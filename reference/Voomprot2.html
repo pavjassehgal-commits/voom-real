@@ -1,0 +1,2710 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Voom</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700;12..96,800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+/* ============ TOKENS ============ */
+:root{
+  /* ground: neutrals carry a faint green-grey bias, analogous to the teal support */
+  --bg:#f1f3ef; --surface:#ffffff; --surface-2:#eaece6; --surface-3:#dee1d9;
+  --line:#dee1d8; --line-2:#c9cec3;
+  --text:#111614; --text-2:#4d574f; --text-3:#818c83;
+  /* one bold accent — signal orange — with deep teal as the only support hue */
+  --brand:#e8481f; --brand-2:#0f6f68; --brand-soft:rgba(232,72,31,.10);
+  --ember:#f2a516; --rose:#c9306b;
+  /* semantic state, deliberately separate from the accent */
+  --green:#1c8a52; --amber:#b8770a; --red:#c02d28; --blue:#2f6f9f; --pink:#c9306b;
+  --shadow:0 1px 2px rgba(17,22,20,.05), 0 8px 24px -14px rgba(17,22,20,.22);
+  --shadow-lg:0 26px 60px -22px rgba(17,22,20,.4);
+  --r:14px; --r-lg:20px; --r-sm:10px;
+  --grad:linear-gradient(112deg,#c9380f 0%,#e8481f 55%,#e8681c 100%);
+  --grad-deep:linear-gradient(140deg,#8f2506 0%,#c9380f 45%,#e05a15 100%);
+  --sans:'Public Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --display:'Bricolage Grotesque','Public Sans',sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0a0e0d; --surface:#131817; --surface-2:#1b2220; --surface-3:#252d2a;
+    --line:#242c29; --line-2:#374039;
+    --text:#eef2ee; --text-2:#a3ada5; --text-3:#6f7a72;
+    --brand:#ff6a3d; --brand-2:#3fb3a6; --brand-soft:rgba(255,106,61,.14);
+    --green:#3ec27c; --amber:#e0a53a; --red:#f0645c; --blue:#6aa8d8;
+    --shadow:0 1px 2px rgba(0,0,0,.5), 0 12px 32px -16px rgba(0,0,0,.8);
+    --shadow-lg:0 30px 70px -20px rgba(0,0,0,.85);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0a0e0d; --surface:#131817; --surface-2:#1b2220; --surface-3:#252d2a;
+  --line:#242c29; --line-2:#374039;
+  --text:#eef2ee; --text-2:#a3ada5; --text-3:#6f7a72;
+  --brand:#ff6a3d; --brand-2:#3fb3a6; --brand-soft:rgba(255,106,61,.14);
+  --green:#3ec27c; --amber:#e0a53a; --red:#f0645c; --blue:#6aa8d8;
+  --shadow:0 1px 2px rgba(0,0,0,.5), 0 12px 32px -16px rgba(0,0,0,.8);
+  --shadow-lg:0 30px 70px -20px rgba(0,0,0,.85);
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{
+  font-family:var(--sans); background:var(--bg); color:var(--text);
+  font-size:15px; line-height:1.5; -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:none;border:none;cursor:pointer}
+a{color:inherit;text-decoration:none}
+svg{width:16px;height:16px;flex:none;vertical-align:-.18em}
+::selection{background:var(--brand);color:#fff}
+:focus-visible{outline:2px solid var(--brand);outline-offset:2px;border-radius:6px}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}}
+/* scrollbars */
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:20px;border:3px solid transparent;background-clip:content-box}
+*::-webkit-scrollbar-track{background:transparent}
+
+/* ============ PRIMITIVES ============ */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:42px;padding:0 18px;
+  border-radius:11px;font-weight:600;font-size:14px;transition:.16s ease;white-space:nowrap;border:1px solid transparent}
+.btn:active{transform:scale(.975)}
+.btn-primary{background:var(--grad);color:#fff;box-shadow:0 6px 18px -8px var(--brand)}
+.btn-primary:hover{filter:brightness(1.08)}
+.btn-dark{background:var(--text);color:var(--surface)}
+.btn-ghost{background:var(--surface-2);color:var(--text);border-color:var(--line)}
+.btn-ghost:hover{background:var(--surface-3)}
+.btn-outline{border-color:var(--line-2);color:var(--text)}
+.btn-outline:hover{background:var(--surface-2)}
+.btn-danger{background:rgba(240,56,75,.12);color:var(--red)}
+.btn-sm{height:34px;padding:0 13px;font-size:13px;border-radius:9px}
+.btn-lg{height:50px;padding:0 26px;font-size:15px;border-radius:13px}
+.btn-block{width:100%}
+.btn[disabled]{opacity:.45;pointer-events:none}
+.icon-btn{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;color:var(--text-2);transition:.15s}
+.icon-btn:hover{background:var(--surface-2);color:var(--text)}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow)}
+.pad{padding:20px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:99px;background:var(--surface-2);
+  border:1px solid var(--line);font-size:13px;font-weight:500;cursor:pointer;transition:.15s;color:var(--text-2)}
+.chip:hover{border-color:var(--brand);color:var(--text)}
+.chip.on{background:var(--brand-soft);border-color:var(--brand);color:var(--brand);font-weight:600}
+.chip[disabled]{opacity:.4;pointer-events:none}
+.slider[disabled]{opacity:.45;cursor:not-allowed}
+.slider[disabled]::-webkit-slider-thumb{border-color:var(--text-3);cursor:not-allowed}
+.tag{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:7px;font-size:11.5px;font-weight:600;letter-spacing:.01em}
+.t-green{background:rgba(18,183,106,.13);color:var(--green)}
+.t-amber{background:rgba(255,159,10,.15);color:#c47800}
+.t-red{background:rgba(240,56,75,.12);color:var(--red)}
+.t-blue{background:rgba(46,125,255,.13);color:var(--blue)}
+.t-pink{background:rgba(255,77,141,.13);color:var(--pink)}
+.t-brand{background:var(--brand-soft);color:var(--brand)}
+.t-grey{background:var(--surface-2);color:var(--text-3)}
+:root[data-theme="dark"] .t-amber{color:var(--amber)}
+
+.field{display:block;margin-bottom:14px}
+.field label{display:block;font-size:12.5px;font-weight:600;color:var(--text-2);margin-bottom:6px;letter-spacing:.01em}
+.input,textarea.input,select.input{width:100%;height:46px;padding:0 14px;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:12px;font-size:14.5px;transition:.15s;outline:none;color:var(--text)}
+textarea.input{height:auto;padding:12px 14px;resize:vertical;line-height:1.55;font-family:inherit}
+.input:focus{border-color:var(--brand);background:var(--surface);box-shadow:0 0 0 4px var(--brand-soft)}
+.input::placeholder{color:var(--text-3)}
+select.input{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238a93a8' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 14px center;padding-right:38px}
+.hint{font-size:12px;color:var(--text-3);margin-top:5px}
+
+.muted{color:var(--text-2)} .dim{color:var(--text-3)}
+.h1{font-family:var(--display);font-size:26px;font-weight:700;letter-spacing:-.02em;text-wrap:balance}
+.h2{font-family:var(--display);font-size:18px;font-weight:600;letter-spacing:-.01em}
+.h3{font-size:14.5px;font-weight:650}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.row{display:flex;align-items:center;gap:10px}
+.between{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.wrap{flex-wrap:wrap}
+.grow{flex:1;min-width:0}
+.stack{display:flex;flex-direction:column}
+.hide{display:none !important}
+.sep{height:1px;background:var(--line);margin:14px 0}
+.trunc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ============ LOGO / MARA ORB ============ */
+.logo{display:flex;align-items:center;gap:10px;font-family:var(--display);font-weight:700;font-size:20px;letter-spacing:-.03em}
+.logo-mark{width:32px;height:32px;border-radius:10px;background:var(--grad);display:grid;place-items:center;
+  box-shadow:0 6px 16px -6px var(--brand);flex:none}
+.logo-mark svg{width:19px;height:19px}
+.orb{width:34px;height:34px;border-radius:50%;flex:none;position:relative;
+  background:conic-gradient(from 200deg,#e8481f,#f2a516,#0f6f68,#e8481f);
+  box-shadow:0 0 0 3px var(--surface),0 6px 18px -6px rgba(232,72,31,.6)}
+.orb::after{content:"";position:absolute;inset:6px;border-radius:50%;background:var(--surface);opacity:.92}
+.orb::before{content:"";position:absolute;inset:10px;border-radius:50%;background:var(--grad);
+  animation:pulse 3.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{transform:scale(.8);opacity:.75}50%{transform:scale(1.05);opacity:1}}
+.orb.sm{width:26px;height:26px}.orb.sm::after{inset:4px}.orb.sm::before{inset:7px}
+.orb.lg{width:64px;height:64px}.orb.lg::after{inset:11px}.orb.lg::before{inset:18px}
+
+/* ============ AUTH ============ */
+#auth{min-height:100dvh;display:grid;grid-template-columns:1fr 1fr}
+.auth-art{position:relative;overflow:hidden;background:#0b100e;display:flex;flex-direction:column;justify-content:space-between;padding:44px}
+.auth-art::before{content:"";position:absolute;width:680px;height:680px;border-radius:50%;
+  background:radial-gradient(circle,rgba(232,72,31,.8),transparent 62%);top:-180px;left:-160px;filter:blur(20px)}
+.auth-art::after{content:"";position:absolute;width:560px;height:560px;border-radius:50%;
+  background:radial-gradient(circle,rgba(15,111,104,.75),transparent 62%);bottom:-200px;right:-140px;filter:blur(20px)}
+.auth-art>*{position:relative;z-index:1;color:#fff}
+.auth-quote{font-family:var(--display);font-size:34px;line-height:1.22;font-weight:600;letter-spacing:-.025em;max-width:460px}
+.auth-metrics{display:flex;gap:28px;margin-top:26px;flex-wrap:wrap}
+.auth-metrics b{display:block;font-family:var(--display);font-size:26px}
+.auth-metrics span{font-size:12.5px;color:rgba(255,255,255,.6)}
+.auth-panel{display:grid;place-items:center;padding:32px 24px;overflow-y:auto}
+.auth-box{width:100%;max-width:400px}
+.social{display:flex;gap:10px}
+.social .btn{flex:1}
+.divider{display:flex;align-items:center;gap:12px;margin:18px 0;color:var(--text-3);font-size:12px}
+.divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line)}
+.demo-note{background:var(--brand-soft);border:1px dashed var(--brand);border-radius:12px;padding:11px 13px;
+  font-size:12.5px;color:var(--brand);margin-bottom:18px;font-weight:500}
+
+/* ============ ONBOARDING ============ */
+#onboard{min-height:100dvh;display:flex;flex-direction:column;background:var(--bg)}
+.ob-top{padding:20px 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;background:var(--surface)}
+.steps{display:flex;gap:8px;align-items:center}
+.step-dot{height:5px;width:44px;border-radius:99px;background:var(--surface-3);transition:.35s}
+.step-dot.on{background:var(--grad);width:64px}
+.ob-body{flex:1;display:grid;place-items:center;padding:36px 20px}
+.ob-card{width:100%;max-width:620px}
+.ob-foot{padding:16px 24px;border-top:1px solid var(--line);background:var(--surface);display:flex;justify-content:space-between;gap:12px;
+  position:sticky;bottom:0}
+.pickers{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.pick{border:1.5px solid var(--line);border-radius:14px;padding:14px;text-align:left;transition:.15s;background:var(--surface)}
+.pick:hover{border-color:var(--line-2);transform:translateY(-1px)}
+.pick.on{border-color:var(--brand);background:var(--brand-soft)}
+.pick .e{font-size:22px;display:block;margin-bottom:6px}
+.pick b{font-size:13.5px;display:block}
+.pick span{font-size:11.5px;color:var(--text-3)}
+.swatches{display:flex;gap:10px;flex-wrap:wrap}
+.sw{width:44px;height:44px;border-radius:12px;border:3px solid transparent;transition:.15s;position:relative}
+.sw.on{border-color:var(--text);transform:scale(1.06)}
+.analyzing{text-align:center;padding:40px 10px}
+.an-list{max-width:340px;margin:26px auto 0;text-align:left;display:flex;flex-direction:column;gap:12px}
+.an-item{display:flex;align-items:center;gap:11px;font-size:14px;color:var(--text-3);transition:.3s}
+.an-item.done{color:var(--text)}
+.an-tick{width:22px;height:22px;border-radius:50%;border:2px solid var(--line-2);display:grid;place-items:center;flex:none;transition:.3s}
+.an-item.done .an-tick{background:var(--green);border-color:var(--green)}
+.an-item.done .an-tick svg{opacity:1}
+.an-tick svg{width:12px;height:12px;stroke:#fff;opacity:0}
+
+/* ============ APP SHELL ============ */
+#app{display:none;min-height:100dvh}
+#app.on{display:grid;grid-template-columns:248px 1fr}
+.side{background:var(--surface);border-right:1px solid var(--line);display:flex;flex-direction:column;
+  position:sticky;top:0;height:100dvh;padding:18px 12px}
+.side-top{padding:4px 8px 18px}
+.nav{display:flex;flex-direction:column;gap:2px;overflow-y:auto;flex:1}
+.nav-lab{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--text-3);padding:16px 10px 7px}
+.nav-i{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:11px;font-size:14px;font-weight:550;
+  color:var(--text-2);transition:.14s;width:100%;text-align:left;position:relative}
+.nav-i:hover{background:var(--surface-2);color:var(--text)}
+.nav-i.on{background:var(--brand-soft);color:var(--brand);font-weight:650}
+.nav-i svg{width:18px;height:18px;flex:none;stroke-width:2}
+.nav-i .badge{margin-left:auto;background:var(--brand);color:#fff;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:99px}
+.nav-i .badge.g{background:var(--surface-3);color:var(--text-3)}
+.plan-card{margin:12px 6px 0;padding:14px;border-radius:15px;background:var(--grad-deep);color:#fff;position:relative;overflow:hidden}
+.plan-card b{font-family:var(--display);font-size:15px}
+.plan-card p{font-size:12px;opacity:.85;margin:3px 0 11px;line-height:1.45}
+.plan-card .btn{background:rgba(255,255,255,.96);color:#a82c08;height:34px;font-size:13px;width:100%}
+
+.main{min-width:0;display:flex;flex-direction:column}
+.topbar{height:64px;padding:0 22px;display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--line);
+  background:color-mix(in srgb,var(--surface) 82%,transparent);backdrop-filter:blur(14px);position:sticky;top:0;z-index:30}
+.search{flex:1;max-width:380px;position:relative}
+.search input{height:38px;border-radius:11px;padding-left:38px;background:var(--surface-2);border:1px solid var(--line);width:100%;outline:none}
+.search svg{position:absolute;left:12px;top:11px;width:16px;height:16px;stroke:var(--text-3)}
+.avatar{width:34px;height:34px;border-radius:50%;background:var(--grad);color:#fff;display:grid;place-items:center;
+  font-weight:700;font-size:13px;flex:none}
+.page{padding:24px 22px 90px;max-width:1320px;width:100%;margin:0 auto;animation:fade .28s ease}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.page-head{margin-bottom:20px;display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.page-head p{color:var(--text-2);font-size:14px;margin-top:3px}
+.mobile-only{display:none}
+
+/* ============ DASHBOARD ============ */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}
+.kpi{padding:17px;border-radius:var(--r-lg);background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);cursor:pointer;transition:.16s}
+.kpi:hover{transform:translateY(-2px);border-color:var(--line-2)}
+.kpi .lab{font-size:12.5px;color:var(--text-2);font-weight:550;display:flex;align-items:center;gap:7px}
+.kpi .val{font-family:var(--display);font-size:27px;font-weight:700;margin:8px 0 6px;letter-spacing:-.02em}
+.kpi .dot{width:26px;height:26px;border-radius:8px;display:grid;place-items:center}
+.kpi .dot svg{width:14px;height:14px}
+.grid-2{display:grid;grid-template-columns:1.55fr 1fr;gap:14px;margin-bottom:14px}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.chart-wrap{position:relative;height:220px;margin-top:6px}
+.chart-wrap svg{width:100%;height:100%;overflow:visible}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--text-2)}
+.legend i{width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:6px}
+.bar-row{display:flex;align-items:center;gap:12px;padding:9px 0}
+.bar-track{flex:1;height:8px;background:var(--surface-2);border-radius:99px;overflow:hidden}
+.bar-fill{height:100%;border-radius:99px;transition:width .8s cubic-bezier(.4,0,.2,1)}
+.insight{display:flex;gap:12px;padding:13px;border-radius:14px;border:1px solid var(--line);margin-bottom:10px;transition:.15s;background:var(--surface)}
+.insight:hover{border-color:var(--brand);box-shadow:var(--shadow)}
+.insight .ic svg{width:17px;height:17px}
+.insight .ic{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;flex:none}
+.insight p{font-size:13px;color:var(--text-2);margin:3px 0 9px;line-height:1.5}
+.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
+.tbl th{text-align:left;font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);
+  padding:0 12px 10px;font-weight:700}
+.tbl td{padding:13px 12px;border-top:1px solid var(--line)}
+.tbl tr{transition:.14s}
+.tbl tbody tr:hover{background:var(--surface-2)}
+.tbl .num{text-align:right;font-variant-numeric:tabular-nums}
+
+/* ============ MARA CHAT ============ */
+.chat{display:grid;grid-template-columns:1fr 300px;gap:14px;height:calc(100dvh - 64px)}
+.chat-main{display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);
+  margin:14px 0 14px 14px;overflow:hidden}
+.chat-head{padding:13px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:11px}
+.chat-log{flex:1;overflow-y:auto;padding:22px;display:flex;flex-direction:column;gap:16px;scroll-behavior:smooth}
+.msg{display:flex;gap:11px;max-width:78%;animation:pop .3s cubic-bezier(.2,.9,.3,1.3)}
+@keyframes pop{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.msg.me{align-self:flex-end;flex-direction:row-reverse}
+.bub{padding:12px 15px;border-radius:16px;font-size:14.2px;line-height:1.58;background:var(--surface-2);border:1px solid var(--line)}
+.msg.me .bub{background:var(--grad);color:#fff;border:none;border-bottom-right-radius:5px}
+.msg.mara .bub{border-bottom-left-radius:5px}
+.bub b{font-weight:650}
+.bub ul{margin:8px 0 2px;padding-left:17px}
+.bub li{margin:4px 0}
+.msg-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:11px}
+.typing{display:flex;gap:4px;padding:15px 16px}
+.typing i{width:7px;height:7px;border-radius:50%;background:var(--text-3);animation:bounce 1.3s infinite}
+.typing i:nth-child(2){animation-delay:.16s}.typing i:nth-child(3){animation-delay:.32s}
+@keyframes bounce{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-6px);opacity:1}}
+.chat-in{padding:14px 16px;border-top:1px solid var(--line)}
+.chat-box{display:flex;align-items:flex-end;gap:10px;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:16px;padding:8px 8px 8px 15px;transition:.15s}
+.chat-box:focus-within{border-color:var(--brand);box-shadow:0 0 0 4px var(--brand-soft)}
+.chat-box textarea{flex:1;background:none;border:none;outline:none;resize:none;max-height:120px;padding:9px 0;font-size:14.5px;line-height:1.5}
+.send{width:38px;height:38px;border-radius:11px;background:var(--grad);color:#fff;display:grid;place-items:center;flex:none}
+.quicks{display:flex;gap:7px;overflow-x:auto;padding-bottom:9px;scrollbar-width:none}
+.quicks::-webkit-scrollbar{display:none}
+.chat-side{padding:14px 14px 14px 0;overflow-y:auto}
+.mini{padding:13px;border-radius:14px;background:var(--surface-2);border:1px solid var(--line);margin-bottom:10px}
+
+/* ============ CALENDAR ============ */
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--line);border:1px solid var(--line);
+  border-radius:var(--r);overflow:hidden}
+.cal-dow{background:var(--surface-2);padding:9px;text-align:center;font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em}
+.cal-day{background:var(--surface);min-height:118px;padding:7px;position:relative;transition:.14s;cursor:pointer;display:flex;flex-direction:column;gap:4px}
+.cal-day:hover{background:var(--surface-2)}
+.cal-day.out{background:var(--surface-2);opacity:.5}
+.cal-day.today .dnum{background:var(--grad);color:#fff}
+.dnum{width:23px;height:23px;border-radius:8px;display:grid;place-items:center;font-size:12px;font-weight:650;color:var(--text-2)}
+.ev{font-size:11px;padding:4px 6px;border-radius:7px;font-weight:600;display:flex;align-items:center;gap:5px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:.12s}
+.ev:hover{transform:translateX(2px)}
+.ev i{width:6px;height:6px;border-radius:50%;flex:none}
+.cal-add{opacity:0;position:absolute;right:6px;top:6px;width:21px;height:21px;border-radius:7px;background:var(--brand);
+  color:#fff;display:grid;place-items:center;font-size:15px;line-height:0;transition:.14s}
+.cal-day:hover .cal-add{opacity:1}
+
+/* ============ REELS ============ */
+.reel-grid{display:grid;grid-template-columns:340px 1fr;gap:16px}
+.phone{width:250px;margin:0 auto;border-radius:32px;background:#000;padding:9px;box-shadow:var(--shadow-lg);position:relative}
+.phone-scr{border-radius:25px;aspect-ratio:9/16;overflow:hidden;position:relative;display:flex;flex-direction:column;
+  justify-content:flex-end;padding:14px;color:#fff}
+.phone-notch{position:absolute;top:14px;left:50%;transform:translateX(-50%);width:74px;height:19px;background:#000;border-radius:99px;z-index:3}
+.reel-cap{padding-right:38px;font-size:11.5px;line-height:1.45;position:relative;z-index:2;text-shadow:0 1px 8px rgba(0,0,0,.6)}
+.reel-ui{position:absolute;right:10px;bottom:60px;display:flex;flex-direction:column;gap:15px;z-index:2;align-items:center}
+.reel-ui div{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:9.5px;font-weight:600}
+.reel-ui svg{width:20px;height:20px;fill:#fff;filter:drop-shadow(0 1px 4px rgba(0,0,0,.5))}
+.tmpls{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:9px}
+.tmpl{aspect-ratio:9/13;border-radius:11px;position:relative;overflow:hidden;border:2.5px solid transparent;transition:.15s;
+  display:flex;align-items:flex-end;padding:7px;color:#fff;font-size:10.5px;font-weight:650;text-shadow:0 1px 5px rgba(0,0,0,.7)}
+.tmpl.on{border-color:var(--brand);transform:scale(.97)}
+.tmpl:hover{transform:translateY(-2px)}
+.queue-item{display:flex;gap:12px;padding:12px;border:1px solid var(--line);border-radius:14px;margin-bottom:10px;align-items:center;transition:.15s;background:var(--surface)}
+.queue-item:hover{border-color:var(--line-2);box-shadow:var(--shadow)}
+.q-thumb{width:46px;height:62px;border-radius:9px;flex:none;position:relative;overflow:hidden}
+.q-thumb::after{content:"";position:absolute;inset:0;background:linear-gradient(transparent,rgba(0,0,0,.35))}
+
+/* ============ CAMPAIGNS ============ */
+.tabs{display:flex;gap:4px;background:var(--surface-2);padding:4px;border-radius:13px;border:1px solid var(--line);width:fit-content;max-width:100%;overflow-x:auto}
+.tab{padding:8px 16px;border-radius:10px;font-size:13.5px;font-weight:600;color:var(--text-2);transition:.15s;white-space:nowrap}
+.tab.on{background:var(--surface);color:var(--text);box-shadow:var(--shadow)}
+.sms-phone{max-width:270px;margin:0 auto;background:var(--surface-2);border:1px solid var(--line);border-radius:26px;padding:16px 12px}
+.sms-bub{background:var(--brand);color:#fff;padding:10px 13px;border-radius:17px;border-bottom-right-radius:5px;
+  font-size:13px;line-height:1.5;margin-left:auto;max-width:88%;word-break:break-word}
+.mail-prev{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface)}
+.mail-hero{padding:30px 22px;text-align:center;color:#fff}
+.stat-mini{text-align:center;padding:11px;border-radius:12px;background:var(--surface-2)}
+.stat-mini b{display:block;font-family:var(--display);font-size:19px}
+.stat-mini span{font-size:11px;color:var(--text-3)}
+
+/* ============ INSTAGRAM ============ */
+.ig-hero svg{width:24px;height:24px}
+.ig-hero{background:linear-gradient(120deg,#f9ce34,#ee2a7b 48%,#6228d7);border-radius:var(--r-lg);padding:30px;color:#fff;position:relative;overflow:hidden}
+.ig-acct{display:flex;gap:14px;align-items:center;padding:15px;border:1px solid var(--line);border-radius:14px;transition:.15s;cursor:pointer;width:100%;text-align:left}
+.ig-acct:hover{border-color:var(--brand);background:var(--brand-soft)}
+.ig-pfp{width:48px;height:48px;border-radius:50%;flex:none;padding:2.5px;background:linear-gradient(45deg,#f9ce34,#ee2a7b,#6228d7)}
+.ig-pfp div{width:100%;height:100%;border-radius:50%;background:var(--grad);display:grid;place-items:center;color:#fff;font-weight:700;border:2px solid var(--surface)}
+.perm{display:flex;gap:11px;padding:11px 0;align-items:flex-start}
+.perm .tick{width:19px;height:19px;border-radius:50%;background:var(--green);display:grid;place-items:center;flex:none;margin-top:1px}
+.perm .tick svg{width:11px;height:11px;stroke:#fff}
+
+/* ============ PRICING ============ */
+.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:start}
+.plan{padding:26px 22px;border-radius:22px;border:1.5px solid var(--line);background:var(--surface);position:relative;transition:.2s}
+.plan:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg)}
+.plan.hot{border-color:var(--brand);box-shadow:0 20px 50px -24px var(--brand)}
+.plan.hot::before{content:"MOST POPULAR";position:absolute;top:-11px;left:50%;transform:translateX(-50%);
+  background:var(--grad);color:#fff;font-size:10px;font-weight:800;letter-spacing:.1em;padding:5px 13px;border-radius:99px;white-space:nowrap}
+.price{font-family:var(--display);font-size:42px;font-weight:700;letter-spacing:-.03em;line-height:1}
+.plan ul{list-style:none;margin:18px 0 0;display:flex;flex-direction:column;gap:10px}
+.plan li{display:flex;gap:9px;font-size:13.5px;align-items:flex-start;color:var(--text-2)}
+.plan li svg{width:16px;height:16px;stroke:var(--green);flex:none;margin-top:2px;stroke-width:2.6}
+.plan li.off{opacity:.42}.plan li.off svg{stroke:var(--text-3)}
+.toggle-wrap{display:inline-flex;background:var(--surface-2);padding:4px;border-radius:12px;border:1px solid var(--line)}
+
+/* ============ ADS ============ */
+.alloc{display:flex;align-items:center;gap:14px;padding:14px;border:1px solid var(--line);border-radius:14px;margin-bottom:10px;background:var(--surface)}
+.slider{-webkit-appearance:none;appearance:none;height:6px;border-radius:99px;background:var(--surface-3);outline:none;flex:1}
+.slider::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--surface);
+  border:3px solid var(--brand);cursor:grab;box-shadow:0 2px 8px rgba(0,0,0,.2)}
+.slider::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:var(--surface);border:3px solid var(--brand);cursor:grab}
+.approve-card{background:var(--grad-deep);color:#fff;border-radius:22px;padding:26px;position:relative;overflow:hidden}
+.approve-card::after{content:"";position:absolute;width:280px;height:280px;border-radius:50%;background:rgba(255,255,255,.1);top:-120px;right:-70px}
+.approve-card>*{position:relative;z-index:1}
+.donut{width:150px;height:150px;flex:none}
+
+/* ============ MODAL / TOAST / DRAWER ============ */
+.scrim{position:fixed;inset:0;background:rgba(7,9,18,.55);backdrop-filter:blur(5px);z-index:100;
+  display:grid;place-items:center;padding:20px;animation:fade .2s}
+.modal{background:var(--surface);border-radius:22px;width:100%;max-width:480px;max-height:88dvh;overflow-y:auto;
+  box-shadow:var(--shadow-lg);animation:rise .3s cubic-bezier(.2,.9,.3,1.1);border:1px solid var(--line)}
+.modal.wide{max-width:620px}
+@keyframes rise{from{opacity:0;transform:translateY(22px) scale(.97)}to{opacity:1;transform:none}}
+.modal-head{padding:20px 22px 0;display:flex;justify-content:space-between;align-items:flex-start;gap:14px}
+.modal-body{padding:16px 22px}
+.modal-foot{padding:14px 22px 20px;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
+.toasts{position:fixed;bottom:20px;right:20px;z-index:200;display:flex;flex-direction:column;gap:10px;max-width:calc(100vw - 40px)}
+.toast{background:var(--surface);border:1px solid var(--line);border-left:3.5px solid var(--green);border-radius:13px;
+  padding:12px 16px;box-shadow:var(--shadow-lg);display:flex;gap:11px;align-items:center;min-width:250px;
+  animation:slideIn .32s cubic-bezier(.2,.9,.3,1.2);font-size:13.5px;font-weight:550}
+@keyframes slideIn{from{opacity:0;transform:translateX(60px)}to{opacity:1;transform:none}}
+.toast.err{border-left-color:var(--red)}
+.toast.info{border-left-color:var(--brand)}
+.menu{position:absolute;right:0;top:46px;background:var(--surface);border:1px solid var(--line);border-radius:14px;
+  box-shadow:var(--shadow-lg);width:216px;padding:6px;z-index:60;animation:rise .18s}
+.menu button{display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;border-radius:9px;font-size:13.5px;text-align:left;transition:.13s;font-weight:520}
+.menu button:hover{background:var(--surface-2)}
+.menu svg{width:16px;height:16px;stroke:var(--text-3)}
+
+/* ============ RESPONSIVE ============ */
+@media (max-width:1100px){
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .grid-2{grid-template-columns:1fr}
+  .grid-3{grid-template-columns:1fr}
+  .chat{grid-template-columns:1fr}
+  .chat-side{display:none}
+  .chat-main{margin:14px}
+  .reel-grid{grid-template-columns:1fr}
+  .plans{grid-template-columns:1fr;max-width:460px;margin:0 auto}
+  .plan.hot{order:-1}
+}
+@media (max-width:900px){
+  #auth{grid-template-columns:1fr}
+  .auth-art{display:none}
+  #app.on{grid-template-columns:1fr}
+  .side{position:fixed;left:0;top:0;z-index:90;width:262px;transform:translateX(-105%);transition:transform .3s cubic-bezier(.3,.9,.3,1);
+    box-shadow:var(--shadow-lg)}
+  .side.open{transform:none}
+  .mobile-only{display:inline-flex}
+  .desktop-only{display:none !important}
+  .page{padding:18px 14px 92px}
+  .msg{max-width:88%}
+  .side-scrim{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:85}
+  .chat{height:calc(100dvh - 64px - 62px)}
+  .chat-main{margin:10px}
+  .toasts{left:14px;right:14px;bottom:76px}
+}
+@media (max-width:640px){
+  .kpis{grid-template-columns:repeat(2,1fr);gap:10px}
+  .kpi .val{font-size:22px}
+  .h1{font-size:21px}
+  .cal-day{min-height:74px;padding:4px}
+  .ev{font-size:9.5px;padding:2px 4px}
+  .ev i{display:none}
+  .tbl th:nth-child(n+4),.tbl td:nth-child(n+4){display:none}
+  .modal{border-radius:20px}
+  .page-head{gap:10px}
+  .topbar{padding:0 14px;gap:8px}
+  .search{display:none}
+  .kpi .cmp{display:none}
+  .plan.hot::before{font-size:9px}
+}
+/* mobile bottom bar */
+.botbar{display:none;position:fixed;bottom:0;left:0;right:0;height:62px;background:color-mix(in srgb,var(--surface) 92%,transparent);
+  backdrop-filter:blur(16px);border-top:1px solid var(--line);z-index:80;padding-bottom:env(safe-area-inset-bottom)}
+.botbar .b{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  font-size:10px;font-weight:600;color:var(--text-3);transition:.14s}
+.botbar .b.on{color:var(--brand)}
+.botbar .b svg{width:20px;height:20px;stroke-width:2}
+@media (max-width:900px){ .botbar.show{display:flex} }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="layer"></div>
+<div class="toasts" id="toasts"></div>
+<script>
+/* =================================================================
+   VOOM — visual prototype. All data is fake. No live integrations.
+   ================================================================= */
+
+const I = {
+  bolt:'<path d="M13 2L3 14h8l-1 8 10-12h-8z"/>',
+  home:'<path d="M3 10.5L12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/>',
+  spark:'<path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"/>',
+  cal:'<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/>',
+  film:'<rect x="2" y="4" width="20" height="16" rx="3"/><path d="M7 4v16M17 4v16M2 12h20M2 8h5M2 16h5M17 8h5M17 16h5"/>',
+  mail:'<rect x="2" y="5" width="20" height="14" rx="3"/><path d="M3 7l9 6 9-6"/>',
+  chat:'<path d="M21 12a8 8 0 01-11.4 7.2L3 21l1.8-6.6A8 8 0 1121 12z"/>',
+  ig:'<rect x="2.5" y="2.5" width="19" height="19" rx="5.5"/><circle cx="12" cy="12" r="4.2"/><circle cx="17.5" cy="6.5" r="1.2" fill="currentColor" stroke="none"/>',
+  target:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/>',
+  card:'<rect x="2" y="5" width="20" height="14" rx="3"/><path d="M2 10h20"/>',
+  users:'<path d="M17 20v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9.5" cy="7" r="3.5"/><path d="M22 20v-2a4 4 0 00-3-3.8"/>',
+  cog:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-2.7 1.1v.3a2 2 0 11-4 0v-.2a1.6 1.6 0 00-2.8-1.1l-.1.1a2 2 0 11-2.8-2.8l.1-.1A1.6 1.6 0 004.6 15a2 2 0 00-1.8-1.2h-.3a2 2 0 010-4h.2A1.6 1.6 0 004.6 7.6l-.1-.1a2 2 0 112.8-2.8l.1.1A1.6 1.6 0 009.9 3.7V3.5a2 2 0 014 0v.2a1.6 1.6 0 002.7 1.1l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 001.1 2.7h.3a2 2 0 010 4h-.2a1.6 1.6 0 00-1.2 1.1z"/>',
+  search:'<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+  bell:'<path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  x:'<path d="M18 6L6 18M6 6l12 12"/>',
+  check:'<path d="M20 6L9 17l-5-5"/>',
+  arrow:'<path d="M5 12h14M13 6l6 6-6 6"/>',
+  back:'<path d="M19 12H5M11 18l-6-6 6-6"/>',
+  send:'<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>',
+  menu:'<path d="M3 12h18M3 6h18M3 18h18"/>',
+  up:'<path d="M7 17L17 7M9 7h8v8"/>',
+  down:'<path d="M17 7L7 17M15 17H7V9"/>',
+  eye:'<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
+  heart:'<path d="M20.8 5.6a5 5 0 00-7.1 0L12 7.3l-1.7-1.7a5 5 0 10-7.1 7.1L12 21.4l8.8-8.7a5 5 0 000-7.1z"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
+  trend:'<path d="M22 7l-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/>',
+  wallet:'<path d="M20 7H5a2 2 0 010-4h13v4"/><path d="M3 5v14a2 2 0 002 2h15V7H5"/><circle cx="16" cy="14" r="1.4" fill="currentColor"/>',
+  logout:'<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/>',
+  moon:'<path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/>',
+  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  copy:'<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 012-2h10"/>',
+  trash:'<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>',
+  edit:'<path d="M11 4H4v16h16v-7"/><path d="M18.5 2.5a2.1 2.1 0 013 3L12 15l-4 1 1-4z"/>',
+  play:'<path d="M6 4l14 8-14 8V4z"/>',
+  shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  msg:'<path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>',
+  globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18"/>',
+  fire:'<path d="M12 2s5 5 5 9a5 5 0 01-10 0c0-1.5.7-3 .7-3S6 10 6 13a6 6 0 1012 0c0-5-6-11-6-11z"/>',
+  info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+  warn:'<path d="M12 3l9.5 17H2.5L12 3z"/><path d="M12 10v4M12 17h.01"/>',
+  filter:'<path d="M3 5h18l-7 8v6l-4 2v-8L3 5z"/>',
+  img:'<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.8"/><path d="M21 15l-5-5L5 21"/>',
+  music:'<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  crown:'<path d="M2 18h20M3 6l4.5 5L12 4l4.5 7L21 6l-1.5 10h-15L3 6z"/>',
+};
+const ic=(n,c='')=>`<svg class="${c}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I[n]||''}</svg>`;
+
+/* ---------- FAKE DATA ---------- */
+const DB = {
+  user:{ name:'Layla Haddad', email:'layla@marinacafe.ae', initials:'LH' },
+  brand:{
+    name:'Marina Café', site:'marinacafe.ae', industry:'Restaurant / Café',
+    audience:['Local residents nearby','Young adults (18–29)','Families with children'],
+    goals:['More walk-in customers'],
+    tone:['Friendly','Playful','Modern'],
+    channels:['Instagram','Email','SMS'], budget:'AED 1,000 – 3,000', freq:'2–3 times a week',
+    auto:'MARA drafts, I approve', permission:'Yes — always ask first',
+    color:'#e8481f',
+    handle:'@marinacafe'
+  },
+  plan:'free',
+  igConnected:false,
+  kpis:[
+    {k:'reach',   lab:'Reach',            val:'184.2K', d:'+18.4%', up:true,  ic:'eye',   c:'--brand'},
+    {k:'eng',     lab:'Engagement rate',  val:'6.8%',   d:'+1.2 pts',up:true, ic:'heart', c:'--rose'},
+    {k:'foll',    lab:'New followers',    val:'3,412',  d:'+24.1%', up:true,  ic:'users', c:'--blue'},
+    {k:'rev',     lab:'Attributed revenue',val:'AED 42,860',d:'-3.2%', up:false, ic:'wallet',c:'--brand-2'},
+  ],
+  series:{
+    labels:['Jul 28','Aug 2','Aug 6','Aug 10','Aug 14','Aug 18','Aug 22'],
+    reach:[62,74,71,96,88,118,134],
+    eng:[28,41,36,52,61,58,79],
+  },
+  channels:[
+    {n:'Instagram Reels', v:42, c:'#e8481f'},
+    {n:'Instagram Feed',  v:23, c:'#f2a516'},
+    {n:'Email',           v:19, c:'#0f6f68'},
+    {n:'SMS',             v:10, c:'#2f6f9f'},
+    {n:'Paid Social',     v:6,  c:'#c9306b'},
+  ],
+  insights:[
+    {t:'Reels posted at 7:10pm outperform by 3.4×', b:'Your last 6 evening Reels averaged 41K views vs 12K for morning posts. I can move your queue.',
+     ic:'fire', c:'--rose', act:'Reschedule queue', go:'reels'},
+    {t:'“Barrier repair” is trending in your niche', b:'Search interest up 62% this month. I drafted 3 Reel hooks around it, ready for review.',
+     ic:'trend', c:'--brand', act:'See drafts', go:'calendar'},
+    {t:'Win-back segment is going cold', b:'1,284 subscribers haven’t opened in 60 days. A 2-email win-back flow should recover ~AED 3,100.',
+     ic:'warn', c:'--amber', act:'Build flow', go:'campaigns'},
+    {t:'AED 1,200 paid budget awaiting your approval', b:'I built an allocation projected to return 3.8× ROAS on your top Reel.',
+     ic:'wallet', c:'--green', act:'Review budget', go:'ads'},
+  ],
+  campaignsTable:[
+    {n:'Glow Drop — launch teaser', ch:'Reels',  sent:'—',      open:'112K views', clk:'4.2K', rev:'AED 8,420', st:'Live',      t:'t-green'},
+    {n:'Summer Barrier Repair',     ch:'Email',  sent:'8,412',  open:'41.2%',      clk:'6.8%', rev:'AED 12,190',st:'Sent',      t:'t-blue'},
+    {n:'Flash 24h — 20% off',       ch:'SMS',    sent:'3,190',  open:'98.1%',      clk:'11.4%',rev:'AED 9,340', st:'Sent',      t:'t-blue'},
+    {n:'Retargeting — cart abandon',ch:'Paid',   sent:'—',      open:'62K impr.',  clk:'2.9%', rev:'AED 6,720', st:'Live',      t:'t-green'},
+    {n:'Founder story — carousel',  ch:'Feed',   sent:'—',      open:'28K reach',  clk:'1.1K', rev:'AED 2,180', st:'Scheduled', t:'t-amber'},
+  ],
+  posts:[
+    {d:2,  t:'Reel · Barrier repair myth',  c:'#e8481f', ch:'Reel',  time:'7:10 PM', st:'Scheduled'},
+    {d:2,  t:'Email · Weekly glow letter',  c:'#0f6f68', ch:'Email', time:'9:00 AM', st:'Scheduled'},
+    {d:5,  t:'Reel · 3-step night routine', c:'#e8481f', ch:'Reel',  time:'7:10 PM', st:'Draft'},
+    {d:7,  t:'Feed · Founder story',        c:'#c9306b', ch:'Feed',  time:'12:30 PM',st:'Scheduled'},
+    {d:9,  t:'SMS · Flash drop alert',      c:'#f2a516', ch:'SMS',   time:'11:00 AM',st:'Scheduled'},
+    {d:11, t:'Reel · Ingredient deep dive', c:'#e8481f', ch:'Reel',  time:'6:45 PM', st:'Draft'},
+    {d:14, t:'Email · Glow Drop launch',    c:'#0f6f68', ch:'Email', time:'8:00 AM', st:'Scheduled'},
+    {d:14, t:'Reel · Launch teaser',        c:'#e8481f', ch:'Reel',  time:'7:10 PM', st:'Scheduled'},
+    {d:18, t:'Feed · UGC carousel',         c:'#c9306b', ch:'Feed',  time:'1:00 PM', st:'Idea'},
+    {d:20, t:'Reel · Before & after',       c:'#e8481f', ch:'Reel',  time:'7:10 PM', st:'Idea'},
+    {d:23, t:'SMS · Restock heads-up',      c:'#f2a516', ch:'SMS',   time:'10:30 AM',st:'Draft'},
+    {d:26, t:'Email · Win-back #1',         c:'#0f6f68', ch:'Email', time:'9:00 AM', st:'Draft'},
+  ],
+  reelQueue:[
+    {t:'Barrier repair myth — busted', when:'Tue, Aug 25 · 7:10 PM', st:'Scheduled', t2:'t-green', g:'linear-gradient(160deg,#ff8a3d,#c9306b)', views:'—'},
+    {t:'3-step night routine',         when:'Fri, Aug 28 · 7:10 PM', st:'Draft',     t2:'t-amber', g:'linear-gradient(160deg,#2f6f9f,#0f6f68)', views:'—'},
+    {t:'Ingredient deep dive: PHA',    when:'Mon, Sep 1 · 6:45 PM',  st:'Draft',     t2:'t-amber', g:'linear-gradient(160deg,#e8481f,#f2a516)', views:'—'},
+    {t:'Glow Drop launch teaser',      when:'Posted Aug 20',         st:'Live',      t2:'t-blue',  g:'linear-gradient(160deg,#0f6f68,#141a18)', views:'112K'},
+  ],
+  emails:[
+    {n:'Summer Barrier Repair',  seg:'All subscribers · 8,412', st:'Sent',      t:'t-blue',  o:'41.2%', c:'6.8%', r:'AED 12,190', when:'Aug 18'},
+    {n:'Glow Drop — launch',     seg:'VIP + engaged · 4,120',   st:'Scheduled', t:'t-amber', o:'—',     c:'—',    r:'—',       when:'Sep 6, 8:00 AM'},
+    {n:'Win-back flow #1',       seg:'Cold 60d · 1,284',        st:'Draft',     t:'t-grey',  o:'—',     c:'—',    r:'—',       when:'Not scheduled'},
+    {n:'Welcome series — step 1',seg:'New signups · auto',      st:'Live',      t:'t-green', o:'62.4%', c:'14.1%',r:'AED 18,430', when:'Automated'},
+  ],
+  sms:[
+    {n:'Flash 24h — 20% off',    seg:'SMS opt-ins · 3,190', st:'Sent',      t:'t-blue',  o:'98.1%', c:'11.4%', r:'AED 9,340', when:'Aug 14'},
+    {n:'Restock heads-up',       seg:'Waitlist · 842',      st:'Scheduled', t:'t-amber', o:'—',     c:'—',     r:'—',      when:'Aug 26, 10:30 AM'},
+    {n:'Glow Drop early access', seg:'VIP · 610',           st:'Draft',     t:'t-grey',  o:'—',     c:'—',     r:'—',      when:'Not scheduled'},
+  ],
+  ads:{
+    total:1200,
+    alloc:[
+      {n:'Reels — Barrier repair', ch:'Instagram Reels', pct:45, c:'#e8481f', roas:'4.2×'},
+      {n:'Retargeting — cart',     ch:'Meta Advantage+', pct:30, c:'#0f6f68', roas:'5.1×'},
+      {n:'Lookalike 1% — buyers',  ch:'Instagram Feed',  pct:15, c:'#f2a516', roas:'2.6×'},
+      {n:'Story swipe-ups',        ch:'Instagram Story', pct:10, c:'#2f6f9f', roas:'1.9×'},
+    ],
+    history:[
+      {n:'August boost',             amt:'AED 800',  st:'Active',   t:'t-green', roas:'3.9×', when:'Approved Aug 12'},
+      {n:'July always-on retarget',  amt:'AED 650',  st:'Complete', t:'t-grey',  roas:'4.4×', when:'Jul 1 – Jul 31'},
+      {n:'June test — Story ads',    amt:'AED 300',  st:'Complete', t:'t-grey',  roas:'1.4×', when:'Jun 8 – Jun 22'},
+    ]
+  },
+  plans:[
+    {id:'free', name:'Free', m:0, y:0, blurb:'Try MARA on one business.', hot:false,
+     f:['MARA chat — 20 messages / mo','1 connected business','Content calendar','5 scheduled posts / mo'],
+     off:['Reel auto-scheduling','Email & SMS campaigns','Paid ad management','Competitor tracking']},
+    {id:'pro', name:'Pro', m:199, y:199, blurb:'For businesses posting every week.', hot:true,
+     f:['Unlimited MARA chat','3 connected businesses','Unlimited scheduling','Email & SMS campaigns','Reel auto-scheduling at best times','Performance dashboard'],
+     off:['Paid ad budget management']},
+    {id:'max', name:'Max', m:549, y:549, blurb:'MARA runs your marketing end-to-end.', hot:false,
+     f:['Everything in Pro','Unlimited businesses & seats','Paid ad budget management','Budget limits and automatic performance pauses','Competitor & trend tracking','Priority support'],
+     off:[]},
+  ]
+};
+
+/* ---------- STATE ---------- */
+const S = {
+  screen:'auth', authMode:'login', obStep:0, page:'dash',
+  theme:localStorage.getItem('voom-theme')||(window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'),
+  menuOpen:false, sideOpen:false, notif:3,
+  calMonth:7, calYear:2026, calFilter:'All',
+  campTab:'email', billing:'yearly',
+  reelTmpl:0, reelTime:'19:10', reelCaption:'', 
+  igStep:0,
+  adAlloc:JSON.parse(JSON.stringify(DB.ads.alloc)), adTotal:1200, adApproved:false,
+  approvedPlan:null, changeMode:false,
+  chat:[], typing:false,
+  onboard:{desc:'',name:'',site:'',industry:'',customer:[],goal:'',tone:[],channels:[],budget:'',freq:'',auto:'',permission:'',color:'#e8481f'},
+};
+
+/* ---------- HELPERS ---------- */
+const $ = s=>document.querySelector(s);
+const root=()=>$('#root'), layer=()=>$('#layer');
+const esc = s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+const PROTO='Prototype demonstration — no real action was performed.';
+function protoNote(){return `<div class="card pad" style="background:var(--surface-2);border-style:dashed"><div class="row" style="align-items:flex-start;gap:10px"><span style="color:var(--text-3);display:grid;place-items:center">${ic('info')}</span><p style="font-size:12.8px;line-height:1.55;color:var(--text-2)"><b>${PROTO}</b></p></div></div>`;}
+const AD_SEPARATION='Your Voom subscription pays for the software. Advertising budgets are optional and paid directly through your connected advertising account.';
+function adSepNote(){return `<div class="card pad" style="background:var(--surface-2)"><div class="row" style="align-items:flex-start;gap:10px"><span style="color:var(--brand);display:grid;place-items:center">${ic('wallet')}</span><p style="font-size:12.8px;line-height:1.6;color:var(--text-2)">${AD_SEPARATION}</p></div></div>`;}
+function exTag(){return '<span class="tag t-grey">Example result</span>';}
+function demoTag(){return '<span class="tag t-grey">Demo data</span>';}
+function toast(msg,kind='ok',proto=false){
+  const t=document.createElement('div');
+  t.className='toast '+(kind==='err'?'err':kind==='info'?'info':'');
+  const i = kind==='err'?'warn':kind==='info'?'info':'check';
+  const col = kind==='err'?'var(--red)':kind==='info'?'var(--brand)':'var(--green)';
+  t.innerHTML=`<span style="color:${col};display:grid;place-items:center">${ic(i)}</span><span>${msg}${proto?`<br><span style="font-weight:500;color:var(--text-3);font-size:12px">${PROTO}</span>`:''}</span>`;
+  t.querySelector('svg').style.width='17px'; t.querySelector('svg').style.height='17px';
+  $('#toasts').appendChild(t);
+  setTimeout(()=>{t.style.transition='.3s';t.style.opacity='0';t.style.transform='translateX(50px)';
+    setTimeout(()=>t.remove(),300);},proto?4600:3000);
+}
+function modal(html){ layer().innerHTML=`<div class="scrim" onclick="if(event.target===this)closeModal()">${html}</div>`; }
+function closeModal(){ layer().innerHTML=''; }
+function setTheme(t){ S.theme=t; document.documentElement.dataset.theme=t; localStorage.setItem('voom-theme',t); }
+setTheme(S.theme);
+function go(p){ S.page=p; S.sideOpen=false; S.menuOpen=false; render(); window.scrollTo(0,0); }
+function nfc(n){ return n.toLocaleString('en-US'); }
+</script>
+<script>
+/* =========================== AUTH =========================== */
+function viewAuth(){
+  const su = S.authMode==='signup';
+  return `
+  <div id="auth">
+    <div class="auth-art">
+      <div class="logo" style="color:#fff">
+        <span class="logo-mark" style="background:rgba(255,255,255,.16)">${ic('bolt')}</span> Voom
+      </div>
+      <div>
+        <div class="auth-quote">Meet MARA — the AI marketing manager that actually ships the work.</div>
+        <p style="color:rgba(255,255,255,.62);margin-top:16px;max-width:420px;font-size:14.5px;line-height:1.6">
+          She plans your calendar, writes the Reels, schedules the sends, and asks before spending a cent on ads.</p>
+        <div style="margin-top:26px;padding:16px 18px;border:1px dashed rgba(255,255,255,.28);border-radius:14px;max-width:430px">
+          <div style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.55);margin-bottom:12px">Example result — demo data, not a performance claim</div>
+          <div class="auth-metrics" style="margin-top:0">
+            <div><b>3.4×</b><span>reach, sample dataset</span></div>
+            <div><b>11 hrs</b><span>planning time, sample</span></div>
+            <div><b>4.8×</b><span>return, sample dataset</span></div>
+          </div>
+        </div>
+      </div>
+      <div style="color:rgba(255,255,255,.5);font-size:12.5px;line-height:1.6;max-width:430px">
+        Visual prototype. Every number, account and campaign shown is demo data —
+        no real accounts, payments, posts or messages are involved.
+      </div>
+    </div>
+
+    <div class="auth-panel">
+      <div class="auth-box">
+        <div class="logo" style="margin-bottom:26px">
+          <span class="logo-mark">${ic('bolt','')}</span> Voom
+        </div>
+        <h1 class="h1" style="font-size:27px">${su?'Create your account':'Welcome back'}</h1>
+        <p class="muted" style="margin:6px 0 22px;font-size:14px">
+          ${su?'Set up your brand in under two minutes.':'Sign in to pick up where MARA left off.'}</p>
+
+        <div class="demo-note">${ic('info')} Prototype — any email and password will work.</div>
+
+        <div class="social">
+          <button class="btn btn-outline" onclick="oauth('Google')">
+            <svg viewBox="0 0 24 24" width="17" height="17"><path fill="#4285F4" d="M22 12.2c0-.8-.1-1.4-.2-2H12v3.8h5.7c-.1 1-.8 2.5-2.2 3.5l3.4 2.6c2-1.8 3.1-4.5 3.1-7.9z"/><path fill="#34A853" d="M12 23c2.9 0 5.3-1 7-2.6l-3.4-2.6c-.9.6-2.1 1-3.6 1-2.8 0-5.1-1.8-6-4.3l-3.5 2.7C4.2 20.5 7.8 23 12 23z"/><path fill="#FBBC05" d="M6 14.5c-.2-.7-.4-1.4-.4-2.2s.1-1.5.4-2.2L2.5 7.4C1.7 8.8 1.3 10.3 1.3 12s.4 3.2 1.2 4.6L6 14.5z"/><path fill="#EA4335" d="M12 5.5c2 0 3.3.9 4.1 1.6l3-2.9C17.3 2.5 14.9 1.4 12 1.4 7.8 1.4 4.2 3.9 2.5 7.4L6 10.1c.9-2.5 3.2-4.6 6-4.6z"/></svg>
+            Google</button>
+          <button class="btn btn-outline" onclick="oauth('Apple')">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor"><path d="M16.4 12.7c0-2.6 2.1-3.8 2.2-3.9-1.2-1.7-3-2-3.7-2-1.6-.2-3.1.9-3.9.9s-2-.9-3.3-.9c-1.7 0-3.3 1-4.2 2.5-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.5 1.3-.1 1.8-.8 3.3-.8s2 .8 3.3.8c1.4 0 2.2-1.2 3.1-2.5.7-1 1-1.9 1.1-2-.1 0-2.4-1-2.4-3.8zM14 4.6c.7-.9 1.2-2.1 1-3.3-1.1 0-2.4.7-3.1 1.6-.7.8-1.2 2-1.1 3.2 1.2.1 2.5-.6 3.2-1.5z"/></svg>
+            Apple</button>
+        </div>
+        <div class="divider">or continue with email</div>
+
+        <form onsubmit="event.preventDefault();doAuth()">
+          ${su?`<div class="field"><label>Full name</label><input class="input" id="f-name" value="Layla Haddad" required></div>`:''}
+          <div class="field"><label>Work email</label><input class="input" id="f-email" type="email" value="layla@marinacafe.ae" required></div>
+          <div class="field"><label>Password</label><input class="input" id="f-pass" type="password" value="voomdemo123" required></div>
+          ${su?`<label class="row" style="font-size:12.5px;color:var(--text-2);margin:2px 0 16px;cursor:pointer">
+              <input type="checkbox" checked style="width:16px;height:16px;accent-color:var(--brand)">
+              I agree to the Terms and Privacy Policy</label>`
+            :`<div class="between" style="margin:2px 0 18px">
+              <label class="row" style="font-size:12.5px;color:var(--text-2);cursor:pointer">
+                <input type="checkbox" checked style="width:16px;height:16px;accent-color:var(--brand)"> Keep me signed in</label>
+              <button type="button" class="dim" style="font-size:12.5px;font-weight:600" onclick="toast('Reset link sent to your inbox (demo)','info')">Forgot password?</button>
+            </div>`}
+          <button class="btn btn-primary btn-lg btn-block" type="submit">
+            ${su?'Create account':'Sign in'} ${ic('arrow')}</button>
+        </form>
+
+        <p class="muted" style="text-align:center;margin-top:18px;font-size:13.5px">
+          ${su?'Already have an account?':'New to Voom?'}
+          <button style="color:var(--brand);font-weight:650" onclick="S.authMode='${su?'login':'signup'}';render()">
+            ${su?'Sign in':'Create one free'}</button>
+        </p>
+      </div>
+    </div>
+  </div>`;
+}
+function oauth(p){ toast(`${p} sign-in is not wired up in this prototype`,'info'); setTimeout(()=>doAuth(),700); }
+function doAuth(){
+  if(S.authMode==='signup'){ S.screen='onboard'; S.obStep=0; }
+  else { S.screen='app'; S.page='dash'; if(!S.chat.length) seedChat(); }
+  render();
+}
+
+/* ======================= ONBOARDING ======================= */
+/* ---------- INDUSTRY CONTENT PACKS — all strings below are demo data ---------- */
+const PACKS={
+'Restaurant / Café':{brand:'Marina Café',site:'marinacafe.ae',handle:'@marinacafe',
+  aud:['Local residents nearby','Young adults (18–29)','Families with children'],
+  r:['Behind the pass: signature breakfast','60 seconds inside the kitchen','New autumn menu tasting','Our most-ordered dish, made slowly'],
+  p:['New autumn menu','Weekend brunch set','Meet the head chef','Friday family offer'],
+  cap:"We changed one thing about our breakfast and people noticed 👀\nHere's what actually goes into the plate everyone orders twice.",
+  hooks:['“The dish we almost took off the menu — and why we didn’t.”','“What AED 45 gets you at our table.”','“60 seconds in our kitchen before we open.”'],
+  trend:'“weekend brunch”', slot:'7:10 PM', slotWhy:'people book dinner tables in the evening',
+  emailN:'Autumn menu is live', emailSub:'The new menu is on the table',
+  emailBody:'If you have been waiting for the autumn menu, it lands this Thursday. Here is what we added — and the one dish we kept by popular demand.',
+  smsT:'Marina Café: Weekend brunch seats just opened — book at marinacafe.ae/book. Reply STOP to opt out',
+  camp:['Autumn menu — teaser','Weekend brunch newsletter','Flash: 2-for-1 dessert','Retargeting — table bookings','Meet the chef — carousel'],
+  ad:['Reels — signature breakfast','Retargeting — booking page','Lookalike 1% — past diners','Story — weekend brunch'],
+  top:['Behind the pass: breakfast','Meet the head chef','Autumn menu tasting'],
+  cold:'diners who haven’t booked in 60 days', win:'bring regulars back in', unit:'bookings'},
+
+'Salon / Spa':{brand:'Studio Rima',site:'studiorima.ae',handle:'@studiorima',
+  aud:['Local residents nearby','Young adults (18–29)','Professionals (30–50)'],
+  r:['Colour correction, start to finish','What a blow-dry really costs','Client transformation of the week','3 things to ask before you colour'],
+  p:['New treatment menu','Stylist spotlight','Weekday booking offer','Aftercare routine'],
+  cap:"Colour correction in 45 seconds ✂️\nThis took four hours — here's what we actually did, step by step.",
+  hooks:['“What most people get wrong before a colour appointment.”','“Four hours in 45 seconds — colour correction.”','“The one question to ask your stylist.”'],
+  trend:'“colour correction”', slot:'6:30 PM', slotWhy:'clients book after work',
+  emailN:'Weekday chairs open', emailSub:'Quieter chair, better price',
+  emailBody:'Our Tuesday and Wednesday chairs are the calmest of the week — and right now they are also the best value. Here is what is open.',
+  smsT:'Studio Rima: Two chairs opened this Thursday. Book at studiorima.ae/book. Reply STOP to opt out',
+  camp:['Colour correction — Reel','Weekday chairs newsletter','Flash: 20% off treatments','Retargeting — booking page','Stylist spotlight — carousel'],
+  ad:['Reels — colour correction','Retargeting — booking page','Lookalike 1% — past clients','Story — weekday offer'],
+  top:['Colour correction start to finish','Stylist spotlight','Client transformation'],
+  cold:'clients who haven’t booked in 60 days', win:'rebook lapsed clients', unit:'appointments'},
+
+'Gym / Fitness studio':{brand:'Grit Studio',site:'gritstudio.ae',handle:'@gritstudio',
+  aud:['Young adults (18–29)','Professionals (30–50)','Local residents nearby'],
+  r:['Your first class, honestly','Form check: the 3 most common mistakes','Members on why they stayed','What 6am actually looks like'],
+  p:['New class timetable','Coach spotlight','Founding member offer','Members’ results board'],
+  cap:"Your first class, honestly 💪\nNobody is watching you. Here's exactly what happens in the first ten minutes.",
+  hooks:['“Nobody is watching you — what your first class is really like.”','“Three form mistakes we fix every single week.”','“Why our 6am members never miss.”'],
+  trend:'“strength for beginners”', slot:'6:00 PM', slotWhy:'members plan tomorrow’s session in the evening',
+  emailN:'New timetable is live', emailSub:'Your new week, mapped out',
+  emailBody:'The new timetable goes live Monday, with two extra evening strength slots you asked for. Here is how to lock in your spot.',
+  smsT:'Grit Studio: 3 spots left in tomorrow’s 6am strength class — grab one at gritstudio.ae. Reply STOP to opt out',
+  camp:['First class — Reel','New timetable newsletter','Flash: founding member rate','Retargeting — trial signup','Coach spotlight — carousel'],
+  ad:['Reels — first class','Retargeting — trial page','Lookalike 1% — members','Story — class spots'],
+  top:['Your first class, honestly','Form check: 3 mistakes','Members on why they stayed'],
+  cold:'members who haven’t booked in 60 days', win:'win back lapsed members', unit:'class bookings'},
+
+'Clothing / Fashion':{brand:'Atelier Nine',site:'ateliernine.ae',handle:'@ateliernine',
+  aud:['Young adults (18–29)','Professionals (30–50)','Luxury / high-income'],
+  r:['New arrivals, styled 3 ways','How this piece is actually made','Fit check: sizing honestly','What sells out first, every time'],
+  p:['New arrivals drop','Styling guide','Restock announcement','Behind the fabric'],
+  cap:"One piece, three ways 🖤\nSave this before the drop — the middle look is the one that sells out first.",
+  hooks:['“One piece, three ways — save this before the drop.”','“How this is actually made, start to finish.”','“Fit check: sizing, honestly.”'],
+  trend:'“capsule wardrobe”', slot:'8:00 PM', slotWhy:'shoppers browse late evening',
+  emailN:'The drop goes live Thursday', emailSub:'Early access opens tonight',
+  emailBody:'The new drop lands Thursday at 8pm. You are on the early access list, which means you see it — and can buy it — twelve hours before everyone else.',
+  smsT:'Atelier Nine: Early access to the drop opens in 1 hour — ateliernine.ae/drop. Reply STOP to opt out',
+  camp:['New drop — teaser Reel','Early access newsletter','Flash: 24h 20% off','Retargeting — cart abandon','Behind the fabric — carousel'],
+  ad:['Reels — new arrivals','Retargeting — cart abandon','Lookalike 1% — buyers','Story — drop reminder'],
+  top:['New arrivals, styled 3 ways','How this is made','Fit check: sizing'],
+  cold:'subscribers who haven’t opened in 60 days', win:'recover lapsed shoppers', unit:'orders'},
+
+'Real estate':{brand:'Meridian Properties',site:'meridianproperties.ae',handle:'@meridianproperties',
+  aud:['Professionals (30–50)','Luxury / high-income','Businesses (B2B)'],
+  r:['Inside a 2-bed on the Marina','What AED 1.2M actually buys','3 questions before you view','Handover day, start to finish'],
+  p:['New listing walkthrough','Market update','Buyer’s checklist','Client handover story'],
+  cap:"What AED 1.2M actually buys on the Marina 🔑\nFull walkthrough — including the thing most listings don't show you.",
+  hooks:['“What AED 1.2M actually buys — full walkthrough.”','“Three questions to ask before any viewing.”','“The part of the listing nobody photographs.”'],
+  trend:'“first-time buyer guides”', slot:'8:30 PM', slotWhy:'buyers browse listings at night',
+  emailN:'This month’s market update', emailSub:'What moved this month',
+  emailBody:'Three things shifted in the market this month, and one of them changes what a first-time buyer can realistically offer. Here is the short version.',
+  smsT:'Meridian: New 2-bed listing on the Marina, viewings open Saturday — meridianproperties.ae. Reply STOP to opt out',
+  camp:['Marina walkthrough — Reel','Monthly market update','Flash: open house Saturday','Retargeting — listing viewers','Buyer’s checklist — carousel'],
+  ad:['Reels — Marina walkthrough','Retargeting — listing page','Lookalike 1% — past buyers','Story — open house'],
+  top:['Inside a 2-bed on the Marina','What AED 1.2M buys','Handover day'],
+  cold:'enquiries that went quiet 60 days ago', win:'reopen cold enquiries', unit:'viewings'},
+
+'Online store':{brand:'Kestrel Goods',site:'kestrelgoods.ae',handle:'@kestrelgoods',
+  aud:['Young adults (18–29)','Professionals (30–50)','Budget-conscious shoppers'],
+  r:['Unboxing the bestseller','Why this costs what it costs','3 uses you didn’t expect','Packing your order, start to finish'],
+  p:['Bestseller restock','Product breakdown','Customer review feature','Free delivery weekend'],
+  cap:"Why this costs what it costs 📦\nFull breakdown — materials, shipping, and the bit most brands leave out.",
+  hooks:['“Why this costs what it costs — full breakdown.”','“Three uses for this you didn’t expect.”','“Packing your order, start to finish.”'],
+  trend:'“honest pricing breakdowns”', slot:'8:00 PM', slotWhy:'carts fill in the evening',
+  emailN:'Restock: the bestseller is back', emailSub:'It’s back in stock',
+  emailBody:'The one that sold out in four days is back, in slightly larger numbers this time. Here is the restock, plus the two colours you kept asking for.',
+  smsT:'Kestrel Goods: Your bestseller is back in stock — kestrelgoods.ae/restock. Reply STOP to opt out',
+  camp:['Bestseller — teaser Reel','Restock newsletter','Flash: 24h free delivery','Retargeting — cart abandon','Customer review — carousel'],
+  ad:['Reels — bestseller unboxing','Retargeting — cart abandon','Lookalike 1% — buyers','Story — restock alert'],
+  top:['Unboxing the bestseller','Why this costs what it costs','Packing your order'],
+  cold:'subscribers who haven’t opened in 60 days', win:'recover abandoned carts', unit:'orders'},
+
+'Clinic / Healthcare':{brand:'Northside Clinic',site:'northsideclinic.ae',handle:'@northsideclinic',
+  aud:['Families with children','Professionals (30–50)','Local residents nearby'],
+  r:['What your first visit involves','3 myths we hear every week','Meet the team','When to book, and when to wait'],
+  p:['New appointment hours','Team introduction','Preventive check reminder','Patient FAQ'],
+  cap:"What your first visit actually involves 🩺\nNo surprises — here's the full process, start to finish.",
+  hooks:['“What your first visit actually involves.”','“Three things we hear every week that aren’t true.”','“When to book, and when it can wait.”'],
+  trend:'“preventive check-ups”', slot:'7:00 PM', slotWhy:'patients book after working hours',
+  emailN:'Extended evening hours', emailSub:'We’re open later now',
+  emailBody:'From this month we are open until 8pm on weekdays, which should make booking around work considerably easier. Here is the new schedule.',
+  smsT:'Northside Clinic: Evening appointments now open until 8pm — book at northsideclinic.ae. Reply STOP to opt out',
+  camp:['First visit — Reel','Evening hours newsletter','Reminder: preventive checks','Retargeting — booking page','Meet the team — carousel'],
+  ad:['Reels — first visit explained','Retargeting — booking page','Lookalike 1% — past patients','Story — evening hours'],
+  top:['What your first visit involves','Meet the team','3 myths we hear weekly'],
+  cold:'patients who haven’t booked in 12 months', win:'bring patients back for checks', unit:'appointments'},
+
+'Professional services':{brand:'Harbour Consulting',site:'harbourconsulting.ae',handle:'@harbourconsulting',
+  aud:['Businesses (B2B)','Professionals (30–50)','Local residents nearby'],
+  r:['The mistake that costs clients most','What our first call covers','A project, start to finish','3 questions before you hire anyone'],
+  p:['Case study: 90-day project','Team spotlight','Free consultation week','Client result story'],
+  cap:"The mistake that costs our clients the most 📊\nIt takes ten minutes to fix and almost nobody checks it.",
+  hooks:['“The mistake that costs our clients the most.”','“What actually happens on our first call.”','“Three questions to ask before you hire anyone.”'],
+  trend:'“practical how-to breakdowns”', slot:'9:00 AM', slotWhy:'business audiences read in the morning',
+  emailN:'Case study: 90 days in', emailSub:'What 90 days actually changed',
+  emailBody:'We ran the same process with three clients this quarter. Here is what changed, what did not, and the part we would do differently.',
+  smsT:'Harbour Consulting: Two consultation slots opened this week — book at harbourconsulting.ae. Reply STOP to opt out',
+  camp:['Common mistake — Reel','Case study newsletter','Consultation week push','Retargeting — enquiry page','Team spotlight — carousel'],
+  ad:['Reels — common mistake','Retargeting — enquiry page','Lookalike 1% — past clients','Story — consultation week'],
+  top:['The mistake that costs most','What our first call covers','A project, start to finish'],
+  cold:'enquiries that went quiet 60 days ago', win:'reopen cold enquiries', unit:'enquiries'},
+
+'Other':{brand:'Your Business',site:'yourbusiness.ae',handle:'@yourbusiness',
+  aud:['Local residents nearby','Professionals (30–50)'],
+  r:['Behind the scenes','How we actually do this','Customer story of the week','The question we get asked most'],
+  p:['What’s new this month','Meet the team','This week’s offer','Customer story'],
+  cap:"Behind the scenes 👀\nHere's how this actually gets made — and the step most people never see.",
+  hooks:['“Here’s how this actually gets made.”','“The question we get asked most — answered.”','“A customer story worth two minutes.”'],
+  trend:'“behind-the-scenes content”', slot:'7:10 PM', slotWhy:'your audience is most active in the evening',
+  emailN:'What’s new this month', emailSub:'A short update from us',
+  emailBody:'A few things changed this month that are worth two minutes of your time. Here is the short version, with the one update most people care about first.',
+  smsT:'Your Business: Something new just went live — see it at yourbusiness.ae. Reply STOP to opt out',
+  camp:['Behind the scenes — Reel','Monthly newsletter','Flash: this week only','Retargeting — website visitors','Customer story — carousel'],
+  ad:['Reels — behind the scenes','Retargeting — website visitors','Lookalike 1% — past customers','Story — this week’s offer'],
+  top:['Behind the scenes','Customer story of the week','How we actually do this'],
+  cold:'contacts who haven’t engaged in 60 days', win:'re-engage quiet contacts', unit:'enquiries'},
+};
+let PACK=PACKS['Restaurant / Café'];
+
+const POST_SLOTS=[
+ {d:2,ch:'Reel',time:'7:10 PM',st:'Scheduled'},{d:2,ch:'Email',time:'9:00 AM',st:'Scheduled'},
+ {d:5,ch:'Reel',time:'7:10 PM',st:'Draft'},    {d:7,ch:'Feed',time:'12:30 PM',st:'Scheduled'},
+ {d:9,ch:'SMS',time:'11:00 AM',st:'Scheduled'},{d:11,ch:'Reel',time:'6:45 PM',st:'Draft'},
+ {d:14,ch:'Email',time:'8:00 AM',st:'Scheduled'},{d:14,ch:'Reel',time:'7:10 PM',st:'Scheduled'},
+ {d:18,ch:'Feed',time:'1:00 PM',st:'Idea'},    {d:20,ch:'Reel',time:'7:10 PM',st:'Idea'},
+ {d:23,ch:'SMS',time:'10:30 AM',st:'Draft'},   {d:26,ch:'Email',time:'9:00 AM',st:'Draft'}];
+const CH_COL={Reel:'#e8481f',Feed:'#c9306b',Email:'#0f6f68',SMS:'#f2a516'};
+
+function applyPack(key){
+  const p=PACKS[key]||PACKS['Other']; PACK=p;
+  DB.brand.name=p.brand; DB.brand.site=p.site; DB.brand.handle=p.handle; DB.brand.industry=key;
+  const pick={Reel:0,Feed:0,Email:0,SMS:0};
+  const lists={Reel:p.r,Feed:p.p,Email:[p.emailN,'Monthly newsletter','Win-back message'],SMS:['Flash offer alert','Reminder message','Restock heads-up']};
+  DB.posts=POST_SLOTS.map(s=>{
+    const L=lists[s.ch]; const t=L[pick[s.ch]++ % L.length];
+    return {d:s.d,t:`${s.ch} · ${t}`,c:CH_COL[s.ch],ch:s.ch,time:s.time,st:s.st};
+  });
+  DB.reelQueue=[
+    {t:p.r[0],when:'Tue, Aug 25 · '+p.slot,st:'Scheduled',t2:'t-green',g:'linear-gradient(160deg,#ff8a3d,#c9306b)',views:'—'},
+    {t:p.r[1],when:'Fri, Aug 28 · '+p.slot,st:'Draft',t2:'t-amber',g:'linear-gradient(160deg,#2f6f9f,#0f6f68)',views:'—'},
+    {t:p.r[2],when:'Mon, Sep 1 · 6:45 PM',st:'Draft',t2:'t-amber',g:'linear-gradient(160deg,#e8481f,#f2a516)',views:'—'},
+    {t:p.r[3]||p.r[0],when:'Posted Aug 20',st:'Live',t2:'t-blue',g:'linear-gradient(160deg,#0f6f68,#141a18)',views:'112K'}];
+  DB.campaignsTable.forEach((r,i)=>r.n=p.camp[i]||r.n);
+  DB.emails[0].n=p.emailN; DB.emails[1].n=p.camp[0]; DB.emails[2].n='Win-back — step 1';
+  DB.sms[0].n='Flash offer — 24h'; DB.sms[1].n='Reminder message'; DB.sms[2].n='Early access alert';
+  DB.ads.alloc.forEach((a,i)=>{a.n=p.ad[i]||a.n});
+  DB.ads.history[0].n='August boost — '+p.p[0];
+  S.adAlloc=JSON.parse(JSON.stringify(DB.ads.alloc));
+  DB.insights=[
+    {t:`Content posted at ${p.slot} performed best`, b:`In this demo dataset, ${p.slotWhy} — evening posts averaged 41K views against 12K in the morning. I can move your queue.`,
+     ic:'fire', c:'--rose', act:'Reschedule queue', go:'reels', ex:true},
+    {t:`${p.trend} is trending in your category`, b:`Search interest is up 62% this month in this demo dataset. I drafted 3 Reel hooks around it, ready for review.`,
+     ic:'trend', c:'--brand', act:'See drafts', go:'calendar', ex:true},
+    {t:'Your quiet contacts are going cold', b:`1,284 ${p.cold} in this demo list. A two-step win-back should ${p.win}.`,
+     ic:'warn', c:'--amber', act:'Build flow', go:'campaigns', ex:true},
+    {t:'AED 1,200 ad budget awaiting approval', b:'I built an allocation you can review below. Nothing spends until you approve it, and ad money is paid through your own ad account.',
+     ic:'wallet', c:'--green', act:'Review budget', go:'ads', ex:false},
+  ];
+  S.reelCaption=''; DEFAULT_CAP=p.cap;
+}
+function detectIndustry(t){
+  const H=[[/restaurant|caf[eé]|coffee|bakery|food|kitchen|dine|dining|menu|pizza|shawarma|brunch/i,'Restaurant / Café'],
+    [/salon|spa|hair|nails|barber|lash|brow|beauty|grooming/i,'Salon / Spa'],
+    [/gym|fitness|yoga|pilates|crossfit|padel|personal train|studio class/i,'Gym / Fitness studio'],
+    [/cloth|fashion|boutique|abaya|apparel|wear|shoes|jewel/i,'Clothing / Fashion'],
+    [/real estate|property|properties|villa|apartment|broker|listing|landlord/i,'Real estate'],
+    [/online store|e-?commerce|shopify|web ?shop|ship orders|deliver orders/i,'Online store'],
+    [/clinic|dental|dentist|doctor|medical|physio|aesthetic|therap/i,'Clinic / Healthcare'],
+    [/consult|agency|law|legal|account|bookkeep|tutor|repair|cleaning|service business/i,'Professional services']];
+  for(const [re,n] of H) if(re.test(t)) return n; return '';
+}
+
+/* ---------- ONBOARDING QUESTIONS (multiple choice) ---------- */
+const Q_INDUSTRY=[['🍽️','Restaurant / Café'],['💇','Salon / Spa'],['🏋️','Gym / Fitness studio'],['👗','Clothing / Fashion'],
+  ['🏠','Real estate'],['🛍️','Online store'],['🩺','Clinic / Healthcare'],['💼','Professional services'],['✨','Other']];
+const Q_CUSTOMER=['Local residents nearby','Young adults (18–29)','Families with children','Professionals (30–50)',
+  'Tourists & visitors','Businesses (B2B)','Luxury / high-income','Budget-conscious shoppers'];
+const Q_GOAL=[['🚶','More walk-in customers'],['🛒','More online sales'],['📅','More bookings & appointments'],
+  ['📩','More enquiries & leads'],['📈','Grow followers & awareness'],['🚀','Launch something new']];
+const OB_TONE=['Friendly','Premium','Playful','Professional','Bold','Calm','Traditional','Modern'];
+const Q_CHANNELS=['Instagram','TikTok','Facebook','WhatsApp','Email','SMS','Google','Paid ads'];
+const Q_BUDGET=['AED 0 — organic only','Under AED 1,000','AED 1,000 – 3,000','AED 3,000 – 10,000','AED 10,000+'];
+const Q_FREQ=['A few times a month','2–3 times a week','Daily','Multiple times a day'];
+const Q_AUTO=[['🙋','I decide everything','MARA only suggests ideas'],['✍️','MARA drafts, I approve','Nothing goes out unapproved'],
+  ['⚡','MARA drafts and schedules','I can edit before it publishes'],['🤖','MARA runs it end-to-end','Within the rules I set']];
+const Q_PERM=[['🔒','Yes — always ask first','Every post waits for my approval'],['💳','Ask for paid ads only','Organic posts publish automatically'],
+  ['🚦','No — publish automatically','MARA stays inside my brand rules']];
+const OB_COLORS=['#e8481f','#c9306b','#0f6f68','#f2a516','#2f6f9f','#1c8a52','#7b4bd1','#111614'];
+
+const OB_STEPS=['Your brand','Category','Goals','Reach','Working style','Connect'];
+
+function qBlock(title,help,html){
+  return `<div style="margin-bottom:26px">
+    <label style="display:block;font-size:13.5px;font-weight:650;margin-bottom:3px">${title}</label>
+    ${help?`<p class="dim" style="font-size:12.5px;margin-bottom:10px">${help}</p>`:'<div style="height:8px"></div>'}
+    ${html}</div>`;
+}
+function chips(list,key,max){
+  return `<div class="row wrap" style="gap:8px">${list.map(v=>
+    `<button class="chip ${S.onboard[key].includes(v)?'on':''}" onclick="obTog('${key}','${v.replace(/'/g,"\\'")}'${max?','+max:''})">${v}</button>`).join('')}</div>`;
+}
+function picks(list,key,cols){
+  return `<div class="pickers"${cols?` style="grid-template-columns:repeat(${cols},1fr)"`:''}>${list.map(item=>{
+    const [e,n,sub]=item;
+    return `<button class="pick ${S.onboard[key]===n?'on':''}" onclick="S.onboard['${key}']='${n.replace(/'/g,"\\'")}';render()">
+      <span class="e">${e}</span><b>${n}</b>${sub?`<span>${sub}</span>`:''}</button>`;}).join('')}</div>`;
+}
+function radios(list,key){
+  return `<div class="stack" style="gap:8px">${list.map(v=>
+    `<button class="pick ${S.onboard[key]===v?'on':''}" style="padding:12px 14px" onclick="S.onboard['${key}']='${v}';render()">
+      <span class="row" style="gap:10px"><span style="width:16px;height:16px;border-radius:50%;flex:none;border:2px solid ${S.onboard[key]===v?'var(--brand)':'var(--line-2)'};background:${S.onboard[key]===v?'var(--brand)':'transparent'};box-shadow:inset 0 0 0 2.5px var(--surface)"></span>
+      <b style="font-size:13.5px">${v}</b></span></button>`).join('')}</div>`;
+}
+function maraUnderstands(){
+  const o=S.onboard, d=o.desc.trim();
+  const words=d.split(/\s+/).filter(Boolean).length;
+  return `<div class="card pad" style="background:var(--brand-soft);border-color:var(--brand);margin-bottom:26px">
+    <div class="row" style="align-items:flex-start;gap:12px">
+      <span class="orb sm" style="margin-top:2px"></span>
+      <div>
+        <b style="font-size:14px">Got it — I understand your brand.</b>
+        <p style="font-size:13.5px;line-height:1.62;color:var(--text-2);margin-top:6px">
+          I read all ${words} words. ${o.industry?`This reads like a <b>${esc(o.industry).toLowerCase()}</b> business, so I've pre-selected that below — change it if I've got it wrong.`
+          :`I couldn't pin the category from the description alone, so pick it below.`}
+          Now nine quick questions and I'll build your first two weeks.</p>
+      </div></div></div>`;
+}
+
+function viewOnboard(){
+  const st=S.obStep, o=S.onboard;
+  let body='';
+  if(st===0) body=`
+    <h1 class="h1">Describe your brand in your own words.</h1>
+    <p class="muted" style="margin:7px 0 20px">Write it however you'd explain it to a customer. MARA reads this before she asks anything else.</p>
+    <textarea class="input" id="ob-desc" rows="9" style="font-size:15.5px;line-height:1.65"
+      placeholder="For example: We're a small café near the marina. We roast our own beans, most of our customers are regulars who work nearby, and weekends are our busiest time. We want more people to know we do brunch."
+      oninput="S.onboard.desc=this.value;const n=document.getElementById('ob-count');if(n)n.textContent=this.value.trim().split(/\\s+/).filter(Boolean).length">${esc(o.desc)}</textarea>
+    <div class="between" style="margin-top:9px">
+      <span class="dim" style="font-size:12px"><span id="ob-count">${o.desc.trim().split(/\s+/).filter(Boolean).length}</span> words — a few sentences is plenty</span>
+      <span class="tag t-grey">${ic('info')} Demo data</span>
+    </div>`;
+  if(st===1) body=`
+    ${maraUnderstands()}
+    <h1 class="h1" style="font-size:22px">First, the basics</h1>
+    <p class="muted" style="margin:7px 0 24px">So MARA writes as you, not about you.</p>
+    <div class="row wrap" style="gap:12px">
+      <div class="field grow" style="min-width:200px"><label>Business name</label>
+        <input class="input" placeholder="Your business name" value="${esc(o.name)}" oninput="S.onboard.name=this.value"></div>
+      <div class="field grow" style="min-width:200px"><label>Website or page <span class="dim">(optional)</span></label>
+        <input class="input" placeholder="yourbusiness.ae" value="${esc(o.site)}" oninput="S.onboard.site=this.value"></div>
+    </div>
+    ${qBlock('1. What kind of business is this?','Pick the closest match.',picks(Q_INDUSTRY,'industry',3))}`;
+  if(st===2) body=`
+    <h1 class="h1">Who you serve, and why</h1>
+    <p class="muted" style="margin:7px 0 24px">Two questions. MARA uses these to choose the angle for every post.</p>
+    ${qBlock('2. Who is your target customer?','Choose all that apply.',chips(Q_CUSTOMER,'customer'))}
+    ${qBlock('3. What is your main marketing goal?','Pick the one that matters most right now.',picks(Q_GOAL,'goal'))}`;
+  if(st===3) body=`
+    <h1 class="h1">How you sound, and where</h1>
+    <p class="muted" style="margin:7px 0 24px">Voice and channels — these shape the words and the format.</p>
+    ${qBlock('4. What is your brand personality?','Choose up to three.',chips(OB_TONE,'tone',3))}
+    ${qBlock('5. Which marketing channels do you use?','Choose all that apply.',chips(Q_CHANNELS,'channels'))}
+    ${qBlock('Brand colour','Used across your previews.',`<div class="swatches">
+      ${OB_COLORS.map(c=>`<button class="sw ${o.color===c?'on':''}" style="background:${c}" onclick="S.onboard.color='${c}';render()"></button>`).join('')}</div>`)}`;
+  if(st===4) body=`
+    <h1 class="h1">Budget and pace</h1>
+    <p class="muted" style="margin:7px 0 24px">This sets how much MARA plans — and how much she asks you for.</p>
+    ${qBlock('6. What is your optional monthly paid-advertising budget?','This is separate from your Voom subscription. Choose AED 0 if you only want organic marketing.',radios(Q_BUDGET,'budget'))}
+    ${qBlock('7. How often do you want to post?','',radios(Q_FREQ,'freq'))}
+    <div class="card pad" style="background:var(--surface-2)">
+      <div class="row" style="align-items:flex-start;gap:10px"><span style="color:var(--text-3);display:grid;place-items:center">${ic('info')}</span>
+      <p style="font-size:12.8px;line-height:1.6;color:var(--text-2)">Your Voom subscription pays for the software. Advertising budgets are optional and paid directly through your connected advertising account.</p></div>
+    </div>`;
+  if(st===5) body=`
+    <h1 class="h1">How much should MARA do?</h1>
+    <p class="muted" style="margin:7px 0 24px">You can change both of these at any time in settings.</p>
+    ${qBlock('8. What level of automation do you want?','',picks(Q_AUTO,'auto',2))}
+    ${qBlock('9. Must MARA ask permission before publishing?','',picks(Q_PERM,'permission',3))}`;
+  if(st===6) body=`
+    <h1 class="h1">Connect your channels</h1>
+    <p class="muted" style="margin:7px 0 24px">MARA needs at least one channel to start publishing. You can add more later.</p>
+    ${[['ig','Instagram','Reels, feed posts, stories & insights',S.igConnected],
+       ['mail','Email','Campaigns, flows & subscriber lists',false],
+       ['msg','SMS','Broadcasts and reply handling',false]]
+      .map(([i,n,d,c])=>`
+      <div class="card pad between" style="margin-bottom:11px">
+        <div class="row">
+          <div style="width:40px;height:40px;border-radius:12px;display:grid;place-items:center;color:#fff;
+            background:${i==='ig'?'linear-gradient(45deg,#f9ce34,#ee2a7b,#6228d7)':i==='mail'?'var(--grad)':'var(--amber)'}">${ic(i)}</div>
+          <div><b style="font-size:14px">${n}</b><div class="dim" style="font-size:12.5px">${d}</div></div>
+        </div>
+        ${c?`<span class="tag t-green">${ic('check')} Connected</span>`
+           :`<button class="btn btn-ghost btn-sm" onclick="${i==='ig'?"obConnectIG()":`toast('${n} is not connected in this prototype','info')`}">Connect</button>`}
+      </div>`).join('')}
+    ${protoNote()}
+    <div class="card pad" style="background:var(--brand-soft);border-color:var(--brand);margin-top:11px">
+      <div class="row" style="align-items:flex-start;gap:11px">
+        <span class="orb sm" style="margin-top:2px"></span>
+        <p style="font-size:13.5px;line-height:1.6">You can skip this and explore first — I'll fill your dashboard with clearly-labelled demo data so you can see how everything works.</p>
+      </div>
+    </div>`;
+
+  return `<div id="onboard">
+    <div class="ob-top">
+      <div class="logo"><span class="logo-mark">${ic('bolt')}</span> Voom</div>
+      <div class="steps desktop-only">${OB_STEPS.map((s,i)=>`<div class="step-dot ${i<=st?'on':''}" title="${s}"></div>`).join('')}</div>
+      <div class="row"><span class="dim" style="font-size:13px">Step ${st+1} of 7</span>
+        <button class="btn btn-ghost btn-sm" onclick="finishOnboard(true)">Skip</button></div>
+    </div>
+    <div class="ob-body"><div class="ob-card">${body}</div></div>
+    <div class="ob-foot">
+      <button class="btn btn-ghost" onclick="${st===0?"S.screen='auth';render()":'S.obStep--;render()'}">${ic('back')} Back</button>
+      <button class="btn btn-primary" id="ob-next" onclick="obNext()">
+        ${st===6?'Finish setup':st===0?'Send to MARA':'Continue'} ${ic('arrow')}</button>
+    </div>
+  </div>`;
+}
+function obTog(k,v,max){
+  const a=S.onboard[k]; const i=a.indexOf(v);
+  if(i>-1) a.splice(i,1); else { if(max&&a.length>=max){toast(`Pick up to ${max}`,'err');return;} a.push(v); }
+  render();
+}
+function obConnectIG(){ S.igConnected=true; toast('Instagram connected — demo account','ok',true); render(); }
+function obNext(){
+  const o=S.onboard, st=S.obStep;
+  if(st===0){
+    if(o.desc.trim().split(/\s+/).filter(Boolean).length<5){ toast('Tell MARA a little more — a sentence or two','err'); return; }
+    if(!o.industry) o.industry=detectIndustry(o.desc);
+    S.obStep=1; render(); return;
+  }
+  const need={1:['industry','Pick the kind of business'],2:['goal','Choose your main marketing goal'],
+    4:['budget','Choose a monthly budget'],5:['auto','Choose an automation level']};
+  if(need[st] && !o[need[st][0]]){ toast(need[st][1],'err'); return; }
+  if(st===2 && !o.customer.length){ toast('Pick at least one target customer','err'); return; }
+  if(st===5 && !o.permission){ toast('Choose a publishing permission','err'); return; }
+  if(st<6){ S.obStep++; render(); return; }
+  finishOnboard(false);
+}
+function finishOnboard(skipped){
+  const o=S.onboard;
+  if(!skipped){
+    applyPack(o.industry||'Other');
+    if(o.name.trim()){ DB.brand.name=o.name.trim(); DB.brand.handle='@'+o.name.trim().toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,18); }
+    if(o.site.trim()) DB.brand.site=o.site.trim();
+    if(o.customer.length) DB.brand.audience=o.customer;
+    if(o.goal) DB.brand.goals=[o.goal];
+    if(o.tone.length) DB.brand.tone=o.tone;
+    if(o.channels.length) DB.brand.channels=o.channels;
+    if(o.budget) DB.brand.budget=o.budget;
+    if(o.freq) DB.brand.freq=o.freq;
+    if(o.auto) DB.brand.auto=o.auto;
+    if(o.permission) DB.brand.permission=o.permission;
+    DB.brand.color=o.color;
+  }
+  runAnalyze();
+}
+
+function runAnalyze(){
+  const items=['Reading your description','Learning your brand voice','Reviewing sample competitor posts',
+    'Choosing your best posting times','Drafting your first 14 days'];
+  layer().innerHTML=`<div class="scrim"><div class="modal" style="max-width:420px">
+    <div class="analyzing">
+      <div style="display:grid;place-items:center;margin-bottom:6px"><span class="orb lg"></span></div>
+      <h2 class="h2" style="margin-top:16px">MARA is studying your brand</h2>
+      <p class="muted" style="font-size:13.5px;margin-top:5px">This takes about ten seconds.</p>
+      <div class="an-list" id="an-list">
+        ${items.map((t,i)=>`<div class="an-item" id="an-${i}"><span class="an-tick">${ic('check')}</span>${t}</div>`).join('')}
+      </div>
+    </div></div></div>`;
+  items.forEach((_,i)=>setTimeout(()=>{ const e=$('#an-'+i); if(e)e.classList.add('done'); },500+i*750));
+  setTimeout(()=>{ closeModal(); S.screen='app'; S.page='dash'; seedChat(); render();
+    toast('Your workspace is ready — 14 days of content drafted','ok',true); },500+items.length*750+600);
+}
+</script>
+<script>
+/* ======================== APP SHELL ======================== */
+const NAV=[
+  {g:'Workspace',items:[
+    {id:'dash',n:'Dashboard',i:'home'},
+    {id:'mara',n:'MARA',i:'spark',badge:'AI'},
+  ]},
+  {g:'Content',items:[
+    {id:'calendar',n:'Content calendar',i:'cal'},
+    {id:'reels',n:'Reel scheduling',i:'film'},
+    {id:'campaigns',n:'Email & SMS',i:'mail',badge:'2'},
+  ]},
+  {g:'Growth',items:[
+    {id:'ads',n:'Paid advertising',i:'target',badge:'1'},
+    {id:'instagram',n:'Instagram',i:'ig'},
+  ]},
+  {g:'Account',items:[
+    {id:'pricing',n:'Plans & billing',i:'card'},
+    {id:'settings',n:'Settings',i:'cog'},
+  ]},
+];
+const TITLES={dash:'Dashboard',mara:'MARA',calendar:'Content calendar',reels:'Reel scheduling',
+  campaigns:'Email & SMS',ads:'Paid advertising',instagram:'Instagram',pricing:'Plans & billing',settings:'Settings'};
+
+function viewApp(){
+  const p=S.page;
+  const pages={dash:pageDash,mara:pageMara,calendar:pageCalendar,reels:pageReels,
+    campaigns:pageCampaigns,ads:pageAds,instagram:pageInstagram,pricing:pagePricing,settings:pageSettings};
+  const planName=DB.plans.find(x=>x.id===DB.plan).name;
+  return `
+  ${S.sideOpen?`<div class="side-scrim" onclick="S.sideOpen=false;render()"></div>`:''}
+  <div id="app" class="on">
+    <aside class="side ${S.sideOpen?'open':''}">
+      <div class="side-top between">
+        <div class="logo"><span class="logo-mark">${ic('bolt')}</span> Voom</div>
+        <button class="icon-btn mobile-only" onclick="S.sideOpen=false;render()">${ic('x')}</button>
+      </div>
+      <nav class="nav">
+        ${NAV.map(g=>`<div class="nav-lab">${g.g}</div>`+g.items.map(it=>`
+          <button class="nav-i ${p===it.id?'on':''}" onclick="go('${it.id}')">
+            ${ic(it.i)} <span class="grow trunc">${it.n}</span>
+            ${it.badge?`<span class="badge ${it.badge==='AI'?'g':''}">${it.badge}</span>`:''}
+          </button>`).join('')).join('')}
+      </nav>
+      ${DB.plan!=='max'?`
+      <div class="plan-card">
+        <b>${DB.plan==='free'?'You’re on Free':'You’re on Pro'}</b>
+        <p>${DB.plan==='free'?'14 of 20 MARA messages used this month.':'Unlock paid ad management with Max — AED 549/mo.'}</p>
+        <button class="btn" onclick="go('pricing')">${ic('crown')} Upgrade</button>
+      </div>`:`
+      <div class="plan-card" style="background:var(--surface-2);color:var(--text)">
+        <b>${ic('crown')} Max plan</b><p style="opacity:.7">MARA is running your channels end-to-end.</p>
+      </div>`}
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <button class="icon-btn mobile-only" onclick="S.sideOpen=true;render()">${ic('menu')}</button>
+        <div class="logo mobile-only" style="font-size:17px;gap:8px">
+          <span class="logo-mark" style="width:27px;height:27px;border-radius:9px">${ic('bolt')}</span></div>
+        <div class="search desktop-only">${ic('search')}
+          <input placeholder="Search posts, campaigns, ideas…" onkeydown="if(event.key==='Enter'){toast('Search is visual-only in this prototype','info');this.blur()}"></div>
+        <div class="grow"></div>
+        <button class="btn btn-primary btn-sm desktop-only" onclick="openCompose()">${ic('plus')} Create</button>
+        <button class="icon-btn" onclick="setTheme(S.theme==='dark'?'light':'dark');render()" title="Theme">
+          ${ic(S.theme==='dark'?'sun':'moon')}</button>
+        <button class="icon-btn" style="position:relative" onclick="openNotifs()">
+          ${ic('bell')}${S.notif?`<span style="position:absolute;top:6px;right:7px;width:8px;height:8px;border-radius:50%;background:var(--brand);border:2px solid var(--surface)"></span>`:''}</button>
+        <div style="position:relative">
+          <button class="avatar" onclick="S.menuOpen=!S.menuOpen;render()">${DB.user.initials}</button>
+          ${S.menuOpen?`<div class="menu">
+            <div style="padding:9px 11px 11px">
+              <b style="font-size:13.5px;display:block">${esc(DB.user.name)}</b>
+              <span class="dim" style="font-size:12px">${esc(DB.user.email)}</span>
+              <div style="margin-top:7px"><span class="tag t-brand">${planName} plan</span></div>
+            </div>
+            <div class="sep" style="margin:4px 0"></div>
+            <button onclick="go('settings')">${ic('cog')} Brand settings</button>
+            <button onclick="go('pricing')">${ic('card')} Plans & billing</button>
+            <button onclick="go('instagram')">${ic('ig')} Connections</button>
+            <div class="sep" style="margin:4px 0"></div>
+            <button onclick="logout()" style="color:var(--red)">${ic('logout')} Sign out</button>
+          </div>`:''}
+        </div>
+      </header>
+      ${(pages[p]||pageDash)()}
+    </div>
+  </div>
+  <nav class="botbar show">
+    ${[['dash','Home','home'],['calendar','Calendar','cal'],['mara','MARA','spark'],['campaigns','Sends','mail'],['ads','Ads','target']]
+      .map(([id,n,i])=>`<button class="b ${p===id?'on':''}" onclick="go('${id}')">${ic(i)}<span>${n}</span></button>`).join('')}
+  </nav>`;
+}
+function logout(){ S.screen='auth'; S.authMode='login'; S.menuOpen=false; render(); toast('Signed out','info'); }
+function openNotifs(){
+  S.notif=0;
+  modal(`<div class="modal">
+    <div class="modal-head"><div><h2 class="h2">Notifications</h2><p class="dim" style="font-size:13px">3 new</p></div>
+      <button class="icon-btn" onclick="closeModal()">${ic('x')}</button></div>
+    <div class="modal-body">
+      ${[['wallet','--green','MARA needs budget approval','AED 1,200 allocation ready for review · 2h ago','ads'],
+         ['film','--rose','Reel scheduled for '+PACK.slot,'“'+PACK.r[0]+'” goes live tomorrow · 5h ago','reels'],
+         ['mail','--brand','“'+PACK.emailN+'” sent','41.2% open rate in this demo dataset · 1d ago','campaigns']]
+        .map(([i,c,t,b,g])=>`<button class="insight" style="width:100%;text-align:left" onclick="closeModal();go('${g}')">
+          <span class="ic" style="background:color-mix(in srgb,var(${c}) 14%,transparent);color:var(${c})">${ic(i)}</span>
+          <div class="grow"><b style="font-size:13.5px">${t}</b><p style="margin-bottom:0">${b}</p></div>
+          <span style="color:var(--text-3)">${ic('arrow')}</span></button>`).join('')}
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>
+  </div>`);
+  render();
+}
+
+/* ======================== DASHBOARD ======================== */
+function areaChart(){
+  const s=DB.series, W=560,H=200, mx=Math.max(...s.reach)*1.15;
+  const pts=(a)=>a.map((v,i)=>[i*(W/(a.length-1)), H-(v/mx)*H]);
+  const path=(a)=>{const p=pts(a);return p.map((c,i)=>{
+    if(!i)return `M${c[0]},${c[1]}`;
+    const pr=p[i-1], cx=(pr[0]+c[0])/2;
+    return `C${cx},${pr[1]} ${cx},${c[1]} ${c[0]},${c[1]}`;}).join(' ');};
+  const area=(a)=>`${path(a)} L${W},${H} L0,${H} Z`;
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <defs>
+      <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#e8481f" stop-opacity=".34"/><stop offset="100%" stop-color="#e8481f" stop-opacity="0"/></linearGradient>
+      <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#0f6f68" stop-opacity=".26"/><stop offset="100%" stop-color="#0f6f68" stop-opacity="0"/></linearGradient>
+    </defs>
+    ${[0,.25,.5,.75,1].map(f=>`<line x1="0" y1="${H*f}" x2="${W}" y2="${H*f}" stroke="var(--line)" stroke-width="1" vector-effect="non-scaling-stroke"/>`).join('')}
+    <path d="${area(s.reach)}" fill="url(#g1)"/>
+    <path d="${area(s.eng)}" fill="url(#g2)"/>
+    <path d="${path(s.reach)}" fill="none" stroke="#e8481f" stroke-width="2.5" vector-effect="non-scaling-stroke" stroke-linecap="round"/>
+    <path d="${path(s.eng)}" fill="none" stroke="#0f6f68" stroke-width="2.5" vector-effect="non-scaling-stroke" stroke-linecap="round"/>
+    ${pts(s.reach).map((c,i)=>`<circle cx="${c[0]}" cy="${c[1]}" r="3.5" fill="var(--surface)" stroke="#e8481f" stroke-width="2.5" vector-effect="non-scaling-stroke">
+      <title>${s.labels[i]} · ${s.reach[i]}K reach</title></circle>`).join('')}
+  </svg>`;
+}
+function pageDash(){
+  const hour=new Date().getHours();
+  const greet=hour<12?'Good morning':hour<18?'Good afternoon':'Good evening';
+  return `<div class="page">
+    <div class="page-head">
+      <div>
+        <h1 class="h1">${greet}, ${DB.user.name.split(' ')[0]}</h1>
+        <p>Here's how ${esc(DB.brand.name)} performed over the last 30 days.</p>
+        <div class="row wrap" style="gap:7px;margin-top:9px">${demoTag()}
+          <span class="tag t-grey">${ic('info')} Every figure on this page is sample data</span></div>
+      </div>
+      <div class="row wrap">
+        <select class="input" style="width:auto;height:38px" onchange="toast('Range set to '+this.value,'info')">
+          <option>Last 30 days</option><option>Last 7 days</option><option>This quarter</option><option>Year to date</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" onclick="toast('Report exported as PDF','ok',true)">${ic('down')} Export</button>
+        <button class="btn btn-primary btn-sm" onclick="go('mara')">${ic('spark')} Ask MARA</button>
+      </div>
+    </div>
+
+    <div class="kpis">
+      ${DB.kpis.map(k=>`<div class="kpi" onclick="kpiDetail('${k.k}')">
+        <div class="between">
+          <span class="lab">${k.lab}</span>
+          <span class="dot" style="background:color-mix(in srgb,var(${k.c}) 14%,transparent);color:var(${k.c})">${ic(k.ic)}</span>
+        </div>
+        <div class="val">${k.val}</div>
+        <div class="row" style="font-size:12.5px;font-weight:600;color:${k.up?'var(--green)':'var(--red)'}">
+          <span style="display:grid;place-items:center">${ic(k.up?'up':'down')}</span>${k.d}
+          <span class="dim cmp" style="font-weight:500">vs last period</span>
+        </div>
+      </div>`).join('')}
+    </div>
+
+    <div class="grid-2">
+      <div class="card pad">
+        <div class="between" style="margin-bottom:4px">
+          <div><div class="row wrap"><h2 class="h2">Reach & engagement</h2>${demoTag()}</div>
+            <p class="dim" style="font-size:12.5px;margin-top:2px">Thousands, last 30 days — sample dataset</p></div>
+          <div class="legend desktop-only">
+            <span><i style="background:#e8481f"></i>Reach</span><span><i style="background:#0f6f68"></i>Engagements</span></div>
+        </div>
+        <div class="chart-wrap">${areaChart()}</div>
+        <div class="row between" style="margin-top:9px;font-size:11.5px;color:var(--text-3)">
+          ${DB.series.labels.map(l=>`<span>${l}</span>`).join('')}
+        </div>
+      </div>
+
+      <div class="card pad">
+        <h2 class="h2" style="margin-bottom:6px">Where growth came from</h2>
+        <p class="dim" style="font-size:12.5px;margin-bottom:10px">Share of total engagements</p>
+        ${DB.channels.map(c=>`<div class="bar-row">
+          <span style="font-size:13px;width:106px;flex:none" class="trunc">${c.n}</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${c.v}%;background:${c.c}"></div></div>
+          <b style="font-size:12.5px;width:34px;text-align:right" class="mono">${c.v}%</b>
+        </div>`).join('')}
+        <div class="sep"></div>
+        <button class="btn btn-ghost btn-sm btn-block" onclick="go('campaigns')">Break down by campaign ${ic('arrow')}</button>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card pad">
+        <div class="between" style="margin-bottom:14px">
+          <div class="row wrap"><span class="orb sm"></span><h2 class="h2">MARA's recommendations</h2>${demoTag()}</div>
+          <button class="btn btn-ghost btn-sm" onclick="go('mara')">Open chat</button>
+        </div>
+        ${DB.insights.map(x=>`<div class="insight">
+          <span class="ic" style="background:color-mix(in srgb,var(${x.c}) 14%,transparent);color:var(${x.c})">${ic(x.ic)}</span>
+          <div class="grow">
+            <div class="row wrap" style="gap:7px"><b style="font-size:13.8px">${x.t}</b>${x.ex?exTag():''}</div><p>${x.b}</p>
+            <div class="row wrap" style="gap:8px">
+              <button class="btn btn-primary btn-sm" onclick="go('${x.go}')">${x.act}</button>
+              <button class="btn btn-outline btn-sm" onclick="askMara('Tell me more about: ${x.t}')">Ask MARA</button>
+              <button class="btn btn-sm" style="color:var(--text-3)" onclick="this.closest('.insight').remove();toast('Dismissed','info')">Dismiss</button>
+            </div>
+          </div>
+        </div>`).join('')}
+      </div>
+
+      <div class="card pad">
+        <div class="between" style="margin-bottom:12px">
+          <h2 class="h2">Coming up</h2>
+          <button class="btn btn-ghost btn-sm" onclick="go('calendar')">Calendar</button>
+        </div>
+        ${DB.posts.slice(0,6).map(p=>`<div class="row" style="padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="postDetail(${DB.posts.indexOf(p)})">
+          <span style="width:8px;height:8px;border-radius:50%;background:${p.c};flex:none"></span>
+          <div class="grow" style="min-width:0"><div class="trunc" style="font-size:13.3px;font-weight:550">${p.t}</div>
+            <span class="dim" style="font-size:11.5px">Aug ${p.d} · ${p.time}</span></div>
+          <span class="tag ${p.st==='Scheduled'?'t-green':p.st==='Draft'?'t-amber':'t-grey'}">${p.st}</span>
+        </div>`).join('')}
+        <button class="btn btn-primary btn-sm btn-block" style="margin-top:14px" onclick="openCompose()">${ic('plus')} Create post</button>
+      </div>
+    </div>
+
+    <div class="card pad" style="margin-top:14px">
+      <div class="between" style="margin-bottom:14px">
+        <div class="row wrap"><h2 class="h2">Campaign performance</h2>${demoTag()}</div>
+        <button class="btn btn-ghost btn-sm" onclick="toast('Full report exported','ok',true)">${ic('down')} Export CSV</button>
+      </div>
+      <div style="overflow-x:auto">
+      <table class="tbl">
+        <thead><tr><th>Campaign</th><th>Channel</th><th>Sent / Impr.</th><th>Open / View</th><th>Click</th><th class="num">Revenue</th><th>Status</th></tr></thead>
+        <tbody>
+          ${DB.campaignsTable.map(r=>`<tr onclick="toast('Opening “${r.n}” report (demo)','info')" style="cursor:pointer">
+            <td><b>${r.n}</b></td><td class="muted">${r.ch}</td><td class="muted mono">${r.sent}</td>
+            <td class="mono">${r.open}</td><td class="mono">${r.clk}</td>
+            <td class="num"><b>${r.rev}</b></td><td><span class="tag ${r.t}">${r.st}</span></td></tr>`).join('')}
+        </tbody>
+      </table></div>
+    </div>
+  </div>`;
+}
+function kpiDetail(k){
+  const x=DB.kpis.find(z=>z.k===k);
+  modal(`<div class="modal">
+    <div class="modal-head"><div><h2 class="h2">${x.lab}</h2><p class="dim" style="font-size:13px">Last 30 days</p></div>
+      <button class="icon-btn" onclick="closeModal()">${ic('x')}</button></div>
+    <div class="modal-body">
+      <div class="row" style="align-items:baseline;gap:12px"><span class="h1" style="font-size:38px">${x.val}</span>
+        <span class="tag ${x.up?'t-green':'t-red'}">${x.d}</span></div>
+      <div class="row wrap" style="gap:7px;margin-top:8px">${demoTag()}</div>
+      <div class="chart-wrap" style="height:150px;margin:14px 0">${areaChart()}</div>
+      <div class="card pad" style="background:var(--brand-soft);border-color:var(--brand)">
+        <div class="row" style="align-items:flex-start;gap:10px"><span class="orb sm" style="margin-top:1px"></span>
+        <p style="font-size:13.5px;line-height:1.6">${x.up
+          ? `The lift is mostly Reels — evening posts drove 71% of the change. I'd double down on that slot.`
+          : `Revenue dipped because we paused paid retargeting on Aug 9. Approving the new budget should recover it inside a week.`}</p></div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      <button class="btn btn-primary" onclick="closeModal();askMara('Why did ${x.lab} change?')">Ask MARA about this</button></div>
+  </div>`);
+}
+</script>
+<script>
+/* ========================= MARA CHAT ========================= */
+const QUICKS=['Plan next week','Write a Reel hook','Why did reach drop?','Draft a win-back email','Approve ad budget','Best time to post?'];
+
+function seedChat(){
+  S.chat=[{r:'mara',h:`Hi ${DB.user.name.split(' ')[0]} 👋 I'm <b>MARA</b>, your marketing manager.
+    I've studied <b>${esc(DB.brand.name)}</b> and drafted your next 14 days.<br><br>
+    Three things I'd tackle first:
+    <ul><li>Move your Reels to the <b>${PACK.slot}</b> slot — ${PACK.slotWhy}</li>
+    <li>Re-engage <b>1,284</b> ${PACK.cold}</li>
+    <li>Review <b>AED 1,200</b> in optional ad budget I've drafted</li></ul>
+    <span class="tag t-grey" style="margin-top:8px">Demo data</span>`,
+    acts:[['Show me the calendar','go(\'calendar\')'],['Review the budget','go(\'ads\')']]}];
+}
+function pageMara(){
+  return `<div class="chat">
+    <div class="chat-main">
+      <div class="chat-head">
+        <span class="orb"></span>
+        <div class="grow"><b style="font-size:15px">MARA</b>
+          <div style="font-size:12px;color:var(--green);display:flex;align-items:center;gap:5px">
+            <span style="width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block"></span>
+            Managing ${esc(DB.brand.name)}</div></div>
+        <button class="icon-btn" onclick="maraMenu()" title="Options">${ic('cog')}</button>
+      </div>
+      <div class="chat-log" id="chatlog">
+        ${S.chat.map(m=>msgHTML(m)).join('')}
+        ${S.typing?`<div class="msg mara"><span class="orb sm" style="margin-top:4px"></span>
+          <div class="bub" style="padding:0"><div class="typing"><i></i><i></i><i></i></div></div></div>`:''}
+      </div>
+      <div class="chat-in">
+        <div class="quicks">${QUICKS.map(q=>`<button class="chip" onclick="askMara('${q}')">${q}</button>`).join('')}</div>
+        <div class="chat-box">
+          <textarea id="chatbox" rows="1" placeholder="Ask MARA anything about your marketing…"
+            oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}"></textarea>
+          <button class="icon-btn" onclick="toast('Attach media — visual only','info')" title="Attach">${ic('img')}</button>
+          <button class="send" onclick="sendMsg()">${ic('send')}</button>
+        </div>
+        <p class="dim" style="font-size:11.5px;margin-top:8px;text-align:center">
+          MARA can draft, schedule and spend — she always asks before money leaves your account.</p>
+      </div>
+    </div>
+    <div class="chat-side">
+      <div class="mini">
+        <b style="font-size:13px">Brand profile</b>
+        <div class="sep" style="margin:10px 0"></div>
+        <div style="font-size:12.5px;line-height:1.9;color:var(--text-2)">
+          <div class="between"><span>Brand</span><b style="color:var(--text)">${esc(DB.brand.name)}</b></div>
+          <div class="between"><span>Industry</span><b style="color:var(--text)">${esc(DB.brand.industry)}</b></div>
+          <div class="between"><span>Voice</span><b style="color:var(--text)">${DB.brand.tone.join(', ')}</b></div>
+          <div class="between"><span>Instagram</span>${S.igConnected?`<span class="tag t-green">Connected</span>`:`<button class="tag t-amber" onclick="go('instagram')">Connect</button>`}</div>
+        </div>
+        <button class="btn btn-ghost btn-sm btn-block" style="margin-top:12px" onclick="go('settings')">Edit brand</button>
+      </div>
+      <div class="mini">
+        <b style="font-size:13px">Waiting on you</b>
+        <div class="sep" style="margin:10px 0"></div>
+        ${[['AED 1,200 ad budget','ads','t-green'],['3 Reel drafts','reels','t-pink'],['Win-back email','campaigns','t-blue']]
+          .map(([t,g,c])=>`<button class="between" style="width:100%;padding:7px 0;font-size:12.5px" onclick="go('${g}')">
+            <span>${t}</span><span class="dim">${ic('arrow')}</span></button>`).join('')}
+      </div>
+      <div class="mini" style="background:var(--brand-soft);border-color:var(--brand)">
+        <b style="font-size:13px">${ic('crown')} MARA memory</b>
+        <p style="font-size:12.5px;color:var(--text-2);margin-top:7px;line-height:1.55">
+          She remembers 47 facts about your brand — products, banned words, past winners.</p>
+        <button class="btn btn-ghost btn-sm btn-block" style="margin-top:10px" onclick="toast('Memory viewer is visual-only here','info')">View memory</button>
+      </div>
+    </div>
+  </div>`;
+}
+function msgHTML(m){
+  if(m.r==='me') return `<div class="msg me"><div class="bub">${m.h}</div></div>`;
+  return `<div class="msg mara"><span class="orb sm" style="margin-top:4px"></span>
+    <div class="bub">${m.h}
+    ${m.acts?`<div class="msg-acts">${m.acts.map(([l,fn])=>`<button class="btn btn-outline btn-sm" onclick="${fn.replace(/"/g,'&quot;')}">${l}</button>`).join('')}</div>`:''}
+    </div></div>`;
+}
+function scrollChat(){ const l=$('#chatlog'); if(l) l.scrollTop=l.scrollHeight; }
+function sendMsg(){
+  const b=$('#chatbox'); if(!b) return;
+  const v=b.value.trim(); if(!v) return;
+  b.value=''; b.style.height='auto'; pushUser(v);
+}
+function askMara(q){ if(S.page!=='mara'){ S.page='mara'; render(); } setTimeout(()=>pushUser(q),60); }
+function pushUser(text){
+  S.chat.push({r:'me',h:esc(text)});
+  S.typing=true; render(); scrollChat();
+  setTimeout(()=>{ S.typing=false; S.chat.push(maraReply(text)); render(); scrollChat(); }, 900+Math.random()*700);
+}
+function maraReply(q){
+  const t=q.toLowerCase();
+  const A=(h,acts)=>({r:'mara',h,acts});
+  if(/budget|ad|spend|paid|roas/.test(t)) return A(
+    `I've drafted <b>AED 1,200</b> across four campaigns for the next 14 days:
+     <ul>${S.adAlloc.map(a=>`<li>${a.pct}% — ${a.n}</li>`).join('')}</ul>
+     That's an <b>example projection</b> on demo data, not a promise. Nothing spends until you approve it —
+     and ad money is charged by your own ad account, never by your Voom subscription.`,
+    [['Review & approve','go(\'ads\')'],['Lower to AED 800','go(\'ads\')']]);
+  if(/reel|hook|video|tiktok/.test(t)) return A(
+    `Here are three hooks in your voice — warm, a little cheeky, expert underneath:
+     <ul>${PACK.hooks.map(h=>`<li>${h}</li>`).join('')}</ul>
+     Hook #1 lines up with ${PACK.trend}, up 62% in this demo dataset.
+     Want me to build the Reel and queue it for ${PACK.slot}?`,
+    [['Build Reel #1','go(\'reels\')'],['See the calendar','go(\'calendar\')']]);
+  if(/week|plan|calendar|schedule/.test(t)) return A(
+    `Next week is drafted — <b>7 pieces</b>, weighted toward Reels since that's where your growth is:
+     <ul><li><b>Mon</b> — Reel: ${PACK.r[0]} · ${PACK.slot}</li><li><b>Tue</b> — Email: ${PACK.emailN} · 9:00 AM</li>
+     <li><b>Wed</b> — Feed: ${PACK.p[2]}</li><li><b>Thu</b> — Reel: ${PACK.r[1]}</li>
+     <li><b>Fri</b> — SMS: reminder message · 11:00 AM</li><li><b>Sat</b> — Reel: ${PACK.r[2]}</li>
+     <li><b>Sun</b> — Rest day (quietest day in this demo dataset)</li></ul>`,
+    [['Open calendar','go(\'calendar\')'],['Approve all drafts','approveAllDrafts()']]);
+  if(/email|win-?back|newsletter|flow/.test(t)) return A(
+    `<b>1,284</b> ${PACK.cold}. I drafted a two-step win-back:<br><br>
+     <b>Email 1</b> — “Did we lose you?” · soft re-intro, no discount<br>
+     <b>Email 2</b> (4 days later) — “15% to come back” · expires in 48h<br><br>
+     On this demo list that models out to roughly <b>AED 3,100</b> recovered — an example result, not a forecast.`,
+    [['Open campaigns','go(\'campaigns\')'],['Draft email 1 now','go(\'campaigns\')']]);
+  if(/sms|text|message/.test(t)) return A(
+    `In this demo dataset SMS is your strongest channel — <b>98.1% open</b>, 11.4% click.
+     I'd send one broadcast on a genuinely useful day only. Over-texting is the fastest way to lose that list.`,
+    [['Open SMS','go(\'campaigns\')']]);
+  if(/time|when.*post|best time/.test(t)) return A(
+    `In this demo dataset your audience peaks <b>Tue–Thu evening, Gulf time</b> — ${PACK.slotWhy}.
+     Reels in that window averaged <b>41K views</b> against 12K outside it (example result).
+     I've pinned <b>${PACK.slot}</b> as your default slot.`,
+    [['See Reel queue','go(\'reels\')']]);
+  if(/reach|drop|down|why/.test(t)) return A(
+    `In this demo dataset reach is <b>up 18.4%</b> — revenue is what dipped 3.2%. Two causes:
+     <ul><li>Paid retargeting paused on Aug 9 (biggest factor)</li>
+     <li>Two Reels posted in the morning instead of the evening slot</li></ul>
+     Approving the ad budget addresses the first; I've already moved the queue for the second.`,
+    [['Approve budget','go(\'ads\')'],['Check the queue','go(\'reels\')']]);
+  if(/instagram|connect/.test(t)) return A(
+    S.igConnected?`Instagram is connected as <b>${DB.brand.handle}</b> in this prototype. In the real product I'd pull insights hourly and publish Reels directly.`
+    :`I can't publish yet — Instagram isn't connected. It takes about 20 seconds and I'll need permission to publish and read insights.`,
+    [[S.igConnected?'View connection':'Connect Instagram','go(\'instagram\')']]);
+  if(/price|plan|upgrade|cost/.test(t)) return A(
+    `You're on <b>${DB.plans.find(p=>p.id===DB.plan).name}</b> — AED ${DB.plans.find(p=>p.id===DB.plan).m}/month.
+     Paid ad management and unlimited scheduling live on <b>Max</b>. Remember the subscription only pays for the
+     software; any advertising budget is paid through your own ad account.`,
+    [['Compare plans','go(\'pricing\')']]);
+  return A(`Got it. Based on this demo dataset for <b>${esc(DB.brand.name)}</b>, the highest-leverage move
+     is your <b>${PACK.slot}</b> Reel slot — it outperforms every other time in the sample.
+     Want me to build next week around it?`,
+    [['Yes, plan the week','askMara(\'Plan next week\')'],['Show performance','go(\'dash\')']]);
+}
+function approveAllDrafts(){
+  DB.posts.forEach(p=>{ if(p.st!=='Scheduled') p.st='Scheduled'; });
+  DB.reelQueue.forEach(r=>{ if(r.st==='Draft'){r.st='Scheduled';r.t2='t-green';} });
+  toast('All drafts approved and scheduled','ok',true);
+  S.chat.push({r:'mara',h:'Done — everything is scheduled. I\'ll publish on your behalf and report back each morning.'});
+  render();
+}
+function maraMenu(){
+  modal(`<div class="modal">
+    <div class="modal-head"><h2 class="h2">MARA settings</h2><button class="icon-btn" onclick="closeModal()">${ic('x')}</button></div>
+    <div class="modal-body">
+      ${[['Autonomy level','Ask before publishing'],['Daily briefing','8:00 AM · Email'],['Tone','Warm, playful, expert'],['Banned words','“miracle”, “cure”, “anti-aging”']]
+        .map(([a,b])=>`<div class="between" style="padding:11px 0;border-bottom:1px solid var(--line)">
+          <span style="font-size:13.5px;font-weight:550">${a}</span>
+          <button class="row dim" style="font-size:13px" onclick="toast('Editing ${a} — visual only','info')">${b} ${ic('arrow')}</button></div>`).join('')}
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-danger" onclick="S.chat=[];seedChat();closeModal();render();toast('Conversation cleared','info')">${ic('trash')} Clear chat</button>
+      <button class="btn btn-primary" onclick="closeModal()">Done</button></div>
+  </div>`);
+}
+
+/* ====================== CONTENT CALENDAR ====================== */
+const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+const CHANS=['All','Reel','Feed','Email','SMS'];
+function pageCalendar(){
+  const y=S.calYear,m=S.calMonth;
+  const first=new Date(y,m,1).getDay(), days=new Date(y,m+1,0).getDate(), prev=new Date(y,m,0).getDate();
+  const isAug=(m===7&&y===2026);
+  let cells=[];
+  for(let i=first-1;i>=0;i--) cells.push({d:prev-i,out:true});
+  for(let d=1;d<=days;d++) cells.push({d,out:false});
+  while(cells.length%7) cells.push({d:cells.length-days-first+1,out:true});
+  const evs=d=>isAug?DB.posts.filter(p=>p.d===d&&(S.calFilter==='All'||p.ch===S.calFilter)):[];
+  const counts=DB.posts.reduce((a,p)=>(a[p.st]=(a[p.st]||0)+1,a),{});
+  return `<div class="page">
+    <div class="page-head">
+      <div><h1 class="h1">Content calendar</h1>
+        <p>${DB.posts.length} pieces planned · ${counts.Scheduled||0} scheduled, ${counts.Draft||0} drafts, ${counts.Idea||0} ideas</p></div>
+      <div class="row wrap">
+        <button class="btn btn-outline btn-sm" onclick="askMara('Plan next week')">${ic('spark')} Fill gaps with MARA</button>
+        <button class="btn btn-primary btn-sm" onclick="openCompose()">${ic('plus')} New post</button>
+      </div>
+    </div>
+    <div class="between wrap" style="margin-bottom:14px;gap:10px">
+      <div class="row">
+        <button class="icon-btn" onclick="calMove(-1)">${ic('back')}</button>
+        <b class="h2" style="min-width:170px;text-align:center">${MONTHS[m]} ${y}</b>
+        <button class="icon-btn" onclick="calMove(1)">${ic('arrow')}</button>
+        <button class="btn btn-ghost btn-sm" onclick="S.calMonth=7;S.calYear=2026;render()">Today</button>
+      </div>
+      <div class="row wrap" style="gap:7px">
+        ${CHANS.map(c=>`<button class="chip ${S.calFilter===c?'on':''}" onclick="S.calFilter='${c}';render()">${c}</button>`).join('')}
+      </div>
+    </div>
+    <div class="cal-grid">
+      ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-dow">${d}</div>`).join('')}
+      ${cells.map(c=>{
+        const e=c.out?[]:evs(c.d);
+        return `<div class="cal-day ${c.out?'out':''} ${(!c.out&&isAug&&c.d===24)?'today':''}" onclick="openCompose(${c.out?'null':c.d})">
+          <div class="between"><span class="dnum">${c.d}</span>
+            ${c.out?'':`<span class="cal-add">+</span>`}</div>
+          ${e.slice(0,3).map(p=>`<div class="ev" style="background:${p.c}1f;color:${p.c}" 
+            onclick="event.stopPropagation();postDetail(${DB.posts.indexOf(p)})"><i style="background:${p.c}"></i>${p.t.split('· ')[1]||p.t}</div>`).join('')}
+          ${e.length>3?`<span class="dim" style="font-size:10px;padding-left:4px">+${e.length-3} more</span>`:''}
+        </div>`;}).join('')}
+    </div>
+    <div class="grid-3" style="margin-top:14px">
+      ${[['Scheduled','t-green',counts.Scheduled||0,'Publishing automatically'],
+         ['Draft','t-amber',counts.Draft||0,'Waiting on your review'],
+         ['Idea','t-grey',counts.Idea||0,'MARA suggestions']]
+        .map(([n,t,c,d])=>`<div class="card pad between">
+          <div><span class="tag ${t}">${n}</span><div class="h1" style="font-size:24px;margin-top:9px">${c}</div>
+            <span class="dim" style="font-size:12px">${d}</span></div>
+          <button class="icon-btn" onclick="S.calFilter='All';render();toast('Filtered to ${n.toLowerCase()}s','info')">${ic('arrow')}</button>
+        </div>`).join('')}
+    </div>
+  </div>`;
+}
+function calMove(n){ let m=S.calMonth+n,y=S.calYear; if(m<0){m=11;y--} if(m>11){m=0;y++} S.calMonth=m;S.calYear=y;render(); }
+function postDetail(i){
+  const p=DB.posts[i]; if(!p) return;
+  modal(`<div class="modal">
+    <div class="modal-head"><div>
+        <span class="tag" style="background:${p.c}1f;color:${p.c}">${p.ch}</span>
+        <h2 class="h2" style="margin-top:8px">${p.t.split('· ')[1]||p.t}</h2>
+        <p class="dim" style="font-size:13px">Aug ${p.d}, 2026 · ${p.time}</p></div>
+      <button class="icon-btn" onclick="closeModal()">${ic('x')}</button></div>
+    <div class="modal-body">
+      <div class="field"><label>Caption</label>
+        <textarea class="input" rows="4">${esc(PACK.cap)}</textarea></div>
+      <div class="row wrap" style="gap:7px;margin-bottom:14px">
+        ${['#dubai','#localbusiness','#behindthescenes','#smallbusiness',DB.brand.handle.replace('@','#')].map(h=>`<span class="chip">${h}</span>`).join('')}
+      </div>
+      <div class="row wrap" style="gap:8px">
+        <button class="btn btn-outline btn-sm" onclick="toast('MARA rewrote the caption')">${ic('spark')} Rewrite with MARA</button>
+        <button class="btn btn-outline btn-sm" onclick="toast('Best time applied: 7:10 PM')">${ic('clock')} Best time</button>
+      </div>
+      <div class="sep"></div>
+      <div class="between"><span style="font-size:13.5px;font-weight:550">Status</span>
+        <span class="tag ${p.st==='Scheduled'?'t-green':p.st==='Draft'?'t-amber':'t-grey'}">${p.st}</span></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-danger btn-sm" onclick="DB.posts.splice(${i},1);closeModal();render();toast('Post deleted','info')">${ic('trash')} Delete</button>
+      <div class="grow"></div>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="DB.posts[${i}].st='Scheduled';closeModal();render();toast('Post scheduled for Aug ${p.d}','ok',true)">Schedule</button>
+    </div>
+  </div>`);
+}
+function openCompose(day){
+  const d=day||24;
+  modal(`<div class="modal wide">
+    <div class="modal-head"><div><h2 class="h2">Create content</h2>
+      <p class="dim" style="font-size:13px">MARA will format it for the channel you pick.</p></div>
+      <button class="icon-btn" onclick="closeModal()">${ic('x')}</button></div>
+    <div class="modal-body">
+      <label style="display:block;font-size:12.5px;font-weight:600;color:var(--text-2);margin-bottom:9px">Channel</label>
+      <div class="pickers" style="grid-template-columns:repeat(4,1fr);margin-bottom:18px">
+        ${[['🎬','Reel'],['🖼️','Feed'],['✉️','Email'],['💬','SMS']]
+          .map(([e,n],i)=>`<button class="pick ${i===0?'on':''}" onclick="[...this.parentNode.children].forEach(x=>x.classList.remove('on'));this.classList.add('on');window._ch='${n}'">
+            <span class="e">${e}</span><b>${n}</b></button>`).join('')}
+      </div>
+      <div class="field"><label>What's it about?</label>
+        <input class="input" id="c-topic" placeholder="e.g. what makes your best seller work" value="${esc(PACK.p[0])}"></div>
+      <button class="btn btn-outline btn-sm" style="margin-bottom:14px" onclick="genCaption()">${ic('spark')} Generate with MARA</button>
+      <div class="field"><label>Caption</label>
+        <textarea class="input" id="c-cap" rows="4" placeholder="MARA will write this for you…"></textarea></div>
+      <div class="row" style="gap:10px">
+        <div class="field grow"><label>Date</label><input class="input" type="date" value="2026-08-${String(d).padStart(2,'0')}"></div>
+        <div class="field grow"><label>Time</label><input class="input" type="time" value="19:10"></div>
+      </div>
+      <div class="row" style="font-size:12.5px;color:var(--brand);gap:6px"><span style="display:grid;place-items:center">${ic('spark')}</span>
+        ${PACK.slot} is the best-performing slot in this demo dataset.</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-outline" onclick="addPost('Draft')">Save draft</button>
+      <button class="btn btn-primary" onclick="addPost('Scheduled')">${ic('clock')} Schedule</button>
+    </div>
+  </div>`);
+  window._ch='Reel';
+}
+function genCaption(){
+  const t=$('#c-topic').value||'your topic';
+  const box=$('#c-cap'); box.value='Writing…';
+  setTimeout(()=>{ box.value=`Nobody tells you this about ${t.toLowerCase()} — here's the 30-second version.\n\n#dubai #smallbusiness ${DB.brand.handle.replace('@','#')}`;
+    toast('MARA wrote your caption'); },700);
+}
+function addPost(st){
+  const ch=window._ch||'Reel';
+  const col={Reel:'#e8481f',Feed:'#c9306b',Email:'#0f6f68',SMS:'#f2a516'}[ch];
+  const topic=($('#c-topic')?.value)||'New post';
+  DB.posts.push({d:24,t:`${ch} · ${topic}`,c:col,ch,time:'7:10 PM',st});
+  closeModal(); render();
+  toast(st==='Scheduled'?`${ch} scheduled for Aug 24, ${PACK.slot}`:'Saved as draft','ok',st==='Scheduled');
+}
+</script>
+<script>
+/* ====================== REEL SCHEDULING ====================== */
+const TMPLS=[
+  {n:'Talking head',g:'linear-gradient(160deg,#ff8a3d,#c9306b)'},
+  {n:'Before / after',g:'linear-gradient(160deg,#2f6f9f,#0f6f68)'},
+  {n:'Product hero',g:'linear-gradient(160deg,#e8481f,#f2a516)'},
+  {n:'Text hook',g:'linear-gradient(160deg,#0f6f68,#141a18)'},
+  {n:'Tutorial',g:'linear-gradient(160deg,#9fd6c9,#f4cdb4)'},
+  {n:'UGC stitch',g:'linear-gradient(160deg,#c9306b,#f2a516)'},
+];
+let DEFAULT_CAP=PACK.cap;
+function pageReels(){
+  const t=TMPLS[S.reelTmpl];
+  const cap=S.reelCaption||DEFAULT_CAP;
+  return `<div class="page">
+    <div class="page-head">
+      <div><h1 class="h1">Reel scheduling</h1><p>Build a Reel, and MARA drops it into your best-performing slot.</p></div>
+      <div class="row wrap">
+        <button class="btn btn-outline btn-sm" onclick="bestTimeAll()">${ic('clock')} Optimise whole queue</button>
+        <button class="btn btn-primary btn-sm" onclick="scheduleReel()">${ic('plus')} Schedule Reel</button>
+      </div>
+    </div>
+    ${!S.igConnected?`<div class="card pad between wrap" style="border-color:var(--amber);background:rgba(255,159,10,.07);margin-bottom:14px;gap:12px">
+      <div class="row"><span style="color:var(--amber);display:grid;place-items:center">${ic('warn')}</span>
+        <span style="font-size:13.5px">Instagram isn't connected — Reels will stay in draft until it is.</span></div>
+      <button class="btn btn-dark btn-sm" onclick="go('instagram')">Connect Instagram</button></div>`:''}
+
+    <div class="reel-grid">
+      <div class="card pad">
+        <h2 class="h2" style="margin-bottom:14px;text-align:center">Preview</h2>
+        <div class="phone">
+          <div class="phone-notch"></div>
+          <div class="phone-scr" style="background:${t.g}">
+            <div style="position:absolute;inset:0;background:linear-gradient(transparent 45%,rgba(0,0,0,.72))"></div>
+            <div class="reel-ui">
+              <div>${ic('heart')}<span>4.2K</span></div>
+              <div>${ic('chat')}<span>318</span></div>
+              <div>${ic('send')}<span>1.1K</span></div>
+            </div>
+            <div class="reel-cap">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:7px;font-weight:700">
+                <span style="width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.3);display:grid;place-items:center;font-size:9px">L</span>
+                ${DB.brand.handle} · <span style="font-weight:500;opacity:.8">Follow</span></div>
+              ${esc(cap).replace(/\n/g,'<br>')}
+              <div style="display:flex;align-items:center;gap:5px;margin-top:7px;opacity:.85;font-size:10px">
+                ${ic('music')} Original audio · ${esc(DB.brand.name)}</div>
+            </div>
+          </div>
+        </div>
+        <div class="row" style="justify-content:center;gap:8px;margin-top:14px">
+          <button class="btn btn-ghost btn-sm" onclick="toast('Playing preview (visual only)','info')">${ic('play')} Play</button>
+          <button class="btn btn-ghost btn-sm" onclick="toast('Cover frame updated','info')">${ic('img')} Cover</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="card pad" style="margin-bottom:14px">
+          <h2 class="h2" style="margin-bottom:12px">Template</h2>
+          <div class="tmpls">
+            ${TMPLS.map((x,i)=>`<button class="tmpl ${S.reelTmpl===i?'on':''}" style="background:${x.g}"
+              onclick="S.reelTmpl=${i};render()">${x.n}</button>`).join('')}
+          </div>
+          <div class="sep"></div>
+          <div class="field"><label>Caption</label>
+            <textarea class="input" rows="4" oninput="S.reelCaption=this.value">${esc(cap)}</textarea></div>
+          <div class="row wrap" style="gap:8px;margin-bottom:14px">
+            <button class="btn btn-outline btn-sm" onclick="maraCaption()">${ic('spark')} Rewrite with MARA</button>
+            <button class="btn btn-outline btn-sm" onclick="toast('12 hashtags added from your top posts')">${ic('plus')} Suggest hashtags</button>
+            <button class="btn btn-outline btn-sm" onclick="toast('Trending audio attached: “sunset drive”')">${ic('music')} Pick audio</button>
+          </div>
+          <div class="row" style="gap:10px" class="wrap">
+            <div class="field grow" style="margin-bottom:0"><label>Date</label><input class="input" type="date" value="2026-08-25"></div>
+            <div class="field grow" style="margin-bottom:0"><label>Time</label>
+              <input class="input" type="time" value="${S.reelTime}" oninput="S.reelTime=this.value"></div>
+          </div>
+          <div class="card pad" style="margin-top:14px;background:var(--brand-soft);border-color:var(--brand)">
+            <div class="between wrap" style="gap:10px">
+              <div class="row" style="align-items:flex-start"><span class="orb sm" style="margin-top:2px"></span>
+                <div><div class="row wrap" style="gap:7px"><b style="font-size:13.5px">Best time: ${PACK.slot}</b>${exTag()}</div>
+                  <p class="muted" style="font-size:12.5px;margin-top:2px">In this demo dataset the last 6 evening Reels averaged 41K views against 12K in the morning — ${PACK.slotWhy}.</p></div></div>
+              <button class="btn btn-primary btn-sm" onclick="S.reelTime='19:10';render();toast('Slot set to '+PACK.slot)">Use it</button>
+            </div>
+          </div>
+          <button class="btn btn-primary btn-lg btn-block" style="margin-top:14px" onclick="scheduleReel()">
+            ${ic('clock')} Schedule Reel for Aug 25</button>
+        </div>
+
+        <div class="card pad">
+          <div class="between" style="margin-bottom:12px">
+            <h2 class="h2">Queue</h2><span class="dim" style="font-size:12.5px">${DB.reelQueue.length} Reels</span></div>
+          ${DB.reelQueue.map((r,i)=>`<div class="queue-item">
+            <div class="q-thumb" style="background:${r.g}"></div>
+            <div class="grow" style="min-width:0">
+              <div class="trunc" style="font-size:13.8px;font-weight:600">${r.t}</div>
+              <div class="dim" style="font-size:12px;margin-top:2px">${r.when}${r.views!=='—'?` · ${r.views} views`:''}</div>
+              <div class="row" style="gap:6px;margin-top:7px">
+                <span class="tag ${r.t2}">${r.st}</span>
+                ${r.st!=='Live'?`<button class="btn btn-sm" style="color:var(--brand);font-size:12px;height:auto;padding:0" onclick="reelAction(${i},'time')">Change time</button>`:''}
+              </div>
+            </div>
+            <div class="row" style="gap:4px">
+              ${r.st==='Draft'?`<button class="btn btn-primary btn-sm" onclick="reelAction(${i},'schedule')">Schedule</button>`:''}
+              <button class="icon-btn" onclick="reelAction(${i},'del')">${ic('trash')}</button>
+            </div>
+          </div>`).join('')}
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+function maraCaption(){
+  S.reelCaption=PACK.cap+"\n\n#dubai #smallbusiness "+DB.brand.handle.replace('@','#');
+  render(); toast('MARA rewrote your caption in brand voice');
+}
+function scheduleReel(){
+  if(!S.igConnected){
+    modal(`<div class="modal" style="max-width:420px">
+      <div class="modal-head"><h2 class="h2">Connect Instagram first</h2><button class="icon-btn" onclick="closeModal()">${ic('x')}</button></div>
+      <div class="modal-body"><p class="muted" style="font-size:14px;line-height:1.6">
+        MARA can save this as a draft now, but she needs a connected Instagram account to publish it automatically.</p></div>
+      <div class="modal-foot"><button class="btn btn-ghost" onclick="saveReelDraft()">Save as draft</button>
+        <button class="btn btn-primary" onclick="closeModal();go('instagram')">Connect Instagram</button></div>
+    </div>`); return;
+  }
+  DB.reelQueue.unshift({t:(S.reelCaption||DEFAULT_CAP).split('\n')[0].slice(0,38),
+    when:`Tue, Aug 25 · ${fmtTime(S.reelTime)}`,st:'Scheduled',t2:'t-green',g:TMPLS[S.reelTmpl].g,views:'—'});
+  DB.posts.push({d:25,t:'Reel · '+TMPLS[S.reelTmpl].n,c:'#e8481f',ch:'Reel',time:fmtTime(S.reelTime),st:'Scheduled'});
+  render(); toast(`Reel scheduled for Aug 25 at ${fmtTime(S.reelTime)}`,'ok',true);
+}
+function saveReelDraft(){
+  DB.reelQueue.unshift({t:(S.reelCaption||DEFAULT_CAP).split('\n')[0].slice(0,38),when:'Not scheduled',
+    st:'Draft',t2:'t-amber',g:TMPLS[S.reelTmpl].g,views:'—'});
+  closeModal(); render(); toast('Saved as draft','info');
+}
+function fmtTime(t){ const [h,m]=t.split(':').map(Number); const ap=h>=12?'PM':'AM'; const hh=h%12||12; return `${hh}:${String(m).padStart(2,'0')} ${ap}`; }
+function reelAction(i,a){
+  const r=DB.reelQueue[i];
+  if(a==='del'){ DB.reelQueue.splice(i,1); render(); toast('Removed from queue','info'); }
+  if(a==='schedule'){ r.st='Scheduled'; r.t2='t-green'; r.when='Fri, Aug 28 · '+PACK.slot; render(); toast(`“${r.t}” scheduled`,'ok',true); }
+  if(a==='time'){ r.when=r.when.replace(/· .*/,'· 7:10 PM'); render(); toast('Moved to your best slot — 7:10 PM'); }
+}
+function bestTimeAll(){
+  DB.reelQueue.forEach(r=>{ if(r.st!=='Live') r.when=r.when.replace(/· .*/,'· 7:10 PM'); });
+  render(); toast('Whole queue moved to '+PACK.slot,'ok',true);
+}
+
+/* ==================== EMAIL & SMS CAMPAIGNS ==================== */
+function pageCampaigns(){
+  const em=S.campTab==='email';
+  const list=em?DB.emails:DB.sms;
+  return `<div class="page">
+    <div class="page-head">
+      <div><h1 class="h1">Email & SMS</h1><p>Campaigns, flows and broadcasts — drafted by MARA, approved by you.</p></div>
+      <div class="row wrap">
+        <button class="btn btn-outline btn-sm" onclick="askMara('Draft a win-back email')">${ic('spark')} Ask MARA to draft</button>
+        <button class="btn btn-primary btn-sm" onclick="openCampaign()">${ic('plus')} New ${em?'email':'SMS'}</button>
+      </div>
+    </div>
+
+    <div class="between wrap" style="margin-bottom:16px;gap:12px">
+      <div class="tabs">
+        <button class="tab ${em?'on':''}" onclick="S.campTab='email';render()">${ic('mail')} Email</button>
+        <button class="tab ${!em?'on':''}" onclick="S.campTab='sms';render()">${ic('msg')} SMS</button>
+      </div>
+      <div class="row wrap" style="gap:7px">${demoTag()}
+        <span class="tag t-grey">${ic('info')} No provider connected — sends are simulated</span></div>
+    </div>
+
+    <div class="grid-3" style="margin-bottom:14px">
+      ${(em?[['Subscribers','8,412','+312 this month'],['Avg. open rate','41.2%','+4.1 pts'],['Revenue / send','AED 1.45','+AED 0.22']]
+           :[['SMS opt-ins','3,190','+184 this month'],['Avg. click rate','11.4%','+1.8 pts'],['Revenue / send','AED 2.93','+AED 0.41']])
+        .map(([a,b,c])=>`<div class="card pad">
+          <span class="lab dim" style="font-size:12.5px">${a}</span>
+          <div class="h1" style="font-size:26px;margin:7px 0 4px">${b}</div>
+          <span style="font-size:12.5px;color:var(--green);font-weight:600">${c}</span></div>`).join('')}
+    </div>
+
+    <div class="card pad">
+      <div class="between" style="margin-bottom:14px"><h2 class="h2">${em?'Email campaigns':'SMS broadcasts'}</h2>
+        <button class="btn btn-ghost btn-sm" onclick="toast('Filters are visual-only','info')">${ic('filter')} Filter</button></div>
+      <div style="overflow-x:auto"><table class="tbl">
+        <thead><tr><th>Campaign</th><th>Audience</th><th>${em?'Open':'Delivered'}</th><th>Click</th><th class="num">Revenue</th><th>When</th><th></th></tr></thead>
+        <tbody>${list.map((c,i)=>`<tr>
+          <td><b>${c.n}</b><div style="margin-top:4px"><span class="tag ${c.t}">${c.st}</span></div></td>
+          <td class="muted">${c.seg}</td><td class="mono">${c.o}</td><td class="mono">${c.c}</td>
+          <td class="num"><b>${c.r}</b></td><td class="muted" style="font-size:12.5px">${c.when}</td>
+          <td style="text-align:right;white-space:nowrap">
+            ${c.st==='Draft'?`<button class="btn btn-primary btn-sm" onclick="sendCampaign('${S.campTab}',${i})">Review & send</button>`
+             :c.st==='Scheduled'?`<button class="btn btn-outline btn-sm" onclick="sendCampaign('${S.campTab}',${i})">Edit</button>`
+             :`<button class="btn btn-ghost btn-sm" onclick="toast('Opening report for “${c.n}” (demo)','info')">Report</button>`}
+          </td></tr>`).join('')}</tbody>
+      </table></div>
+    </div>
+
+    <div class="grid-2" style="margin-top:14px">
+      <div class="card pad">
+        <h2 class="h2" style="margin-bottom:12px">${em?'Email preview':'SMS preview'}</h2>
+        ${em?`<div class="mail-prev">
+          <div class="mail-hero" style="background:var(--grad-deep)">
+            <div style="font-family:var(--display);font-size:22px;font-weight:700">${esc(DB.brand.name)}</div>
+            <p style="opacity:.85;font-size:13px;margin-top:5px">${esc(PACK.emailN)}</p></div>
+          <div style="padding:20px">
+            <h3 style="font-family:var(--display);font-size:17px;margin-bottom:9px">${esc(PACK.emailSub)}</h3>
+            <p style="font-size:13.5px;color:var(--text-2);line-height:1.65">Hi {{first_name}} — ${esc(PACK.emailBody)}</p>
+            <button class="btn btn-primary btn-sm" style="margin-top:14px" onclick="toast('Link preview — visual only','info')">Read more →</button>
+            <div class="sep"></div>
+            <p style="font-size:11px;color:var(--text-3)">You're receiving this because you shop with ${esc(DB.brand.name)}. Unsubscribe anytime.</p>
+          </div></div>`
+        :`<div class="sms-phone">
+          <p class="dim" style="text-align:center;font-size:11px;margin-bottom:12px">Today 11:00 AM</p>
+          <div class="sms-bub">${esc(PACK.smsT)}</div>
+          <div class="row" style="justify-content:flex-end;gap:6px;margin-top:7px">
+            <span class="dim" style="font-size:10.5px">Delivered</span></div>
+        </div>`}
+      </div>
+      <div class="card pad">
+        <div class="row" style="margin-bottom:12px"><span class="orb sm"></span><h2 class="h2">MARA's take</h2></div>
+        ${(em?[['Win-back 1,284 cold subscribers','Projected +AED 3,100 recovered','campaigns'],
+               ['Move sends to Tuesday 9 AM','Your opens are 12% higher then','campaigns'],
+               ['Segment out non-openers before launch','Protects your sender reputation','campaigns']]
+             :[['Send only on restock days','Over-texting is the #1 cause of opt-outs','campaigns'],
+               ['Keep under 160 characters','Splitting messages doubles your cost','campaigns'],
+               ['Add SMS opt-in to checkout','You\'re leaving ~40 signups/week on the table','campaigns']])
+          .map(([t,b])=>`<div class="insight">
+            <span class="ic" style="background:var(--brand-soft);color:var(--brand)">${ic('spark')}</span>
+            <div class="grow"><b style="font-size:13.5px">${t}</b><p style="margin-bottom:8px">${b}</p>
+              <button class="btn btn-outline btn-sm" onclick="askMara('${t}')">Ask MARA to do it</button></div></div>`).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+function sendCampaign(kind,i){
+  const c=(kind==='email'?DB.emails:DB.sms)[i];
+  const em=kind==='email';
+  modal(`<div class="modal wide">
+    <div class="modal-head"><div><h2 class="h2">${c.n}</h2>
+      <p class="dim" style="font-size:13px">${c.seg}</p></div>
+      <button class="icon-btn" onclick="closeModal()">${ic('x')}</button></div>
+    <div class="modal-body">
+      ${em?`<div class="field"><label>Subject line</label><input class="input" value="${esc(PACK.emailSub)}"></div>
+        <div class="field"><label>Preview text</label><input class="input" value="${esc(PACK.emailN)}"></div>
+        <div class="field"><label>Body</label><textarea class="input" rows="5">Hi {{first_name}} — ${esc(PACK.emailBody)}</textarea></div>`
+      :`<div class="field"><label>Message</label>
+        <textarea class="input" id="sms-body" rows="4" maxlength="160" oninput="$('#sms-count').textContent=this.value.length">${esc(PACK.smsT)}</textarea>
+        <div class="hint"><span id="sms-count">96</span>/160 characters · 1 segment · est. cost AED ${(3190*0.12).toFixed(2)}</div></div>`}
+      <div class="field"><label>Audience</label>
+        <select class="input"><option>${c.seg}</option><option>All subscribers · 8,412</option><option>VIP buyers · 610</option><option>Cold 60d · 1,284</option></select></div>
+      <div class="row" style="gap:10px">
+        <div class="field grow"><label>Date</label><input class="input" type="date" value="2026-08-26"></div>
+        <div class="field grow"><label>Time</label><input class="input" type="time" value="${em?'09:00':'11:00'}"></div>
+      </div>
+      <div class="grid-3" style="gap:10px">
+        ${[['Recipients',c.seg.split('· ')[1]||'—'],['Est. opens',em?'3,466':'3,129'],['Est. revenue',em?'AED 3,100':'AED 2,240']]
+          .map(([a,b])=>`<div class="stat-mini"><b>${b}</b><span>${a}</span></div>`).join('')}
+      </div>
+      <div class="card pad" style="margin-top:14px;background:rgba(255,159,10,.08);border-color:var(--amber)">
+        <div class="row" style="align-items:flex-start;gap:10px"><span style="color:var(--amber);display:grid;place-items:center">${ic('warn')}</span>
+        <p style="font-size:13px;line-height:1.55">No ${em?'email':'SMS'} provider is connected in this prototype — “Send” simulates the campaign and generates sample results.
+          <br><b>${PROTO}</b></p></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="toast('Test send simulated to ${DB.user.email}','info',true)">Send test</button>
+      <div class="grow"></div>
+      <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="doSend('${kind}',${i})">${ic('send')} Send now</button>
+    </div>
+  </div>`);
+}
+function doSend(kind,i){
+  const arr=kind==='email'?DB.emails:DB.sms; const c=arr[i];
+  c.st='Sent'; c.t='t-blue'; c.when='Just now';
+  c.o=kind==='email'?'38.9%':'97.4%'; c.c=kind==='email'?'5.9%':'10.2%';
+  c.r=kind==='email'?'AED 2,940':'AED 2,180';
+  closeModal(); render();
+  toast(`${kind==='email'?'Email':'SMS'} “${c.n}” simulated — sample results added`,'ok',true);
+}
+function openCampaign(){
+  const em=S.campTab==='email';
+  (em?DB.emails:DB.sms).unshift({n:em?'Untitled email':'Untitled SMS',seg:em?'All subscribers · 8,412':'SMS opt-ins · 3,190',
+    st:'Draft',t:'t-grey',o:'—',c:'—',r:'—',when:'Not scheduled'});
+  render(); sendCampaign(S.campTab,0);
+}
+</script>
+<script>
+/* ==================== INSTAGRAM CONNECTION ==================== */
+function pageInstagram(){
+  if(S.igConnected) return igConnectedView();
+  return `<div class="page" style="max-width:760px">
+    <div class="page-head"><div><h1 class="h1">Instagram</h1>
+      <p>Connect a Business or Creator account so MARA can publish and read insights.</p></div></div>
+    <div class="ig-hero">
+      <div style="width:52px;height:52px;border-radius:16px;background:rgba(255,255,255,.2);display:grid;place-items:center;margin-bottom:16px">${ic('ig')}</div>
+      <h2 style="font-family:var(--display);font-size:24px;font-weight:700">Let MARA run your Instagram</h2>
+      <p style="opacity:.9;font-size:14.5px;margin-top:7px;max-width:440px;line-height:1.6">
+        Publish Reels and posts automatically, pull real reach and engagement, and spot trends before your competitors do.</p>
+      <button class="btn" style="background:#fff;color:#b62d6a;margin-top:20px" onclick="igStart()">
+        ${ic('ig')} Connect Instagram account</button>
+    </div>
+    <div class="grid-2" style="margin-top:14px;grid-template-columns:1fr 1fr">
+      <div class="card pad">
+        <h3 class="h3" style="margin-bottom:10px">What MARA gets access to</h3>
+        ${[['Publish Reels, posts and stories on your behalf'],['Read reach, engagement and follower insights'],
+           ['Read and reply to comments and DMs'],['View your last 90 days of performance']]
+          .map(([t])=>`<div class="perm"><span class="tick">${ic('check')}</span>
+            <span style="font-size:13.3px;line-height:1.5">${t}</span></div>`).join('')}
+      </div>
+      <div class="card pad">
+        <h3 class="h3" style="margin-bottom:10px">What she never does</h3>
+        ${[['Change your password or account settings'],['Spend money without your written approval'],
+           ['Follow, unfollow or DM anyone unprompted'],['Share your data with other brands']]
+          .map(([t])=>`<div class="perm"><span class="tick" style="background:var(--text-3)">${ic('x')}</span>
+            <span style="font-size:13.3px;line-height:1.5">${t}</span></div>`).join('')}
+      </div>
+    </div>
+    <div class="card pad" style="margin-top:14px;background:var(--surface-2)">
+      <div class="row" style="align-items:flex-start;gap:11px">
+        <span style="color:var(--text-3);display:grid;place-items:center">${ic('shield')}</span>
+        <p class="muted" style="font-size:13px;line-height:1.6">This is a visual prototype — no real Instagram connection is made.
+          “Connect” walks through a simulated authorisation flow using sample accounts.<br><b>${PROTO}</b></p></div>
+    </div>
+  </div>`;
+}
+function igStart(){ S.igStep=1; igModal(); }
+function igModal(){
+  const step=S.igStep;
+  if(step===1) modal(`<div class="modal" style="max-width:420px">
+    <div class="modal-head"><div class="row"><div style="width:36px;height:36px;border-radius:11px;color:#fff;
+        background:linear-gradient(45deg,#f9ce34,#ee2a7b,#6228d7);display:grid;place-items:center">${ic('ig')}</div>
+      <div><b style="font-size:15px">Continue to Instagram</b><div class="dim" style="font-size:12px">Simulated authorisation</div></div></div>
+      <button class="icon-btn" onclick="closeModal()">${ic('x')}</button></div>
+    <div class="modal-body">
+      <p class="muted" style="font-size:13.5px;line-height:1.6;margin-bottom:16px">Choose the account you'd like Voom to manage.</p>
+      ${[['Lumé Skincare','@lumeskin','48.2K followers','Business'],['Priya Sharma','@priya.writes','3,190 followers','Creator']]
+        .map(([n,h,f,ty],i)=>`<button class="ig-acct" style="margin-bottom:10px" onclick="S.igStep=2;igModal()">
+          <div class="ig-pfp"><div>${n[0]}</div></div>
+          <div class="grow"><b style="font-size:14px">${n}</b>
+            <div class="dim" style="font-size:12.5px">${h} · ${f}</div></div>
+          <span class="tag ${ty==='Business'?'t-brand':'t-grey'}">${ty}</span></button>`).join('')}
+      <p class="dim" style="font-size:11.5px;margin-top:8px">Only Business and Creator accounts can be automated by Instagram.</p>
+    </div></div>`);
+  if(step===2) modal(`<div class="modal" style="max-width:420px">
+    <div class="modal-head"><div><b style="font-size:15px">Voom is requesting access</b>
+      <div class="dim" style="font-size:12.5px">as @lumeskin</div></div>
+      <button class="icon-btn" onclick="closeModal()">${ic('x')}</button></div>
+    <div class="modal-body">
+      ${['Publish Reels, posts and stories','Read insights and audience data','Manage comments and messages','Access your media library']
+        .map(t=>`<div class="perm"><span class="tick">${ic('check')}</span><span style="font-size:13.5px">${t}</span></div>`).join('')}
+      <div class="sep"></div>
+      <p class="dim" style="font-size:12px;line-height:1.55">You can revoke access at any time from Instagram settings. This prototype does not contact Instagram.</p>
+      <div style="margin-top:12px">${protoNote()}</div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal();toast('Connection cancelled','info')">Cancel</button>
+      <button class="btn btn-primary" onclick="igFinish()">Allow access</button></div></div>`);
+}
+function igFinish(){
+  layer().innerHTML=`<div class="scrim"><div class="modal" style="max-width:360px">
+    <div class="analyzing"><div style="display:grid;place-items:center"><span class="orb lg"></span></div>
+      <h2 class="h2" style="margin-top:16px">Syncing @lumeskin</h2>
+      <p class="muted" style="font-size:13.5px;margin-top:6px">Pulling 90 days of posts and insights…</p></div></div></div>`;
+  setTimeout(()=>{ S.igConnected=true; closeModal(); render(); toast('Instagram connected — demo account','ok',true); },1800);
+}
+function igConnectedView(){
+  return `<div class="page" style="max-width:900px">
+    <div class="page-head"><div><h1 class="h1">Instagram</h1><p>Connected in this prototype — no real Instagram account is linked.</p>
+      <div class="row wrap" style="gap:7px;margin-top:9px">${demoTag()}</div></div>
+      <button class="btn btn-outline btn-sm" onclick="toast('Resyncing insights…','info');setTimeout(()=>toast('Synced 90 days of data'),1200)">Sync now</button></div>
+    <div class="card pad">
+      <div class="between wrap" style="gap:14px">
+        <div class="row">
+          <div class="ig-pfp" style="width:60px;height:60px"><div style="font-size:19px">L</div></div>
+          <div><div class="row" style="gap:7px"><b style="font-size:17px">${esc(DB.brand.name)}</b>
+              <span class="tag t-green">${ic('check')} Connected</span></div>
+            <div class="dim" style="font-size:13px">${DB.brand.handle} · Business account</div>
+            <div class="dim" style="font-size:12px;margin-top:3px">Last synced 4 minutes ago</div></div>
+        </div>
+        <div class="row wrap" style="gap:8px">
+          <button class="btn btn-ghost btn-sm" onclick="toast('Permissions unchanged (demo)','info')">Permissions</button>
+          <button class="btn btn-danger btn-sm" onclick="igDisconnect()">Disconnect</button>
+        </div>
+      </div>
+      <div class="sep"></div>
+      <div class="grid-3" style="gap:10px">
+        ${[['48,204','Followers','+3,412'],['6.8%','Engagement','+1.2 pts'],['184.2K','30-day reach','+18.4%']]
+          .map(([a,b,c])=>`<div class="stat-mini"><b>${a}</b><span>${b}</span>
+            <div style="font-size:11px;color:var(--green);font-weight:650;margin-top:3px">${c}</div></div>`).join('')}
+      </div>
+    </div>
+    <div class="grid-2" style="margin-top:14px">
+      <div class="card pad"><div class="row wrap" style="margin-bottom:12px"><h2 class="h2">Top posts, last 30 days</h2>${demoTag()}</div>
+        ${[[PACK.top[0],'Reel','112K','#e8481f'],[PACK.top[1],'Feed','28K','#c9306b'],
+           [PACK.top[2],'Reel','41K','#e8481f']].map(([t,ty,v,c])=>`
+          <div class="row" style="padding:9px 0;border-bottom:1px solid var(--line)">
+            <div style="width:38px;height:48px;border-radius:8px;background:${c};flex:none"></div>
+            <div class="grow"><div style="font-size:13.3px;font-weight:600" class="trunc">${t}</div>
+              <span class="dim" style="font-size:12px">${ty}</span></div>
+            <b style="font-size:13px" class="mono">${v}</b><span class="dim" style="font-size:11.5px">views</span></div>`).join('')}
+      </div>
+      <div class="card pad"><h2 class="h2" style="margin-bottom:12px">What MARA can do now</h2>
+        ${[['Auto-publish Reels at 7:10 PM','reels'],['Pull live insights into your dashboard','dash'],
+           ['Run paid campaigns on this account','ads'],['Draft replies to comments','mara']]
+          .map(([t,g])=>`<button class="between" style="width:100%;padding:10px 0;border-bottom:1px solid var(--line);text-align:left">
+            <span class="row" style="font-size:13.3px"><span class="tick" style="width:18px;height:18px;border-radius:50%;background:var(--green);display:grid;place-items:center">${ic('check')}</span>${t}</span>
+            <span class="dim" onclick="go('${g}')">${ic('arrow')}</span></button>`).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+function igDisconnect(){
+  modal(`<div class="modal" style="max-width:400px">
+    <div class="modal-head"><h2 class="h2">Disconnect Instagram?</h2><button class="icon-btn" onclick="closeModal()">${ic('x')}</button></div>
+    <div class="modal-body"><p class="muted" style="font-size:14px;line-height:1.6">
+      MARA will stop publishing immediately. 3 scheduled Reels will revert to drafts and insights will stop updating.</p></div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Keep connected</button>
+      <button class="btn btn-danger" onclick="S.igConnected=false;closeModal();render();toast('Instagram disconnected','info')">Disconnect</button></div>
+  </div>`);
+}
+
+/* ========================== PRICING ========================== */
+function pagePricing(){
+  return `<div class="page">
+    <div style="text-align:center;max-width:620px;margin:6px auto 26px">
+      <span class="tag t-brand">${ic('crown')} Plans</span>
+      <h1 class="h1" style="font-size:32px;margin:12px 0 8px">Give MARA more room to work</h1>
+      <p class="muted" style="font-size:15px">Start free. Upgrade when she's earning more than she costs.</p>
+      <div class="row" style="justify-content:center;gap:8px;margin-top:16px;flex-wrap:wrap">
+        <span class="tag t-grey">Billed monthly · prototype pricing</span>
+        <span class="tag t-grey">${ic('info')} No payment is taken</span>
+      </div>
+      <div style="max-width:600px;margin:16px auto 0">${adSepNote()}</div>
+    </div>
+    <div class="plans">
+      ${DB.plans.map(p=>{
+        const cur=DB.plan===p.id, price=p.m;
+        return `<div class="plan ${p.hot?'hot':''}">
+          <div class="between"><h3 style="font-family:var(--display);font-size:19px;font-weight:700">${p.name}</h3>
+            ${cur?'<span class="tag t-green">Current</span>':''}</div>
+          <p class="muted" style="font-size:13.3px;margin:5px 0 16px">${p.blurb}</p>
+          <div class="row" style="align-items:baseline;gap:5px">
+            <span class="price" style="font-size:34px">AED ${nfc(price)}</span><span class="dim" style="font-size:13.5px">/month</span></div>
+          <div class="dim" style="font-size:12px;margin-top:4px">${price?'Software subscription only — ad budget is separate':'No card required'}</div>
+          <button class="btn ${p.hot?'btn-primary':'btn-outline'} btn-block" style="margin-top:16px"
+            ${cur?'disabled':''} onclick="upgrade('${p.id}')">
+            ${cur?'Your current plan':p.id==='free'?'Downgrade to Free':`Upgrade to ${p.name}`}</button>
+          <ul>
+            ${p.f.map(f=>`<li>${ic('check')}<span>${f}</span></li>`).join('')}
+            ${p.off.map(f=>`<li class="off">${ic('x')}<span>${f}</span></li>`).join('')}
+          </ul>
+        </div>`;}).join('')}
+    </div>
+    <div class="card pad" style="margin-top:22px;max-width:900px;margin-inline:auto">
+      <h2 class="h2" style="margin-bottom:12px">Frequently asked</h2>
+      ${[['Can MARA spend my ad budget without asking?','MARA can never start a new campaign, increase the total budget or exceed an approved limit without your permission. After approval, MARA may optimise and pause campaigns within that fixed limit.'],
+         ['What happens to my content if I downgrade?','Nothing is deleted. Scheduled posts beyond your new plan limit pause as drafts until you upgrade again.'],
+         ['Do you charge per connected channel?','No. Channels are included; plans differ by brands, seats and whether MARA can manage paid spend.'],
+         ['Is billing live in this prototype?','No. Stripe is not connected and no payment is taken. Upgrading here simulates a checkout so you can see the full flow — a prototype demonstration only.'],
+         ['Does my subscription pay for my advertising?','No. '+AD_SEPARATION]]
+        .map(([q,a],i)=>`<div style="border-bottom:1px solid var(--line)">
+          <button class="between" style="width:100%;padding:13px 0;text-align:left;font-size:14px;font-weight:600"
+            onclick="const b=this.nextElementSibling;b.classList.toggle('hide')">${q}<span class="dim">${ic('plus')}</span></button>
+          <p class="muted hide" style="font-size:13.3px;line-height:1.6;padding-bottom:14px">${a}</p></div>`).join('')}
+    </div>
+  </div>`;
+}
+function upgrade(id){
+  const p=DB.plans.find(x=>x.id===id), price=p.m;
+  if(id==='free'){
+    modal(`<div class="modal" style="max-width:400px">
+      <div class="modal-head"><h2 class="h2">Downgrade to Free?</h2><button class="icon-btn" onclick="closeModal()">${ic('x')}</button></div>
+      <div class="modal-body"><p class="muted" style="font-size:14px;line-height:1.6">
+        MARA will pause paid ad management and cap you at 5 scheduled posts a month. Your content stays put.</p></div>
+      <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Keep my plan</button>
+        <button class="btn btn-danger" onclick="DB.plan='free';closeModal();render();toast('Moved to the Free plan','info')">Downgrade</button></div>
+    </div>`); return;
+  }
+  modal(`<div class="modal">
+    <div class="modal-head"><div><h2 class="h2">Upgrade to ${p.name}</h2>
+      <p class="dim" style="font-size:13px">Billed monthly · software subscription only</p></div>
+      <button class="icon-btn" onclick="closeModal()">${ic('x')}</button></div>
+    <div class="modal-body">
+      <div class="card pad between" style="background:var(--surface-2);margin-bottom:16px">
+        <div><b style="font-size:14.5px">Voom ${p.name}</b>
+          <div class="dim" style="font-size:12.5px">Renews monthly · software only</div></div>
+        <div style="text-align:right"><b class="h2">AED ${nfc(price)}</b>
+          <div class="dim" style="font-size:12px">per month</div></div>
+      </div>
+      ${adSepNote()}<div style="height:14px"></div>
+      <div class="field"><label>Card number</label><input class="input" value="4242 4242 4242 4242" readonly></div>
+      <div class="row" style="gap:10px">
+        <div class="field grow"><label>Expiry</label><input class="input" value="12 / 29" readonly></div>
+        <div class="field grow"><label>CVC</label><input class="input" value="•••" readonly></div>
+      </div>
+      <div class="card pad" style="background:rgba(255,159,10,.08);border-color:var(--amber)">
+        <div class="row" style="align-items:flex-start;gap:10px"><span style="color:var(--amber);display:grid;place-items:center">${ic('warn')}</span>
+        <p style="font-size:13px;line-height:1.55">Stripe isn't connected — these are placeholder details and no payment will be taken.<br><b>${PROTO}</b></p></div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="doUpgrade('${id}')">${ic('card')} Simulate payment</button></div>
+  </div>`);
+}
+function doUpgrade(id){
+  const p=DB.plans.find(x=>x.id===id);
+  layer().innerHTML=`<div class="scrim"><div class="modal" style="max-width:340px"><div class="analyzing">
+    <div style="display:grid;place-items:center"><span class="orb lg"></span></div>
+    <h2 class="h2" style="margin-top:16px">Processing…</h2></div></div></div>`;
+  setTimeout(()=>{
+    DB.plan=id; closeModal(); render();
+    modal(`<div class="modal" style="max-width:400px"><div class="modal-body" style="text-align:center;padding:32px 26px">
+      <div style="width:60px;height:60px;border-radius:50%;background:var(--green);display:grid;place-items:center;margin:0 auto 16px;color:#fff">${ic('check')}</div>
+      <h2 class="h2">You're on ${p.name}</h2>
+      <div class="row" style="justify-content:center;margin-top:9px"><span class="tag t-grey">${PROTO}</span></div>
+      <p class="muted" style="font-size:13.8px;margin-top:10px;line-height:1.6">
+        ${id==='max'?'MARA can now manage paid budgets and run your channels end-to-end.':'Unlimited MARA chat, scheduling and campaigns are unlocked.'}</p>
+      <button class="btn btn-primary btn-block" style="margin-top:20px" onclick="closeModal();go('${id==='max'?'ads':'mara'}')">
+        ${id==='max'?'Review the ad budget':'Talk to MARA'}</button>
+      <button class="btn btn-ghost btn-block" style="margin-top:8px" onclick="closeModal()">Back to plans</button>
+    </div></div>`);
+    toast(`Upgraded to ${p.name} — simulated`,'ok',true);
+  },1600);
+}
+</script>
+<script>
+/* ================== PAID ADVERTISING BUDGET ================== */
+function donut(){
+  const R=62,C=2*Math.PI*R; let off=0;
+  return `<svg class="donut" viewBox="0 0 150 150">
+    <circle cx="75" cy="75" r="72" fill="rgba(255,255,255,.13)"/>
+    <circle cx="75" cy="75" r="${R}" fill="none" stroke="rgba(255,255,255,.22)" stroke-width="19"/>
+    ${S.adAlloc.map(a=>{
+      const len=C*(a.pct/100); const seg=`<circle cx="75" cy="75" r="${R}" fill="none" stroke="${a.c}" stroke-width="19"
+        stroke-dasharray="${len-2.5} ${C-len+2.5}" stroke-dashoffset="${-off}" transform="rotate(-90 75 75)" stroke-linecap="butt"><title>${a.n} — ${a.pct}%</title></circle>`;
+      off+=len; return seg;}).join('')}
+    <text x="75" y="70" text-anchor="middle" font-size="21" font-weight="700" fill="currentColor" font-family="Bricolage Grotesque">AED ${nfc(S.adTotal)}</text>
+    <text x="75" y="88" text-anchor="middle" font-size="10" fill="currentColor" opacity=".72">14-day budget</text>
+  </svg>`;
+}
+function adTotals(){
+  const sum=S.adAlloc.reduce((a,b)=>a+b.pct,0);
+  const proj=S.adAlloc.reduce((a,b)=>a+(S.adTotal*b.pct/100)*parseFloat(b.roas),0);
+  return {sum,proj:Math.round(proj),roas:(proj/S.adTotal).toFixed(1)};
+}
+/* ---------- approval lock helpers ---------- */
+function adEditable(){ return !S.approvedPlan || S.changeMode; }
+function adGuard(){
+  if(adEditable()) return true;
+  toast('Budget is locked by your approval — use “Request budget change”','err');
+  return false;
+}
+function spentPct(){ const ap=S.approvedPlan; return ap? Math.min(100,Math.round(ap.spent/ap.limit*100)) : 0; }
+
+function pageAds(){
+  const {sum,proj,roas}=adTotals();
+  const locked=DB.plan!=='max';
+  const ap=S.approvedPlan, editable=adEditable();
+  const dis=editable?'':'disabled';
+
+  const statusPanel = (ap && !S.changeMode) ? `
+    <div class="card pad" style="border-color:${ap.paused?'var(--amber)':'var(--green)'};margin-bottom:14px">
+      <div class="between wrap" style="gap:12px;margin-bottom:14px">
+        <div class="row" style="align-items:flex-start">
+          <span style="color:${ap.paused?'var(--amber)':'var(--green)'};display:grid;place-items:center;margin-top:2px">${ic(ap.paused?'clock':'check')}</span>
+          <div><div class="row wrap" style="gap:8px"><b style="font-size:15px">Approved campaign</b>
+              <span class="tag ${ap.paused?'t-amber':'t-green'}">${ap.paused?'Spend paused':'Running'}</span>
+              <span class="tag t-grey">${ic('shield')} Budget locked</span></div>
+            <div class="dim" style="font-size:12.5px;margin-top:3px">
+              MARA may optimise and pause campaigns inside this limit. She cannot increase it.</div></div>
+        </div>
+        <div class="row wrap" style="gap:8px">
+          <button class="btn ${ap.paused?'btn-primary':'btn-danger'} btn-sm" onclick="${ap.paused?'resumeAds()':'pauseAds()'}">
+            ${ic(ap.paused?'play':'clock')} ${ap.paused?'Resume spend':'Pause spend'}</button>
+          <button class="btn btn-outline btn-sm" onclick="requestChange()">${ic('edit')} Request budget change</button>
+        </div>
+      </div>
+      <div class="grid-3" style="gap:10px">
+        <div class="stat-mini"><b>AED ${nfc(ap.limit)}</b><span>Approved limit</span></div>
+        <div class="stat-mini"><b>AED ${nfc(ap.spent)}</b><span>Spent so far</span></div>
+        <div class="stat-mini"><b>AED ${nfc(ap.limit-ap.spent)}</b><span>Remaining</span></div>
+      </div>
+      <div style="margin-top:14px">
+        <div class="between" style="font-size:12px;color:var(--text-2);margin-bottom:6px">
+          <span>${spentPct()}% of approved limit used</span>
+          <span class="mono">AED ${nfc(ap.spent)} / AED ${nfc(ap.limit)}</span></div>
+        <div class="bar-track" style="height:10px"><div class="bar-fill" style="width:${spentPct()}%;background:${ap.paused?'var(--amber)':'var(--green)'}"></div></div>
+      </div>
+      <div class="sep"></div>
+      <div class="row wrap" style="gap:22px">
+        <div><div class="dim" style="font-size:11.5px">Start date</div><b style="font-size:13.5px">${ap.start}</b></div>
+        <div><div class="dim" style="font-size:11.5px">End date</div><b style="font-size:13.5px">${ap.end}</b></div>
+        <div><div class="dim" style="font-size:11.5px">Campaigns</div><b style="font-size:13.5px">${ap.alloc.length}</b></div>
+      </div>
+      <div style="margin-top:14px">${protoNote()}</div>
+    </div>` : '';
+
+  const changePanel = S.changeMode ? `
+    <div class="card pad" style="border-color:var(--amber);background:rgba(255,159,10,.08);margin-bottom:14px">
+      <div class="between wrap" style="gap:14px">
+        <div style="max-width:560px">
+          <div class="row wrap" style="gap:8px"><span style="color:var(--amber);display:grid;place-items:center">${ic('warn')}</span>
+            <b style="font-size:15px">Budget change request — not approved yet</b></div>
+          <p style="font-size:13.3px;line-height:1.6;color:var(--text-2);margin-top:8px">
+            Your approved limit of <b>AED ${nfc(S.approvedPlan.limit)}</b> is still the only amount MARA may spend.
+            <b>No additional money can be spent until you explicitly approve the new amount.</b></p>
+          <div class="row wrap" style="gap:18px;margin-top:12px">
+            <div><div class="dim" style="font-size:11.5px">Currently approved</div><b class="mono" style="font-size:15px">AED ${nfc(S.approvedPlan.limit)}</b></div>
+            <div style="display:grid;place-items:center;color:var(--text-3)">${ic('arrow')}</div>
+            <div><div class="dim" style="font-size:11.5px">Proposed</div>
+              <b class="mono" style="font-size:15px;color:${S.adTotal>S.approvedPlan.limit?'var(--red)':'var(--green)'}">AED ${nfc(S.adTotal)}</b></div>
+            <div><div class="dim" style="font-size:11.5px">Difference</div>
+              <b class="mono" style="font-size:15px">${S.adTotal>=S.approvedPlan.limit?'+':'−'}AED ${nfc(Math.abs(S.adTotal-S.approvedPlan.limit))}</b></div>
+          </div>
+        </div>
+        <div class="row wrap" style="gap:9px">
+          <button class="btn btn-ghost btn-sm" onclick="cancelChange()">Cancel change</button>
+          <button class="btn btn-primary btn-sm" onclick="submitChange()">${ic('check')} Submit for approval</button>
+        </div>
+      </div>
+    </div>` : '';
+
+  const proposeCard = (!ap && !S.changeMode) ? `
+    <div class="approve-card" style="margin-bottom:14px">
+      <div class="between wrap" style="gap:18px">
+        <div style="max-width:460px">
+          <span class="tag" style="background:rgba(255,255,255,.2);color:#fff">${ic('clock')} Awaiting your approval</span>
+          <h2 style="font-family:var(--display);font-size:24px;font-weight:700;margin:12px 0 8px">
+            MARA suggests AED ${nfc(S.adTotal)} over 14 days</h2>
+          <p style="opacity:.9;font-size:14px;line-height:1.6">
+            Weighted toward your Reels, because that's where reach compounds fastest in this demo dataset.
+            Nothing is spent until you approve it, and the money is charged by your own ad account —
+            never by your Voom subscription.</p>
+          <div class="row wrap" style="gap:7px;margin-top:12px">
+            <span class="tag" style="background:rgba(255,255,255,.2);color:#fff">${PROTO}</span></div>
+          <div class="row wrap" style="gap:9px;margin-top:18px">
+            <button class="btn" style="background:#fff;color:#a82c08" onclick="approveAds(false)">${ic('check')} Approve AED ${nfc(S.adTotal)}</button>
+            <button class="btn" style="background:rgba(255,255,255,.18);color:#fff" onclick="adjustAds()">Adjust budget</button>
+            <button class="btn" style="background:transparent;color:#fff;border-color:rgba(255,255,255,.4)" onclick="declineAds()">Decline</button>
+          </div>
+        </div>
+        <div style="display:grid;place-items:center;color:#fff">${donut()}</div>
+      </div>
+    </div>` : '';
+
+  return `<div class="page">
+    <div class="page-head">
+      <div><h1 class="h1">Paid advertising</h1><p>MARA builds the allocation. Nothing spends until you approve it.</p>
+        <div class="row wrap" style="gap:7px;margin-top:9px">${demoTag()}
+          <span class="tag t-grey">${ic('info')} Optional — separate from your subscription</span></div></div>
+      <div class="row wrap">
+        <button class="btn btn-outline btn-sm" onclick="askMara('Explain this ad budget')">${ic('spark')} Ask MARA why</button>
+        <button class="btn btn-ghost btn-sm" onclick="toast('Spend history exported','ok',true)">${ic('down')} Export</button>
+      </div>
+    </div>
+
+    <div style="margin-bottom:14px">${adSepNote()}</div>
+    ${locked?`<div class="card pad between wrap" style="border-color:var(--brand);background:var(--brand-soft);margin-bottom:14px;gap:12px">
+      <div class="row"><span style="color:var(--brand);display:grid;place-items:center">${ic('crown')}</span>
+        <span style="font-size:13.5px">Paid ad management is a <b>Max</b> feature. You can review the plan below — approving requires an upgrade.</span></div>
+      <button class="btn btn-primary btn-sm" onclick="go('pricing')">See Max</button></div>`:''}
+
+    ${statusPanel}${changePanel}${proposeCard}
+
+    <div class="grid-2">
+      <div class="card pad">
+        <div class="between wrap" style="margin-bottom:6px;gap:8px">
+          <div><h2 class="h2">Allocation</h2>
+            <p class="dim" style="font-size:12.5px;margin-top:2px">${editable?'Drag to rebalance — total must be 100%':'Locked by your approval'}</p></div>
+          <div class="row wrap" style="gap:7px">
+            ${editable?'':`<span class="tag t-grey">${ic('shield')} Locked</span>`}
+            <span class="tag ${sum===100?'t-green':'t-red'}">${sum}% allocated</span></div>
+        </div>
+        <div class="sep"></div>
+        ${S.adAlloc.map((a,i)=>`<div class="alloc">
+          <span style="width:10px;height:34px;border-radius:5px;background:${a.c};flex:none"></span>
+          <div class="grow" style="min-width:0">
+            <div class="between" style="margin-bottom:5px">
+              <div class="trunc"><b style="font-size:13.5px">${a.n}</b>
+                <div class="dim" style="font-size:11.5px">${a.ch} · past ROAS ${a.roas}</div></div>
+              <b class="mono" style="font-size:13.5px;flex:none">AED ${nfc(Math.round(S.adTotal*a.pct/100))}</b>
+            </div>
+            <div class="row">
+              <input class="slider" type="range" min="0" max="100" value="${a.pct}" ${dis}
+                oninput="setAlloc(${i},this.value)">
+              <b class="mono" style="width:38px;text-align:right;font-size:12.5px">${a.pct}%</b>
+            </div>
+          </div>
+        </div>`).join('')}
+        <div class="between wrap" style="margin-top:14px;gap:8px">
+          <button class="btn btn-ghost btn-sm" ${dis} onclick="resetAlloc()">${ic('spark')} Reset to MARA's split</button>
+          <button class="btn btn-outline btn-sm" ${dis} onclick="normalize()">Balance to 100%</button>
+        </div>
+        ${editable?'':`<p class="dim" style="font-size:12px;margin-top:12px;line-height:1.55">
+          These controls unlock only inside a budget change request, which needs your approval before anything else is spent.</p>`}
+      </div>
+
+      <div>
+        <div class="card pad" style="margin-bottom:14px">
+          <div class="row wrap" style="margin-bottom:4px"><h2 class="h2">Example scenario</h2>${exTag()}</div>
+          <p class="dim" style="font-size:12.5px;margin-bottom:12px">These figures demonstrate how ROAS works. They are not guaranteed results.</p>
+          <div class="grid-3" style="gap:9px;grid-template-columns:1fr 1fr">
+            ${[['Ad spend','AED '+nfc(S.adTotal)],['Tracked revenue','AED '+nfc(proj)],['ROAS',roas+'×'],['Est. new customers','~148']]
+              .map(([a,b])=>`<div class="stat-mini"><b>${b}</b><span>${a}</span></div>`).join('')}
+          </div>
+          <div class="card pad" style="margin-top:12px;background:var(--surface-2)">
+            <div class="row" style="align-items:flex-start;gap:10px"><span style="color:var(--text-3);display:grid;place-items:center">${ic('info')}</span>
+              <p style="font-size:12.8px;line-height:1.6;color:var(--text-2)">
+                <b>4× ROAS</b> means AED 4 in tracked revenue for every AED 1 spent on advertising.
+                Revenue is not the same as profit.</p></div>
+          </div>
+          <div class="sep"></div>
+          <div class="between wrap" style="gap:8px;margin-bottom:8px">
+            <label style="font-size:12.5px;font-weight:600;color:var(--text-2)">Total budget</label>
+            ${editable?'':`<span class="tag t-grey">${ic('shield')} Locked</span>`}
+          </div>
+          <div class="row wrap" style="gap:7px">
+            ${[600,800,1200,2000].map(v=>`<button class="chip ${S.adTotal===v?'on':''}" ${dis} onclick="setTotal(${v})">AED ${nfc(v)}</button>`).join('')}
+          </div>
+          <div class="row" style="margin-top:12px;gap:10px">
+            <input class="slider" type="range" min="200" max="5000" step="100" value="${S.adTotal}" ${dis} oninput="setTotal(this.value)">
+            <b class="mono" style="width:86px;text-align:right;white-space:nowrap;flex:none">AED ${nfc(S.adTotal)}</b>
+          </div>
+          ${editable?'':`<p class="dim" style="font-size:12px;margin-top:10px;line-height:1.55">
+            Your approved limit is fixed at <b>AED ${nfc(ap.limit)}</b>. Use <b>Request budget change</b> to propose a different amount.</p>`}
+        </div>
+        <div class="card pad" style="background:var(--brand-soft);border-color:var(--brand)">
+          <div class="row" style="align-items:flex-start;gap:11px">
+            <span class="orb sm" style="margin-top:2px"></span>
+            <div><b style="font-size:13.5px">What MARA may and may not do</b>
+              <ul style="font-size:12.8px;color:var(--text-2);margin:8px 0 0;padding-left:17px;line-height:1.85">
+                <li>May pause any campaign below <b>1.5× ROAS</b> after AED 80 spend</li>
+                <li>May move spend between campaigns inside the approved limit</li>
+                <li><b>May never</b> exceed the approved limit, even if performance is strong</li>
+                <li><b>May never</b> start a new campaign or raise the limit without your approval</li>
+              </ul></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card pad" style="margin-top:14px">
+      <h2 class="h2" style="margin-bottom:4px">How paid advertising works</h2>
+      <p class="dim" style="font-size:12.5px;margin-bottom:16px">Where the money actually goes, step by step.</p>
+      <div class="stack" style="gap:12px">
+        ${['Connect your Meta or Google advertising account.',
+           'Add your payment card directly to Meta or Google.',
+           'MARA creates a campaign and suggests a budget.',
+           'You approve, reduce or decline it.',
+           'Meta or Google charges your card gradually as advertisements run.',
+           'MARA optimises within the amount you approved.',
+           'Any increase requires another approval.']
+          .map((t,i)=>`<div class="row" style="align-items:flex-start;gap:12px">
+            <span class="mono" style="width:26px;height:26px;border-radius:8px;background:var(--surface-2);border:1px solid var(--line);
+              display:grid;place-items:center;font-size:11.5px;font-weight:600;flex:none;color:var(--text-2)">${i+1}</span>
+            <span style="font-size:13.5px;line-height:1.55;padding-top:3px">${t}</span></div>`).join('')}
+      </div>
+      <div class="card pad" style="margin-top:16px;background:var(--surface-2)">
+        <div class="row" style="align-items:flex-start;gap:10px"><span style="color:var(--brand);display:grid;place-items:center">${ic('shield')}</span>
+          <p style="font-size:13px;line-height:1.6"><b>Voom does not receive or store your advertising money or advertising card details.</b></p></div>
+      </div>
+    </div>
+
+    <div class="card pad" style="margin-top:14px">
+      <div class="row wrap" style="margin-bottom:14px"><h2 class="h2">Spend history</h2>${demoTag()}</div>
+      <div style="overflow-x:auto"><table class="tbl">
+        <thead><tr><th>Campaign</th><th>Budget</th><th>ROAS</th><th>Period</th><th>Status</th></tr></thead>
+        <tbody>${DB.ads.history.map(h=>`<tr>
+          <td><b>${h.n}</b></td><td class="mono">${h.amt}</td>
+          <td class="mono" style="color:${parseFloat(h.roas)>=2?'var(--green)':'var(--red)'};font-weight:650">${h.roas}</td>
+          <td class="muted" style="font-size:12.5px">${h.when}</td>
+          <td><span class="tag ${h.t}">${h.st}</span></td></tr>`).join('')}</tbody>
+      </table></div>
+    </div>
+  </div>`;
+}
+
+function setTotal(v){ if(!adGuard()) return; S.adTotal=+v; render(); }
+function setAlloc(i,v){ if(!adGuard()) return; S.adAlloc[i].pct=+v; render(); }
+function resetAlloc(){ if(!adGuard()) return;
+  S.adAlloc=JSON.parse(JSON.stringify(DB.ads.alloc)); render(); toast("Reset to MARA's recommendation",'info'); }
+function normalize(){
+  if(!adGuard()) return;
+  const sum=S.adAlloc.reduce((a,b)=>a+b.pct,0)||1;
+  S.adAlloc.forEach(a=>a.pct=Math.round(a.pct/sum*100));
+  const d=100-S.adAlloc.reduce((a,b)=>a+b.pct,0); S.adAlloc[0].pct+=d;
+  render(); toast('Balanced to 100%');
+}
+function adjustAds(){ toast('Use the sliders below to rebalance, then approve','info');
+  document.querySelector('.slider')?.scrollIntoView({behavior:'smooth',block:'center'}); }
+
+function declineAds(){
+  modal(`<div class="modal" style="max-width:420px">
+    <div class="modal-head"><h2 class="h2">Decline this budget?</h2><button class="icon-btn" onclick="closeModal()">${ic('x')}</button></div>
+    <div class="modal-body">
+      <p class="muted" style="font-size:14px;line-height:1.6;margin-bottom:14px">Tell MARA why, and she'll rebuild the plan around it. Nothing is spent either way.</p>
+      ${['Too expensive right now','Wrong channel mix','Want to test organic first','Not the right timing']
+        .map(r=>`<button class="chip" style="margin:0 6px 8px 0" onclick="[...this.parentNode.querySelectorAll('.chip')].forEach(c=>c.classList.remove('on'));this.classList.add('on')">${r}</button>`).join('')}
+      <textarea class="input" rows="3" placeholder="Anything else?" style="margin-top:8px"></textarea>
+      <div style="margin-top:12px">${protoNote()}</div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-danger" onclick="doDecline()">Decline budget</button></div>
+  </div>`);
+}
+function doDecline(){
+  closeModal();
+  if(S.approvedPlan){ toast('Your approved limit is unchanged','info'); return; }
+  S.adTotal=600;
+  S.adAlloc=[{n:PACK.ad[1],ch:'Meta Advantage+',pct:70,c:'#0f6f68',roas:'5.1×'},
+             {n:PACK.ad[0],ch:'Instagram Reels',pct:30,c:'#e8481f',roas:'4.2×'}];
+  S.chat.push({r:'mara',h:`Understood — I've dropped the proposal to <b>AED 600</b> and shifted it into
+    ${PACK.ad[1].toLowerCase()}, the highest-ROAS line in this demo dataset. Still nothing spends until you approve it.`,
+    acts:[['Review new budget','go(\'ads\')']]});
+  render(); toast('Budget declined — MARA is rebuilding the plan','info');
+}
+function requestChange(){
+  S.changeMode=true;
+  S.adTotal=S.approvedPlan.limit;
+  S.adAlloc=JSON.parse(JSON.stringify(S.approvedPlan.alloc));
+  render();
+  toast('Change request opened — nothing extra is spent until you approve it','info');
+}
+function cancelChange(){
+  S.changeMode=false;
+  S.adTotal=S.approvedPlan.limit;
+  S.adAlloc=JSON.parse(JSON.stringify(S.approvedPlan.alloc));
+  render(); toast('Change cancelled — your approved limit is unchanged','info');
+}
+function submitChange(){
+  const {sum}=adTotals(), ap=S.approvedPlan;
+  if(sum!==100){ toast(`Allocation is ${sum}% — balance it to 100% first`,'err'); return; }
+  if(S.adTotal===ap.limit && JSON.stringify(S.adAlloc)===JSON.stringify(ap.alloc)){
+    toast('Nothing has changed yet','err'); return; }
+  if(S.adTotal<ap.spent){ toast(`AED ${nfc(ap.spent)} is already spent — the new limit cannot be lower`,'err'); return; }
+  approveAds(true);
+}
+
+function approveAds(isChange){
+  const {sum,proj,roas}=adTotals();
+  if(sum!==100){ toast(`Allocation is ${sum}% — balance it to 100% first`,'err'); return; }
+  if(DB.plan!=='max'){
+    modal(`<div class="modal" style="max-width:420px">
+      <div class="modal-head"><div><h2 class="h2">${ic('crown')} Max required</h2>
+        <p class="dim" style="font-size:13px">Paid ad management</p></div>
+        <button class="icon-btn" onclick="closeModal()">${ic('x')}</button></div>
+      <div class="modal-body"><p class="muted" style="font-size:14px;line-height:1.6">
+        MARA can build and monitor budgets on any plan, but she can only run spend on <b>Max</b> —
+        that's where budget limits and automatic performance pauses live.</p></div>
+      <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Not now</button>
+        <button class="btn btn-primary" onclick="closeModal();go('pricing')">Upgrade to Max</button></div>
+    </div>`); return;
+  }
+  const ap=S.approvedPlan, up=isChange&&S.adTotal>ap.limit;
+  modal(`<div class="modal">
+    <div class="modal-head"><div><h2 class="h2">${isChange?'Approve new limit of':'Approve'} AED ${nfc(S.adTotal)}</h2>
+      <p class="dim" style="font-size:13px">${isChange?`Change request · was AED ${nfc(ap.limit)}`:`14 days · ${S.adAlloc.length} campaigns`}</p></div>
+      <button class="icon-btn" onclick="closeModal()">${ic('x')}</button></div>
+    <div class="modal-body">
+      ${isChange?`<div class="card pad" style="background:${up?'rgba(240,56,75,.08)':'rgba(18,183,106,.08)'};border-color:${up?'var(--red)':'var(--green)'};margin-bottom:14px">
+        <div class="row wrap" style="gap:16px">
+          <div><div class="dim" style="font-size:11.5px">Approved now</div><b class="mono">AED ${nfc(ap.limit)}</b></div>
+          <div style="display:grid;place-items:center;color:var(--text-3)">${ic('arrow')}</div>
+          <div><div class="dim" style="font-size:11.5px">New limit</div><b class="mono">AED ${nfc(S.adTotal)}</b></div>
+          <div><div class="dim" style="font-size:11.5px">${up?'Extra authorised':'Reduction'}</div>
+            <b class="mono" style="color:${up?'var(--red)':'var(--green)'}">${up?'+':'−'}AED ${nfc(Math.abs(S.adTotal-ap.limit))}</b></div>
+          <div><div class="dim" style="font-size:11.5px">Already spent</div><b class="mono">AED ${nfc(ap.spent)}</b></div>
+        </div></div>`:''}
+      ${S.adAlloc.map(a=>`<div class="between" style="padding:9px 0;border-bottom:1px solid var(--line)">
+        <span class="row" style="font-size:13.3px"><span style="width:8px;height:8px;border-radius:50%;background:${a.c}"></span>${a.n}</span>
+        <b class="mono" style="font-size:13.3px">AED ${nfc(Math.round(S.adTotal*a.pct/100))}</b></div>`).join('')}
+      <div class="between" style="padding:13px 0"><b>${isChange?'New total limit':'Total'}</b><b class="h2">AED ${nfc(S.adTotal)}</b></div>
+      <div class="grid-3" style="gap:9px;grid-template-columns:1fr 1fr">
+        <div class="stat-mini"><b>AED ${nfc(proj)}</b><span>Example tracked revenue</span></div>
+        <div class="stat-mini"><b>${roas}×</b><span>Example ROAS</span></div>
+      </div>
+      <p class="dim" style="font-size:11.5px;margin-top:8px">Example scenario from demo data — not a guaranteed result. Revenue is not profit.</p>
+      <label class="row" style="margin-top:16px;font-size:13px;cursor:pointer;align-items:flex-start;gap:9px">
+        <input type="checkbox" id="ad-ok" style="width:17px;height:17px;accent-color:var(--brand);margin-top:2px">
+        <span>I authorise MARA to spend up to <b>AED ${nfc(S.adTotal)}</b> in total from <b>my own advertising account</b>.
+          MARA may optimise and pause inside this limit, and must ask me again before any increase.
+          My Voom subscription is billed separately.</span></label>
+      <div class="card pad" style="margin-top:14px;background:rgba(255,159,10,.08);border-color:var(--amber)">
+        <div class="row" style="align-items:flex-start;gap:10px"><span style="color:var(--amber);display:grid;place-items:center">${ic('warn')}</span>
+        <p style="font-size:12.8px;line-height:1.55">No ad account is connected — approving here simulates the launch and generates sample performance.
+          <br><b>${PROTO}</b></p></div>
+      </div>
+      <div style="margin-top:10px">${adSepNote()}</div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmAds(${isChange?'true':'false'})">${ic('check')} ${isChange?'Approve new limit':'Approve & launch'}</button></div>
+  </div>`);
+}
+
+function confirmAds(isChange){
+  if(!$('#ad-ok').checked){ toast('Tick the authorisation box to continue','err'); return; }
+  const {proj,roas}=adTotals();
+  closeModal();
+  if(isChange){
+    const prev=S.approvedPlan.limit;
+    S.approvedPlan.limit=S.adTotal;
+    S.approvedPlan.alloc=JSON.parse(JSON.stringify(S.adAlloc));
+    S.changeMode=false;
+    DB.ads.history.unshift({n:'Budget change — approved',amt:'AED '+nfc(S.adTotal),st:'Active',t:'t-green',roas:roas+'×',when:'Changed just now'});
+    S.chat.push({r:'mara',h:`New limit approved — <b>AED ${nfc(S.adTotal)}</b> (was AED ${nfc(prev)}).
+      I'll stay inside it and ask you again before any further increase.`,
+      acts:[['See live spend','go(\'ads\')']]});
+    render(); toast(`New limit of AED ${nfc(S.adTotal)} approved`,'ok',true);
+    return;
+  }
+  S.approvedPlan={limit:S.adTotal, alloc:JSON.parse(JSON.stringify(S.adAlloc)),
+    spent:Math.round(S.adTotal*0.34), start:'24 Aug 2026', end:'7 Sep 2026', paused:false};
+  S.adApproved=true; S.changeMode=false;
+  DB.ads.history.unshift({n:'Sept sprint — MARA plan',amt:'AED '+nfc(S.adTotal),st:'Active',t:'t-green',roas:roas+'×',when:'Approved just now'});
+  S.chat.push({r:'mara',h:`Budget approved — <b>AED ${nfc(S.adTotal)}</b> is live across ${S.adAlloc.length} campaigns.
+    That limit is now fixed: I'll optimise and pause inside it, and I'll ask you again before spending a dirham more.`,
+    acts:[['See live spend','go(\'ads\')']]});
+  render(); toast(`AED ${nfc(S.adTotal)} approved — campaigns launching (simulated)`,'ok',true);
+}
+function pauseAds(){ if(!S.approvedPlan) return; S.approvedPlan.paused=true; render(); toast('All paid spend paused','info',true); }
+function resumeAds(){ if(!S.approvedPlan) return; S.approvedPlan.paused=false; render(); toast('Spend resumed inside your approved limit','info',true); }
+
+/* ========================== SETTINGS ========================== */
+function pageSettings(){
+  const b=DB.brand;
+  return `<div class="page" style="max-width:820px">
+    <div class="page-head"><div><h1 class="h1">Settings</h1><p>What MARA knows about you and how she behaves.</p></div>
+      <button class="btn btn-primary btn-sm" onclick="toast('Brand profile saved')">Save changes</button></div>
+    <div class="card pad" style="margin-bottom:14px">
+      <h2 class="h2" style="margin-bottom:14px">Brand profile</h2>
+      <div class="row" style="gap:12px" class="wrap">
+        <div class="field grow"><label>Brand name</label><input class="input" value="${esc(b.name)}" oninput="DB.brand.name=this.value"></div>
+        <div class="field grow"><label>Website</label><input class="input" value="${esc(b.site)}"></div>
+      </div>
+      <div class="field"><label>Kind of business</label>
+        <select class="input" onchange="applyPack(this.value);render();toast('Demo content switched to '+this.value,'info')">
+          ${Q_INDUSTRY.map(([e,o])=>`<option ${o===b.industry?'selected':''}>${o}</option>`).join('')}</select></div>
+      <label style="display:block;font-size:12.5px;font-weight:600;color:var(--text-2);margin-bottom:9px">Brand personality</label>
+      <div class="row wrap" style="gap:7px;margin-bottom:16px">
+        ${OB_TONE.map(t=>`<button class="chip ${b.tone.includes(t)?'on':''}" onclick="togTone('${t}')">${t}</button>`).join('')}
+      </div>
+      <label style="display:block;font-size:12.5px;font-weight:600;color:var(--text-2);margin-bottom:9px">Audience</label>
+      <div class="row wrap" style="gap:7px">
+        ${b.audience.map(a=>`<span class="chip on">${a} <span onclick="this.parentNode.remove()">×</span></span>`).join('')}
+        <button class="chip" onclick="toast('Audience editor is visual-only','info')">${ic('plus')} Add</button>
+      </div>
+    </div>
+    <div class="card pad" style="margin-bottom:14px">
+      <h2 class="h2" style="margin-bottom:6px">MARA autonomy</h2>
+      <p class="dim" style="font-size:12.5px;margin-bottom:14px">How much she can do without checking in — set during onboarding.</p>
+      <div style="margin-bottom:14px">${adSepNote()}</div>
+      ${[['Draft content','Always','t-green'],['Publish to Instagram',(b.permission||'Yes — always ask first').startsWith('No')?'Automatic':'Ask first',(b.permission||'').startsWith('No')?'t-green':'t-amber'],
+         ['Send email & SMS','Ask first','t-amber'],['Spend ad budget','Always ask','t-red'],
+         ['Automation level',b.auto||'MARA drafts, I approve','t-blue'],['Posting frequency',b.freq||'2–3 times a week','t-blue'],
+         ['Monthly ad budget',b.budget||'AED 1,000 – 3,000','t-blue']]
+        .map(([a,v,t])=>`<div class="between" style="padding:11px 0;border-bottom:1px solid var(--line)">
+          <span style="font-size:13.5px;font-weight:550">${a}</span>
+          <button class="tag ${t}" onclick="toast('Autonomy settings are visual-only here','info')">${v} ${ic('arrow')}</button></div>`).join('')}
+    </div>
+    <div class="card pad">
+      <h2 class="h2" style="margin-bottom:14px">Account</h2>
+      <div class="between" style="padding:10px 0;border-bottom:1px solid var(--line)">
+        <div><b style="font-size:13.5px">${esc(DB.user.name)}</b><div class="dim" style="font-size:12.5px">${esc(DB.user.email)}</div></div>
+        <button class="btn btn-ghost btn-sm" onclick="toast('Profile editor is visual-only','info')">Edit</button></div>
+      <div class="between" style="padding:10px 0;border-bottom:1px solid var(--line)">
+        <div><b style="font-size:13.5px">Appearance</b><div class="dim" style="font-size:12.5px">Light or dark interface</div></div>
+        <div class="toggle-wrap">
+          <button class="tab ${S.theme==='light'?'on':''}" onclick="setTheme('light');render()">Light</button>
+          <button class="tab ${S.theme==='dark'?'on':''}" onclick="setTheme('dark');render()">Dark</button></div></div>
+      <div class="between" style="padding:14px 0 0">
+        <div><b style="font-size:13.5px;color:var(--red)">Delete workspace</b>
+          <div class="dim" style="font-size:12.5px">Removes ${esc(b.name)} and all content</div></div>
+        <button class="btn btn-danger btn-sm" onclick="toast('Deletion is disabled in this prototype','err')">Delete</button></div>
+    </div>
+  </div>`;
+}
+function togTone(t){ const a=DB.brand.tone,i=a.indexOf(t); if(i>-1)a.splice(i,1); else a.push(t); render(); }
+
+/* ========================== ROUTER ========================== */
+function render(){
+  const v = S.screen==='auth'?viewAuth() : S.screen==='onboard'?viewOnboard() : viewApp();
+  root().innerHTML=v;
+  if(S.screen==='app'&&S.page==='mara') setTimeout(scrollChat,10);
+}
+document.addEventListener('click',e=>{
+  if(S.menuOpen && !e.target.closest('.menu') && !e.target.closest('.avatar')){ S.menuOpen=false; render(); }
+},true);
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ if(layer().innerHTML){closeModal()} else if(S.sideOpen){S.sideOpen=false;render()} } });
+applyPack('Restaurant / Café');
+seedChat();
+render();
+</script>
+</body>
+</html>
