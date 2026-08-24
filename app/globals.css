@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0a0e0d;
+  --surface: #131817;
+  --surface-2: #1b2220;
+  --surface-3: #252d2a;
+  --line: #242c29;
+  --line-2: #374039;
+  --text: #eef2ee;
+  --text-2: #a3ada5;
+  --text-3: #6f7a72;
+
+  --brand: #ff6a3d;
+  --brand-2: #3fb3a6;
+  --brand-soft: rgba(255, 106, 61, 0.14);
+  --grad: linear-gradient(112deg, #c9380f 0%, #e8481f 55%, #e8681c 100%);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-brand: var(--brand);
+  --color-brand-2: var(--brand-2);
+  --font-sans: var(--font-public-sans);
+  --font-display: var(--font-bricolage);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.voom-grad {
+  background: var(--grad);
+}
