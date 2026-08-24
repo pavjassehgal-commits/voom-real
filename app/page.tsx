@@ -22,7 +22,7 @@ export default function Home() {
         </p>
         <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
           <Link
-            href="/login"
+            href="/signup"
             className="voom-grad inline-flex h-[46px] items-center justify-center rounded-[11px] px-6 text-sm font-semibold text-white shadow-[0_6px_18px_-8px_var(--brand)] transition hover:brightness-110"
           >
             Get started

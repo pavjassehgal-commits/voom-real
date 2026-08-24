@@ -1,17 +1,27 @@
-import Link from "next/link";
+import { redirect } from "next/navigation";
+import { createClient } from "@/utils/supabase/server";
 import Logo from "../components/Logo";
+import { logout } from "./actions";
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const supabase = await createClient();
+  const { data, error } = await supabase.auth.getClaims();
+  if (error || !data?.claims) {
+    redirect("/login");
+  }
+
   return (
     <div className="flex min-h-screen flex-col">
       <header className="flex items-center justify-between border-b border-line px-6 py-4">
         <Logo />
-        <Link
-          href="/"
-          className="text-sm font-medium text-text-2 hover:text-text"
-        >
-          Log out
-        </Link>
+        <form action={logout}>
+          <button
+            type="submit"
+            className="text-sm font-medium text-text-2 hover:text-text"
+          >
+            Log out
+          </button>
+        </form>
       </header>
 
       <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
