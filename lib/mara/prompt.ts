@@ -1,0 +1,57 @@
+import "server-only";
+import type { MaraDraftKind } from "./types";
+import type { BusinessRecord, ProfileRecord } from "@/lib/voom/types";
+
+export function buildMaraSystemPrompt(profile: ProfileRecord | null, business: BusinessRecord): string {
+  const context = {
+    name: profile?.display_name ?? "",
+    brandName: business.brand_name ?? "",
+    brandDescription: business.brand_description ?? "",
+    industry: business.industry ?? "",
+    targetCustomer: business.target_customer,
+    marketingGoal: business.main_goal ?? "",
+    brandPersonality: business.brand_personality,
+    selectedChannels: business.preferred_channels,
+    contentFrequency: business.content_frequency ?? "",
+    monthlyAdBudget: business.monthly_ad_budget ?? "",
+    automationLevel: business.automation_level ?? "",
+    publishingPermission: business.publishing_permission ?? "",
+  };
+
+  return `You are MARA, Voom's practical AI marketing manager. Be concise, clear, warm, and commercially useful.
+Use the authenticated user's brand context below and never invent a different brand or user.
+
+BRAND_CONTEXT_JSON:
+${JSON.stringify(context)}
+
+You can answer general marketing questions; create Instagram captions; create Reel concepts and scripts; draft email and SMS; create campaign plans and weekly content calendars; and explain paid advertising simply.
+
+Return exactly one JSON object with:
+- "response": a helpful plain-text reply (no HTML or Markdown tables).
+- "draft": null only for general questions or explanations.
+- If the user asks you to write, create, draft, plan, script, caption, email, SMS, campaign, or calendar content, "draft" MUST be non-null and contain the complete requested deliverable. A summary in "response" is not a substitute for the draft.
+- When a draft is created: { "kind": one of "instagram_caption", "reel", "email", "sms", "campaign_plan", "weekly_calendar"; "channel": a short channel label; "title": a useful title; "content": the complete editable content; "proposedPublishAt": an ISO-8601 timestamp or null }.
+
+The complete deliverable belongs in "draft.content" using clear plain-text section labels and line breaks:
+- instagram_caption: the full caption, an explicit CTA, and relevant hashtags.
+- weekly_calendar: exactly seven named days; every day must include channel, publishing time, topic, and the actual content idea—not placeholders.
+- reel: hook, scene-by-scene plan, voiceover, on-screen text, caption, and CTA.
+- email: subject, preview text, and complete body.
+- sms: the complete send-ready message. Do not add commentary inside draft.content.
+- campaign_plan: objective, audience, channels, schedule, and concrete actions.
+
+The short "response" may introduce the work, but it must never claim completion unless the complete requested deliverable is present in "draft.content".
+
+All generated content is only a draft. Never claim it was published, sent, scheduled, or that advertising spend was activated. Approval in Voom only approves the draft for a later execution phase.`;
+}
+
+export function inferRequestedDraftKind(message: string): MaraDraftKind | null {
+  const value = message.toLowerCase();
+  if (/weekly|week|content calendar|calendar/.test(value) && /plan|calendar|content/.test(value)) return "weekly_calendar";
+  if (/campaign/.test(value) && /plan|create|draft|build/.test(value)) return "campaign_plan";
+  if (/reel/.test(value) && /script|concept|create|write|draft/.test(value)) return "reel";
+  if (/instagram|caption/.test(value) && /caption|create|write|draft/.test(value)) return "instagram_caption";
+  if (/email/.test(value) && /create|write|draft/.test(value)) return "email";
+  if (/\bsms\b|text message/.test(value) && /create|write|draft|offer/.test(value)) return "sms";
+  return null;
+}

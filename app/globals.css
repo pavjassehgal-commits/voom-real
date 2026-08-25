@@ -14,7 +14,51 @@
   --brand: #ff6a3d;
   --brand-2: #3fb3a6;
   --brand-soft: rgba(255, 106, 61, 0.14);
+  --ember: #f2a516;
+  --rose: #c9306b;
+
+  --green: #3ec27c;
+  --amber: #e0a53a;
+  --red: #f0645c;
+  --blue: #6aa8d8;
+  --pink: #c9306b;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px -16px rgba(0, 0, 0, 0.8);
+  --shadow-lg: 0 30px 70px -20px rgba(0, 0, 0, 0.85);
+
+  --r: 14px;
+  --r-lg: 20px;
+  --r-sm: 10px;
+
   --grad: linear-gradient(112deg, #c9380f 0%, #e8481f 55%, #e8681c 100%);
+  --grad-deep: linear-gradient(140deg, #8f2506 0%, #c9380f 45%, #e05a15 100%);
+}
+
+:root[data-theme="light"] {
+  --bg: #f1f3ef;
+  --surface: #ffffff;
+  --surface-2: #eaece6;
+  --surface-3: #dee1d9;
+  --line: #dee1d8;
+  --line-2: #c9cec3;
+  --text: #111614;
+  --text-2: #4d574f;
+  --text-3: #818c83;
+
+  --brand: #e8481f;
+  --brand-2: #0f6f68;
+  --brand-soft: rgba(232, 72, 31, 0.1);
+  --ember: #f2a516;
+  --rose: #c9306b;
+
+  --green: #1c8a52;
+  --amber: #b8770a;
+  --red: #c02d28;
+  --blue: #2f6f9f;
+  --pink: #c9306b;
+
+  --shadow: 0 1px 2px rgba(17, 22, 20, 0.05), 0 8px 24px -14px rgba(17, 22, 20, 0.22);
+  --shadow-lg: 0 26px 60px -22px rgba(17, 22, 20, 0.4);
 }
 
 @theme inline {
@@ -29,8 +73,30 @@
   --color-text-3: var(--text-3);
   --color-brand: var(--brand);
   --color-brand-2: var(--brand-2);
+  --color-ember: var(--ember);
+  --color-rose: var(--rose);
+  --color-green: var(--green);
+  --color-amber: var(--amber);
+  --color-red: var(--red);
+  --color-blue: var(--blue);
+  --color-pink: var(--pink);
   --font-sans: var(--font-public-sans);
   --font-display: var(--font-bricolage);
+  --font-mono: var(--font-plex-mono);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 20px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 body {
@@ -38,6 +104,14 @@ body {
   color: var(--text);
 }
 
+::selection {
+  background: var(--brand);
+  color: #fff;
+}
+
 .voom-grad {
   background: var(--grad);
+}
+.voom-grad-deep {
+  background: var(--grad-deep);
 }

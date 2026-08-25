@@ -1,6 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import { resolveSiteUrl } from "@/utils/site-url";
 
@@ -46,7 +47,7 @@ export async function signup(
 
   const supabase = await createClient();
 
-  const { error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
@@ -58,6 +59,10 @@ export async function signup(
     return {
       formError: "We couldn't create your account. Please try again.",
     };
+  }
+
+  if (data.session) {
+    redirect("/app/onboarding");
   }
 
   return { success: true };
