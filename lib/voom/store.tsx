@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -146,7 +147,6 @@ interface VoomState {
   reelTime: string;
   reelCaption: string;
   igConnected: boolean;
-  igStep: number;
   plan: Plan["id"];
   brand: Brand;
   posts: Post[];
@@ -214,7 +214,6 @@ function initialState(init: { displayName: string | null; email: string | null; 
     reelTime: "19:10",
     reelCaption: "",
     igConnected: false,
-    igStep: 0,
     plan: "free",
     brand,
     posts: buildPosts(pack),
@@ -282,9 +281,7 @@ interface VoomActions {
   reelChangeTime: (i: number) => void;
   bestTimeAll: () => void;
 
-  igConnect: () => void;
   igDisconnect: () => void;
-  igSetStep: (n: number) => void;
 
   setAdTotal: (v: number) => boolean;
   setAdAlloc: (i: number, v: number) => boolean;
@@ -329,6 +326,20 @@ export function VoomProvider({
   );
   const router = useRouter();
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    const syncInstagram = async () => {
+      try {
+        const response = await fetch("/api/integrations/instagram/status", { cache: "no-store" });
+        const value = await response.json() as { connection?: { connected?: boolean } };
+        if (active && response.ok) setState((current) => ({ ...current, igConnected: Boolean(value.connection?.connected) }));
+      } catch { /* Connection status remains safely disconnected. */ }
+    };
+    void syncInstagram();
+    window.addEventListener("voom:instagram-changed", syncInstagram);
+    return () => { active = false; window.removeEventListener("voom:instagram-changed", syncInstagram); };
+  }, []);
 
   const after = useCallback((ms: number, fn: () => void) => {
     const id = setTimeout(fn, ms);
@@ -483,8 +494,8 @@ export function VoomProvider({
     if (/instagram|connect/.test(t))
       return A(
         s.igConnected
-          ? `Instagram is connected as <b>${s.brand.handle || "your account"}</b> in this prototype. In the real product I'd pull insights hourly and publish Reels directly.`
-          : `I can't publish yet — Instagram isn't connected. It takes about 20 seconds and I'll need permission to publish and read insights.`,
+          ? `Instagram is securely connected as <b>${s.brand.handle || "your account"}</b>. Publishing remains unavailable until Voom's explicit approval and publishing flow is enabled.`
+          : `Instagram isn't connected. Open the Instagram page to start Voom's secure authorization flow when Meta configuration is available.`,
         [[s.igConnected ? "View connection" : "Connect Instagram", "instagram"]],
       );
     if (/price|plan|upgrade|cost/.test(t)) {
@@ -534,7 +545,7 @@ export function VoomProvider({
       reelQueue: s.reelQueue.map((r) => (r.st === "Draft" ? { ...r, st: "Scheduled", t2: "t-green" } : r)),
       chat: [
         ...s.chat,
-        { r: "mara" as const, h: "Done — everything is scheduled. I'll publish on your behalf and report back each morning." },
+        { r: "mara" as const, h: "Done — the drafts are approved and scheduled in Voom. Nothing has been published externally." },
       ],
     }));
     toast("All drafts approved and scheduled", "ok", true);
@@ -699,19 +710,10 @@ export function VoomProvider({
     toast("Whole queue moved to best slot", "ok", true);
   }, [toast]);
 
-  const igConnect = useCallback<VoomActions["igConnect"]>(() => {
-    setState((s) => ({ ...s, igConnected: true, igStep: 0 }));
-    toast("Instagram connected — demo account", "ok", true);
-  }, [toast]);
-
   const igDisconnect = useCallback<VoomActions["igDisconnect"]>(() => {
     setState((s) => ({ ...s, igConnected: false }));
     toast("Instagram disconnected", "info");
   }, [toast]);
-
-  const igSetStep = useCallback<VoomActions["igSetStep"]>((n) => {
-    setState((s) => ({ ...s, igStep: n }));
-  }, []);
 
   const adGuard = useCallback((s: VoomState) => {
     if (!s.approvedPlan || s.changeMode) return true;
@@ -1090,9 +1092,7 @@ export function VoomProvider({
       reelSchedule,
       reelChangeTime,
       bestTimeAll,
-      igConnect,
       igDisconnect,
-      igSetStep,
       setAdTotal,
       setAdAlloc,
       resetAlloc,
@@ -1146,9 +1146,7 @@ export function VoomProvider({
       reelSchedule,
       reelChangeTime,
       bestTimeAll,
-      igConnect,
       igDisconnect,
-      igSetStep,
       setAdTotal,
       setAdAlloc,
       resetAlloc,

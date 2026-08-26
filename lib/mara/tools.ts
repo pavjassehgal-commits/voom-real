@@ -4,6 +4,8 @@ import { z } from "zod";
 import type { BusinessRecord, ProfileRecord } from "@/lib/voom/types";
 import type { ServerSupabase } from "./internal-data";
 import { resolveRelativeDateTime } from "./relative-date";
+import { readInstagramConfig } from "@/lib/instagram/config";
+import { getInstagramConnection } from "@/lib/instagram/data";
 import {
   createCalendarItem, createCampaign, deleteCalendarItem, getBrandProfile, getCalendarItem, getCampaign,
   getDraft, listCalendarItems, listCampaigns, listDrafts, updateCalendarItem, updateCampaign,
@@ -110,8 +112,14 @@ async function runTool(c: ToolContext, name: MaraToolName, a: Record<string, unk
   if (name === "get_draft") { const data = await getDraft(c.db, c.ownerId, a.draftId as string); return success(data, data ? "Loaded the draft." : "That draft was not found."); }
   if (name === "list_campaigns") { const data = await listCampaigns(c.db, c.ownerId, a.kind as string | undefined); return success(data, `Found ${data.length} campaign draft${data.length === 1 ? "" : "s"}.`); }
   if (name === "get_campaign") { const data = await getCampaign(c.db, c.ownerId, a.campaignId as string); return success(data, data ? "Loaded the campaign draft." : "That campaign was not found."); }
-  if (name === "get_connected_channels") return success({ selectedChannels: c.business.preferred_channels, integrations: { instagram: false, email: false, sms: false }, note: "Execution integrations are not available yet." }, "Checked channel availability.");
-  if (name === "get_instagram_connection_status") return success({ connected: false, publishingAvailable: false, reason: "The real Instagram integration has not been completed or approved." }, "Instagram publishing is unavailable.");
+  if (name === "get_connected_channels") {
+    const instagram = await getInstagramConnection(c.db, c.ownerId, Boolean(readInstagramConfig()));
+    return success({ selectedChannels: c.business.preferred_channels, integrations: { instagram: instagram.connected, email: false, sms: false }, note: instagram.connected ? "Instagram is connected. Publishing still requires the separate confirmed execution flow." : "Instagram is not connected." }, "Checked channel availability.");
+  }
+  if (name === "get_instagram_connection_status") {
+    const instagram = await getInstagramConnection(c.db, c.ownerId, Boolean(readInstagramConfig()));
+    return success({ connected: instagram.connected, configured: instagram.configured, username: instagram.username, accountType: instagram.accountType, publishingAvailable: false, reason: instagram.connected ? "The account is connected, but publishing remains unavailable until the confirmed execution flow is implemented and approved." : "Instagram is not connected." }, instagram.connected ? "Checked the Instagram connection." : "Instagram publishing is unavailable.");
+  }
   if (name === "get_subscription_and_feature_limits") return success({ plan: "free", maraMessagesPerMinute: 12, publishingAvailable: false, sendingAvailable: false, adSpendAvailable: false }, "Loaded the current feature limits.");
   if (name === "create_content_draft") {
     const { data, error } = await c.db.from("mara_drafts").insert({ owner_user_id: c.ownerId, conversation_id: c.conversationId, kind: a.kind, channel: a.channel, title: a.title, content: a.content, proposed_publish_at: a.proposedPublishAt ?? null }).select("id,title,status").single();

@@ -18,7 +18,7 @@ import {
 } from "@/lib/voom/onboardingData";
 import { Icon } from "../icons";
 import { Btn, Chip, Orb, Textarea } from "../ui/primitives";
-import { DemoTag, ProtoNote } from "../ui/Notes";
+import { DemoTag } from "../ui/Notes";
 import { AnalyzingScreen } from "./AnalyzingScreen";
 import Logo from "@/app/components/Logo";
 
@@ -26,7 +26,7 @@ const LAST_STEP = 7;
 
 export function OnboardingWizard() {
   const { onboard, onboardStep, igConnected, onboardSaving, onboardError } = useVoomState();
-  const { setOnboardField, setOnboardStep, finishOnboarding, toast, igConnect, goTo } = useVoomActions();
+  const { setOnboardField, setOnboardStep, finishOnboarding, toast, goTo } = useVoomActions();
   const [analyzing, setAnalyzing] = useState(false);
 
   const st = onboardStep;
@@ -128,7 +128,7 @@ export function OnboardingWizard() {
           {st === 4 && <StepVoiceChannels />}
           {st === 5 && <StepBudgetPace />}
           {st === 6 && <StepAutomation />}
-          {st === 7 && <StepConnect igConnected={igConnected} onConnect={igConnect} />}
+          {st === 7 && <StepConnect igConnected={igConnected} onConnect={() => goTo("instagram")} />}
         </div>
       </div>
 
@@ -449,14 +449,14 @@ function StepAutomation() {
 function StepConnect({ igConnected, onConnect }: { igConnected: boolean; onConnect: () => void }) {
   const { toast } = useVoomActions();
   const rows: [string, string, string, boolean][] = [
-    ["ig", "Instagram", "Reels, feed posts, stories & insights", igConnected],
+    ["ig", "Instagram", "Professional account connection", igConnected],
     ["mail", "Email", "Campaigns, flows & subscriber lists", false],
     ["msg", "SMS", "Broadcasts and reply handling", false],
   ];
   return (
     <div>
       <h1 className="font-display text-2xl font-bold tracking-tight">Connect your channels</h1>
-      <p className="my-2 text-[15px] text-text-2">MARA needs at least one channel to start publishing. You can add more later.</p>
+      <p className="my-2 text-[15px] text-text-2">Connect a channel when its integration is ready, or finish setup and connect it later.</p>
       {rows.map(([icon, name, desc, connected]) => (
         <div key={name} className="mb-2.5 flex items-center justify-between rounded-[var(--r-lg)] border border-line bg-surface p-4">
           <div className="flex items-center gap-2.5">
@@ -478,18 +478,17 @@ function StepConnect({ igConnected, onConnect }: { igConnected: boolean; onConne
               <Icon name="check" size={12} /> Connected
             </span>
           ) : (
-            <Btn variant="ghost" size="sm" onClick={icon === "ig" ? onConnect : () => toast(`${name} is not connected in this prototype`, "info")}>
+            <Btn variant="ghost" size="sm" onClick={icon === "ig" ? onConnect : () => toast(`${name} integration is not available yet`, "info")}>
               Connect
             </Btn>
           )}
         </div>
       ))}
-      <ProtoNote />
       <div className="mt-2.5 rounded-2xl border border-brand bg-[var(--brand-soft)] p-4">
         <div className="flex items-start gap-2.5">
           <Orb size="sm" className="mt-0.5" />
           <p className="text-[13.5px] leading-[1.6]">
-            You can skip this and explore first — I&apos;ll fill your dashboard with clearly-labelled demo data so you can see how everything works.
+            Instagram uses a real, secure authorization flow. You can skip it now and connect from the Instagram page after setup.
           </p>
         </div>
       </div>

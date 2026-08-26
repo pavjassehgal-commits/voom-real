@@ -1,19 +1,22 @@
 "use client";
 
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useVoomActions, useVoomState, useCurrentPack } from "@/lib/voom/store";
+import type { InstagramConnectionView } from "@/lib/instagram/types";
 import { useModal } from "@/lib/voom/modal";
 import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { InstagramConnectModal } from "@/components/voom/modals/InstagramConnectModal";
 import { DisconnectInstagramModal } from "@/components/voom/modals/DisconnectInstagramModal";
 import { Btn, Card, Tag } from "@/components/voom/ui/primitives";
-import { DemoTag, PROTO_TEXT } from "@/components/voom/ui/Notes";
+import { DemoTag } from "@/components/voom/ui/Notes";
 
 const GETS = [
-  "Publish Reels, posts and stories on your behalf",
-  "Read reach, engagement and follower insights",
-  "Read and reply to comments and DMs",
-  "View your last 90 days of performance",
+  "Read your professional account identity",
+  "Create feed and Reel publishing containers after explicit approval",
+  "Keep access tokens encrypted and server-only",
+  "Disconnect the account from Voom at any time",
 ];
 const NEVERS = [
   "Change your password or account settings",
@@ -23,29 +26,35 @@ const NEVERS = [
 ];
 
 export default function InstagramPage() {
+  return <Suspense fallback={null}><InstagramPageContent /></Suspense>;
+}
+
+function InstagramPageContent() {
   const { igConnected, brand } = useVoomState();
-  const { toast, goTo } = useVoomActions();
+  const { goTo } = useVoomActions();
   const { open } = useModal();
   const pack = useCurrentPack();
+  const searchParams = useSearchParams();
+  const [connection, setConnection] = useState<InstagramConnectionView | null>(null);
+  const connectionError = searchParams.has("instagram_error");
 
-  if (igConnected) {
+  useEffect(() => {
+    let active = true;
+    fetch("/api/integrations/instagram/status", { cache: "no-store" })
+      .then(async (response) => response.ok ? (await response.json() as { connection: InstagramConnectionView }).connection : null)
+      .then((value) => { if (active) setConnection(value); })
+      .catch(() => { if (active) setConnection(null); });
+    return () => { active = false; };
+  }, [igConnected]);
+
+  if (connection?.connected) {
     return (
       <div className="mx-auto max-w-[900px]">
         <PageHead
           title="Instagram"
-          description="Connected in this prototype — no real Instagram account is linked."
-          tags={<DemoTag />}
+          description="Your professional Instagram account is securely connected to Voom."
           actions={
-            <Btn
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                toast("Resyncing insights…", "info");
-                setTimeout(() => toast("Synced 90 days of data"), 1200);
-              }}
-            >
-              Sync now
-            </Btn>
+            <Btn variant="outline" size="sm" disabled>Insights sync coming next</Btn>
           }
         />
         <Card className="p-4">
@@ -56,44 +65,29 @@ export default function InstagramPage() {
                 style={{ background: "linear-gradient(45deg,#f9ce34,#ee2a7b,#6228d7)" }}
               >
                 <span className="voom-grad grid h-full w-full place-items-center rounded-full border-2 border-surface text-[19px] text-white">
-                  {brand.name[0]}
+                  {(connection.name || connection.username || brand.name)[0]}
                 </span>
               </span>
               <div>
                 <div className="flex items-center gap-1.5">
-                  <b className="text-[17px]">{brand.name}</b>
+                  <b className="text-[17px]">{connection.name || connection.username}</b>
                   <Tag tone="t-green">
                     <Icon name="check" size={12} /> Connected
                   </Tag>
                 </div>
-                <div className="text-[13px] text-text-3">{brand.handle} · Business account</div>
-                <div className="mt-0.5 text-xs text-text-3">Last synced 4 minutes ago</div>
+                <div className="text-[13px] text-text-3">@{connection.username} · {formatAccountType(connection.accountType)}</div>
+                <div className="mt-0.5 text-xs text-text-3">Connected {connection.connectedAt ? new Date(connection.connectedAt).toLocaleString() : "recently"}</div>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Btn variant="ghost" size="sm" onClick={() => toast("Permissions unchanged (demo)", "info")}>
-                Permissions
-              </Btn>
               <Btn variant="danger" size="sm" onClick={() => open(<DisconnectInstagramModal />)}>
                 Disconnect
               </Btn>
             </div>
           </div>
           <div className="my-3.5 h-px bg-line" />
-          <div className="grid gap-2.5 sm:grid-cols-3">
-            {(
-              [
-                ["48,204", "Followers", "+3,412"],
-                ["6.8%", "Engagement", "+1.2 pts"],
-                ["184.2K", "30-day reach", "+18.4%"],
-              ] as [string, string, string][]
-            ).map(([a, b, c]) => (
-              <div key={a} className="rounded-xl bg-surface-2 p-2.5 text-center">
-                <b className="block font-display text-[19px]">{a}</b>
-                <span className="text-[11px] text-text-3">{b}</span>
-                <div className="mt-0.5 text-[11px] font-semibold text-green">{c}</div>
-              </div>
-            ))}
+          <div className="rounded-xl bg-surface-2 p-3 text-sm text-text-2">
+            Live Instagram insights are not enabled yet. Voom will not show simulated metrics as account data.
           </div>
         </Card>
         <div className="mt-3.5 grid gap-3.5 lg:grid-cols-2">
@@ -124,10 +118,10 @@ export default function InstagramPage() {
             <h2 className="mb-3 font-display text-lg font-semibold">What MARA can do now</h2>
             {(
               [
-                ["Auto-publish Reels at 7:10 PM", "reels"],
-                ["Pull live insights into your dashboard", "dash"],
-                ["Run paid campaigns on this account", "ads"],
-                ["Draft replies to comments", "mara"],
+                ["Prepare Reel drafts for your review", "reels"],
+                ["Keep publishing blocked until explicitly enabled", "instagram"],
+                ["Create approved Instagram drafts", "mara"],
+                ["Review scheduled content", "calendar"],
               ] as [string, string][]
             ).map(([t, g]) => (
               <button key={t} onClick={() => goTo(g)} className="flex w-full items-center justify-between border-b border-line py-2.5 text-left last:border-0">
@@ -150,7 +144,8 @@ export default function InstagramPage() {
 
   return (
     <div className="mx-auto max-w-[760px]">
-      <PageHead title="Instagram" description="Connect a Business or Creator account so MARA can publish and read insights." />
+      <PageHead title="Instagram" description="Connect a Business or Creator account securely for future publishing and insights features." />
+      {connectionError ? <div role="alert" className="mb-3.5 rounded-xl border border-red/30 bg-red/10 p-3 text-sm text-red">Instagram could not be connected. No account changes were made. Please try again.</div> : null}
       <div
         className="relative overflow-hidden rounded-[var(--r-lg)] p-[30px] text-white"
         style={{ background: "linear-gradient(120deg,#f9ce34,#ee2a7b 48%,#6228d7)" }}
@@ -158,9 +153,9 @@ export default function InstagramPage() {
         <div className="mb-4 grid h-[52px] w-[52px] place-items-center rounded-2xl bg-white/20">
           <Icon name="ig" size={24} />
         </div>
-        <h2 className="font-display text-2xl font-bold">Let MARA run your Instagram</h2>
+        <h2 className="font-display text-2xl font-bold">Connect Instagram securely</h2>
         <p className="mt-1.5 max-w-[440px] text-[14.5px] leading-[1.6] opacity-90">
-          Publish Reels and posts automatically, pull real reach and engagement, and spot trends before your competitors do.
+          Connect a professional account through Instagram. Drafting and scheduling stay inside Voom; external publishing remains blocked until it is separately enabled.
         </p>
         <Btn
           className="mt-5 bg-white text-[#b62d6a] hover:bg-white/90"
@@ -198,13 +193,16 @@ export default function InstagramPage() {
         <div className="flex items-start gap-2.5">
           <Icon name="shield" className="text-text-3" />
           <p className="text-[13px] leading-[1.6] text-text-2">
-            This is a visual prototype — no real Instagram connection is made. &quot;Connect&quot; walks through a simulated authorisation flow using
-            sample accounts.
-            <br />
-            <b>{PROTO_TEXT}</b>
+            Connection uses Instagram&apos;s authorization page. Credentials and access tokens stay server-only; Voom never asks for your Instagram password.
+            {!connection?.configured ? <><br /><b>Meta application settings are not configured yet, so connection is safely unavailable.</b></> : null}
           </p>
         </div>
       </Card>
     </div>
   );
+}
+
+function formatAccountType(value: string | null) {
+  if (!value) return "Professional account";
+  return value.toLowerCase().replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
