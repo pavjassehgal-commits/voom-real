@@ -13,8 +13,23 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   let body: unknown;
   try { body = await request.json(); } catch { return Response.json({ error: "That action is not valid." }, { status: 400 }); }
   const decision = body && typeof body === "object" && "decision" in body ? (body as { decision?: unknown }).decision : null;
-  if (decision !== "confirm" && decision !== "cancel") return Response.json({ error: "Choose Confirm or Cancel." }, { status: 400 });
+  if (decision !== "confirm" && decision !== "cancel" && decision !== "edit") return Response.json({ error: "Choose Confirm, Edit, or Cancel." }, { status: 400 });
   const db = await createClient();
+
+  if (decision === "edit") {
+    const changes = body && typeof body === "object" && "changes" in body ? (body as { changes?: unknown }).changes : null;
+    if (!changes || typeof changes !== "object" || Array.isArray(changes)) return Response.json({ error: "Those changes are not valid." }, { status: 400 });
+    const allowed = new Set(["title", "channel", "content", "topic", "publishAt", "proposedPublishAt", "name", "objective", "audience", "subject", "previewText", "proposedSendAt", "budget"]);
+    const clean = Object.fromEntries(Object.entries(changes as Record<string, unknown>).filter(([key, value]) => allowed.has(key) && (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null)));
+    if (!Object.keys(clean).length || JSON.stringify(clean).length > 14000) return Response.json({ error: "Those changes are not valid." }, { status: 400 });
+    const { data: current } = await db.from("mara_pending_actions").select("sanitized_arguments,new_value").eq("id", id).eq("owner_user_id", user.id).in("status", ["pending", "failed"]).maybeSingle();
+    if (!current) return currentAction(db, user.id, id);
+    const nextArguments = { ...(current.sanitized_arguments ?? {}), ...clean };
+    const { data, error } = await db.from("mara_pending_actions").update({ sanitized_arguments: nextArguments, new_value: { ...(current.new_value ?? {}), ...clean }, status: "pending", error_summary: null, result_summary: "Updated proposal. Review it before confirming." }).eq("id", id).eq("owner_user_id", user.id).in("status", ["pending", "failed"]).select("id,conversation_id,message_id,tool_name,summary,old_value,new_value,status,result_summary,error_summary,created_at,updated_at,executed_at").single();
+    if (error) return friendlyFailure();
+    await db.from("mara_tool_runs").update({ sanitized_arguments: nextArguments, status: "pending_confirmation", error_summary: null, result_summary: "Proposal edited by the user and awaiting confirmation." }).eq("pending_action_id", id).eq("owner_user_id", user.id);
+    return Response.json({ action: data, message: "Proposal updated. Nothing has been applied yet." });
+  }
 
   if (decision === "cancel") {
     const { data, error } = await db.from("mara_pending_actions").update({ status: "cancelled", result_summary: "Cancelled. Nothing changed.", executed_at: new Date().toISOString() })

@@ -4,6 +4,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { INSTAGRAM_SCOPES } from "./client";
 import { encryptInstagramToken } from "./crypto";
+import { decryptInstagramToken } from "./crypto";
 import type { InstagramConnectionView } from "./types";
 
 const OAUTH_TTL_MS = 10 * 60 * 1000;
@@ -62,3 +63,19 @@ export async function disconnectInstagramLocally(db: SupabaseClient, ownerId: st
 }
 
 function hashState(state: string) { return createHash("sha256").update(state, "utf8").digest("hex"); }
+
+export async function getInstagramServerCredentials(db: SupabaseClient, ownerId: string, encryptionKey: string) {
+  const { data, error } = await db.rpc("get_instagram_connection_secret", { p_owner_user_id: ownerId }).maybeSingle();
+  if (error || !data) throw new Error("instagram_connection_unavailable");
+  const secret = data as Record<string, unknown>;
+  if (secret.connection_status !== "connected") throw new Error("instagram_connection_unavailable");
+  return {
+    userId: String(secret.instagram_user_id),
+    accessToken: decryptInstagramToken({
+      encryptedToken: String(secret.encrypted_access_token),
+      iv: String(secret.token_iv),
+      authTag: String(secret.token_auth_tag),
+    }, encryptionKey),
+    expiresAt: secret.token_expires_at ? String(secret.token_expires_at) : null,
+  };
+}

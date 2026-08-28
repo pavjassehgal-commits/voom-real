@@ -15,10 +15,10 @@ import { AdSepNote, DemoTag, ExTag, ProtoNote } from "@/components/voom/ui/Notes
 const STEPS = [
   "Connect your Meta or Google advertising account.",
   "Add your payment card directly to Meta or Google.",
-  "MARA creates a campaign and suggests a budget.",
+  "Voom prepares a campaign and suggests a budget.",
   "You approve, reduce or decline it.",
   "Meta or Google charges your card gradually as advertisements run.",
-  "MARA optimises within the amount you approved.",
+  "Voom optimises within the amount you approved.",
   "Any increase requires another approval.",
 ];
 
@@ -26,7 +26,7 @@ const BUDGET_CHIPS = [600, 800, 1200, 2000];
 
 export default function AdsPage() {
   const { adAlloc, adTotal, approvedPlan, changeMode, plan, adHistory } = useVoomState();
-  const { setAdTotal, setAdAlloc, resetAlloc, normalizeAlloc, requestChange, cancelChange, pauseAds, resumeAds, askMara, goTo, toast } =
+  const { setAdTotal, setAdAlloc, resetAlloc, normalizeAlloc, requestChange, cancelChange, pauseAds, resumeAds, goTo, toast } =
     useVoomActions();
   const { open } = useModal();
 
@@ -70,7 +70,7 @@ export default function AdsPage() {
     <div>
       <PageHead
         title="Paid advertising"
-        description="MARA builds the allocation. Nothing spends until you approve it."
+        description="Voom prepares the allocation. Nothing spends until you approve it."
         tags={
           <>
             <DemoTag />
@@ -81,8 +81,8 @@ export default function AdsPage() {
         }
         actions={
           <>
-            <Btn variant="outline" size="sm" onClick={() => askMara("Explain this ad budget", () => goTo("mara"))}>
-              <Icon name="spark" size={14} /> Ask MARA why
+            <Btn variant="outline" size="sm" onClick={() => goTo("plan")}>
+              <Icon name="spark" size={14} /> Review strategy
             </Btn>
             <Btn variant="ghost" size="sm" onClick={() => toast("Spend history exported", "ok", true)}>
               <Icon name="down" size={14} /> Export
@@ -124,7 +124,7 @@ export default function AdsPage() {
                     <Icon name="shield" size={12} /> Budget locked
                   </Tag>
                 </div>
-                <div className="mt-0.5 text-[12.5px] text-text-3">MARA may optimise and pause campaigns inside this limit. She cannot increase it.</div>
+                <div className="mt-0.5 text-[12.5px] text-text-3">Voom may optimise and pause campaigns inside this limit. It cannot increase it.</div>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -191,7 +191,7 @@ export default function AdsPage() {
                 <b className="text-[15px]">Budget change request — not approved yet</b>
               </div>
               <p className="mt-2 text-[13.3px] leading-[1.6] text-text-2">
-                Your approved limit of <b>AED {nfc(approvedPlan.limit)}</b> is still the only amount MARA may spend.{" "}
+                Your approved limit of <b>AED {nfc(approvedPlan.limit)}</b> is still the only amount Voom may spend.{" "}
                 <b>No additional money can be spent until you explicitly approve the new amount.</b>
               </p>
               <div className="mt-3 flex flex-wrap gap-4.5">
@@ -233,7 +233,7 @@ export default function AdsPage() {
               <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2.5 py-1 text-[11.5px] font-semibold">
                 <Icon name="clock" size={12} /> Awaiting your approval
               </span>
-              <h2 className="my-3 font-display text-2xl font-bold">MARA suggests AED {nfc(adTotal)} over 14 days</h2>
+              <h2 className="my-3 font-display text-2xl font-bold">Voom suggests AED {nfc(adTotal)} over 14 days</h2>
               <p className="text-sm leading-[1.6] opacity-90">
                 Weighted toward your Reels, because that&apos;s where reach compounds fastest in this demo dataset. Nothing is spent until you approve it,
                 and the money is charged by your own ad account — never by your Voom subscription.
@@ -308,7 +308,7 @@ export default function AdsPage() {
           ))}
           <div className="mt-3.5 flex flex-wrap justify-between gap-2">
             <Btn variant="ghost" size="sm" disabled={!editable} onClick={resetAlloc}>
-              <Icon name="spark" size={14} /> Reset to MARA&apos;s split
+              <Icon name="spark" size={14} /> Reset to Voom&apos;s split
             </Btn>
             <Btn variant="outline" size="sm" disabled={!editable} onClick={normalizeAlloc}>
               Balance to 100%
@@ -398,7 +398,7 @@ export default function AdsPage() {
             <div className="flex items-start gap-2.5">
               <span className="mt-0.5 h-2.5 w-2.5 flex-none rounded-full voom-grad" />
               <div>
-                <b className="text-[13.5px]">What MARA may and may not do</b>
+                <b className="text-[13.5px]">What Voom may and may not do</b>
                 <ul className="mt-2 list-none space-y-2 text-[12.8px] leading-[1.5] text-text-2">
                   <li>May pause any campaign below 1.5× ROAS after AED 80 spend</li>
                   <li>May move spend between campaigns inside the approved limit</li>

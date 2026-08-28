@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { useVoomActions, useVoomState, useCurrentPack } from "@/lib/voom/store";
+import { useVoomActions, useVoomState } from "@/lib/voom/store";
 import type { InstagramConnectionView } from "@/lib/instagram/types";
 import { useModal } from "@/lib/voom/modal";
 import { Icon } from "@/components/voom/icons";
@@ -10,7 +10,14 @@ import { PageHead } from "@/components/voom/shell/AppShell";
 import { InstagramConnectModal } from "@/components/voom/modals/InstagramConnectModal";
 import { DisconnectInstagramModal } from "@/components/voom/modals/DisconnectInstagramModal";
 import { Btn, Card, Tag } from "@/components/voom/ui/primitives";
-import { DemoTag } from "@/components/voom/ui/Notes";
+
+type InstagramInsights = {
+  metrics: Record<string, number>;
+  media: Array<{ id: string; caption: string; mediaType: string; mediaUrl: string | null; thumbnailUrl: string | null; permalink: string | null; timestamp: string | null; likes: number; comments: number }>;
+  syncedAt: string;
+  metricsAvailable: boolean;
+  mediaAvailable: boolean;
+};
 
 const GETS = [
   "Read your professional account identity",
@@ -33,19 +40,32 @@ function InstagramPageContent() {
   const { igConnected, brand } = useVoomState();
   const { goTo } = useVoomActions();
   const { open } = useModal();
-  const pack = useCurrentPack();
   const searchParams = useSearchParams();
   const [connection, setConnection] = useState<InstagramConnectionView | null>(null);
+  const [insights, setInsights] = useState<InstagramInsights | null>(null);
+  const [insightsError, setInsightsError] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const connectionError = searchParams.has("instagram_error");
+
+  const syncInsights = useCallback(async () => {
+    setSyncing(true);
+    setInsightsError(false);
+    try {
+      const response = await fetch("/api/integrations/instagram/insights", { cache: "no-store" });
+      if (!response.ok) throw new Error("sync_failed");
+      setInsights(await response.json() as InstagramInsights);
+    } catch { setInsightsError(true); }
+    finally { setSyncing(false); }
+  }, []);
 
   useEffect(() => {
     let active = true;
     fetch("/api/integrations/instagram/status", { cache: "no-store" })
       .then(async (response) => response.ok ? (await response.json() as { connection: InstagramConnectionView }).connection : null)
-      .then((value) => { if (active) setConnection(value); })
+      .then((value) => { if (active) { setConnection(value); if (value?.connected) void syncInsights(); } })
       .catch(() => { if (active) setConnection(null); });
     return () => { active = false; };
-  }, [igConnected]);
+  }, [igConnected, syncInsights]);
 
   if (connection?.connected) {
     return (
@@ -54,7 +74,7 @@ function InstagramPageContent() {
           title="Instagram"
           description="Your professional Instagram account is securely connected to Voom."
           actions={
-            <Btn variant="outline" size="sm" disabled>Insights sync coming next</Btn>
+            <Btn variant="outline" size="sm" disabled={syncing} onClick={() => void syncInsights()}>{syncing ? "Syncing…" : "Refresh insights"}</Btn>
           }
         />
         <Card className="p-4">
@@ -86,23 +106,20 @@ function InstagramPageContent() {
             </div>
           </div>
           <div className="my-3.5 h-px bg-line" />
-          <div className="rounded-xl bg-surface-2 p-3 text-sm text-text-2">
-            Live Instagram insights are not enabled yet. Voom will not show simulated metrics as account data.
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {[["Views", insights?.metrics.views], ["Reach", insights?.metrics.reach], ["Engaged", insights?.metrics.accounts_engaged], ["Followers", insights?.metrics.follower_count]].map(([label, value]) => (
+              <div key={String(label)} className="rounded-xl bg-surface-2 p-3"><div className="text-xs text-text-3">{label}</div><b className="font-mono text-lg">{typeof value === "number" ? value.toLocaleString() : "—"}</b></div>
+            ))}
           </div>
+          {insightsError ? <div role="alert" className="mt-3 rounded-xl border border-red/30 bg-red/10 p-3 text-sm text-red">Instagram insights could not be refreshed. Your connection is still safe; please retry.</div> : null}
         </Card>
         <div className="mt-3.5 grid gap-3.5 lg:grid-cols-2">
           <Card className="p-4">
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <h2 className="font-display text-lg font-semibold">Top posts, last 30 days</h2>
-              <DemoTag />
+              {insights?.mediaAvailable ? <Tag tone="t-green">Live</Tag> : null}
             </div>
-            {(
-              [
-                [pack.top[0], "Reel", "112K", "#e8481f"],
-                [pack.top[1], "Feed", "28K", "#c9306b"],
-                [pack.top[2], "Reel", "41K", "#e8481f"],
-              ] as [string, string, string, string][]
-            ).map(([t, ty, v, c]) => (
+            {insights?.media.length ? insights.media.slice(0, 3).map((item) => [item.caption || "Instagram post", item.mediaType, String(item.likes + item.comments), "#e8481f"] as [string,string,string,string]).map(([t, ty, v, c]) => (
               <div key={t} className="flex items-center gap-2.5 border-b border-line py-2.5 last:border-0">
                 <div className="h-12 w-[38px] flex-none rounded-[8px]" style={{ background: c }} />
                 <div className="min-w-0 flex-1">
@@ -110,17 +127,17 @@ function InstagramPageContent() {
                   <span className="text-xs text-text-3">{ty}</span>
                 </div>
                 <b className="font-mono text-[13px]">{v}</b>
-                <span className="text-[11.5px] text-text-3">views</span>
+                <span className="text-[11.5px] text-text-3">interactions</span>
               </div>
-            ))}
+            )) : <div className="rounded-xl bg-surface-2 p-4 text-sm text-text-2">{insights?.mediaAvailable ? "No Instagram posts were returned for this account yet." : "Recent Instagram posts are temporarily unavailable."}</div>}
           </Card>
           <Card className="p-4">
-            <h2 className="mb-3 font-display text-lg font-semibold">What MARA can do now</h2>
+            <h2 className="mb-3 font-display text-lg font-semibold">What Voom can do now</h2>
             {(
               [
                 ["Prepare Reel drafts for your review", "reels"],
                 ["Keep publishing blocked until explicitly enabled", "instagram"],
-                ["Create approved Instagram drafts", "mara"],
+                ["Create approved Instagram drafts", "reels"],
                 ["Review scheduled content", "calendar"],
               ] as [string, string][]
             ).map(([t, g]) => (
@@ -167,7 +184,7 @@ function InstagramPageContent() {
       </div>
       <div className="mt-3.5 grid gap-3.5 sm:grid-cols-2">
         <Card className="p-4">
-          <h3 className="mb-2.5 text-[14.5px] font-semibold">What MARA gets access to</h3>
+          <h3 className="mb-2.5 text-[14.5px] font-semibold">What Voom gets access to</h3>
           {GETS.map((t) => (
             <div key={t} className="flex items-start gap-2.5 py-1.5">
               <span className="mt-0.5 grid h-[19px] w-[19px] flex-none place-items-center rounded-full bg-green">

@@ -12,8 +12,8 @@ import { AD_SEPARATION, AdSepNote } from "@/components/voom/ui/Notes";
 
 const FAQS: [string, string][] = [
   [
-    "Can MARA spend my ad budget without asking?",
-    "MARA can never start a new campaign, increase the total budget or exceed an approved limit without your permission. After approval, MARA may optimise and pause campaigns within that fixed limit.",
+    "Can Voom spend my ad budget without asking?",
+    "Voom can never start a new campaign, increase the total budget or exceed an approved limit without your permission. After approval, Voom may optimise and pause campaigns within that fixed limit.",
   ],
   [
     "What happens to my content if I downgrade?",
@@ -21,7 +21,7 @@ const FAQS: [string, string][] = [
   ],
   [
     "Do you charge per connected channel?",
-    "No. Channels are included; plans differ by brands, seats and whether MARA can manage paid spend.",
+    "No. Channels are included; plans differ by brands, seats and whether Voom can manage paid spend.",
   ],
   [
     "Is billing live in this prototype?",
@@ -41,7 +41,7 @@ export default function PricingPage() {
         <Tag tone="t-brand">
           <Icon name="crown" size={12} /> Plans
         </Tag>
-        <h1 className="my-3 font-display text-[26px] font-bold sm:text-[32px]">Give MARA more room to work</h1>
+        <h1 className="my-3 font-display text-[26px] font-bold sm:text-[32px]">Give Voom more room to work</h1>
         <p className="text-[15px] text-text-2">Start free. Upgrade when she&apos;s earning more than she costs.</p>
         <div className="mt-4 flex flex-wrap justify-center gap-2">
           <Tag>Billed monthly · prototype pricing</Tag>

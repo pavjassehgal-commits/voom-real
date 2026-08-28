@@ -7,11 +7,11 @@ import { cx } from "../ui/primitives";
 import { pageIdFromPath } from "./nav";
 
 const ITEMS: [string, string, string][] = [
-  ["dash", "Home", "home"],
+  ["today", "Today", "home"],
+  ["approvals", "Approvals", "check"],
+  ["plan", "Plan", "spark"],
   ["calendar", "Calendar", "cal"],
-  ["mara", "MARA", "spark"],
-  ["campaigns", "Sends", "mail"],
-  ["ads", "Ads", "target"],
+  ["reels", "Studio", "film"],
 ];
 
 export function BottomBar() {

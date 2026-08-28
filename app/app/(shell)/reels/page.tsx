@@ -31,7 +31,7 @@ export default function ReelsPage() {
     <div>
       <PageHead
         title="Reel scheduling"
-        description="Build a Reel, and MARA drops it into your best-performing slot."
+        description="Build a Reel, and Voom proposes the best-performing slot."
         actions={
           <>
             <Btn variant="outline" size="sm" onClick={bestTimeAll}>
@@ -123,7 +123,7 @@ export default function ReelsPage() {
             </label>
             <div className="mb-3.5 flex flex-wrap gap-2">
               <Btn variant="outline" size="sm" onClick={maraRewriteCaption}>
-                <Icon name="spark" size={14} /> Rewrite with MARA
+                <Icon name="spark" size={14} /> Rewrite with Voom
               </Btn>
               <Btn variant="outline" size="sm" onClick={() => toast("12 hashtags added from your top posts")}>
                 <Icon name="plus" size={14} /> Suggest hashtags

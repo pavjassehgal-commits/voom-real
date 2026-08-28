@@ -65,7 +65,7 @@ export function Sidebar() {
             <b className="font-display text-[15px]">{plan === "free" ? "You’re on Free" : "You’re on Pro"}</b>
             <p className="my-0.5 mb-2.5 text-xs opacity-85">
               {plan === "free"
-                ? "14 of 20 MARA messages used this month."
+                ? "Your assisted marketing workspace is active."
                 : "Unlock paid ad management with Max — AED 549/mo."}
             </p>
             <Btn
@@ -83,7 +83,7 @@ export function Sidebar() {
             <b className="flex items-center gap-1.5 text-[15px]">
               <Icon name="crown" size={14} /> Max plan
             </b>
-            <p className="mt-0.5 text-xs opacity-70">MARA is running your channels end-to-end.</p>
+            <p className="mt-0.5 text-xs opacity-70">Voom intelligence is coordinating your approved work.</p>
           </div>
         )}
       </aside>

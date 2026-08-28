@@ -6,7 +6,11 @@ const REQUEST_TIMEOUT_MS = 15_000;
 export const INSTAGRAM_SCOPES = ["instagram_business_basic", "instagram_business_content_publish"] as const;
 
 export class InstagramApiError extends Error {
-  constructor(public readonly code: "rate_limited" | "unauthorized" | "unavailable" | "invalid_response") {
+  constructor(
+    public readonly code: "rate_limited" | "unauthorized" | "unavailable" | "invalid_response",
+    public readonly operation: "code_exchange" | "long_token_exchange" | "profile" | null = null,
+    public readonly providerReason: "credentials" | "redirect" | "code" | "app_configuration" | "rejected" | null = null,
+  ) {
     super(code);
   }
 }
@@ -28,24 +32,29 @@ export class InstagramClient {
 
   async exchangeCode(code: string) {
     const body = new URLSearchParams({ client_id: this.config.appId, client_secret: this.config.appSecret, grant_type: "authorization_code", redirect_uri: this.config.redirectUri, code });
-    const short = await this.fetchJson("https://api.instagram.com/oauth/access_token", { method: "POST", body });
+    const short = await this.fetchJson("https://api.instagram.com/oauth/access_token", { method: "POST", body }, "code_exchange");
     const shortToken = stringField(short, "access_token");
     const userId = stringField(short, "user_id");
-    const longUrl = new URL(`https://graph.instagram.com/${this.config.graphVersion}/access_token`);
+    // Meta's long-lived token exchange is intentionally unversioned. Graph
+    // resource requests are versioned, but /access_token rejects that prefix.
+    const longUrl = new URL("https://graph.instagram.com/access_token");
     longUrl.searchParams.set("grant_type", "ig_exchange_token");
     longUrl.searchParams.set("client_secret", this.config.appSecret);
     longUrl.searchParams.set("access_token", shortToken);
-    const long = await this.fetchJson(longUrl);
+    const long = await this.fetchJson(longUrl, undefined, "long_token_exchange");
     return { accessToken: stringField(long, "access_token"), userId, expiresIn: numberField(long, "expires_in") };
   }
 
   async getProfile(accessToken: string, userId: string) {
-    const url = new URL(`https://graph.instagram.com/${this.config.graphVersion}/${encodeURIComponent(userId)}`);
-    url.searchParams.set("fields", "user_id,username,name,account_type,profile_picture_url,followers_count,media_count");
+    const url = new URL(`https://graph.instagram.com/${this.config.graphVersion}/me`);
+    // The Instagram Login identity endpoint reliably exposes these two fields.
+    // Additional profile fields vary by API version and can reject the entire
+    // request, so connection setup intentionally uses the minimum field set.
+    url.searchParams.set("fields", "id,username");
     url.searchParams.set("access_token", accessToken);
-    const value = await this.fetchJson(url);
+    const value = await this.fetchJson(url, undefined, "profile");
     return {
-      userId: optionalString(value, "user_id") ?? userId,
+      userId: optionalString(value, "id") ?? optionalString(value, "user_id") ?? userId,
       username: stringField(value, "username"),
       name: optionalString(value, "name"),
       accountType: optionalString(value, "account_type"),
@@ -53,20 +62,39 @@ export class InstagramClient {
     };
   }
 
-  private async fetchJson(input: string | URL, init?: RequestInit) {
+  async getMedia(accessToken: string, limit = 12) {
+    const url = new URL(`https://graph.instagram.com/${this.config.graphVersion}/me/media`);
+    url.searchParams.set("fields", "id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,like_count,comments_count");
+    url.searchParams.set("limit", String(Math.min(Math.max(limit, 1), 25)));
+    url.searchParams.set("access_token", accessToken);
+    const value = await this.fetchJson(url, undefined, "profile");
+    return Array.isArray(value.data) ? value.data.filter(isRecord) : [];
+  }
+
+  async getAccountInsights(accessToken: string) {
+    const url = new URL(`https://graph.instagram.com/${this.config.graphVersion}/me/insights`);
+    url.searchParams.set("metric", "views,reach,accounts_engaged,total_interactions,follower_count");
+    url.searchParams.set("period", "day");
+    url.searchParams.set("metric_type", "total_value");
+    url.searchParams.set("access_token", accessToken);
+    const value = await this.fetchJson(url, undefined, "profile");
+    return Array.isArray(value.data) ? value.data.filter(isRecord) : [];
+  }
+
+  private async fetchJson(input: string | URL, init?: RequestInit, operation: InstagramApiError["operation"] = null) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       const response = await this.request(input, { ...init, signal: controller.signal, headers: { Accept: "application/json", ...init?.headers } });
-      if (response.status === 429) throw new InstagramApiError("rate_limited");
-      if (response.status === 401 || response.status === 403) throw new InstagramApiError("unauthorized");
-      if (!response.ok) throw new InstagramApiError(response.status >= 500 ? "unavailable" : "invalid_response");
       const value: unknown = await response.json().catch(() => null);
-      if (!value || typeof value !== "object" || Array.isArray(value)) throw new InstagramApiError("invalid_response");
+      if (response.status === 429) throw new InstagramApiError("rate_limited", operation);
+      if (response.status === 401 || response.status === 403) throw new InstagramApiError("unauthorized", operation, classifyProviderReason(value));
+      if (!response.ok) throw new InstagramApiError(response.status >= 500 ? "unavailable" : "invalid_response", operation, classifyProviderReason(value));
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new InstagramApiError("invalid_response", operation);
       return value as Record<string, unknown>;
     } catch (error) {
       if (error instanceof InstagramApiError) throw error;
-      throw new InstagramApiError("unavailable");
+      throw new InstagramApiError("unavailable", operation);
     } finally { clearTimeout(timeout); }
   }
 }
@@ -74,3 +102,21 @@ export class InstagramClient {
 function stringField(value: Record<string, unknown>, key: string) { const field = value[key]; if (typeof field !== "string" && typeof field !== "number") throw new InstagramApiError("invalid_response"); return String(field); }
 function optionalString(value: Record<string, unknown>, key: string) { const field = value[key]; return typeof field === "string" || typeof field === "number" ? String(field) : null; }
 function numberField(value: Record<string, unknown>, key: string) { const field = value[key]; if (typeof field !== "number" || !Number.isFinite(field)) throw new InstagramApiError("invalid_response"); return field; }
+function isRecord(value: unknown): value is Record<string, unknown> { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
+
+function classifyProviderReason(value: unknown): InstagramApiError["providerReason"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "rejected";
+  const record = value as Record<string, unknown>;
+  const nested = record.error && typeof record.error === "object" && !Array.isArray(record.error)
+    ? record.error as Record<string, unknown>
+    : record;
+  const raw = [record.error_message, record.error_type, nested.message, nested.type]
+    .filter((item): item is string => typeof item === "string")
+    .join(" ")
+    .toLowerCase();
+  if (/client.secret|app.secret|invalid.client|client authentication/.test(raw)) return "credentials";
+  if (/redirect|callback/.test(raw)) return "redirect";
+  if (/authorization code|invalid code|code.+expired|code.+used|matching code/.test(raw)) return "code";
+  if (/app.+invalid|platform app|app.+configuration|app.+setup/.test(raw)) return "app_configuration";
+  return "rejected";
+}

@@ -12,7 +12,7 @@ import { DemoTag } from "@/components/voom/ui/Notes";
 
 export default function CampaignsPage() {
   const { campTab, emails, sms, brand } = useVoomState();
-  const { setCampTab, askMara, goTo, toast, openNewCampaign } = useVoomActions();
+  const { setCampTab, goTo, toast, openNewCampaign } = useVoomActions();
   const { open } = useModal();
   const pack = useCurrentPack();
   const brandLabel = brand.name || "your business";
@@ -63,11 +63,11 @@ export default function CampaignsPage() {
     <div>
       <PageHead
         title="Email & SMS"
-        description="Campaigns, flows and broadcasts — drafted by MARA, approved by you."
+        description="Campaigns, flows and broadcasts — prepared by Voom, approved by you."
         actions={
           <>
-            <Btn variant="outline" size="sm" onClick={() => askMara("Draft a win-back email", () => goTo("mara"))}>
-              <Icon name="spark" size={14} /> Ask MARA to draft
+            <Btn variant="outline" size="sm" onClick={() => goTo("plan")}>
+              <Icon name="spark" size={14} /> Review marketing plan
             </Btn>
             <Btn variant="primary" size="sm" onClick={openNew}>
               <Icon name="plus" size={14} /> New {em ? "email" : "SMS"}
@@ -207,7 +207,7 @@ export default function CampaignsPage() {
         <Card className="p-4">
           <div className="mb-3 flex items-center gap-2">
             <span className="voom-grad h-[26px] w-[26px] flex-none rounded-full" />
-            <h2 className="font-display text-lg font-semibold">MARA&apos;s take</h2>
+            <h2 className="font-display text-lg font-semibold">Voom&apos;s recommendation</h2>
           </div>
           {maraTake.map(([t, b]) => (
             <div key={t} className="mb-2.5 flex gap-3 rounded-2xl border border-line p-3.5">
@@ -217,8 +217,8 @@ export default function CampaignsPage() {
               <div className="min-w-0 flex-1">
                 <b className="text-[13.5px]">{t}</b>
                 <p className="mb-2 mt-1 text-[13px] text-text-2">{b}</p>
-                <Btn variant="outline" size="sm" onClick={() => askMara(t, () => goTo("mara"))}>
-                  Ask MARA to do it
+                <Btn variant="outline" size="sm" onClick={() => goTo("plan")}>
+                  Review in plan
                 </Btn>
               </div>
             </div>

@@ -4,7 +4,10 @@ import { parseMaraResult } from "@/lib/mara/result";
 import type { MaraAiResult, MaraDraftKind, MaraDraftRecord, MaraMessageRecord } from "@/lib/mara/types";
 import type { MaraPendingActionRecord } from "@/lib/mara/tool-types";
 import { executeMaraTool, maraToolDefinitions } from "@/lib/mara/tools";
+import { inferMediaRequest, MEDIA_SELECT, toMediaView } from "@/lib/media/data";
+import type { MediaGenerationRecord } from "@/lib/media/types";
 import { getBusinessRecord, getCurrentUser, getProfileRecord } from "@/lib/voom/server-data";
+import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
 
 export const runtime = "nodejs";
@@ -30,7 +33,8 @@ export async function GET() {
   if (conversationError) return databaseUnavailable();
   if (!conversation) return Response.json({ conversation: null, messages: [], drafts: [] });
 
-  const [{ data: messages, error: messageError }, { data: drafts, error: draftError }, { data: pendingActions, error: pendingError }] = await Promise.all([
+  const admin = createAdminClient();
+  const [{ data: messages, error: messageError }, { data: drafts, error: draftError }, { data: pendingActions, error: pendingError }, { data: media, error: mediaError }] = await Promise.all([
     supabase
       .from("mara_messages")
       .select("id,conversation_id,role,content,created_at")
@@ -44,10 +48,14 @@ export async function GET() {
     supabase.from("mara_pending_actions")
       .select("id,conversation_id,message_id,tool_name,summary,old_value,new_value,status,result_summary,error_summary,created_at,updated_at,executed_at")
       .eq("conversation_id", conversation.id).order("created_at", { ascending: true }),
+    admin.from("mara_media_generations")
+      .select(MEDIA_SELECT)
+      .eq("owner_user_id", user.id).eq("conversation_id", conversation.id).order("created_at", { ascending: true }),
   ]);
 
-  if (messageError || draftError || pendingError) return databaseUnavailable();
-  return Response.json({ conversation, messages: messages ?? [], drafts: drafts ?? [], pendingActions: pendingActions ?? [] });
+  if (messageError || draftError || pendingError || mediaError) return databaseUnavailable();
+  const mediaViews = await Promise.all((media ?? []).map((item) => toMediaView(admin, item as Record<string, unknown>)));
+  return Response.json({ conversation, messages: messages ?? [], drafts: drafts ?? [], pendingActions: pendingActions ?? [], media: mediaViews });
 }
 
 export async function POST(request: Request) {
@@ -106,6 +114,13 @@ export async function POST(request: Request) {
     ...(history ?? []).reverse().map((item) => ({ role: item.role as "user" | "assistant", content: item.content })),
   ];
   const expectedDraftKind = inferRequestedDraftKind(message);
+  const mediaRequest = inferMediaRequest(message);
+  if (mediaRequest) {
+    const result = await createMediaRequest({ userId: user.id, conversationId: conversation.id, requestId, message, mediaRequest, business });
+    if (result instanceof Response) return result;
+    await supabase.from("mara_conversations").update({ updated_at: new Date().toISOString() }).eq("id", conversation.id);
+    return streamResult(conversation.id, userMessage as MaraMessageRecord, result.assistantMessage, null, [], result.media);
+  }
   const operational = shouldUseTools(message, expectedDraftKind);
   if (expectedDraftKind && !operational) {
     aiMessages.push({
@@ -196,7 +211,7 @@ async function resolveConversation(
   return data;
 }
 
-function streamResult(conversationId: string, userMessage: MaraMessageRecord, assistantMessage: MaraMessageRecord, draft: MaraDraftRecord | null, pendingActions: MaraPendingActionRecord[] = []) {
+function streamResult(conversationId: string, userMessage: MaraMessageRecord, assistantMessage: MaraMessageRecord, draft: MaraDraftRecord | null, pendingActions: MaraPendingActionRecord[] = [], media: MediaGenerationRecord | null = null) {
   const encoder = new TextEncoder();
   const chunks = assistantMessage.content.match(/.{1,48}(?:\s|$)/g) ?? [assistantMessage.content];
   const stream = new ReadableStream({
@@ -206,11 +221,56 @@ function streamResult(conversationId: string, userMessage: MaraMessageRecord, as
         controller.enqueue(encoder.encode(`${JSON.stringify({ type: "delta", content })}\n`));
         await new Promise((resolve) => setTimeout(resolve, 12));
       }
-      controller.enqueue(encoder.encode(`${JSON.stringify({ type: "done", assistantMessage, draft, pendingActions })}\n`));
+      controller.enqueue(encoder.encode(`${JSON.stringify({ type: "done", assistantMessage, draft, pendingActions, media })}\n`));
       controller.close();
     },
   });
   return new Response(stream, { headers: { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" } });
+}
+
+async function createMediaRequest(input: {
+  userId: string;
+  conversationId: string;
+  requestId: string;
+  message: string;
+  mediaRequest: NonNullable<ReturnType<typeof inferMediaRequest>>;
+  business: NonNullable<Awaited<ReturnType<typeof getBusinessRecord>>>;
+}) {
+  const admin = createAdminClient();
+  const brand = input.business as unknown as Record<string, unknown>;
+  const brandContext = [
+    `Brand: ${String(brand.brand_name ?? "the user's brand")}`,
+    brand.brand_description ? `Description: ${String(brand.brand_description)}` : "",
+    brand.industry ? `Industry: ${String(brand.industry)}` : "",
+    Array.isArray(brand.brand_personality) ? `Visual personality: ${brand.brand_personality.join(", ")}` : "",
+  ].filter(Boolean).join("\n");
+  const prompt = `${input.message}\n\nCreate polished marketing media for this saved Voom brand.\n${brandContext}\nDo not add logos, claims, prices, or written text unless the request explicitly asks for them.`.slice(0, 4000);
+  const isVideo = input.mediaRequest.mediaType === "video";
+  const assistantText = isVideo
+    ? "I prepared your video generation request. Review the format and estimated cost below, then press Confirm generation. Nothing will be published."
+    : "I’m creating your image now. The finished visual will appear in the card below and remain saved here after refresh.";
+  const idempotencyKey = `mara-media:${input.requestId}`;
+  const { data: existing } = await admin.from("mara_media_generations").select(MEDIA_SELECT).eq("owner_user_id", input.userId).eq("idempotency_key", idempotencyKey).maybeSingle();
+  if (existing?.message_id) {
+    const { data: existingMessage } = await admin.from("mara_messages").select("id,conversation_id,role,content,created_at").eq("id", existing.message_id).eq("owner_user_id", input.userId).maybeSingle();
+    if (existingMessage) return { assistantMessage: existingMessage as MaraMessageRecord, media: await toMediaView(admin, existing as Record<string, unknown>) };
+  }
+  const { data: assistantMessage, error: assistantError } = await admin.from("mara_messages").insert({ conversation_id: input.conversationId, owner_user_id: input.userId, role: "assistant", content: assistantText }).select("id,conversation_id,role,content,created_at").single();
+  if (assistantError) return databaseUnavailable();
+  const { data: media, error } = await admin.from("mara_media_generations").upsert({
+    owner_user_id: input.userId, conversation_id: input.conversationId, message_id: assistantMessage.id,
+    media_type: input.mediaRequest.mediaType, prompt, aspect_ratio: input.mediaRequest.aspectRatio,
+    duration_seconds: input.mediaRequest.durationSeconds, status: isVideo ? "pending_confirmation" : "queued",
+    estimated_cost_usd: isVideo ? estimateVideoCost(input.mediaRequest.durationSeconds ?? 8) : null,
+    idempotency_key: idempotencyKey,
+  }, { onConflict: "owner_user_id,idempotency_key" }).select(MEDIA_SELECT).single();
+  if (error) return databaseUnavailable();
+  return { assistantMessage: assistantMessage as MaraMessageRecord, media: await toMediaView(admin, media as Record<string, unknown>) };
+}
+
+function estimateVideoCost(seconds: number) {
+  const configured = Number(process.env.MEDIA_VIDEO_ESTIMATED_COST_PER_SECOND_USD);
+  return Number((seconds * (Number.isFinite(configured) && configured >= 0 ? configured : 0.15)).toFixed(4));
 }
 
 function shouldUseTools(message: string, expectedKind: MaraDraftKind | null) {

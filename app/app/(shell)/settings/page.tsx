@@ -62,7 +62,7 @@ export default function SettingsPage() {
     <div className="mx-auto max-w-[820px]">
       <PageHead
         title="Settings"
-        description="What MARA knows about you and how she behaves."
+        description="What Voom knows about your brand and how its intelligence should operate."
         actions={
           <Btn variant="primary" size="sm" onClick={handleSave} disabled={settingsSaving}>
             {settingsSaving ? "Saving…" : "Save changes"}
@@ -78,7 +78,7 @@ export default function SettingsPage() {
 
       <Card className="mb-3.5 p-4">
         <h2 className="mb-3.5 font-display text-lg font-semibold">Your name</h2>
-        <Field label="What should MARA call you?" hint="Shown in your greeting and account menu.">
+        <Field label="What should Voom call you?" hint="Shown in your greeting and account menu.">
           <Input value={nameInput} onChange={(e) => setNameInput(e.target.value)} placeholder="Your name" />
         </Field>
       </Card>
@@ -132,7 +132,7 @@ export default function SettingsPage() {
       </Card>
 
       <Card className="mb-3.5 p-4">
-        <h2 className="mb-1.5 font-display text-lg font-semibold">MARA autonomy</h2>
+        <h2 className="mb-1.5 font-display text-lg font-semibold">Voom automation</h2>
         <p className="mb-3.5 text-[12.5px] text-text-3">How much she can do without checking in — set during onboarding.</p>
         <div className="mb-3.5">
           <AdSepNote />

@@ -18,7 +18,7 @@ const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function CalendarPage() {
   const { calMonth, calYear, calFilter, posts } = useVoomState();
-  const { calMove, calToday, setCalFilter, askMara, goTo } = useVoomActions();
+  const { calMove, calToday, setCalFilter, goTo } = useVoomActions();
   const { open } = useModal();
   const [savedItems, setSavedItems] = useState<Array<{ id: string; title: string; channel: string; publish_at: string; status: string }>>([]);
   const [calendarError, setCalendarError] = useState<string | null>(null);
@@ -71,8 +71,8 @@ export default function CalendarPage() {
         description={`${posts.length + savedItems.length} pieces planned · ${counts.Scheduled || 0} scheduled, ${counts.Draft || 0} drafts, ${counts.Idea || 0} ideas`}
         actions={
           <>
-            <Btn variant="outline" size="sm" onClick={() => askMara("Plan next week", () => goTo("mara"))}>
-              <Icon name="spark" size={14} /> Fill gaps with MARA
+            <Btn variant="outline" size="sm" onClick={() => goTo("plan")}>
+              <Icon name="spark" size={14} /> Review weekly plan
             </Btn>
             <Btn variant="primary" size="sm" onClick={() => open(<ComposeModal />)}>
               <Icon name="plus" size={14} /> New post
@@ -161,7 +161,7 @@ export default function CalendarPage() {
           [
             ["Scheduled", "t-green", counts.Scheduled || 0, "Publishing automatically"],
             ["Draft", "t-amber", counts.Draft || 0, "Waiting on your review"],
-            ["Idea", "t-grey", counts.Idea || 0, "MARA suggestions"],
+            ["Idea", "t-grey", counts.Idea || 0, "Voom suggestions"],
           ] as [string, string, number, string][]
         ).map(([n, t, c, d]) => (
           <Card key={n} className="flex items-center justify-between p-4">

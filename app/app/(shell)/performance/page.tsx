@@ -1,0 +1,6 @@
+import Link from "next/link";
+import { PageHead } from "@/components/voom/shell/AppShell";
+import { Card } from "@/components/voom/ui/primitives";
+import { Icon } from "@/components/voom/icons";
+
+export default function PerformancePage() { return <div><PageHead title="Performance" description="Live results from connected channels, with no invented statistics." /><Card className="flex flex-col items-start gap-3 p-5 sm:flex-row sm:items-center"><span className="grid h-11 w-11 place-items-center rounded-xl bg-[var(--brand-soft)] text-brand"><Icon name="ig" /></span><div className="min-w-0 flex-1"><h2 className="font-display text-lg font-semibold">Instagram performance</h2><p className="mt-1 text-sm text-text-3">View the real insights and posts returned by your connected professional account.</p></div><Link href="/app/instagram" className="inline-flex h-[38px] items-center rounded-[10px] border border-line px-4 text-sm font-semibold hover:border-brand">View live insights →</Link></Card><Card className="mt-4 p-6 text-center"><b className="text-sm">No other performance sources are connected</b><p className="mx-auto mt-1 max-w-lg text-xs leading-relaxed text-text-3">Email, SMS, and paid advertising results will appear here only after those real integrations are connected.</p></Card></div>; }

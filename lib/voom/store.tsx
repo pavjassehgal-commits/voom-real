@@ -43,12 +43,17 @@ import {
 import { saveOnboarding as saveOnboardingAction, saveBrandSettings as saveBrandSettingsAction, restartOnboarding as restartOnboardingAction } from "./mutations";
 
 const NAV_PATHS: Record<string, string> = {
-  dash: "/app",
-  mara: "/app/mara",
+  dash: "/app/today",
+  today: "/app/today",
+  approvals: "/app/approvals",
+  plan: "/app/plan",
   calendar: "/app/calendar",
   reels: "/app/reels",
   campaigns: "/app/campaigns",
   ads: "/app/ads",
+  automations: "/app/automations",
+  performance: "/app/performance",
+  connections: "/app/connections",
   instagram: "/app/instagram",
   pricing: "/app/pricing",
   settings: "/app/settings",

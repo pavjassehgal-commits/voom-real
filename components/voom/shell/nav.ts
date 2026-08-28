@@ -12,50 +12,54 @@ export interface NavGroup {
 
 export const NAV: NavGroup[] = [
   {
-    g: "Workspace",
+    g: "Operate",
     items: [
-      { id: "dash", n: "Dashboard", i: "home" },
-      { id: "mara", n: "MARA", i: "spark", badge: "AI" },
+      { id: "today", n: "Today", i: "home" },
+      { id: "approvals", n: "Approvals", i: "check" },
+      { id: "plan", n: "Marketing Plan", i: "spark" },
     ],
   },
   {
     g: "Content",
     items: [
-      { id: "calendar", n: "Content calendar", i: "cal" },
-      { id: "reels", n: "Reel scheduling", i: "film" },
-      { id: "campaigns", n: "Email & SMS", i: "mail" },
+      { id: "calendar", n: "Content Calendar", i: "cal" },
+      { id: "reels", n: "Content Studio", i: "film" },
+      { id: "campaigns", n: "Campaigns", i: "mail" },
     ],
   },
   {
-    g: "Growth",
+    g: "Grow",
     items: [
-      { id: "ads", n: "Paid advertising", i: "target" },
-      { id: "instagram", n: "Instagram", i: "ig" },
+      { id: "ads", n: "Paid Advertising", i: "target" },
+      { id: "automations", n: "Automations", i: "bolt" },
+      { id: "performance", n: "Performance", i: "trend" },
+      { id: "connections", n: "Connections", i: "globe" },
     ],
   },
   {
     g: "Account",
     items: [
-      { id: "pricing", n: "Plans & billing", i: "card" },
       { id: "settings", n: "Settings", i: "cog" },
     ],
   },
 ];
 
 export const TITLES: Record<string, string> = {
-  dash: "Dashboard",
-  mara: "MARA",
-  calendar: "Content calendar",
-  reels: "Reel scheduling",
-  campaigns: "Email & SMS",
-  ads: "Paid advertising",
-  instagram: "Instagram",
-  pricing: "Plans & billing",
+  today: "Today",
+  approvals: "Approvals",
+  plan: "Marketing Plan",
+  calendar: "Content Calendar",
+  reels: "Content Studio",
+  campaigns: "Campaigns",
+  ads: "Paid Advertising",
+  automations: "Automations",
+  performance: "Performance",
+  connections: "Connections",
   settings: "Settings",
 };
 
 export function pageIdFromPath(pathname: string): string {
-  if (pathname === "/app" || pathname === "/app/") return "dash";
+  if (pathname === "/app" || pathname === "/app/") return "today";
   const seg = pathname.replace(/^\/app\/?/, "").split("/")[0];
-  return seg || "dash";
+  return seg || "today";
 }

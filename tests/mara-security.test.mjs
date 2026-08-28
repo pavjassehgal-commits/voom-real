@@ -11,7 +11,7 @@ test("AI credentials are server-only placeholders", async () => {
   }
   assert.doesNotMatch(example, /NEXT_PUBLIC_AI_/);
 
-  const client = await read("app/app/(shell)/mara/page.tsx");
+  const client = await read("components/voom/mara/LegacyMaraChat.tsx");
   assert.doesNotMatch(client, /AI_API_KEY|AI_BASE_URL|process\.env/);
 });
 
@@ -104,7 +104,7 @@ test("the allowlist contains every approved Voom tool and no execution tools", a
 });
 
 test("pending action cards persist, confirm or cancel explicitly, and refresh product data", async () => {
-  const client = await read("app/app/(shell)/mara/page.tsx");
+  const client = await read("components/voom/mara/LegacyMaraChat.tsx");
   const actionRoute = await read("app/api/mara/actions/[id]/route.ts");
   assert.match(client, /data-mara-pending-action/);
   assert.match(client, /failed \? "Retry" : "Confirm"/);
@@ -119,7 +119,7 @@ test("pending action cards persist, confirm or cancel explicitly, and refresh pr
 });
 
 test("content drafts render inline with persistent actions", async () => {
-  const client = await read("app/app/(shell)/mara/page.tsx");
+  const client = await read("components/voom/mara/LegacyMaraChat.tsx");
   assert.match(client, /item\.message_id === message\.id/);
   assert.match(client, /<DraftCard draft=\{item\} inline/);
   for (const action of ["Copy", "Edit", "Regenerate", "Approve", "Reject"]) {

@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { InstagramClient } from "@/lib/instagram/client";
+import { InstagramApiError, InstagramClient } from "@/lib/instagram/client";
 import { requireInstagramConfig } from "@/lib/instagram/config";
 import { consumeOAuthState, saveInstagramConnection } from "@/lib/instagram/data";
 import { getCurrentUser } from "@/lib/voom/server-data";
@@ -20,18 +20,25 @@ export async function GET(request: Request) {
   const cookieState = cookieStore.get(STATE_COOKIE)?.value;
   cookieStore.delete(STATE_COOKIE);
   if (!code || code.length > 2048 || !state || !/^[A-Za-z0-9_-]{43}$/.test(state) || !cookieState) return redirectWith(fallback, "invalid_state");
+  let stage: "state" | "token" | "profile" | "save" = "state";
   try {
     const config = requireInstagramConfig();
     const admin = createAdminClient();
     if (!(await consumeOAuthState(admin, user.id, state, cookieState))) return redirectWith(fallback, "invalid_state");
     const client = new InstagramClient(config);
+    stage = "token";
     const token = await client.exchangeCode(code);
+    stage = "profile";
     const profile = await client.getProfile(token.accessToken, token.userId);
+    stage = "save";
     await saveInstagramConnection(admin, { ownerId: user.id, instagramUserId: profile.userId, username: profile.username, name: profile.name, accountType: profile.accountType, profilePictureUrl: profile.profilePictureUrl, accessToken: token.accessToken, expiresIn: token.expiresIn, encryptionKey: config.encryptionKey });
     fallback.searchParams.set("instagram", "connected");
     return NextResponse.redirect(fallback);
-  } catch {
-    return redirectWith(fallback, "connection_failed");
+  } catch (error) {
+    const reason = error instanceof InstagramApiError
+      ? `${error.operation ?? "provider"}_${error.code}_${error.providerReason ?? "unknown"}`
+      : "failed";
+    return redirectWith(fallback, `${stage}_${reason}`);
   }
 }
 
