@@ -32,7 +32,11 @@ export async function getCalendarItem(db: ServerSupabase, ownerId: string, id: s
 }
 
 export async function createCalendarItem(db: ServerSupabase, ownerId: string, input: Record<string, unknown>) {
-  const { data, error } = await db.from("content_calendar_items").insert({ ...input, owner_user_id: ownerId })
+  const value = { ...input, owner_user_id: ownerId };
+  const query = input.source_draft_id
+    ? db.from("content_calendar_items").upsert(value, { onConflict: "owner_user_id,source_draft_id" })
+    : db.from("content_calendar_items").insert(value);
+  const { data, error } = await query
     .select("id,title,channel,content,topic,publish_at,status,source_draft_id,created_at,updated_at").single();
   if (error) throw new Error("calendar_create_failed");
   return data;

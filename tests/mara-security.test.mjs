@@ -49,6 +49,13 @@ test("AI failures are friendly and provider secrets are never echoed", async () 
   assert.doesNotMatch(provider, /console\.(log|error)/);
 });
 
+test("structured JSON validation failures are retryable without exposing provider details", async () => {
+  const provider = await read("lib/ai/openai-compatible.ts");
+  assert.match(provider, /json && response\.status === 400/);
+  assert.match(provider, /throw new AiError\("malformed_response"/);
+  assert.doesNotMatch(provider, /console\.(log|error).*body/);
+});
+
 test("approval cannot publish content", async () => {
   const draftRoute = await read("app/api/mara/drafts/[id]/route.ts");
   const actions = await read("app/api/mara/actions/[id]/route.ts");

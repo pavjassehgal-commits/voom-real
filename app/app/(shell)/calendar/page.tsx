@@ -159,7 +159,7 @@ export default function CalendarPage() {
       <div className="mt-3.5 grid gap-3.5 sm:grid-cols-3">
         {(
           [
-            ["Scheduled", "t-green", counts.Scheduled || 0, "Publishing automatically"],
+            ["Scheduled", "t-green", counts.Scheduled || 0, "Planned inside Voom"],
             ["Draft", "t-amber", counts.Draft || 0, "Waiting on your review"],
             ["Idea", "t-grey", counts.Idea || 0, "Voom suggestions"],
           ] as [string, string, number, string][]

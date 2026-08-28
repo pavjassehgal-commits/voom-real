@@ -40,3 +40,30 @@ test("automation modes preserve confirmation safety", async () => {
   assert.match(page, /No mode can publish externally, send a campaign, delete content, or spend advertising money/);
   assert.match(route, /externalActionsRequirePermission: true/);
 });
+
+test("plan generation persists one Instagram draft and approval without chat messages", async () => {
+  const [planning, workflow, route] = await Promise.all([
+    read("lib/mara/planning.ts"), read("lib/mara/plan-workflow.ts"), read("app/api/plan/route.ts"),
+  ]);
+  assert.match(planning, /complete caption with CTA and hashtags/);
+  assert.match(planning, /proposedPublishAt/);
+  assert.match(workflow, /mara_drafts/);
+  assert.match(workflow, /source_plan_id: planId/);
+  assert.match(workflow, /"propose_calendar_item"/);
+  assert.doesNotMatch(workflow, /mara_messages/);
+  assert.match(route, /prepareInstagramPlanWorkflow/);
+});
+
+test("approved plan content is idempotently linked to the calendar and never published", async () => {
+  const [migration, ownerLinks, tools, data] = await Promise.all([
+    read("supabase/migrations/0010_plan_to_calendar_workflow.sql"), read("supabase/migrations/0011_plan_workflow_owner_links.sql"), read("lib/mara/tools.ts"), read("lib/mara/internal-data.ts"),
+  ]);
+  assert.match(migration, /unique \(owner_user_id, source_plan_id\)/);
+  assert.match(migration, /unique \(owner_user_id, source_draft_id\)/);
+  assert.match(ownerLinks, /foreign key \(source_plan_id, owner_user_id\)/);
+  assert.match(ownerLinks, /foreign key \(source_draft_id, owner_user_id\)/);
+  assert.match(data, /onConflict: "owner_user_id,source_draft_id"/);
+  assert.match(tools, /status: "approved"/);
+  assert.match(tools, /Nothing was published/);
+  assert.match(tools, /mara_drafts"\)\.update\(\{ status: "approved" \}\)/);
+});

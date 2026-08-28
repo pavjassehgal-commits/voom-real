@@ -1,5 +1,6 @@
 import { AiError } from "@/lib/ai";
 import { generateMarketingPlan } from "@/lib/mara/planning";
+import { prepareInstagramPlanWorkflow } from "@/lib/mara/plan-workflow";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
@@ -38,7 +39,8 @@ export async function POST() {
     await admin.from("marketing_plans").update({ status: "superseded" }).eq("owner_user_id", user.id).eq("status", "active");
     const { data, error } = await admin.from("marketing_plans").update({ status: "active" }).eq("id", staged.id).eq("owner_user_id", user.id).select("*").single();
     if (error) throw new Error("plan_activate_failed");
-    return Response.json({ plan: data });
+    const workflow = await prepareInstagramPlanWorkflow(db, user.id, data.id, plan);
+    return Response.json({ plan: data, workflow });
   } catch (error) {
     const message = error instanceof AiError && error.code === "rate_limited"
       ? "Voom's planning engine is busy. Please try again shortly."

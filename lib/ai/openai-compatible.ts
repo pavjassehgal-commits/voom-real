@@ -107,6 +107,13 @@ export class OpenAiCompatibleProvider implements AiProvider {
       throw new AiError("rate_limited", "The AI provider is rate limited.", retryAfter);
     }
     if (!response.ok) {
+      if (json && response.status === 400) {
+        const body = await safeJson(response) as { error?: { message?: string; code?: string } };
+        const detail = `${body.error?.code ?? ""} ${body.error?.message ?? ""}`;
+        if (/json|failed_generation|validate/i.test(detail)) {
+          throw new AiError("malformed_response", "The AI provider returned malformed structured data.");
+        }
+      }
       throw new AiError("unavailable", `The AI provider returned HTTP ${response.status}.`);
     }
     return response;

@@ -31,7 +31,7 @@ const schemas = {
   update_content_draft: z.object({ draftId: uuid, title: z.string().min(1).max(160).optional(), content: z.string().min(1).max(12000).optional(), proposedPublishAt: isoDate.nullable().optional() }).strict(),
   approve_draft: z.object({ draftId: uuid }).strict(),
   reject_draft: z.object({ draftId: uuid }).strict(),
-  propose_calendar_item: z.object({ title: z.string().min(1).max(160), channel, content: z.string().max(12000).default(""), topic: z.string().max(500).default(""), publishAt: isoDate, sourceDraftId: uuid.nullable().optional() }).strict(),
+  propose_calendar_item: z.object({ title: z.string().min(1).max(160), channel, content: z.string().max(12000).default(""), topic: z.string().max(500).default(""), publishAt: isoDate, sourceDraftId: uuid.nullable().optional(), reason: z.string().min(1).max(800).optional() }).strict(),
   update_calendar_item: z.object({ itemId: uuid, title: z.string().min(1).max(160).optional(), channel: channel.optional(), content: z.string().max(12000).optional(), topic: z.string().max(500).optional(), publishAt: isoDate.optional() }).strict(),
   delete_calendar_item: z.object({ itemIds: z.array(uuid).min(1).max(25) }).strict(),
   create_campaign_draft: z.object({ kind: z.enum(["email", "sms"]), name: z.string().min(1).max(160), objective: z.string().max(1000).default(""), audience: z.string().max(1000).default(""), subject: z.string().max(300).nullable().optional(), previewText: z.string().max(500).nullable().optional(), content: z.string().max(12000).default(""), proposedSendAt: isoDate.nullable().optional() }).strict(),
@@ -151,7 +151,14 @@ export async function executeConfirmedAction(c: Omit<ToolContext, "profile" | "b
   const a = action.sanitized_arguments;
   let result: unknown; let summary: string;
   if (action.tool_name === "approve_draft") { const { data, error } = await c.db.from("mara_drafts").update({ status: "approved" }).eq("owner_user_id", c.ownerId).eq("id", a.draftId as string).select("id,title").maybeSingle(); if (error || !data) throw new Error("approval_failed"); result = data; summary = `Approved “${data.title}”. Nothing was published.`; }
-  else if (action.tool_name === "propose_calendar_item") { result = await createCalendarItem(c.db, c.ownerId, { title: a.title, channel: a.channel, content: a.content, topic: a.topic, publish_at: a.publishAt, status: "proposed", source_draft_id: a.sourceDraftId ?? null }); summary = `Added “${(result as { title: string }).title}” to the calendar.`; }
+  else if (action.tool_name === "propose_calendar_item") {
+    result = await createCalendarItem(c.db, c.ownerId, { title: a.title, channel: a.channel, content: a.content, topic: a.topic, publish_at: a.publishAt, status: "approved", source_draft_id: a.sourceDraftId ?? null });
+    if (a.sourceDraftId) {
+      const { data: draft, error } = await c.db.from("mara_drafts").update({ status: "approved" }).eq("owner_user_id", c.ownerId).eq("id", a.sourceDraftId as string).select("id").maybeSingle();
+      if (error || !draft) throw new Error("draft_approval_failed");
+    }
+    summary = `Approved “${(result as { title: string }).title}” and added it to the Voom calendar. Nothing was published.`;
+  }
   else if (action.tool_name === "update_calendar_item") { const id = a.itemId as string; result = await updateCalendarItem(c.db, c.ownerId, id, compact({ title: a.title, channel: a.channel, content: a.content, topic: a.topic, publish_at: a.publishAt })); if (!result) throw new Error("item_missing"); summary = `Updated “${(result as { title: string }).title}” on the calendar.`; }
   else if (action.tool_name === "delete_calendar_item") { const deleted = []; for (const id of a.itemIds as string[]) { const item = await deleteCalendarItem(c.db, c.ownerId, id); if (item) deleted.push(item); } result = deleted; summary = `Deleted ${deleted.length} calendar item${deleted.length === 1 ? "" : "s"}.`; }
   else throw new Error("action_not_confirmable");
