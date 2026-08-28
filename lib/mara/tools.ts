@@ -152,7 +152,9 @@ export async function executeConfirmedAction(c: Omit<ToolContext, "profile" | "b
   let result: unknown; let summary: string;
   if (action.tool_name === "approve_draft") { const { data, error } = await c.db.from("mara_drafts").update({ status: "approved" }).eq("owner_user_id", c.ownerId).eq("id", a.draftId as string).select("id,title").maybeSingle(); if (error || !data) throw new Error("approval_failed"); result = data; summary = `Approved “${data.title}”. Nothing was published.`; }
   else if (action.tool_name === "propose_calendar_item") {
-    result = await createCalendarItem(c.db, c.ownerId, { title: a.title, channel: a.channel, content: a.content, topic: a.topic, publish_at: a.publishAt, status: "approved", source_draft_id: a.sourceDraftId ?? null });
+    const draft = a.sourceDraftId ? await getDraft(c.db, c.ownerId, a.sourceDraftId as string) : null;
+    if (a.sourceDraftId && (!draft || !draft.content.trim() || !draft.proposed_publish_at)) throw new Error("draft_missing");
+    result = await createCalendarItem(c.db, c.ownerId, { title: a.title, channel: a.channel, content: draft?.content ?? a.content, topic: a.topic, publish_at: draft?.proposed_publish_at ?? a.publishAt, status: "approved", source_draft_id: a.sourceDraftId ?? null });
     if (a.sourceDraftId) {
       const { data: draft, error } = await c.db.from("mara_drafts").update({ status: "approved" }).eq("owner_user_id", c.ownerId).eq("id", a.sourceDraftId as string).select("id").maybeSingle();
       if (error || !draft) throw new Error("draft_approval_failed");

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/voom/icons";
-import { Btn, Card, Tag, Textarea } from "@/components/voom/ui/primitives";
+import { Btn, Card, Input, Tag, Textarea } from "@/components/voom/ui/primitives";
 
 export interface ApprovalItem { id: string; tool_name: string; summary: string; old_value: Record<string, unknown> | null; new_value: Record<string, unknown> | null; status: string; result_summary: string | null; error_summary: string | null; created_at: string; }
 
@@ -16,6 +16,7 @@ export function ApprovalsBoard({ initial }: { initial: ApprovalItem[] }) {
     if (response.ok && body.action) { setItems((current) => current.map((item) => item.id === id ? body.action! : item)); window.dispatchEvent(new Event("voom:data-changed")); }
     else setError(body.error ?? "Voom couldn't safely update that action.");
     setBusy(null);
+    return response.ok && Boolean(body.action);
   }
   const open = items.filter((item) => item.status === "pending" || item.status === "failed");
   const completed = items.filter((item) => item.status !== "pending" && item.status !== "failed");
@@ -26,17 +27,30 @@ export function ApprovalsBoard({ initial }: { initial: ApprovalItem[] }) {
   </div>;
 }
 
-function ApprovalCard({ item, busy, onDecision }: { item: ApprovalItem; busy: boolean; onDecision: (id: string, decision: "confirm" | "cancel" | "edit", changes?: Record<string, unknown>) => Promise<void> }) {
+function ApprovalCard({ item, busy, onDecision }: { item: ApprovalItem; busy: boolean; onDecision: (id: string, decision: "confirm" | "cancel" | "edit", changes?: Record<string, unknown>) => Promise<boolean> }) {
   const [editing, setEditing] = useState(false); const [text, setText] = useState(() => editableText(item.new_value));
-  const failed = item.status === "failed"; const detail = details(item);
-  async function save() { const key = editableKey(item.new_value); if (!key || !text.trim()) return; await onDecision(item.id, "edit", { [key]: text.trim() }); setEditing(false); }
+  const [publishAt, setPublishAt] = useState(() => toDubaiLocal(item.new_value?.publishAt)); const [validation, setValidation] = useState("");
+  const failed = item.status === "failed"; const detail = details(item); const contentApproval = isEditableCalendarContent(item);
+  async function save() {
+    setValidation("");
+    if (contentApproval) {
+      const content = text.trim(); const scheduled = fromDubaiLocal(publishAt);
+      if (!content) return setValidation("Caption cannot be empty.");
+      if (!scheduled) return setValidation("Choose a valid publishing date and time.");
+      if (new Date(scheduled).getTime() < Date.now() - 300000) return setValidation("Choose a time that has not already passed.");
+      if (await onDecision(item.id, "edit", { content, publishAt: scheduled })) setEditing(false);
+      return;
+    }
+    const key = editableKey(item.new_value); if (!key || !text.trim()) return;
+    if (await onDecision(item.id, "edit", { [key]: text.trim() })) setEditing(false);
+  }
   return <Card className="overflow-hidden border-brand/30"><div className="border-l-[3px] border-brand p-4 sm:p-5">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><span className="text-[10px] font-bold uppercase tracking-[.09em] text-brand">Approval required</span><h2 className="mt-1 font-display text-lg font-semibold">{item.summary}</h2></div><Tag tone={failed ? "t-red" : "t-amber"}>{failed ? "Retry needed" : "Waiting for you"}</Tag></div>
     <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2"><Info label="Why Voom recommends it" value={detail.why} /><Info label="Channel" value={detail.channel} /></dl>
     {item.old_value && <Values title="Current" value={item.old_value} />}
-    {editing ? <div className="mt-4"><label className="mb-1.5 block text-xs font-semibold text-text-2">Edit proposed {editableKey(item.new_value)?.replaceAll("_", " ") ?? "content"}</label><Textarea rows={7} value={text} maxLength={12000} onChange={(event) => setText(event.target.value)} /></div> : item.new_value && <Values title="Exact proposed change" value={item.new_value} />}
+    {editing ? <div className="mt-4 space-y-3"><label className="block"><span className="mb-1.5 block text-xs font-semibold text-text-2">{contentApproval ? "Instagram caption" : `Edit proposed ${editableKey(item.new_value)?.replaceAll("_", " ") ?? "content"}`}</span><Textarea rows={7} value={text} maxLength={12000} onChange={(event) => setText(event.target.value)} /></label>{contentApproval && <label className="block"><span className="mb-1.5 block text-xs font-semibold text-text-2">Scheduled date and time</span><Input type="datetime-local" value={publishAt} onInput={(event) => setPublishAt(event.currentTarget.value)} /></label>}{validation && <p role="alert" className="text-sm text-red">{validation}</p>}</div> : item.new_value && <Values title="Exact proposed change" value={item.new_value} />}
     {failed && <p className="mt-3 text-sm text-red">{item.error_summary ?? "The previous attempt failed safely. Nothing was changed."}</p>}
-    <div className="mt-4 flex flex-wrap gap-2">{editing ? <><Btn size="sm" variant="primary" disabled={busy || !text.trim()} onClick={() => void save()}>Save edit</Btn><Btn size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel edit</Btn></> : <><Btn size="sm" variant="primary" disabled={busy} onClick={() => void onDecision(item.id, "confirm")}>{failed ? "Retry" : "Confirm"}</Btn><Btn size="sm" variant="outline" disabled={busy || !editableKey(item.new_value)} onClick={() => setEditing(true)}>Edit</Btn>{!failed && <Btn size="sm" variant="danger" disabled={busy} onClick={() => void onDecision(item.id, "cancel")}>Cancel</Btn>}<Link href={detail.href} className="inline-flex h-[34px] items-center rounded-[9px] border border-line px-3.5 text-[13px] font-semibold hover:border-brand">{detail.link} →</Link></> }</div>
+    <div className="mt-4 flex flex-wrap gap-2">{editing ? <><Btn size="sm" variant="primary" disabled={busy || !text.trim() || (contentApproval && !publishAt)} onClick={() => void save()}>Save edit</Btn><Btn size="sm" variant="ghost" onClick={() => { setEditing(false); setValidation(""); setText(editableText(item.new_value)); setPublishAt(toDubaiLocal(item.new_value?.publishAt)); }}>Cancel edit</Btn></> : <><Btn size="sm" variant="primary" disabled={busy} onClick={() => void onDecision(item.id, "confirm")}>{failed ? "Retry" : "Confirm"}</Btn><Btn size="sm" variant="outline" disabled={busy || !editableKey(item.new_value)} onClick={() => setEditing(true)}>Edit</Btn>{!failed && <Btn size="sm" variant="danger" disabled={busy} onClick={() => void onDecision(item.id, "cancel")}>Cancel</Btn>}<Link href={detail.href} className="inline-flex h-[34px] items-center rounded-[9px] border border-line px-3.5 text-[13px] font-semibold hover:border-brand">{detail.link} →</Link></> }</div>
     <p className="mt-3 text-[11px] text-text-3">Confirm changes Voom data only. It never publishes, sends, deletes externally, or spends money without separate permission.</p>
   </div></Card>;
 }
@@ -46,3 +60,6 @@ function details(item: ApprovalItem) { const calendar = item.tool_name.includes(
 function editableKey(value: Record<string, unknown> | null) { if (!value) return null; return ["content", "caption", "title", "topic", "objective", "publishAt", "proposedSendAt", "budget"].find((key) => typeof value[key] === "string") ?? null; }
 function editableText(value: Record<string, unknown> | null) { const key = editableKey(value); return key ? String(value?.[key] ?? "") : ""; }
 function formatValue(key: string, value: unknown) { if (typeof value === "string" && /(at|time|date)$/i.test(key) && !Number.isNaN(Date.parse(value))) return new Date(value).toLocaleString("en-AE", { timeZone: "Asia/Dubai" }); return String(value); }
+function isEditableCalendarContent(item: ApprovalItem) { return item.tool_name === "propose_calendar_item" && typeof item.new_value?.content === "string" && typeof item.new_value?.publishAt === "string" && typeof item.new_value?.sourceDraftId === "string"; }
+function toDubaiLocal(value: unknown) { if (typeof value !== "string" || Number.isNaN(Date.parse(value))) return ""; const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dubai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(value)); const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? ""; return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`; }
+function fromDubaiLocal(value: string) { return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}:00+04:00`)) ? `${value}:00+04:00` : null; }

@@ -1,6 +1,7 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { executeConfirmedAction } from "@/lib/mara/tools";
 import { createClient } from "@/utils/supabase/server";
+import { z } from "zod";
 
 export const runtime = "nodejs";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -19,11 +20,20 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (decision === "edit") {
     const changes = body && typeof body === "object" && "changes" in body ? (body as { changes?: unknown }).changes : null;
     if (!changes || typeof changes !== "object" || Array.isArray(changes)) return Response.json({ error: "Those changes are not valid." }, { status: 400 });
+    const { data: current } = await db.from("mara_pending_actions").select("tool_name,sanitized_arguments,new_value").eq("id", id).eq("owner_user_id", user.id).in("status", ["pending", "failed"]).maybeSingle();
+    if (!current) return currentAction(db, user.id, id);
+    if (current.tool_name === "propose_calendar_item" && typeof current.sanitized_arguments?.sourceDraftId === "string") {
+      const parsed = calendarContentEdit.safeParse(changes);
+      if (!parsed.success || new Date(parsed.data.publishAt).getTime() < Date.now() - 300000 || new Date(parsed.data.publishAt).getTime() > Date.now() + 2 * 365 * 86400000) {
+        return Response.json({ error: "Enter a caption and a valid future date within the next two years." }, { status: 400 });
+      }
+      const { error } = await db.rpc("edit_mara_calendar_approval", { p_action_id: id, p_content: parsed.data.content.trim(), p_publish_at: parsed.data.publishAt });
+      if (error) return friendlyFailure();
+      return currentAction(db, user.id, id, "Draft and schedule updated. Nothing has been applied yet.");
+    }
     const allowed = new Set(["title", "channel", "content", "topic", "publishAt", "proposedPublishAt", "name", "objective", "audience", "subject", "previewText", "proposedSendAt", "budget"]);
     const clean = Object.fromEntries(Object.entries(changes as Record<string, unknown>).filter(([key, value]) => allowed.has(key) && (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null)));
     if (!Object.keys(clean).length || JSON.stringify(clean).length > 14000) return Response.json({ error: "Those changes are not valid." }, { status: 400 });
-    const { data: current } = await db.from("mara_pending_actions").select("sanitized_arguments,new_value").eq("id", id).eq("owner_user_id", user.id).in("status", ["pending", "failed"]).maybeSingle();
-    if (!current) return currentAction(db, user.id, id);
     const nextArguments = { ...(current.sanitized_arguments ?? {}), ...clean };
     const { data, error } = await db.from("mara_pending_actions").update({ sanitized_arguments: nextArguments, new_value: { ...(current.new_value ?? {}), ...clean }, status: "pending", error_summary: null, result_summary: "Updated proposal. Review it before confirming." }).eq("id", id).eq("owner_user_id", user.id).in("status", ["pending", "failed"]).select("id,conversation_id,message_id,tool_name,summary,old_value,new_value,status,result_summary,error_summary,created_at,updated_at,executed_at").single();
     if (error) return friendlyFailure();
@@ -58,9 +68,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
 }
 
-async function currentAction(db: Awaited<ReturnType<typeof createClient>>, ownerId: string, id: string) {
+async function currentAction(db: Awaited<ReturnType<typeof createClient>>, ownerId: string, id: string, message?: string) {
   const { data } = await db.from("mara_pending_actions").select("id,conversation_id,message_id,tool_name,summary,old_value,new_value,status,result_summary,error_summary,created_at,updated_at,executed_at").eq("id", id).eq("owner_user_id", ownerId).maybeSingle();
   if (!data) return Response.json({ error: "That action was not found." }, { status: 404 });
-  return Response.json({ action: data, message: data.result_summary ?? "This action was already handled." });
+  return Response.json({ action: data, message: message ?? data.result_summary ?? "This action was already handled." });
 }
 function friendlyFailure() { return Response.json({ error: "Voom couldn't apply that change. Nothing unsafe was done—please retry." }, { status: 503 }); }
+const calendarContentEdit = z.object({ content: z.string().trim().min(1).max(12000), publishAt: z.string().datetime({ offset: true }) }).strict();

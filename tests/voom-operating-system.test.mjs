@@ -67,3 +67,19 @@ test("approved plan content is idempotently linked to the calendar and never pub
   assert.match(tools, /Nothing was published/);
   assert.match(tools, /mara_drafts"\)\.update\(\{ status: "approved" \}\)/);
 });
+
+test("approval edits persist atomically and confirmation uses the latest owned draft", async () => {
+  const [board, route, migration, tools] = await Promise.all([
+    read("components/voom/operating/ApprovalsBoard.tsx"), read("app/api/mara/actions/[id]/route.ts"),
+    read("supabase/migrations/0012_edit_plan_calendar_approval.sql"), read("lib/mara/tools.ts"),
+  ]);
+  assert.match(board, /Instagram caption/);
+  assert.match(board, /type="datetime-local"/);
+  assert.match(route, /edit_mara_calendar_approval/);
+  assert.match(migration, /security invoker/);
+  assert.match(migration, /owner_user_id = v_owner_id/);
+  assert.match(migration, /update public\.mara_drafts/);
+  assert.match(migration, /update public\.mara_pending_actions/);
+  assert.match(tools, /draft\?\.content \?\? a\.content/);
+  assert.match(tools, /draft\?\.proposed_publish_at \?\? a\.publishAt/);
+});
