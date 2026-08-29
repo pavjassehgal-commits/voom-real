@@ -100,7 +100,7 @@ test("legacy sample workspaces and notifications never claim external actions ha
     read("components/voom/modals/PostDetailModal.tsx"),
   ]);
   assert.match(reels, /sample workspace/);
-  assert.match(reels, /Approvals →/);
+  assert.match(reels, /Open real Reel workflow/);
   assert.match(reels, /illustration-only/);
   assert.doesNotMatch(store, /Reel scheduled for Aug 25/);
   assert.doesNotMatch(store, /Whole queue moved to best slot/);
