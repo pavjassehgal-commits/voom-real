@@ -11,43 +11,50 @@ export const dynamic = "force-dynamic";
 export default async function TodayPage() {
   const data = await getOperatingData();
   if (!data) return null;
-  const pending = data.actions.filter((item) => item.status === "pending" || item.status === "failed");
   const firstName = data.user.email?.split("@")[0] ?? "there";
+  const recommendation = getRecommendation(data.pendingApprovalCount, data.nextScheduled?.publish_at, Boolean(data.plan));
+
   return <div>
     <PageHead title="Today" description={`Your marketing command centre, ${firstName}.`} actions={<AutomationMode compact initial={normalizeAutomationMode(data.business.automation_level)} />} />
+    <div className="grid gap-4 md:grid-cols-2">
+      <DashboardCard title="Needs your approval" icon="warn" href="/app/approvals" action="Open Approvals">
+        <div className="flex items-end gap-3"><strong className="font-display text-4xl leading-none">{data.pendingApprovalCount}</strong><span className="pb-1 text-sm text-text-2">{data.pendingApprovalCount === 1 ? "recommendation" : "recommendations"} waiting</span></div>
+        <p className="mt-3 text-sm leading-relaxed text-text-3">{data.pendingApprovalCount ? "Review each caption and schedule before it is added to your calendar." : "Nothing needs your decision right now."}</p>
+      </DashboardCard>
 
-    <section className="mb-4 overflow-hidden rounded-[var(--r-lg)] border border-line bg-surface shadow-[var(--shadow)]">
-      <div className="border-l-[3px] border-brand p-5 sm:p-6">
-        <div className="flex items-start gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-[var(--brand-soft)] text-brand"><Icon name="spark" size={18} /></span><div className="min-w-0 flex-1">
-          <p className="text-xs font-bold uppercase tracking-[.08em] text-text-3">What Voom is working on</p>
-          {data.plan ? <><h2 className="mt-2 font-display text-lg font-semibold">Keeping your active marketing plan on track</h2><p className="mt-1 text-sm leading-relaxed text-text-2">Voom is monitoring approved work, upcoming content, and items that need your decision. Nothing is published, sent, deleted, or funded without permission.</p></> : <><h2 className="mt-2 font-display text-lg font-semibold">Ready to build your first marketing plan</h2><p className="mt-1 text-sm leading-relaxed text-text-2">Your brand profile and existing Voom activity are ready. Generate a grounded weekly plan and review its first content recommendation.</p><Link href="/app/plan" className="mt-3 inline-flex text-sm font-semibold text-brand hover:underline">Open Marketing Plan →</Link></>}
-        </div></div>
-      </div>
-    </section>
+      <DashboardCard title="Next scheduled content" icon="clock" href="/app/calendar" action="Open Content Calendar">
+        {data.nextScheduled ? <div><div className="flex flex-wrap items-center gap-2"><Tag tone="t-blue">{data.nextScheduled.channel}</Tag><span className="text-xs font-semibold text-text-2">{formatDubai(data.nextScheduled.publish_at)}</span></div><p className="mt-3 line-clamp-2 text-sm leading-relaxed text-text-2">{data.nextScheduled.content || data.nextScheduled.title}</p></div> : <Empty title="Nothing scheduled yet" text="Approved recommendations will appear here once they are placed on the calendar." />}
+      </DashboardCard>
 
-    <div className="grid gap-4 xl:grid-cols-[1.35fr_.85fr]">
-      <div className="space-y-4">
-        <Section title="Today’s planned marketing work" icon="cal" href="/app/calendar" link="View calendar">
-          {data.today.length ? data.today.map((item) => <WorkRow key={item.id} item={item} />) : <Empty title="Nothing is scheduled for today" text="Your next approved or proposed calendar item will appear here." href="/app/calendar" action="Open Content Calendar" />}
-        </Section>
-        <Section title="Upcoming scheduled content" icon="clock" href="/app/calendar" link="View calendar">
-          {data.upcoming.length ? data.upcoming.map((item) => <WorkRow key={item.id} item={item} />) : <Empty title="No upcoming content yet" text="Approved calendar proposals will appear here with their real channel and publishing time." href="/app/plan" action="Review Marketing Plan" />}
-        </Section>
-      </div>
-      <div className="space-y-4">
-        <Section title="Important alerts" icon="warn" href="/app/approvals" link="Review approvals">
-          {pending.length ? pending.slice(0, 5).map((item) => <Link href="/app/approvals" key={item.id} className="flex gap-3 border-t border-line px-4 py-3 first:border-0 hover:bg-surface-2"><span className="mt-1 h-2 w-2 flex-none rounded-full bg-amber" /><span className="min-w-0"><b className="block text-sm">{item.status === "failed" ? "Action needs a retry" : "Decision needed"}</b><span className="mt-0.5 block text-xs leading-relaxed text-text-2">{item.summary}</span></span></Link>) : <div className="flex items-center gap-3 p-4"><span className="grid h-9 w-9 place-items-center rounded-full border border-line text-green"><Icon name="check" /></span><div><b className="text-sm">No urgent alerts</b><p className="mt-0.5 text-xs text-text-3">You’re all caught up.</p></div></div>}
-        </Section>
-        <Section title="Recent activity" icon="trend">
-          {data.activity.length ? data.activity.map((item) => <div key={item.id} className="border-t border-line px-4 py-3 first:border-0"><div className="flex items-start justify-between gap-3"><span className="text-sm">{friendlyActivity(item.tool_name, item.status)}</span><time className="whitespace-nowrap text-[11px] text-text-3">{formatWhen(item.completed_at ?? item.started_at)}</time></div>{(item.result_summary || item.error_summary) && <p className="mt-1 line-clamp-2 text-xs text-text-3">{item.result_summary ?? item.error_summary}</p>}</div>) : <Empty title="No activity yet" text="Voom’s planning and approved actions will be recorded here." />}
-        </Section>
-      </div>
+      <DashboardCard title="Marketing plan" icon="cal" href="/app/plan" action="Open Marketing Plan">
+        {data.plan ? <div><div className="flex items-center gap-2"><Tag tone={data.plan.status === "active" ? "t-green" : "t-grey"}>{data.plan.status === "active" ? "Active" : "Latest"}</Tag><b className="text-sm">{data.plan.business_goal}</b></div><p className="mt-3 text-sm text-text-3">{data.plan.status === "active" ? "Current plan" : "Most recent plan"} · updated {formatDubai(data.plan.updated_at ?? data.plan.created_at)}</p></div> : <Empty title="No marketing plan yet" text="Generate your first weekly plan when you’re ready. Today will not create one automatically." />}
+      </DashboardCard>
+
+      <DashboardCard title="Voom recommendation" icon="spark" href={recommendation.href} action={recommendation.action}>
+        <p className="text-sm font-semibold leading-relaxed">{recommendation.text}</p><p className="mt-2 text-xs leading-relaxed text-text-3">Based on your current Voom plan, approvals, and calendar.</p>
+      </DashboardCard>
     </div>
   </div>;
 }
 
-function Section({ title, icon, href, link, children }: { title: string; icon: string; href?: string; link?: string; children: React.ReactNode }) { return <Card className="overflow-hidden"><div className="flex items-center justify-between border-b border-line px-4 py-3.5"><h2 className="flex items-center gap-2 font-display text-base font-semibold"><Icon name={icon} size={17} className="text-brand" />{title}</h2>{href && <Link href={href} className="text-xs font-semibold text-text-2 hover:text-brand">{link} →</Link>}</div>{children}</Card>; }
-function WorkRow({ item }: { item: { id: string; title: string; channel: string; publish_at: string; status: string; topic: string } }) { return <div className="grid gap-2 border-t border-line px-4 py-3 first:border-0 sm:grid-cols-[1fr_auto_auto] sm:items-center"><div className="min-w-0"><b className="block truncate text-sm">{item.title}</b><span className="text-xs text-text-3">{item.topic || "No topic added"}</span></div><span className="text-xs text-text-2">{item.channel} · {new Date(item.publish_at).toLocaleString("en-AE", { timeZone: "Asia/Dubai", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span><Tag tone={item.status === "scheduled" ? "t-green" : item.status === "approved" ? "t-blue" : "t-amber"}>{item.status}</Tag></div>; }
-function Empty({ title, text, href, action }: { title: string; text: string; href?: string; action?: string }) { return <div className="p-5 text-center"><b className="text-sm">{title}</b><p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-text-3">{text}</p>{href && <Link href={href} className="mt-3 inline-flex text-xs font-semibold text-brand hover:underline">{action} →</Link>}</div>; }
-function friendlyActivity(tool: string, status: string) { const action = tool.replaceAll("_", " ").replace(/^mara /, ""); return `${action[0]?.toUpperCase() ?? ""}${action.slice(1)} · ${status.replaceAll("_", " ")}`; }
-function formatWhen(value: string) { return new Date(value).toLocaleString("en-AE", { timeZone: "Asia/Dubai", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
+function DashboardCard({ title, icon, href, action, children }: { title: string; icon: string; href: string; action: string; children: React.ReactNode }) { return <Card className="flex min-h-52 flex-col p-5 sm:p-6"><div className="mb-5 flex items-center gap-2"><span className="grid h-9 w-9 place-items-center rounded-xl bg-[var(--brand-soft)] text-brand"><Icon name={icon} size={18} /></span><h2 className="font-display text-base font-semibold">{title}</h2></div><div className="flex-1">{children}</div><Link href={href} className="mt-5 inline-flex text-sm font-semibold text-brand hover:underline">{action} →</Link></Card>; }
+function Empty({ title, text }: { title: string; text: string }) { return <div><b className="text-sm">{title}</b><p className="mt-2 text-sm leading-relaxed text-text-3">{text}</p></div>; }
+
+function getRecommendation(pending: number, publishAt: string | undefined, hasPlan: boolean) {
+  if (pending > 0) return { text: `You still have ${pending} ${pending === 1 ? "post" : "posts"} waiting for approval.`, href: "/app/approvals", action: "Review approvals" };
+  if (publishAt) return { text: `Your next scheduled post is ${relativeDubai(publishAt)}.`, href: "/app/calendar", action: "View scheduled content" };
+  if (!hasPlan) return { text: "Create a weekly marketing plan to get your first three actionable recommendations.", href: "/app/plan", action: "Build a marketing plan" };
+  return { text: "Your marketing plan is active and nothing is waiting for approval. Review the plan when you’re ready for the next action.", href: "/app/plan", action: "Review marketing plan" };
+}
+
+function relativeDubai(value: string) {
+  const formatter = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dubai", year: "numeric", month: "2-digit", day: "2-digit" });
+  const target = formatter.format(new Date(value));
+  const today = formatter.format(new Date());
+  const tomorrow = formatter.format(new Date(Date.now() + 86400000));
+  const time = new Date(value).toLocaleTimeString("en-AE", { timeZone: "Asia/Dubai", hour: "numeric", minute: "2-digit" });
+  if (target === today) return `today at ${time}`;
+  if (target === tomorrow) return `tomorrow at ${time}`;
+  return `on ${formatDubai(value)}`;
+}
+function formatDubai(value: string) { return new Date(value).toLocaleString("en-AE", { timeZone: "Asia/Dubai", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }

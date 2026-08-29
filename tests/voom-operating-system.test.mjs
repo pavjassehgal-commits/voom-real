@@ -41,6 +41,21 @@ test("automation modes preserve confirmation safety", async () => {
   assert.match(route, /externalActionsRequirePermission: true/);
 });
 
+test("Today summarizes real owner-scoped weekly workflow data without side effects", async () => {
+  const [page, data] = await Promise.all([read("app/app/(shell)/today/page.tsx"), read("lib/voom/operating-data.ts")]);
+  for (const section of ["Needs your approval", "Next scheduled content", "Marketing plan", "Voom recommendation"]) assert.match(page, new RegExp(section));
+  assert.match(data, /mara_pending_actions/);
+  assert.match(data, /content_calendar_items/);
+  assert.match(data, /marketing_plans/);
+  assert.match(data, /eq\("owner_user_id", user\.id\)/);
+  assert.match(data, /eq\("tool_name", "propose_calendar_item"\)/);
+  assert.match(data, /in\("status", \["approved", "scheduled"\]\)/);
+  assert.match(page, /timeZone: "Asia\/Dubai"/);
+  assert.match(page, /No marketing plan yet/);
+  assert.match(page, /Nothing scheduled yet/);
+  assert.doesNotMatch(page + data, /fetch\(|provider\.|prepareInstagramPlanWorkflow|insert\(|upsert\(|update\(/);
+});
+
 test("plan generation persists exactly three distinct Instagram drafts and approvals without chat messages", async () => {
   const [planning, workflow, route, migration, workspace] = await Promise.all([
     read("lib/mara/planning.ts"), read("lib/mara/plan-workflow.ts"), read("app/api/plan/route.ts"),
