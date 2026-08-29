@@ -41,24 +41,38 @@ test("automation modes preserve confirmation safety", async () => {
   assert.match(route, /externalActionsRequirePermission: true/);
 });
 
-test("plan generation persists one Instagram draft and approval without chat messages", async () => {
-  const [planning, workflow, route] = await Promise.all([
+test("plan generation persists exactly three distinct Instagram drafts and approvals without chat messages", async () => {
+  const [planning, workflow, route, migration, workspace] = await Promise.all([
     read("lib/mara/planning.ts"), read("lib/mara/plan-workflow.ts"), read("app/api/plan/route.ts"),
+    read("supabase/migrations/0013_weekly_plan_recommendations.sql"), read("components/voom/operating/PlanWorkspace.tsx"),
   ]);
   assert.match(planning, /complete caption with CTA and hashtags/);
   assert.match(planning, /proposedPublishAt/);
-  assert.match(workflow, /mara_drafts/);
+  assert.match(planning, /plannedPosts: z\.array\(plannedPost\)\.length\(3\)/);
+  assert.match(planning, /distinct topics/);
+  assert.match(planning, /Schedule each recommendation on a different day/);
+  assert.match(planning, /time > latest/);
+  assert.match(workflow, /posts\.length !== 3/);
+  assert.match(workflow, /mara_drafts"\)\.upsert\(draftRows/);
   assert.match(workflow, /source_plan_id: planId/);
+  assert.match(workflow, /source_plan_item_key: String\(index\)/);
+  assert.match(workflow, /Promise\.all\(posts\.map/);
   assert.match(workflow, /"propose_calendar_item"/);
+  assert.match(workflow, /marketing-plan:\$\{planId\}:item:\$\{index\}/);
+  assert.match(workflow, /pendingActionIds/);
   assert.doesNotMatch(workflow, /mara_messages/);
   assert.match(route, /prepareInstagramPlanWorkflow/);
+  assert.match(migration, /unique \(owner_user_id, source_plan_id, source_plan_item_key\)/);
+  assert.match(workspace, /Your 3 Instagram recommendations are ready/);
 });
 
-test("approved plan content is idempotently linked to the calendar and never published", async () => {
-  const [migration, ownerLinks, tools, data] = await Promise.all([
-    read("supabase/migrations/0010_plan_to_calendar_workflow.sql"), read("supabase/migrations/0011_plan_workflow_owner_links.sql"), read("lib/mara/tools.ts"), read("lib/mara/internal-data.ts"),
+test("approved plan content is independently and idempotently linked to the calendar and never published", async () => {
+  const [migration, weeklyMigration, ownerLinks, tools, data] = await Promise.all([
+    read("supabase/migrations/0010_plan_to_calendar_workflow.sql"), read("supabase/migrations/0013_weekly_plan_recommendations.sql"),
+    read("supabase/migrations/0011_plan_workflow_owner_links.sql"), read("lib/mara/tools.ts"), read("lib/mara/internal-data.ts"),
   ]);
-  assert.match(migration, /unique \(owner_user_id, source_plan_id\)/);
+  assert.match(weeklyMigration, /drop constraint if exists mara_drafts_owner_source_plan_key/);
+  assert.match(weeklyMigration, /unique \(owner_user_id, source_plan_id, source_plan_item_key\)/);
   assert.match(migration, /unique \(owner_user_id, source_draft_id\)/);
   assert.match(ownerLinks, /foreign key \(source_plan_id, owner_user_id\)/);
   assert.match(ownerLinks, /foreign key \(source_draft_id, owner_user_id\)/);

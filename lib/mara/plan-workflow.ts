@@ -8,8 +8,8 @@ import type { BusinessRecord, ProfileRecord } from "@/lib/voom/types";
 const WORKFLOW_TITLE = "Voom planning workflow";
 
 export async function prepareInstagramPlanWorkflow(db: ServerSupabase, ownerId: string, planId: string, plan: MarketingPlan) {
-  const post = plan.plannedPosts.find((item) => item.channel.toLowerCase() === "instagram");
-  if (!post) throw new Error("instagram_recommendation_missing");
+  const posts = plan.plannedPosts.filter((item) => item.channel.toLowerCase() === "instagram");
+  if (posts.length !== 3) throw new Error("instagram_recommendations_missing");
 
   const [{ data: profile }, { data: business }] = await Promise.all([
     db.from("profiles").select("*").eq("user_id", ownerId).maybeSingle(),
@@ -25,35 +25,34 @@ export async function prepareInstagramPlanWorkflow(db: ServerSupabase, ownerId: 
     conversation = created.data;
   }
 
-  const draftResult = await db.from("mara_drafts").upsert({
-    owner_user_id: ownerId,
-    conversation_id: conversation.id,
-    source_plan_id: planId,
-    kind: "instagram_caption",
-    channel: "Instagram",
-    title: post.title,
-    content: post.content,
-    proposed_publish_at: post.proposedPublishAt,
-    status: "draft",
-  }, { onConflict: "owner_user_id,source_plan_id" }).select("id,title,content,proposed_publish_at,status").single();
-  if (draftResult.error || !draftResult.data) throw new Error("workflow_draft_failed");
-
-  const action = await executeMaraTool({
-    db,
-    ownerId,
-    conversationId: conversation.id,
-    profile: profile as ProfileRecord | null,
-    business: business as BusinessRecord,
-    requestKey: `marketing-plan:${planId}`,
-  }, "propose_calendar_item", JSON.stringify({
-    title: post.title,
-    channel: "Instagram",
-    content: post.content,
-    topic: post.topic,
-    publishAt: post.proposedPublishAt,
-    sourceDraftId: draftResult.data.id,
-    reason: post.recommendationReason,
+  const draftRows = posts.map((post, index) => ({
+    owner_user_id: ownerId, conversation_id: conversation.id, source_plan_id: planId,
+    source_plan_item_key: String(index), kind: "instagram_caption", channel: "Instagram",
+    title: post.title, content: post.content, proposed_publish_at: post.proposedPublishAt, status: "draft",
   }));
-  if (!action.ok || !action.pendingActionId) throw new Error("workflow_approval_failed");
-  return { draft: draftResult.data, pendingActionId: action.pendingActionId };
+  const draftResult = await db.from("mara_drafts").upsert(draftRows, {
+    onConflict: "owner_user_id,source_plan_id,source_plan_item_key", ignoreDuplicates: true,
+  }).select("id,title,content,proposed_publish_at,status,source_plan_item_key");
+  if (draftResult.error || draftResult.data?.length !== 3) {
+    const existing = await db.from("mara_drafts").select("id,title,content,proposed_publish_at,status,source_plan_item_key")
+      .eq("owner_user_id", ownerId).eq("source_plan_id", planId).order("source_plan_item_key");
+    if (existing.error || existing.data?.length !== 3) throw new Error("workflow_drafts_failed");
+    draftResult.data = existing.data;
+  }
+  const draftsByKey = new Map(draftResult.data.map((draft) => [draft.source_plan_item_key, draft]));
+
+  const actions = await Promise.all(posts.map((post, index) => {
+    const draft = draftsByKey.get(String(index));
+    if (!draft) throw new Error("workflow_draft_missing");
+    return executeMaraTool({
+      db, ownerId, conversationId: conversation.id,
+      profile: profile as ProfileRecord | null, business: business as BusinessRecord,
+      requestKey: `marketing-plan:${planId}:item:${index}`,
+    }, "propose_calendar_item", JSON.stringify({
+      title: post.title, channel: "Instagram", content: post.content, topic: post.topic,
+      publishAt: post.proposedPublishAt, sourceDraftId: draft.id, reason: post.recommendationReason,
+    }));
+  }));
+  if (actions.some((action) => !action.ok || !action.pendingActionId)) throw new Error("workflow_approvals_failed");
+  return { drafts: [...draftsByKey.values()], pendingActionIds: actions.map((action) => action.pendingActionId as string) };
 }
