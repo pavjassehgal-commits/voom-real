@@ -56,6 +56,34 @@ test("Today summarizes real owner-scoped weekly workflow data without side effec
   assert.doesNotMatch(page + data, /fetch\(|provider\.|prepareInstagramPlanWorkflow|insert\(|upsert\(|update\(/);
 });
 
+test("weekly planning automation is server-scheduled, mode-aware, and idempotent", async () => {
+  const [automation, persistence, cron, migration, vercel, planRoute] = await Promise.all([
+    read("lib/voom/weekly-automation.ts"), read("lib/mara/plan-persistence.ts"), read("app/api/cron/weekly-plans/route.ts"),
+    read("supabase/migrations/0014_weekly_plan_automation.sql"), read("vercel.json"), read("app/api/plan/route.ts"),
+  ]);
+  assert.match(automation, /\["assisted", "autopilot"\]/);
+  assert.doesNotMatch(automation, /"manual"/);
+  assert.match(automation, /automation_week_key/);
+  assert.match(automation, /for \(const business of businesses/);
+  assert.match(persistence, /insert\.error\.code === "23505"/);
+  assert.match(persistence, /prepareInstagramPlanWorkflow/);
+  assert.match(migration, /unique index[\s\S]*owner_user_id, automation_week_key/);
+  assert.match(migration, /where automation_week_key is not null/);
+  assert.match(cron, /Bearer \$\{secret\}/);
+  assert.match(cron, /runWeeklyPlanAutomation/);
+  assert.match(vercel, /0 3 \* \* \*/);
+  assert.match(planRoute, /export async function POST/);
+  assert.doesNotMatch(automation + persistence + cron, /instagram_publish_jobs|META_|spend|send_campaign/);
+});
+
+test("Dubai weekly cycle changes once on Monday", async () => {
+  const { dubaiWeek } = await import("../lib/voom/weekly-cycle.ts");
+  assert.equal(dubaiWeek(new Date("2026-08-30T19:30:00Z")).weekKey, "2026-08-24");
+  assert.equal(dubaiWeek(new Date("2026-08-30T21:30:00Z")).weekKey, "2026-08-31");
+  assert.equal(dubaiWeek(new Date("2026-09-06T19:59:00Z")).weekKey, "2026-08-31");
+  assert.equal(dubaiWeek(new Date("2026-09-06T20:00:00Z")).weekKey, "2026-09-07");
+});
+
 test("plan generation persists exactly three distinct Instagram drafts and approvals without chat messages", async () => {
   const [planning, workflow, route, migration, workspace] = await Promise.all([
     read("lib/mara/planning.ts"), read("lib/mara/plan-workflow.ts"), read("app/api/plan/route.ts"),
