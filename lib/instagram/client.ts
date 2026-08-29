@@ -26,7 +26,7 @@ export class InstagramClient {
     url.searchParams.set("scope", INSTAGRAM_SCOPES.join(","));
     url.searchParams.set("state", state);
     url.searchParams.set("enable_fb_login", "0");
-    url.searchParams.set("force_authentication", "1");
+    url.searchParams.set("force_reauth", "true");
     return url.toString();
   }
 

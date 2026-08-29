@@ -75,6 +75,12 @@ test("long-lived token exchange uses Meta's unversioned access-token endpoint", 
   assert.match(client, /url\.searchParams\.set\("fields", "id,username"\)/);
 });
 
+test("Business Login authorization URL uses Meta's documented force_reauth parameter", async () => {
+  const client = await read("lib/instagram/client.ts");
+  assert.match(client, /url\.searchParams\.set\("force_reauth", "true"\)/);
+  assert.doesNotMatch(client, /force_authentication/);
+});
+
 test("Instagram publishing and insights schema is owner-scoped and server-written", async () => {
   const migration = await read("supabase/migrations/0006_instagram_content_and_insights.sql");
   assert.match(migration, /begin;[\s\S]*commit;/);
