@@ -1,6 +1,12 @@
 @import "tailwindcss";
 
 @keyframes voom-reel-scene { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes voom-reel-text-rise { from { opacity: 0; transform: translateY(18px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes voom-reel-text-pop { from { opacity: 0; transform: scale(.88); } to { opacity: 1; transform: scale(1); } }
+@keyframes voom-reel-kenburns-a { from { transform: scale(1.08); } to { transform: scale(1.26) translate(-2%, -3%); } }
+@keyframes voom-reel-kenburns-b { from { transform: scale(1.24) translate(2%, -2%); } to { transform: scale(1.06); } }
+@keyframes voom-reel-kenburns-c { from { transform: scale(1.05) translate(-3%, 1%); } to { transform: scale(1.22) translate(3%, -2%); } }
+@keyframes voom-reel-kenburns-d { from { transform: scale(1.2) translate(0, 2%); } to { transform: scale(1.04) translate(2%, -1%); } }
 
 :root {
   --bg: #0a0e0d;

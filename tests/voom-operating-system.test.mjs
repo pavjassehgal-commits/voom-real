@@ -192,15 +192,16 @@ test("Reel assets are signature-validated and use one private owner-scoped recor
 
 test("Create with MARA persists a playable truthful Reel composition without publishing", async () => {
   const { buildReelComposition, isReelComposition } = await import("../lib/mara/reel-composition.ts");
-  const textOnly = buildReelComposition({ concept: "Three coffee tips", script: "Store beans airtight. Keep them away from heat.", caption: "Coffee tips", brandName: "Synthetic Café", usesAsset: false, producedAt: "2026-08-29T12:00:00.000Z" });
+  const textOnly = buildReelComposition({ concept: "Three coffee tips", caption: "Coffee tips", brandName: "Synthetic Café", usesAsset: false, producedAt: "2026-08-29T12:00:00.000Z", viewerCopy: { hook: "Three coffee tips", message: "Store beans airtight.", value: "Keep them away from heat.", cta: "Follow for more tips." } });
   assert.equal(textOnly.aspectRatio, "9:16");
   assert.equal(textOnly.durationMs, 11500);
-  assert.equal(textOnly.scenes.length, 3);
+  assert.equal(textOnly.scenes.length, 4);
+  assert.deepEqual(textOnly.scenes.map((scene) => scene.role), ["hook", "message", "value", "cta"]);
   assert.equal(textOnly.scenes[0].role, "hook");
-  assert.equal(textOnly.scenes[2].role, "cta");
+  assert.equal(textOnly.scenes[3].role, "cta");
   assert.equal(textOnly.usesAsset, false);
   assert.equal(isReelComposition(textOnly), true);
-  const assisted = buildReelComposition({ concept: "Storefront tour", script: "Come inside.", caption: "Visit us", brandName: "Synthetic Café", usesAsset: true });
+  const assisted = buildReelComposition({ concept: "Storefront tour", caption: "Visit us", brandName: "Synthetic Café", usesAsset: true, viewerCopy: { hook: "Come inside", message: "Visit us in store", value: "More from Synthetic Café", cta: "Follow Synthetic Café" } });
   assert.equal(assisted.usesAsset, true);
   const [route, player, board, today] = await Promise.all([
     read("app/api/reels/produce/[actionId]/route.ts"), read("components/voom/operating/ReelCompositionPlayer.tsx"),
