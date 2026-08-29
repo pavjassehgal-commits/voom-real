@@ -75,7 +75,7 @@ export async function generateMarketingPlan(db: Db, ownerId: string) {
     recentPerformance: (performance ?? []).slice(0, 8),
     currentDate: now.toISOString().slice(0, 10), timezone: "Asia/Dubai",
     planningWindow: { startsAfter: now.toISOString(), endsBy: new Date(now.getTime() + 7 * 86400000).toISOString() },
-    safety: "Never claim work is published, sent, deleted, or funded. Every planned Instagram post requires its own approval.",
+    safety: "Never claim work is published, sent, deleted, or funded. Keep routine Instagram recommendations factual: do not invent prices, discounts, offers, guarantees, superlatives, giveaways, regulated claims, external links, paid promotion, or personal information. Every planned post still receives its own persisted internal approval action.",
   };
   const provider = createAiProvider();
   const system = `You are Voom's invisible marketing planning engine. Return JSON only: one practical structured plan grounded in the supplied business data. Use exactly this shape and no extra keys:

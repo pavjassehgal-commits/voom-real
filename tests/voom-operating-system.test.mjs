@@ -84,6 +84,44 @@ test("Dubai weekly cycle changes once on Monday", async () => {
   assert.equal(dubaiWeek(new Date("2026-09-06T20:00:00Z")).weekKey, "2026-09-07");
 });
 
+test("Autopilot safety blocks risky content and accepts only valid routine recommendations", async () => {
+  const { evaluateAutopilotRecommendation } = await import("../lib/mara/autopilot-safety.ts");
+  const now = new Date("2026-08-29T08:00:00Z");
+  const base = { title: "A quiet afternoon at the café", content: "Take a slow afternoon break with a freshly prepared coffee. Visit us this week. #DubaiCafe", publishAt: "2026-08-31T14:00:00+04:00" };
+  assert.equal(evaluateAutopilotRecommendation(base, now).safe, true);
+  const blocked = [
+    ["unsupported_offer", "Get 20% off every coffee today"],
+    ["unsupported_claim", "We guarantee the best coffee in Dubai"],
+    ["giveaway_or_contest", "Enter our giveaway to win a prize"],
+    ["unsupported_price", "Your next latte is AED 15"],
+  ];
+  for (const [reason, content] of blocked) {
+    const result = evaluateAutopilotRecommendation({ ...base, content }, now);
+    assert.equal(result.safe, false);
+    assert.ok(result.blockers.includes(reason), `${content} should be blocked as ${reason}`);
+  }
+  assert.equal(evaluateAutopilotRecommendation({ ...base, content: "" }, now).safe, false);
+  assert.equal(evaluateAutopilotRecommendation({ ...base, publishAt: "2026-08-29T11:00:00+04:00" }, now).safe, false);
+});
+
+test("Autopilot approval reuses the owned idempotent internal calendar action", async () => {
+  const [automation, approval, tools, migration, board] = await Promise.all([
+    read("lib/voom/weekly-automation.ts"), read("lib/mara/autopilot-approval.ts"), read("lib/mara/tools.ts"),
+    read("supabase/migrations/0015_autopilot_internal_approval.sql"), read("components/voom/operating/ApprovalsBoard.tsx"),
+  ]);
+  assert.match(automation, /business\.automation_level === "autopilot"/);
+  assert.match(approval, /executeConfirmedAction/);
+  assert.match(approval, /eq\("owner_user_id", ownerId\)/);
+  assert.match(approval, /in\("status", \["pending", "failed"\]\)/);
+  assert.match(approval, /deterministicSafetyChecks: "passed"/);
+  assert.match(approval, /resultingCalendarItemId/);
+  assert.match(tools, /onConflict: "owner_user_id,source_draft_id"|createCalendarItem/);
+  assert.match(migration, /grant insert, update on table public\.content_calendar_items to service_role/);
+  assert.doesNotMatch(migration, /grant[^;]+\b(?:anon|authenticated)\b/i);
+  assert.match(board, /Autopilot approved/);
+  assert.doesNotMatch(approval, /instagram_publish_jobs|META_|send_campaign|ad spend/i);
+});
+
 test("plan generation persists exactly three distinct Instagram drafts and approvals without chat messages", async () => {
   const [planning, workflow, route, migration, workspace] = await Promise.all([
     read("lib/mara/planning.ts"), read("lib/mara/plan-workflow.ts"), read("app/api/plan/route.ts"),

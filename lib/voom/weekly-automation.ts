@@ -16,7 +16,7 @@ export async function runWeeklyPlanAutomation(now = new Date(), db: SupabaseClie
   const result = { checked: businesses?.length ?? 0, created: 0, resumed: 0, skipped: 0, failed: 0 };
   for (const business of businesses ?? []) {
     try {
-      const outcome = await ensureOwnerWeek(db, business.owner_user_id, weekKey, cycleStartIso, now);
+      const outcome = await ensureOwnerWeek(db, business.owner_user_id, business.automation_level === "autopilot", weekKey, cycleStartIso, now);
       result[outcome] += 1;
     } catch {
       result.failed += 1;
@@ -25,16 +25,16 @@ export async function runWeeklyPlanAutomation(now = new Date(), db: SupabaseClie
   return result;
 }
 
-async function ensureOwnerWeek(db: SupabaseClient, ownerId: string, weekKey: string, cycleStartIso: string, now: Date): Promise<"created" | "resumed" | "skipped"> {
+async function ensureOwnerWeek(db: SupabaseClient, ownerId: string, autopilot: boolean, weekKey: string, cycleStartIso: string, now: Date): Promise<"created" | "resumed" | "skipped"> {
   const existing = await db.from("marketing_plans").select("*").eq("owner_user_id", ownerId).eq("automation_week_key", weekKey).maybeSingle();
   if (existing.error) throw new Error("automation_plan_lookup_failed");
-  if (existing.data) { await resumeAutomatedPlan(db, ownerId, existing.data); return "resumed"; }
+  if (existing.data) { await resumeAutomatedPlan(db, ownerId, existing.data, autopilot); return "resumed"; }
 
   const current = await db.from("marketing_plans").select("id,created_at,valid_until").eq("owner_user_id", ownerId).eq("status", "active").gte("created_at", cycleStartIso).gte("valid_until", dubaiDate(now)).order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (current.error) throw new Error("automation_current_plan_lookup_failed");
   if (current.data) return "skipped";
 
-  const persisted = await generateAndPersistPlan(db, ownerId, weekKey);
+  const persisted = await generateAndPersistPlan(db, ownerId, weekKey, autopilot);
   return persisted.created ? "created" : "resumed";
 }
 

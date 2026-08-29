@@ -3,15 +3,16 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { generateMarketingPlan, marketingPlanSchema, type MarketingPlan } from "@/lib/mara/planning";
 import { prepareInstagramPlanWorkflow } from "@/lib/mara/plan-workflow";
+import { autoApproveSafePlanRecommendations } from "@/lib/mara/autopilot-approval";
 
 type GeneratedPlan = Awaited<ReturnType<typeof generateMarketingPlan>>;
 
-export async function generateAndPersistPlan(db: SupabaseClient, ownerId: string, automationWeekKey?: string) {
+export async function generateAndPersistPlan(db: SupabaseClient, ownerId: string, automationWeekKey?: string, autopilot = false) {
   const generated = await generateMarketingPlan(db, ownerId);
-  return persistGeneratedPlan(db, ownerId, generated, automationWeekKey);
+  return persistGeneratedPlan(db, ownerId, generated, automationWeekKey, autopilot);
 }
 
-export async function persistGeneratedPlan(db: SupabaseClient, ownerId: string, generated: GeneratedPlan, automationWeekKey?: string) {
+export async function persistGeneratedPlan(db: SupabaseClient, ownerId: string, generated: GeneratedPlan, automationWeekKey?: string, autopilot = false) {
   const { plan, businessId, sourceSummary } = generated;
   const row = {
     owner_user_id: ownerId, business_id: businessId, status: "superseded",
@@ -26,7 +27,7 @@ export async function persistGeneratedPlan(db: SupabaseClient, ownerId: string, 
   if (insert.error && !(automationWeekKey && insert.error.code === "23505")) throw new Error("plan_store_failed");
   const stored = insert.data ?? (automationWeekKey ? await findAutomatedPlan(db, ownerId, automationWeekKey) : null);
   if (!stored) throw new Error("plan_store_failed");
-  await ensurePlanWorkflow(db, ownerId, stored, insert.data ? plan : storedPlan(stored));
+  await ensurePlanWorkflow(db, ownerId, stored, insert.data ? plan : storedPlan(stored), autopilot);
   const { error: supersedeError } = await db.from("marketing_plans").update({ status: "superseded" }).eq("owner_user_id", ownerId).eq("status", "active").neq("id", stored.id);
   if (supersedeError) throw new Error("plan_supersede_failed");
   const { data: active, error: activateError } = await db.from("marketing_plans").update({ status: "active" }).eq("owner_user_id", ownerId).eq("id", stored.id).select("*").single();
@@ -34,17 +35,18 @@ export async function persistGeneratedPlan(db: SupabaseClient, ownerId: string, 
   return { plan: active, workflowReady: true, created: Boolean(insert.data) };
 }
 
-export async function resumeAutomatedPlan(db: SupabaseClient, ownerId: string, stored: Record<string, unknown>) {
-  await ensurePlanWorkflow(db, ownerId, stored, storedPlan(stored));
+export async function resumeAutomatedPlan(db: SupabaseClient, ownerId: string, stored: Record<string, unknown>, autopilot = false) {
+  await ensurePlanWorkflow(db, ownerId, stored, storedPlan(stored), autopilot);
   const { error: supersedeError } = await db.from("marketing_plans").update({ status: "superseded" }).eq("owner_user_id", ownerId).eq("status", "active").neq("id", stored.id as string);
   if (supersedeError) throw new Error("plan_supersede_failed");
   const { error: activateError } = await db.from("marketing_plans").update({ status: "active" }).eq("owner_user_id", ownerId).eq("id", stored.id as string);
   if (activateError) throw new Error("plan_activate_failed");
 }
 
-async function ensurePlanWorkflow(db: SupabaseClient, ownerId: string, stored: Record<string, unknown>, plan: MarketingPlan) {
+async function ensurePlanWorkflow(db: SupabaseClient, ownerId: string, stored: Record<string, unknown>, plan: MarketingPlan, autopilot: boolean) {
   const result = await prepareInstagramPlanWorkflow(db, ownerId, stored.id as string, plan);
   if (result.pendingActionIds.length !== 3) throw new Error("plan_workflow_failed");
+  if (autopilot) await autoApproveSafePlanRecommendations(db, ownerId, stored.id as string);
 }
 
 async function findAutomatedPlan(db: SupabaseClient, ownerId: string, weekKey: string) {
