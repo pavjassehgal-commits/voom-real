@@ -78,7 +78,7 @@ declare v_action public.mara_pending_actions%rowtype; v_storage text; v_count in
 begin
   select * into v_action from public.mara_pending_actions where id = p_action_id and owner_user_id = p_owner_user_id and tool_name = 'choose_reel_production' and status = 'pending' for update;
   if not found or v_action.new_value->>'draftId' <> p_draft_id::text or v_action.new_value->>'selectedProductionMethod' not in ('upload_asset','film_yourself') then raise exception 'invalid_reel_action'; end if;
-  select storage_path into v_storage from public.reel_draft_assets where id = p_asset_id and owner_user_id = p_owner_user_id and draft_id = p_draft_id for update;
+  select rda.storage_path into v_storage from public.reel_draft_assets rda where id = p_asset_id and owner_user_id = p_owner_user_id and draft_id = p_draft_id for update;
   if not found then raise exception 'asset_not_found'; end if;
   delete from public.reel_draft_assets where id = p_asset_id and owner_user_id = p_owner_user_id and draft_id = p_draft_id;
   select count(*) into v_count from public.reel_draft_assets where owner_user_id = p_owner_user_id and draft_id = p_draft_id;

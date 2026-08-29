@@ -95,6 +95,8 @@ test("asset routes: pack list is ordered, add enforces six, delete is owner-scop
   assert.doesNotMatch(getPost + remove, /NEXT_PUBLIC.*SECRET|publish|instagram|generateVideo/);
   assert.match(migration, /-- PREPARED ONLY/);
   assert.match(migration, /v_count >= 6 then raise exception 'asset_pack_full'/);
+  assert.match(migration, /select rda\.storage_path into v_storage from public\.reel_draft_assets rda where/);
+  assert.doesNotMatch(migration, /select storage_path into v_storage from public\.reel_draft_assets where/);
   assert.match(migration, /grant execute on function public\.add_reel_draft_asset.*to service_role/);
   assert.match(migration, /grant execute on function public\.remove_reel_draft_asset.*to service_role/);
   assert.match(migration, /revoke all on function public\.add_reel_draft_asset.*from public, anon, authenticated/);
