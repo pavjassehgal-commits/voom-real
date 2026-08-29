@@ -83,3 +83,20 @@ test("approval edits persist atomically and confirmation uses the latest owned d
   assert.match(tools, /draft\?\.content \?\? a\.content/);
   assert.match(tools, /draft\?\.proposed_publish_at \?\? a\.publishAt/);
 });
+
+test("saved calendar details are read-only, current, sanitized, and owner-scoped", async () => {
+  const [page, modal, route, data, migration] = await Promise.all([
+    read("app/app/(shell)/calendar/page.tsx"), read("components/voom/modals/SavedCalendarDetailModal.tsx"),
+    read("app/api/voom/calendar/[id]/route.ts"), read("lib/mara/internal-data.ts"), read("supabase/migrations/0003_mara_internal_tools.sql"),
+  ]);
+  assert.match(page, /SavedCalendarDetailModal/);
+  assert.match(modal, /Final caption \/ content/);
+  assert.match(modal, /Nothing has been published or sent externally/);
+  assert.doesNotMatch(modal, /Textarea|>Publish<|>Send</);
+  assert.match(route, /getCurrentUser/);
+  assert.match(route, /getCalendarItem\(await createClient\(\), user\.id, id\)/);
+  assert.match(route, /source: item\.source_draft_id \? "MARA recommendation · approved in Voom" : null/);
+  assert.doesNotMatch(route, /owner_user_id:|source_draft_id:/);
+  assert.match(data, /eq\("owner_user_id", ownerId\)\.eq\("id", id\)/);
+  assert.match(migration, /create policy "calendar_items_own"[\s\S]*auth\.uid\(\)\) = owner_user_id/);
+});

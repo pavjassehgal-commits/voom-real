@@ -7,6 +7,7 @@ import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { ComposeModal } from "@/components/voom/modals/ComposeModal";
 import { PostDetailModal } from "@/components/voom/modals/PostDetailModal";
+import { SavedCalendarDetailModal } from "@/components/voom/modals/SavedCalendarDetailModal";
 import { Btn, Card, Chip, IconBtn, Tag } from "@/components/voom/ui/primitives";
 
 const MONTHS = [
@@ -136,18 +137,21 @@ export default function CalendarPage() {
               </div>
               {evs.slice(0, 3).map((event) => {
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={event.key}
-                    className="flex items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-[7px] px-1.5 py-1 text-[9.5px] font-semibold sm:text-[11px] sm:px-2"
+                    className="flex w-full items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-[7px] px-1.5 py-1 text-left text-[9.5px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand sm:px-2 sm:text-[11px]"
                     style={{ background: `${event.color}1f`, color: event.color }}
+                    aria-label={`Open ${event.label}`}
                     onClick={(e) => {
                       e.stopPropagation();
                       if (event.source === "demo") open(<PostDetailModal index={event.index} />);
+                      else open(<SavedCalendarDetailModal itemId={event.key} />);
                     }}
                   >
                     <i className="hidden h-1.5 w-1.5 flex-none rounded-full sm:inline-block" style={{ background: event.color }} />
                     {event.label}
-                  </div>
+                  </button>
                 );
               })}
               {evs.length > 3 && <span className="pl-1 text-[10px] text-text-3">+{evs.length - 3} more</span>}
