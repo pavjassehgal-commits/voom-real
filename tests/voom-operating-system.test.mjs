@@ -122,6 +122,47 @@ test("Autopilot approval reuses the owned idempotent internal calendar action", 
   assert.doesNotMatch(approval, /instagram_publish_jobs|META_|send_campaign|ad spend/i);
 });
 
+test("Reel production capability is conservative and requests exact real-world assets", async () => {
+  const { classifyReelProduction } = await import("../lib/mara/reel-production.ts");
+  const educational = classifyReelProduction({ concept: "Three coffee storage tips", script: "An educational text-led explainer." });
+  assert.deepEqual(educational.availableMethods, ["create_with_mara", "upload_asset", "film_yourself"]);
+  assert.equal(educational.recommendedMethod, "create_with_mara");
+  assert.equal(educational.missingAssetRequest, null);
+
+  const storefront = classifyReelProduction({ concept: "Show our real storefront", script: "Walk viewers through our location." });
+  assert.deepEqual(storefront.availableMethods, ["film_yourself", "upload_asset"]);
+  assert.doesNotMatch(storefront.availableMethods.join(" "), /create_with_mara/);
+  assert.match(storefront.missingAssetRequest, /storefront and entrance/);
+
+  const testimonial = classifyReelProduction({ concept: "Real customer testimonial", script: "A customer explains their visit." });
+  assert.deepEqual(testimonial.availableMethods, ["film_yourself", "upload_asset"]);
+  assert.match(testimonial.missingAssetRequest, /real customer.*permission/);
+
+  const product = classifyReelProduction({ concept: "Dessert being cut open", script: "Reveal the centre." });
+  assert.match(product.missingAssetRequest, /5–8 second close-up clip.*cut open/);
+});
+
+test("Reel choices reuse persisted drafts and approval actions without generation or scheduling", async () => {
+  const [planning, workflow, tools, route, board, today, automation] = await Promise.all([
+    read("lib/mara/planning.ts"), read("lib/mara/plan-workflow.ts"), read("lib/mara/tools.ts"),
+    read("app/api/mara/actions/[id]/route.ts"), read("components/voom/operating/ApprovalsBoard.tsx"),
+    read("lib/voom/operating-data.ts"), read("lib/mara/autopilot-approval.ts"),
+  ]);
+  assert.match(planning, /contentType: z\.enum\(\["feed", "reel"\]\)/);
+  assert.match(planning, /Reel recommendations need a script/);
+  assert.match(workflow, /kind: post\.contentType === "reel" \? "reel"/);
+  assert.match(tools, /classifyReelProduction/);
+  assert.match(workflow, /"choose_reel_production"/);
+  assert.match(tools, /choose_reel_production/);
+  assert.match(route, /productionStatusFor/);
+  assert.match(route, /eq\("owner_user_id", user\.id\)/);
+  assert.match(board, /Create with MARA/);
+  assert.match(board, /No Reel has been generated or published/);
+  assert.match(today, /reelTaskCount/);
+  assert.match(automation, /eq\("tool_name", "propose_calendar_item"\)/);
+  assert.doesNotMatch(route + workflow, /generateVideo|mara_media_generations|instagram_publish_jobs/);
+});
+
 test("plan generation persists exactly three distinct Instagram drafts and approvals without chat messages", async () => {
   const [planning, workflow, route, migration, workspace] = await Promise.all([
     read("lib/mara/planning.ts"), read("lib/mara/plan-workflow.ts"), read("app/api/plan/route.ts"),

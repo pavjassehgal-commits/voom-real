@@ -6,6 +6,7 @@ import type { ServerSupabase } from "./internal-data";
 import { resolveRelativeDateTime } from "./relative-date";
 import { readInstagramConfig } from "@/lib/instagram/config";
 import { getInstagramConnection } from "@/lib/instagram/data";
+import { classifyReelProduction } from "@/lib/mara/reel-production";
 import {
   createCalendarItem, createCampaign, deleteCalendarItem, getBrandProfile, getCalendarItem, getCampaign,
   getDraft, listCalendarItems, listCampaigns, listDrafts, updateCalendarItem, updateCampaign,
@@ -36,6 +37,7 @@ const schemas = {
   delete_calendar_item: z.object({ itemIds: z.array(uuid).min(1).max(25) }).strict(),
   create_campaign_draft: z.object({ kind: z.enum(["email", "sms"]), name: z.string().min(1).max(160), objective: z.string().max(1000).default(""), audience: z.string().max(1000).default(""), subject: z.string().max(300).nullable().optional(), previewText: z.string().max(500).nullable().optional(), content: z.string().max(12000).default(""), proposedSendAt: isoDate.nullable().optional() }).strict(),
   update_campaign_draft: z.object({ campaignId: uuid, name: z.string().min(1).max(160).optional(), objective: z.string().max(1000).optional(), audience: z.string().max(1000).optional(), subject: z.string().max(300).nullable().optional(), previewText: z.string().max(500).nullable().optional(), content: z.string().max(12000).optional(), proposedSendAt: isoDate.nullable().optional() }).strict(),
+  choose_reel_production: z.object({ draftId: uuid, concept: z.string().min(1).max(500), script: z.string().min(1).max(4000), shotInstructions: z.array(z.string().min(1).max(500)).max(5).default([]) }).strict(),
 } satisfies Record<string, z.ZodType>;
 
 export type MaraToolName = keyof typeof schemas;
@@ -55,6 +57,7 @@ const descriptions: Record<MaraToolName, string> = {
   update_calendar_item: "Propose changing an owned calendar item; always requires confirmation.",
   delete_calendar_item: "Propose deleting the exact owned calendar items; always requires confirmation.",
   create_campaign_draft: "Create an email or SMS campaign draft only. Never sends it.", update_campaign_draft: "Update an owned campaign draft only. Never sends it.",
+  choose_reel_production: "Ask the user for a truthful Reel production method when video production is not complete.",
 };
 
 export const maraToolDefinitions = (Object.keys(schemas) as MaraToolName[]).map((name) => ({
@@ -135,6 +138,11 @@ async function runTool(c: ToolContext, name: MaraToolName, a: Record<string, unk
     return pending(c, name, a, key!, `Approve draft “${old.title}”. This saves approval only and does not publish.`, { status: old.status }, { status: "approved", draftId: old.id });
   }
   if (name === "propose_calendar_item") return pending(c, name, a, key!, `Add “${a.title}” to the ${a.channel} calendar for ${new Date(a.publishAt as string).toLocaleString("en-US", { timeZone: "Asia/Dubai" })}.`, null, a);
+  if (name === "choose_reel_production") {
+    const capability = classifyReelProduction({ concept: a.concept as string, script: a.script as string, shotInstructions: a.shotInstructions as string[] });
+    const proposal = { ...a, shotInstructions: capability.shotInstructions, availableMethods: capability.availableMethods, recommendedMethod: capability.recommendedMethod, missingAssetRequest: capability.missingAssetRequest, selectedProductionMethod: null, productionStatus: "awaiting_production_choice" };
+    return pending(c, name, proposal, key!, `Choose how Voom should produce Reel “${a.concept}”.`, null, proposal);
+  }
   if (name === "update_calendar_item") { const old = await getCalendarItem(c.db, c.ownerId, a.itemId as string); if (!old) return success(null, "That calendar item was not found."); const resolved = c.userRequest ? resolveRelativeDateTime(c.userRequest, old.publish_at) : null; const nextArgs = resolved ? { ...a, publishAt: resolved } : a; return pending(c, name, nextArgs, key!, `Update calendar item “${old.title}”.`, old, { ...old, ...nextArgs }); }
   if (name === "delete_calendar_item") { const items = (await Promise.all((a.itemIds as string[]).map((id) => getCalendarItem(c.db, c.ownerId, id)))).filter(Boolean); if (!items.length) return success([], "No owned calendar items matched."); return pending(c, name, { itemIds: items.map((item) => item!.id) }, key!, `Delete ${items.length} calendar item${items.length === 1 ? "" : "s"}: ${items.map((item) => `“${item!.title}”`).join(", ")}.`, { items }, { deleted: items.map((item) => item!.id) }); }
   throw new Error("not_allowlisted");
@@ -173,7 +181,7 @@ function campaignPatch(a: Record<string, unknown>) { return compact({ kind: a.ki
 function compact(value: Record<string, unknown>) { return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)); }
 function success(data: unknown, summary: string) { return { ok: true, status: "succeeded", summary, data }; }
 function idempotencyKey(c: ToolContext, name: string, args: unknown) { return createHash("sha256").update(`${c.ownerId}:${c.conversationId}:${c.requestKey ?? "legacy"}:${name}:${stable(idempotencyArgs(name, args))}`).digest("hex"); }
-function idempotencyArgs(name: string, args: unknown) { if (!args || typeof args !== "object") return args; const value = args as Record<string, unknown>; if (name === "propose_calendar_item") return { channel: value.channel, publishAt: value.publishAt }; if (name === "approve_draft" || name === "reject_draft" || name === "update_content_draft") return { draftId: value.draftId }; if (name === "update_calendar_item") return { itemId: value.itemId, publishAt: value.publishAt }; if (name === "delete_calendar_item") return { itemIds: Array.isArray(value.itemIds) ? [...value.itemIds].sort() : value.itemIds }; return args; }
+function idempotencyArgs(name: string, args: unknown) { if (!args || typeof args !== "object") return args; const value = args as Record<string, unknown>; if (name === "propose_calendar_item") return { channel: value.channel, publishAt: value.publishAt }; if (name === "approve_draft" || name === "reject_draft" || name === "update_content_draft" || name === "choose_reel_production") return { draftId: value.draftId }; if (name === "update_calendar_item") return { itemId: value.itemId, publishAt: value.publishAt }; if (name === "delete_calendar_item") return { itemIds: Array.isArray(value.itemIds) ? [...value.itemIds].sort() : value.itemIds }; return args; }
 function stable(value: unknown): string { if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`; if (value && typeof value === "object") return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${JSON.stringify(k)}:${stable(v)}`).join(",")}}`; return JSON.stringify(value); }
 async function rejectedTool(c: ToolContext) { await c.db.from("mara_tool_runs").insert({ owner_user_id: c.ownerId, conversation_id: c.conversationId, tool_name: "rejected_unknown_tool", sanitized_arguments: {}, status: "rejected", error_summary: "A non-allowlisted tool was rejected.", completed_at: new Date().toISOString() }); return { ok: false, status: "rejected", summary: `The requested operation is not available in Voom.` }; }
 async function failedTool(c: ToolContext, toolName: string, args: object, code: string) { await c.db.from("mara_tool_runs").insert({ owner_user_id: c.ownerId, conversation_id: c.conversationId, tool_name: toolName, sanitized_arguments: args, status: "failed", error_summary: code, completed_at: new Date().toISOString() }); return { ok: false, status: "failed", summary: "Voom rejected invalid tool arguments. Nothing changed." }; }

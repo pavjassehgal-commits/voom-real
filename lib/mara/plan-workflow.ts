@@ -27,7 +27,8 @@ export async function prepareInstagramPlanWorkflow(db: ServerSupabase, ownerId: 
 
   const draftRows = posts.map((post, index) => ({
     owner_user_id: ownerId, conversation_id: conversation.id, source_plan_id: planId,
-    source_plan_item_key: String(index), kind: "instagram_caption", channel: "Instagram",
+    source_plan_item_key: String(index), kind: post.contentType === "reel" ? "reel" : "instagram_caption",
+    channel: post.contentType === "reel" ? "Reel" : "Instagram",
     title: post.title, content: post.content, proposed_publish_at: post.proposedPublishAt, status: "draft",
   }));
   const draftResult = await db.from("mara_drafts").upsert(draftRows, {
@@ -44,11 +45,18 @@ export async function prepareInstagramPlanWorkflow(db: ServerSupabase, ownerId: 
   const actions = await Promise.all(posts.map((post, index) => {
     const draft = draftsByKey.get(String(index));
     if (!draft) throw new Error("workflow_draft_missing");
-    return executeMaraTool({
+    const context = {
       db, ownerId, conversationId: conversation.id,
       profile: profile as ProfileRecord | null, business: business as BusinessRecord,
       requestKey: `marketing-plan:${planId}:item:${index}`,
-    }, "propose_calendar_item", JSON.stringify({
+    };
+    if (post.contentType === "reel") {
+      return executeMaraTool(context, "choose_reel_production", JSON.stringify({
+        draftId: draft.id, concept: post.topic, script: post.script ?? post.content,
+        shotInstructions: post.shotInstructions,
+      }));
+    }
+    return executeMaraTool(context, "propose_calendar_item", JSON.stringify({
       title: post.title, channel: "Instagram", content: post.content, topic: post.topic,
       publishAt: post.proposedPublishAt, sourceDraftId: draft.id, reason: post.recommendationReason,
     }));

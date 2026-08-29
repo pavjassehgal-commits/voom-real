@@ -16,6 +16,9 @@ const plannedPost = z.object({
   topic: z.string().min(1).max(300),
   content: z.string().min(1).max(12000),
   recommendationReason: z.string().min(1).max(800),
+  contentType: z.enum(["feed", "reel"]).default("feed"),
+  script: z.string().min(1).max(4000).optional(),
+  shotInstructions: z.array(z.string().min(1).max(500)).max(5).default([]),
 }).strict();
 const plannedCampaign = z.object({
   name: z.string().min(1).max(160), channel: z.string().min(1).max(60),
@@ -50,6 +53,9 @@ export const marketingPlanSchema = z.object({
   })
   .refine((plan) => distinct(plan.plannedPosts.map((post) => dubaiDate(post.proposedPublishAt))), {
     message: "Schedule each recommendation on a different day.", path: ["plannedPosts"],
+  })
+  .refine((plan) => plan.plannedPosts.every((post) => post.contentType !== "reel" || Boolean(post.script?.trim())), {
+    message: "Reel recommendations need a script.", path: ["plannedPosts"],
   });
 
 export type MarketingPlan = z.infer<typeof marketingPlanSchema>;
@@ -79,8 +85,8 @@ export async function generateMarketingPlan(db: Db, ownerId: string) {
   };
   const provider = createAiProvider();
   const system = `You are Voom's invisible marketing planning engine. Return JSON only: one practical structured plan grounded in the supplied business data. Use exactly this shape and no extra keys:
-{"businessGoal":"string","weeklyStrategy":"string","selectedChannels":["string"],"contentFrequency":"string","plannedPosts":[{"title":"string","proposedPublishAt":"ISO 8601 timestamp with explicit offset","channel":"Instagram","topic":"string","content":"complete caption with CTA and hashtags","recommendationReason":"string"}],"plannedCampaigns":[{"name":"string","channel":"string","objective":"string","schedule":"string","actions":["string"],"recommendationReason":"string"}],"recommendations":[{"title":"string","why":"string","channel":"string","action":"string","needsApproval":true}],"validFrom":"YYYY-MM-DD","validUntil":"YYYY-MM-DD"}.
-Create exactly three plannedPosts, all for Instagram and all within the supplied seven-day planningWindow. Give each a meaningfully different topic, complete caption, purpose, and a future explicit-offset timestamp. Schedule them on three different days. The recommendations array must contain exactly three matching approval summaries. plannedCampaigns may be empty. Do not write chat, greetings, or claims of completed external actions.`;
+{"businessGoal":"string","weeklyStrategy":"string","selectedChannels":["string"],"contentFrequency":"string","plannedPosts":[{"title":"string","proposedPublishAt":"ISO 8601 timestamp with explicit offset","channel":"Instagram","topic":"string","content":"complete caption with CTA and hashtags","recommendationReason":"string","contentType":"feed or reel","script":"required for reels","shotInstructions":["simple shot direction"]}],"plannedCampaigns":[{"name":"string","channel":"string","objective":"string","schedule":"string","actions":["string"],"recommendationReason":"string"}],"recommendations":[{"title":"string","why":"string","channel":"string","action":"string","needsApproval":true}],"validFrom":"YYYY-MM-DD","validUntil":"YYYY-MM-DD"}.
+Create exactly three plannedPosts, all for Instagram and all within the supplied seven-day planningWindow. Give each a meaningfully different topic, complete caption, purpose, and a future explicit-offset timestamp. Schedule them on three different days. Use contentType reel only when the idea genuinely benefits from video; include its short script and simple vertical shot instructions. Do not claim Voom has authentic footage. The recommendations array must contain exactly three matching approval summaries. plannedCampaigns may be empty. Do not write chat, greetings, or claims of completed external actions.`;
   const request = `Create a focused seven-day marketing plan from this sanitized Voom context. Keep the MVP narrow and make all three Instagram recommendations immediately usable as persisted drafts:\n${JSON.stringify(safeContext)}`;
   let plan: MarketingPlan;
   try {

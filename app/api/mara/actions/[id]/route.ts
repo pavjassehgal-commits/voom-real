@@ -2,6 +2,7 @@ import { getCurrentUser } from "@/lib/voom/server-data";
 import { executeConfirmedAction } from "@/lib/mara/tools";
 import { createClient } from "@/utils/supabase/server";
 import { z } from "zod";
+import { productionStatusFor, reelProductionMethods } from "@/lib/mara/reel-production";
 
 export const runtime = "nodejs";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -14,8 +15,26 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   let body: unknown;
   try { body = await request.json(); } catch { return Response.json({ error: "That action is not valid." }, { status: 400 }); }
   const decision = body && typeof body === "object" && "decision" in body ? (body as { decision?: unknown }).decision : null;
-  if (decision !== "confirm" && decision !== "cancel" && decision !== "edit") return Response.json({ error: "Choose Confirm, Edit, or Cancel." }, { status: 400 });
+  if (decision !== "confirm" && decision !== "cancel" && decision !== "edit" && decision !== "production") return Response.json({ error: "Choose a valid Voom action." }, { status: 400 });
   const db = await createClient();
+
+  if (decision === "production") {
+    const method = body && typeof body === "object" && "method" in body ? (body as { method?: unknown }).method : null;
+    const parsed = z.enum(reelProductionMethods).safeParse(method);
+    if (!parsed.success) return Response.json({ error: "Choose an available production method." }, { status: 400 });
+    const { data: current } = await db.from("mara_pending_actions").select("tool_name,sanitized_arguments,new_value,status").eq("id", id).eq("owner_user_id", user.id).eq("status", "pending").maybeSingle();
+    if (!current) return currentAction(db, user.id, id);
+    const available = Array.isArray(current.new_value?.availableMethods) ? current.new_value.availableMethods : [];
+    if (current.tool_name !== "choose_reel_production" || !available.includes(parsed.data)) return Response.json({ error: "That production method is not available for this Reel." }, { status: 400 });
+    const productionStatus = productionStatusFor(parsed.data);
+    const nextArguments = { ...(current.sanitized_arguments ?? {}), selectedProductionMethod: parsed.data, productionStatus };
+    const nextValue = { ...(current.new_value ?? {}), selectedProductionMethod: parsed.data, productionStatus };
+    const resultSummary = productionSummary(parsed.data);
+    const { data, error } = await db.from("mara_pending_actions").update({ sanitized_arguments: nextArguments, new_value: nextValue, result_summary: resultSummary, error_summary: null }).eq("id", id).eq("owner_user_id", user.id).eq("status", "pending").select("id,conversation_id,message_id,tool_name,summary,old_value,new_value,status,result_summary,error_summary,created_at,updated_at,executed_at").single();
+    if (error) return friendlyFailure();
+    await db.from("mara_tool_runs").update({ sanitized_arguments: nextArguments, status: "pending_confirmation", result_summary: resultSummary }).eq("pending_action_id", id).eq("owner_user_id", user.id);
+    return Response.json({ action: data, message: resultSummary });
+  }
 
   if (decision === "edit") {
     const changes = body && typeof body === "object" && "changes" in body ? (body as { changes?: unknown }).changes : null;
@@ -75,3 +94,8 @@ async function currentAction(db: Awaited<ReturnType<typeof createClient>>, owner
 }
 function friendlyFailure() { return Response.json({ error: "Voom couldn't apply that change. Nothing unsafe was done—please retry." }, { status: 503 }); }
 const calendarContentEdit = z.object({ content: z.string().trim().min(1).max(12000), publishAt: z.string().datetime({ offset: true }) }).strict();
+function productionSummary(method: typeof reelProductionMethods[number]) {
+  if (method === "create_with_mara") return "Ready for future MARA production. No video has been generated or published.";
+  if (method === "film_yourself") return "Waiting for you to film the requested vertical clip. Voom will handle the remaining production later.";
+  return "Waiting for one existing asset upload. No file has been uploaded yet.";
+}

@@ -12,7 +12,7 @@ export default async function TodayPage() {
   const data = await getOperatingData();
   if (!data) return null;
   const firstName = data.user.email?.split("@")[0] ?? "there";
-  const recommendation = getRecommendation(data.pendingApprovalCount, data.nextScheduled?.publish_at, Boolean(data.plan));
+  const recommendation = getRecommendation(data.pendingApprovalCount, data.reelTaskCount, data.nextScheduled?.publish_at, Boolean(data.plan));
 
   return <div>
     <PageHead title="Today" description={`Your marketing command centre, ${firstName}.`} actions={<AutomationMode compact initial={normalizeAutomationMode(data.business.automation_level)} />} />
@@ -40,7 +40,8 @@ export default async function TodayPage() {
 function DashboardCard({ title, icon, href, action, children }: { title: string; icon: string; href: string; action: string; children: React.ReactNode }) { return <Card className="flex min-h-52 flex-col p-5 sm:p-6"><div className="mb-5 flex items-center gap-2"><span className="grid h-9 w-9 place-items-center rounded-xl bg-[var(--brand-soft)] text-brand"><Icon name={icon} size={18} /></span><h2 className="font-display text-base font-semibold">{title}</h2></div><div className="flex-1">{children}</div><Link href={href} className="mt-5 inline-flex text-sm font-semibold text-brand hover:underline">{action} →</Link></Card>; }
 function Empty({ title, text }: { title: string; text: string }) { return <div><b className="text-sm">{title}</b><p className="mt-2 text-sm leading-relaxed text-text-3">{text}</p></div>; }
 
-function getRecommendation(pending: number, publishAt: string | undefined, hasPlan: boolean) {
+function getRecommendation(pending: number, reelTasks: number, publishAt: string | undefined, hasPlan: boolean) {
+  if (reelTasks > 0) return { text: `Voom needs ${reelTasks === 1 ? "one Reel production choice or real-world clip" : `${reelTasks} Reel production choices or real-world clips`} from you.`, href: "/app/approvals", action: "Review Reel tasks" };
   if (pending > 0) return { text: `You still have ${pending} ${pending === 1 ? "post" : "posts"} waiting for approval.`, href: "/app/approvals", action: "Review approvals" };
   if (publishAt) return { text: `Your next scheduled post is ${relativeDubai(publishAt)}.`, href: "/app/calendar", action: "View scheduled content" };
   if (!hasPlan) return { text: "Create a weekly marketing plan to get your first three actionable recommendations.", href: "/app/plan", action: "Build a marketing plan" };

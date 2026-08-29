@@ -9,9 +9,10 @@ export interface ApprovalItem { id: string; tool_name: string; summary: string; 
 
 export function ApprovalsBoard({ initial }: { initial: ApprovalItem[] }) {
   const [items, setItems] = useState(initial); const [busy, setBusy] = useState<string | null>(null); const [error, setError] = useState("");
-  async function decide(id: string, decision: "confirm" | "cancel" | "edit", changes?: Record<string, unknown>) {
+  async function decide(id: string, decision: "confirm" | "cancel" | "edit" | "production", changes?: Record<string, unknown>) {
     setBusy(id); setError("");
-    const response = await fetch(`/api/mara/actions/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision, changes }) });
+    const payload = decision === "production" ? { decision, method: changes?.method } : { decision, changes };
+    const response = await fetch(`/api/mara/actions/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     const body = await response.json() as { action?: ApprovalItem; error?: string };
     if (response.ok && body.action) { setItems((current) => current.map((item) => item.id === id ? body.action! : item)); window.dispatchEvent(new Event("voom:data-changed")); }
     else setError(body.error ?? "Voom couldn't safely update that action.");
@@ -22,12 +23,29 @@ export function ApprovalsBoard({ initial }: { initial: ApprovalItem[] }) {
   const completed = items.filter((item) => item.status !== "pending" && item.status !== "failed");
   return <div>
     {error && <div role="alert" className="mb-4 rounded-xl border border-red/35 bg-red/10 px-4 py-3 text-sm text-red">{error}</div>}
-    {open.length ? <div className="space-y-4">{open.map((item) => <ApprovalCard key={item.id} item={item} busy={busy === item.id} onDecision={decide} />)}</div> : <Card className="p-8 text-center"><span className="mx-auto grid h-12 w-12 place-items-center rounded-full border border-line text-green"><Icon name="check" size={22} /></span><h2 className="mt-3 font-display text-lg font-semibold">Nothing needs your approval</h2><p className="mx-auto mt-1 max-w-md text-sm text-text-3">When Voom recommends a calendar change, approval, deletion, or another protected action, it will appear here first.</p></Card>}
+    {open.length ? <div className="space-y-4">{open.map((item) => item.tool_name === "choose_reel_production" ? <ReelProductionCard key={item.id} item={item} busy={busy === item.id} onDecision={decide} /> : <ApprovalCard key={item.id} item={item} busy={busy === item.id} onDecision={decide} />)}</div> : <Card className="p-8 text-center"><span className="mx-auto grid h-12 w-12 place-items-center rounded-full border border-line text-green"><Icon name="check" size={22} /></span><h2 className="mt-3 font-display text-lg font-semibold">Nothing needs your approval</h2><p className="mx-auto mt-1 max-w-md text-sm text-text-3">When Voom recommends a calendar change, approval, deletion, or another protected action, it will appear here first.</p></Card>}
     {completed.length > 0 && <section className="mt-7"><h2 className="mb-3 font-display text-base font-semibold">Recent decisions</h2><Card className="overflow-hidden">{completed.slice(0, 12).map((item) => <div key={item.id} className="flex items-start justify-between gap-4 border-t border-line px-4 py-3 first:border-0"><div><b className="text-sm">{item.summary}</b><p className="mt-1 text-xs text-text-3">{item.result_summary ?? item.error_summary ?? "No database change was made."}</p></div><Tag tone={item.status === "confirmed" ? "t-green" : "t-grey"}>{item.status === "confirmed" && item.result_summary?.startsWith("Auto-approved by Autopilot") ? "Autopilot approved" : item.status}</Tag></div>)}</Card></section>}
   </div>;
 }
 
-function ApprovalCard({ item, busy, onDecision }: { item: ApprovalItem; busy: boolean; onDecision: (id: string, decision: "confirm" | "cancel" | "edit", changes?: Record<string, unknown>) => Promise<boolean> }) {
+type Decision = (id: string, decision: "confirm" | "cancel" | "edit" | "production", changes?: Record<string, unknown>) => Promise<boolean>;
+
+function ReelProductionCard({ item, busy, onDecision }: { item: ApprovalItem; busy: boolean; onDecision: Decision }) {
+  const value = item.new_value ?? {}; const methods = Array.isArray(value.availableMethods) ? value.availableMethods.filter((method): method is string => typeof method === "string") : [];
+  const selected = typeof value.selectedProductionMethod === "string" ? value.selectedProductionMethod : null;
+  const shots = Array.isArray(value.shotInstructions) ? value.shotInstructions.filter((shot): shot is string => typeof shot === "string") : [];
+  return <Card className="overflow-hidden border-brand/30"><div className="border-l-[3px] border-brand p-4 sm:p-5">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><span className="text-[10px] font-bold uppercase tracking-[.09em] text-brand">Reel production choice</span><h2 className="mt-1 font-display text-lg font-semibold">{String(value.concept ?? "Reel concept")}</h2></div><Tag tone={selected ? "t-blue" : "t-amber"}>{selected ? statusLabel(String(value.productionStatus ?? "")) : "Voom needs your choice"}</Tag></div>
+    <div className="mt-4 grid gap-4 sm:grid-cols-2"><section><h3 className="text-xs font-semibold uppercase tracking-wide text-text-3">Short script</h3><p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-text-2">{String(value.script ?? "")}</p></section><section><h3 className="text-xs font-semibold uppercase tracking-wide text-text-3">What Voom needs</h3><p className="mt-1.5 text-sm leading-relaxed text-text-2">{typeof value.missingAssetRequest === "string" ? value.missingAssetRequest : "No authentic real-world footage is required for this concept."}</p></section></div>
+    {shots.length > 0 && <section className="mt-4 rounded-xl border border-line bg-surface-2 p-3.5"><h3 className="text-xs font-semibold uppercase tracking-wide text-text-3">Simple shot instructions</h3><ul className="mt-2 space-y-1 text-sm text-text-2">{shots.map((shot) => <li key={shot}>• {shot}</li>)}</ul></section>}
+    <div className="mt-4 flex flex-wrap gap-2">{methods.map((method) => <Btn key={method} size="sm" variant={selected === method || (!selected && value.recommendedMethod === method) ? "primary" : "outline"} disabled={busy} onClick={() => void onDecision(item.id, "production", { method })}>{methodLabel(method)}{!selected && value.recommendedMethod === method ? " · Recommended" : ""}</Btn>)}</div>
+    {selected && <p className="mt-3 text-sm font-medium text-text-2">{item.result_summary}</p>}
+    {methods.includes("upload_asset") && <p className="mt-3 text-[11px] text-text-3">Selecting Upload asset saves the request only. Secure file upload is not enabled yet.</p>}
+    <p className="mt-2 text-[11px] text-text-3">No Reel has been generated or published.</p>
+  </div></Card>;
+}
+
+function ApprovalCard({ item, busy, onDecision }: { item: ApprovalItem; busy: boolean; onDecision: Decision }) {
   const [editing, setEditing] = useState(false); const [text, setText] = useState(() => editableText(item.new_value));
   const [publishAt, setPublishAt] = useState(() => toDubaiLocal(item.new_value?.publishAt)); const [validation, setValidation] = useState("");
   const failed = item.status === "failed"; const detail = details(item); const contentApproval = isEditableCalendarContent(item);
@@ -63,3 +81,5 @@ function formatValue(key: string, value: unknown) { if (typeof value === "string
 function isEditableCalendarContent(item: ApprovalItem) { return item.tool_name === "propose_calendar_item" && typeof item.new_value?.content === "string" && typeof item.new_value?.publishAt === "string" && typeof item.new_value?.sourceDraftId === "string"; }
 function toDubaiLocal(value: unknown) { if (typeof value !== "string" || Number.isNaN(Date.parse(value))) return ""; const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dubai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(value)); const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? ""; return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`; }
 function fromDubaiLocal(value: string) { return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}:00+04:00`)) ? `${value}:00+04:00` : null; }
+function methodLabel(method: string) { return method === "create_with_mara" ? "Create with MARA" : method === "film_yourself" ? "Film it myself" : "Use existing asset"; }
+function statusLabel(status: string) { return status === "ready_for_mara_production" ? "Ready for MARA" : status === "waiting_for_filming" ? "Waiting for filming" : status === "waiting_for_asset_upload" ? "Waiting for upload" : "Choice saved"; }
