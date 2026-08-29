@@ -157,7 +157,7 @@ test("Reel choices reuse persisted drafts and approval actions without generatio
   assert.match(route, /productionStatusFor/);
   assert.match(route, /eq\("owner_user_id", user\.id\)/);
   assert.match(board, /Create with MARA/);
-  assert.match(board, /No Reel has been generated or published/);
+  assert.match(board, /Nothing has been published externally/);
   assert.match(today, /reelTaskCount/);
   assert.match(automation, /eq\("tool_name", "propose_calendar_item"\)/);
   assert.doesNotMatch(route + workflow, /generateVideo|mara_media_generations|instagram_publish_jobs/);
@@ -187,7 +187,37 @@ test("Reel assets are signature-validated and use one private owner-scoped recor
   assert.match(migration, /replace_reel_draft_asset/);
   assert.match(migration, /Ready for future MARA production/);
   assert.match(board, /Replace asset/);
-  assert.match(today, /productionStatus !== "ready_for_mara_production"/);
+  assert.match(today, /"ready_for_mara_production", "produced"/);
+});
+
+test("Create with MARA persists a playable truthful Reel composition without publishing", async () => {
+  const { buildReelComposition, isReelComposition } = await import("../lib/mara/reel-composition.ts");
+  const textOnly = buildReelComposition({ concept: "Three coffee tips", script: "Store beans airtight. Keep them away from heat.", caption: "Coffee tips", brandName: "Synthetic Café", usesAsset: false, producedAt: "2026-08-29T12:00:00.000Z" });
+  assert.equal(textOnly.aspectRatio, "9:16");
+  assert.equal(textOnly.durationMs, 11500);
+  assert.equal(textOnly.scenes.length, 3);
+  assert.equal(textOnly.scenes[0].role, "hook");
+  assert.equal(textOnly.scenes[2].role, "cta");
+  assert.equal(textOnly.usesAsset, false);
+  assert.equal(isReelComposition(textOnly), true);
+  const assisted = buildReelComposition({ concept: "Storefront tour", script: "Come inside.", caption: "Visit us", brandName: "Synthetic Café", usesAsset: true });
+  assert.equal(assisted.usesAsset, true);
+  const [route, player, board, today] = await Promise.all([
+    read("app/api/reels/produce/[actionId]/route.ts"), read("components/voom/operating/ReelCompositionPlayer.tsx"),
+    read("components/voom/operating/ApprovalsBoard.tsx"), read("lib/voom/operating-data.ts"),
+  ]);
+  assert.match(route, /eq\("owner_user_id", user\.id\)/);
+  assert.match(route, /reel_draft_assets/);
+  assert.match(route, /productionStatus: "preparing"/);
+  assert.match(route, /productionStatus: "producing"/);
+  assert.match(route, /productionStatus: "produced"/);
+  assert.match(route, /already produced and ready for review/);
+  assert.doesNotMatch(route + player, /instagram|publish_jobs|generateVideo|setTimeout/);
+  assert.match(player, /Live Voom composition/);
+  assert.match(player, /Play Reel/);
+  assert.match(player, /aspect-\[9\/16\]/);
+  assert.match(board, /Ready for review/);
+  assert.match(today, /"ready_for_mara_production", "produced"/);
 });
 
 test("plan generation persists exactly three distinct Instagram drafts and approvals without chat messages", async () => {

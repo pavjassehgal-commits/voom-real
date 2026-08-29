@@ -15,6 +15,6 @@ export async function getOperatingData() {
     db.from("mara_pending_actions").select("id,tool_name,summary,old_value,new_value,status,result_summary,error_summary,created_at,updated_at,executed_at").eq("owner_user_id", user.id).order("created_at", { ascending: false }).limit(50),
   ]);
   const actionRows = actions.data ?? [];
-  const reelTaskCount = actionRows.filter((action) => action.tool_name === "choose_reel_production" && action.status === "pending" && action.new_value?.productionStatus !== "ready_for_mara_production").length;
+  const reelTaskCount = actionRows.filter((action) => action.tool_name === "choose_reel_production" && action.status === "pending" && !["ready_for_mara_production", "produced"].includes(String(action.new_value?.productionStatus ?? ""))).length;
   return { user, business, pendingApprovalCount: pendingApprovals.error ? 0 : pendingApprovals.count ?? 0, reelTaskCount, nextScheduled: nextScheduled.error ? null : nextScheduled.data, plan: plan.error ? null : plan.data, planStorageReady: !plan.error, actions: actionRows };
 }
