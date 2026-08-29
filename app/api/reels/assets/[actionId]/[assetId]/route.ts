@@ -15,6 +15,7 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   });
   if (error) {
     const migrationMissing = String(error.code ?? "") === "PGRST202" || /could not find the function/i.test(String(error.message ?? ""));
+    if (/asset_not_found/i.test(String(error.message ?? ""))) return invalidJson("That asset was not found for this Reel. Nothing changed.", 404);
     return invalidJson(migrationMissing ? "Removing individual assets needs the new asset-pack storage step, which is awaiting approval. Nothing changed." : "Voom couldn't remove that asset safely. Nothing changed.", 503);
   }
   const storagePath = Array.isArray(removed) && typeof removed[0]?.storage_path === "string" ? removed[0].storage_path : null;

@@ -47,6 +47,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ act
   const { error: addError } = await admin.rpc("add_reel_draft_asset", rpcArgs);
   if (addError) {
     const migrationMissing = String(addError.code ?? "") === "PGRST202" || /could not find the function/i.test(String(addError.message ?? ""));
+    if (/asset_pack_full/i.test(String(addError.message ?? ""))) {
+      await admin.storage.from(REEL_ASSET_BUCKET).remove([storagePath]);
+      return invalidJson(`This Reel already has ${REEL_ASSET_PACK_LIMIT} assets. Remove one before adding another.`);
+    }
     // Pre-migration compatibility: the first asset still uses the original
     // single-asset RPC so existing Reels keep working until the asset-pack
     // migration is approved and applied. Additional assets require the new RPC.

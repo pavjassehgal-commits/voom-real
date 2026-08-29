@@ -82,9 +82,13 @@ test("asset routes: pack list is ordered, add enforces six, delete is owner-scop
   assert.match(getPost, /add_reel_draft_asset/);
   assert.match(getPost, /replace_reel_draft_asset/);
   assert.match(getPost, /currentCount >= REEL_ASSET_PACK_LIMIT/);
+  assert.match(getPost, /asset_pack_full/);
+  assert.match(getPost, /This Reel already has \$\{REEL_ASSET_PACK_LIMIT\} assets/);
   assert.match(getPost, /randomUUID\(\)/);
   assert.match(getPost, /detectReelAsset\(bytes\)/);
   assert.match(remove, /remove_reel_draft_asset/);
+  assert.match(remove, /asset_not_found/);
+  assert.match(remove, /That asset was not found for this Reel/);
   assert.match(remove, /p_owner_user_id: context\.userId/);
   assert.match(remove, /p_asset_id: assetId/);
   assert.match(remove, /storage\.from\(REEL_ASSET_BUCKET\)\.remove\(\[storagePath\]\)/);
