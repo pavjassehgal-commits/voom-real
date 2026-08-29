@@ -44,7 +44,9 @@ export function Topbar() {
       <div className="relative hidden max-w-[380px] flex-1 md:block">
         <Icon name="search" size={16} className="absolute left-3 top-[11px] text-text-3" />
         <input
-          placeholder="Search posts, campaigns, ideas…"
+          placeholder="Search isn't available in this version"
+          aria-label="Search isn't available in this version"
+          title="Search isn't available in this version"
           className="h-[38px] w-full rounded-[11px] border border-line bg-surface-2 pl-[38px] pr-3 text-sm outline-none"
           readOnly
         />

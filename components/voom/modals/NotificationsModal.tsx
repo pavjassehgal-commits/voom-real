@@ -12,9 +12,9 @@ export function NotificationsModal() {
   const pack = useCurrentPack();
 
   const items: [IconName, string, string, string, string][] = [
-    ["wallet", "--green", "MARA needs budget approval", "AED 1,200 allocation ready for review · 2h ago", "ads"],
-    ["film", "--rose", `Reel scheduled for ${pack.slot}`, `"${pack.r[0]}" goes live tomorrow · 5h ago`, "reels"],
-    ["mail", "--brand", `"${pack.emailN}" sent`, "41.2% open rate in this demo dataset · 1d ago", "campaigns"],
+    ["wallet", "--green", "Sample: MARA needs budget approval", "AED 1,200 allocation ready for review in the sample dataset · 2h ago", "ads"],
+    ["film", "--rose", "Sample: Reel queued", `"${pack.r[0]}" is in the sample queue at ${pack.slot} · nothing published · 5h ago`, "reels"],
+    ["mail", "--brand", "Sample: email draft prepared", `"${pack.emailN}" was drafted by MARA. Nothing has been sent — connect a provider first. · 1d ago`, "campaigns"],
   ];
 
   return (

@@ -35,6 +35,9 @@ export function PostDetailModal({ index }: { index: number }) {
         onClose={close}
       />
       <ModalBody>
+        <p className="mb-3.5 rounded-xl bg-surface-2 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-text-3">
+          <span className="font-bold uppercase tracking-[.06em]">Sample</span> — this demo post is not saved in Voom. Use “New post” to save real, refresh-safe calendar items.
+        </p>
         <label className="mb-3.5 block">
           <span className="mb-1.5 block text-[12.5px] font-semibold text-text-2">Caption</span>
           <Textarea rows={4} defaultValue={pack.cap} />

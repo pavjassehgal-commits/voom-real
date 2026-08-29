@@ -15,11 +15,9 @@ const CHANNELS: [string, Channel][] = [
   ["💬", "SMS"],
 ];
 
-const COLORS: Record<Channel, string> = { Reel: "#e8481f", Feed: "#c9306b", Email: "#0f6f68", SMS: "#f2a516" };
-
 export function ComposeModal({ day }: { day?: number }) {
   const { close } = useModal();
-  const { addPost, toast } = useVoomActions();
+  const { toast } = useVoomActions();
   const pack = useCurrentPack();
   const { brand } = useVoomState();
   const d = day || 24;
@@ -27,7 +25,11 @@ export function ComposeModal({ day }: { day?: number }) {
   const [channel, setChannel] = useState<Channel>("Reel");
   const [topic, setTopic] = useState(pack.p[0]);
   const [caption, setCaption] = useState("");
+  const [date, setDate] = useState(`2026-08-${String(d).padStart(2, "0")}`);
+  const [time, setTime] = useState("19:10");
   const [generating, setGenerating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   function generate() {
     setGenerating(true);
@@ -37,20 +39,57 @@ export function ComposeModal({ day }: { day?: number }) {
         `Nobody tells you this about ${(topic || "your topic").toLowerCase()} — here's the 30-second version.\n\n#dubai #smallbusiness ${brand.handle.replace("@", "#")}`,
       );
       setGenerating(false);
-      toast("MARA wrote your caption");
+      toast("Sample caption added — save it to keep it");
     }, 700);
   }
 
-  function submit(status: "Draft" | "Scheduled") {
-    addPost({ d, t: `${channel} · ${topic || "New post"}`, c: COLORS[channel], ch: channel, time: "7:10 PM", st: status });
-    close();
-    toast(status === "Scheduled" ? `${channel} scheduled for Aug ${d}, ${pack.slot}` : "Saved as draft", "ok", status === "Scheduled");
+  async function submit(status: "draft" | "scheduled") {
+    if (!caption.trim()) {
+      setError("Write a caption first.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const body = {
+        title: `${channel} · ${topic || "New post"}`,
+        channel,
+        content: caption.trim(),
+        topic: topic.trim(),
+        publishAt: composePublishAt(date, time),
+        status,
+      };
+      const response = await fetch("/api/voom/calendar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) {
+        setError(data.error ?? "Voom couldn't save that post. Please retry.");
+        return;
+      }
+      window.dispatchEvent(new Event("voom:data-changed"));
+      close();
+      toast(
+        status === "scheduled"
+          ? `${channel} planned inside Voom for ${formatShort(date, time)} — nothing published externally`
+          : `${channel} saved as a draft inside Voom`,
+        "ok",
+        status === "scheduled",
+      );
+    } catch {
+      setError("Voom couldn't save that post. Please retry.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
     <ModalShell wide>
-      <ModalHead title="Create content" sub="MARA will format it for the channel you pick." onClose={close} />
+      <ModalHead title="Create content" sub="Saved as a real Voom calendar item — never published outside Voom without explicit approval." onClose={close} />
       <ModalBody>
+        {error && <div role="alert" className="mb-3.5 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-sm text-red">{error}</div>}
         <label className="mb-2.5 block text-[12.5px] font-semibold text-text-2">Channel</label>
         <div className="mb-4.5 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
           {CHANNELS.map(([emoji, name]) => (
@@ -68,34 +107,45 @@ export function ComposeModal({ day }: { day?: number }) {
           <Input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. what makes your best seller work" />
         </Field>
         <Btn variant="outline" size="sm" className="mb-3.5" onClick={generate} disabled={generating}>
-          <Icon name="spark" size={14} /> Generate with MARA
+          <Icon name="spark" size={14} /> {generating ? "Writing…" : "Sample caption"}
         </Btn>
         <Field label="Caption">
-          <Textarea rows={4} value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="MARA will write this for you…" />
+          <Textarea rows={4} value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="Write the caption here…" />
         </Field>
         <div className="flex gap-2.5">
           <Field label="Date">
-            <Input type="date" defaultValue={`2026-08-${String(d).padStart(2, "0")}`} />
+            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
           </Field>
           <Field label="Time">
-            <Input type="time" defaultValue="19:10" />
+            <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
           </Field>
         </div>
         <div className="flex items-center gap-1.5 text-[12.5px] text-brand">
-          <Icon name="spark" size={14} /> {pack.slot} is the best-performing slot in this demo dataset.
+          <Icon name="spark" size={14} /> {pack.slot} is the best-performing slot in this sample dataset.
         </div>
       </ModalBody>
       <ModalFoot>
         <Btn variant="ghost" onClick={close}>
           Cancel
         </Btn>
-        <Btn variant="outline" onClick={() => submit("Draft")}>
+        <Btn variant="outline" disabled={saving} onClick={() => void submit("draft")}>
           Save draft
         </Btn>
-        <Btn variant="primary" onClick={() => submit("Scheduled")}>
-          <Icon name="clock" size={14} /> Schedule
+        <Btn variant="primary" disabled={saving} onClick={() => void submit("scheduled")}>
+          <Icon name="clock" size={14} /> {saving ? "Saving…" : "Plan in calendar"}
         </Btn>
       </ModalFoot>
     </ModalShell>
   );
+}
+
+function composePublishAt(date: string, time: string): string {
+  const value = new Date(time ? `${date}T${time}` : `${date}T00:00`);
+  return Number.isNaN(value.getTime()) ? new Date().toISOString() : value.toISOString();
+}
+
+function formatShort(date: string, time: string): string {
+  const value = new Date(time ? `${date}T${time}` : `${date}T00:00`);
+  if (Number.isNaN(value.getTime())) return "the chosen date";
+  return new Intl.DateTimeFormat("en-AE", { timeZone: "Asia/Dubai", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(value);
 }

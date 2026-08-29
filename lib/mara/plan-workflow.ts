@@ -62,5 +62,34 @@ export async function prepareInstagramPlanWorkflow(db: ServerSupabase, ownerId: 
     }));
   }));
   if (actions.some((action) => !action.ok || !action.pendingActionId)) throw new Error("workflow_approvals_failed");
-  return { drafts: [...draftsByKey.values()], pendingActionIds: actions.map((action) => action.pendingActionId as string) };
+
+  // Persist any email/SMS planned campaigns as real, editable Voom campaign drafts.
+  // Campaigns are never sent: the user reviews and approves them before any provider is connected.
+  const campaignIds: string[] = [];
+  for (const [index, campaign] of plan.plannedCampaigns.entries()) {
+    const kind = campaign.channel.trim().toLowerCase() === "sms" ? "sms" : campaign.channel.trim().toLowerCase() === "email" ? "email" : null;
+    if (!kind) continue;
+    try {
+      const result = await executeMaraTool(
+        { db, ownerId, conversationId: conversation.id, profile: profile as ProfileRecord | null, business: business as BusinessRecord, requestKey: `marketing-plan:${planId}:campaign:${index}` },
+        "create_campaign_draft",
+        JSON.stringify({
+          kind,
+          name: campaign.name,
+          objective: campaign.objective,
+          audience: "",
+          subject: kind === "email" ? campaign.objective.slice(0, 300) : null,
+          previewText: kind === "email" ? "" : null,
+          content: campaign.actions.join("\n\n"),
+          proposedSendAt: null,
+        }),
+      );
+      const created = result.data && typeof result.data === "object" && "id" in result.data ? String(result.data.id) : null;
+      if (result.ok && created) campaignIds.push(created);
+    } catch {
+      // Campaign draft persistence must never block the plan itself; the Campaigns
+      // screen remains the authoritative place to create campaign work manually.
+    }
+  }
+  return { drafts: [...draftsByKey.values()], pendingActionIds: actions.map((action) => action.pendingActionId as string), campaignIds };
 }

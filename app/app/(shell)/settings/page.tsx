@@ -26,7 +26,7 @@ export default function SettingsPage() {
       brand.permission ? (brand.permission.startsWith("No") ? "Automatic" : "Ask first") : "Not set yet",
       brand.permission.startsWith("No") ? "t-green" : "t-amber",
     ],
-    ["Send email & SMS", "Ask first", "t-amber"],
+    ["Send email & SMS", "No provider connected · Ask first", "t-grey"],
     ["Spend ad budget", "Always ask", "t-red"],
     ["Automation level", brand.auto || "Not set yet", "t-blue"],
     ["Posting frequency", brand.freq || "Not set yet", "t-blue"],
