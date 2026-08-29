@@ -140,7 +140,7 @@ async function runTool(c: ToolContext, name: MaraToolName, a: Record<string, unk
   if (name === "propose_calendar_item") return pending(c, name, a, key!, `Add “${a.title}” to the ${a.channel} calendar for ${new Date(a.publishAt as string).toLocaleString("en-US", { timeZone: "Asia/Dubai" })}.`, null, a);
   if (name === "choose_reel_production") {
     const capability = classifyReelProduction({ concept: a.concept as string, script: a.script as string, shotInstructions: a.shotInstructions as string[] });
-    const proposal = { ...a, shotInstructions: capability.shotInstructions, availableMethods: capability.availableMethods, recommendedMethod: capability.recommendedMethod, missingAssetRequest: capability.missingAssetRequest, selectedProductionMethod: null, productionStatus: "awaiting_production_choice" };
+    const proposal = { ...a, shotInstructions: capability.shotInstructions, availableMethods: capability.availableMethods, recommendedMethod: capability.recommendedMethod, missingAssetRequest: capability.missingAssetRequest, allowedAssetKinds: capability.allowedAssetKinds, selectedProductionMethod: null, productionStatus: "awaiting_production_choice", assetReceived: false };
     return pending(c, name, proposal, key!, `Choose how Voom should produce Reel “${a.concept}”.`, null, proposal);
   }
   if (name === "update_calendar_item") { const old = await getCalendarItem(c.db, c.ownerId, a.itemId as string); if (!old) return success(null, "That calendar item was not found."); const resolved = c.userRequest ? resolveRelativeDateTime(c.userRequest, old.publish_at) : null; const nextArgs = resolved ? { ...a, publishAt: resolved } : a; return pending(c, name, nextArgs, key!, `Update calendar item “${old.title}”.`, old, { ...old, ...nextArgs }); }

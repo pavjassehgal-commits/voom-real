@@ -163,6 +163,33 @@ test("Reel choices reuse persisted drafts and approval actions without generatio
   assert.doesNotMatch(route + workflow, /generateVideo|mara_media_generations|instagram_publish_jobs/);
 });
 
+test("Reel assets are signature-validated and use one private owner-scoped record", async () => {
+  const { detectReelAsset, REEL_ASSET_MAX_BYTES, safeAssetName } = await import("../lib/media/reel-asset.ts");
+  assert.equal(detectReelAsset(Uint8Array.from([0xff, 0xd8, 0xff]))?.mimeType, "image/jpeg");
+  assert.equal(detectReelAsset(Uint8Array.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]))?.mimeType, "image/png");
+  assert.equal(detectReelAsset(new TextEncoder().encode("RIFFxxxxWEBP"))?.mimeType, "image/webp");
+  assert.equal(detectReelAsset(Uint8Array.from([0,0,0,0,...new TextEncoder().encode("ftypqt  ")]))?.mimeType, "video/quicktime");
+  assert.equal(detectReelAsset(new TextEncoder().encode("not media")), null);
+  assert.equal(REEL_ASSET_MAX_BYTES, 4194304);
+  assert.equal(safeAssetName("../unsafe/name.mov"), "..-unsafe-name.mov");
+  const [route, migration, board, today] = await Promise.all([
+    read("app/api/reels/assets/[actionId]/route.ts"), read("supabase/migrations/0016_reel_draft_assets.sql"),
+    read("components/voom/operating/ApprovalsBoard.tsx"), read("lib/voom/operating-data.ts"),
+  ]);
+  assert.match(route, /eq\("owner_user_id", user\.id\)/);
+  assert.match(route, /detectReelAsset\(bytes\)/);
+  assert.match(route, /createSignedUrl/);
+  assert.match(route, /randomUUID\(\)/);
+  assert.doesNotMatch(route, /NEXT_PUBLIC.*SECRET|publish|instagram|generateVideo/);
+  assert.match(migration, /unique \(owner_user_id, draft_id\)/);
+  assert.match(migration, /reel_draft_assets_select_own/);
+  assert.match(migration, /revoke all.*anon, authenticated/);
+  assert.match(migration, /replace_reel_draft_asset/);
+  assert.match(migration, /Ready for future MARA production/);
+  assert.match(board, /Replace asset/);
+  assert.match(today, /productionStatus !== "ready_for_mara_production"/);
+});
+
 test("plan generation persists exactly three distinct Instagram drafts and approvals without chat messages", async () => {
   const [planning, workflow, route, migration, workspace] = await Promise.all([
     read("lib/mara/planning.ts"), read("lib/mara/plan-workflow.ts"), read("app/api/plan/route.ts"),

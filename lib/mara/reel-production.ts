@@ -7,6 +7,7 @@ export interface ReelProductionCapability {
   recommendedMethod: ReelProductionMethod;
   missingAssetRequest: string | null;
   shotInstructions: string[];
+  allowedAssetKinds: ("image" | "video")[];
 }
 
 const AUTHENTIC_FOOTAGE = /\b(testimonial|real customer|customer reaction|owner|founder|staff|team member|storefront|shop front|exterior|interior|inside (?:the|our) (?:shop|store|cafe|restaurant)|behind the scenes|being (?:made|prepared|cut|served)|cut(?:ting)? open|unboxing|event|today'?s|our location|walkthrough)\b/i;
@@ -19,12 +20,16 @@ export function classifyReelProduction(input: ReelProductionInput): ReelProducti
   const shotInstructions = normalizeShots(input.shotInstructions, needsAuthenticFootage);
   if (maraCanProduceTruthfully) return {
     availableMethods: ["create_with_mara", "upload_asset", "film_yourself"],
-    recommendedMethod: "create_with_mara", missingAssetRequest: null, shotInstructions,
+    recommendedMethod: "create_with_mara", missingAssetRequest: null, shotInstructions, allowedAssetKinds: ["image", "video"],
   };
   return {
     availableMethods: ["film_yourself", "upload_asset"], recommendedMethod: "film_yourself",
-    missingAssetRequest: missingAsset(text), shotInstructions,
+    missingAssetRequest: missingAsset(text), shotInstructions, allowedAssetKinds: videoRequired(text) ? ["video"] : ["image", "video"],
   };
+}
+
+function videoRequired(text: string) {
+  return /\b(testimonial|customer reaction|being (?:made|prepared|cut|served)|cut(?:ting)? open|walkthrough)\b/i.test(text);
 }
 
 export function productionStatusFor(method: ReelProductionMethod) {
