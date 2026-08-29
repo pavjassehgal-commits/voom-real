@@ -3,6 +3,7 @@ import { createAiProvider } from "@/lib/ai";
 import { buildReelComposition, isReelComposition } from "@/lib/mara/reel-composition";
 import { enforceViewerCopy, fallbackViewerCopy, viewerCopySchema, type ViewerCopyContext } from "@/lib/mara/reel-copy";
 import { classifyReelProduction } from "@/lib/mara/reel-production";
+import { assetKindForMime, assignReelVisuals } from "@/lib/mara/reel-visuals";
 import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
 
@@ -35,12 +36,10 @@ export async function POST(_request: Request, { params }: { params: Promise<{ ac
   const assetReceived = action.new_value.assetReceived === true;
   if (!capability.availableMethods.includes("create_with_mara") && !assetReceived) return Response.json({ error: "Upload the requested real-world asset before Voom produces this Reel." }, { status: 409 });
   const admin = createAdminClient();
-  let usesAsset = false;
-  if (assetReceived) {
-    const { data: asset } = await admin.from("reel_draft_assets").select("id").eq("owner_user_id", user.id).eq("draft_id", action.new_value.draftId).maybeSingle();
-    if (!asset) return Response.json({ error: "The required private asset could not be verified." }, { status: 409 });
-    usesAsset = true;
-  }
+  const { data: assetRows } = await admin.from("reel_draft_assets").select("id,mime_type,created_at").eq("owner_user_id", user.id).eq("draft_id", action.new_value.draftId).order("created_at").order("id").limit(6);
+  const assetPack = (assetRows ?? []).filter((row) => typeof row.id === "string" && assetKindForMime(String(row.mime_type)) !== null);
+  const usesAsset = assetPack.length > 0;
+  if (assetReceived && !usesAsset) return Response.json({ error: "The required private asset could not be verified." }, { status: 409 });
   const preparing = { ...action.new_value, selectedProductionMethod: "create_with_mara", productionStatus: "preparing" };
   const { error: preparingError } = await db.from("mara_pending_actions").update({ new_value: preparing, sanitized_arguments: { ...(action.new_value ?? {}), selectedProductionMethod: "create_with_mara", productionStatus: "preparing" }, result_summary: "Preparing the live Voom Reel composition." }).eq("id", actionId).eq("owner_user_id", user.id).eq("status", "pending");
   if (preparingError) return Response.json({ error: "Voom couldn't start Reel production safely." }, { status: 503 });
@@ -83,8 +82,9 @@ export async function POST(_request: Request, { params }: { params: Promise<{ ac
   } catch {
     viewerCopy = fallbackViewerCopy(copyContext);
   }
-  const composition = buildReelComposition({ concept, caption, brandName, usesAsset, viewerCopy });
-  const produced = { ...producing, productionStatus: "produced", assetReceived, reelComposition: composition };
+  const visuals = assignReelVisuals(assetPack.map((row) => ({ id: row.id, mimeType: String(row.mime_type), kind: assetKindForMime(String(row.mime_type)) as "image" | "video" })));
+  const composition = buildReelComposition({ concept, caption, brandName, usesAsset, viewerCopy, visuals });
+  const produced = { ...producing, productionStatus: "produced", assetReceived, assetCount: assetPack.length, reelComposition: composition };
   const { data: completed, error } = await db.from("mara_pending_actions").update({ new_value: produced, sanitized_arguments: { ...(action.new_value ?? {}), selectedProductionMethod: "create_with_mara", productionStatus: "produced" }, result_summary: "Produced a playable live Voom Reel composition with viewer-facing scenes. Ready for review; nothing was published.", error_summary: null }).eq("id", actionId).eq("owner_user_id", user.id).eq("status", "pending").select(ACTION_COLUMNS).single();
   if (error) return fail(db, user.id, actionId, producing, "Voom couldn't finish Reel production safely.");
   return Response.json({ action: completed, message: "Reel produced and ready for review." });

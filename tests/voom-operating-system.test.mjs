@@ -172,13 +172,14 @@ test("Reel assets are signature-validated and use one private owner-scoped recor
   assert.equal(detectReelAsset(new TextEncoder().encode("not media")), null);
   assert.equal(REEL_ASSET_MAX_BYTES, 4194304);
   assert.equal(safeAssetName("../unsafe/name.mov"), "..-unsafe-name.mov");
-  const [route, migration, board, today] = await Promise.all([
-    read("app/api/reels/assets/[actionId]/route.ts"), read("supabase/migrations/0016_reel_draft_assets.sql"),
+  const [route, helper, migration, migrationPack, board, today] = await Promise.all([
+    read("app/api/reels/assets/[actionId]/route.ts"), read("lib/media/reel-asset-server.ts"),
+    read("supabase/migrations/0016_reel_draft_assets.sql"), read("supabase/migrations/0017_reel_asset_pack.sql"),
     read("components/voom/operating/ApprovalsBoard.tsx"), read("lib/voom/operating-data.ts"),
   ]);
-  assert.match(route, /eq\("owner_user_id", user\.id\)/);
+  assert.match(route + helper, /eq\("owner_user_id", user\.id\)/);
   assert.match(route, /detectReelAsset\(bytes\)/);
-  assert.match(route, /createSignedUrl/);
+  assert.match(helper, /createSignedUrl/);
   assert.match(route, /randomUUID\(\)/);
   assert.doesNotMatch(route, /NEXT_PUBLIC.*SECRET|publish|instagram|generateVideo/);
   assert.match(migration, /unique \(owner_user_id, draft_id\)/);
@@ -186,6 +187,7 @@ test("Reel assets are signature-validated and use one private owner-scoped recor
   assert.match(migration, /revoke all.*anon, authenticated/);
   assert.match(migration, /replace_reel_draft_asset/);
   assert.match(migration, /Ready for future MARA production/);
+  assert.match(migrationPack, /drop constraint if exists reel_draft_assets_owner_user_id_draft_id_key/);
   assert.match(board, /Replace asset/);
   assert.match(today, /"ready_for_mara_production", "produced"/);
 });

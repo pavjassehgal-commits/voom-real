@@ -52,11 +52,11 @@ test("enforceViewerCopy replaces poisoned AI copy with the deterministic fallbac
   assert.equal(Object.values(partial).every((line) => !isInternalDirection(line)), true);
 });
 
-test("composition v2 has four short viewer scenes inside 8-15 seconds", async () => {
+test("composition v3 has four short viewer scenes inside 8-15 seconds", async () => {
   const { buildReelComposition, isReelComposition } = await import("../lib/mara/reel-composition.ts");
   const { fallbackViewerCopy } = await import("../lib/mara/reel-copy.ts");
   const composition = buildReelComposition({ concept: SWIMWEAR.concept, caption: SWIMWEAR.caption, brandName: SWIMWEAR.brandName, usesAsset: true, producedAt: "2026-08-30T10:00:00.000Z", viewerCopy: fallbackViewerCopy(SWIMWEAR) });
-  assert.equal(composition.version, 2);
+  assert.equal(composition.version, 3);
   assert.equal(composition.aspectRatio, "9:16");
   assert.equal(composition.scenes.length, 4);
   assert.deepEqual(composition.scenes.map((scene) => scene.role), ["hook", "message", "value", "cta"]);
@@ -111,7 +111,7 @@ test("produce route generates text-only viewer copy with AI fallback and persist
   assert.match(player, /viewer-facing scenes/);
   assert.match(player, /voom-reel-kenburns/);
   assert.match(player, /objectPosition/);
-  assert.match(player, /videoRef/);
+  assert.match(player, /sharedVideoRef|sceneVideoRefs/);
   assert.match(player, /Produced inside Voom · Not published/);
   assert.match(player, /Play Reel/);
   assert.match(player, /aspect-\[9\/16\]/);
