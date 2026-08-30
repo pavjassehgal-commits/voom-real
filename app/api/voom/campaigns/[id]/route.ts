@@ -1,5 +1,6 @@
 import { approveCampaign, getCampaign, rejectCampaign, updateCampaign } from "@/lib/mara/internal-data";
 import { getCurrentUser } from "@/lib/voom/server-data";
+import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
 import { z } from "zod";
 
@@ -59,13 +60,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!parsed.success) return Response.json({ error: "Choose a valid campaign action." }, { status: 400 });
 
   try {
+    const adminCampaign = await tryAdminCampaignApproval(user.id, id, parsed.data.action);
+    if (adminCampaign) {
+      const message = parsed.data.action === "approve"
+        ? "Campaign approved. It is ready for an explicit send. Nothing has been sent."
+        : "Campaign marked not approved. Nothing has been sent.";
+      return Response.json({ campaign: adminCampaign, message });
+    }
+
     const db = await createClient();
     const campaign = parsed.data.action === "approve"
       ? await approveCampaign(db, user.id, id)
       : await rejectCampaign(db, user.id, id);
     if (!campaign) return Response.json({ error: "That campaign was not found." }, { status: 404 });
     const message = parsed.data.action === "approve"
-      ? "Campaign approved. It is ready to send once a provider is connected — nothing has been sent."
+      ? "Campaign approved. It is ready for an explicit send. Nothing has been sent."
       : "Campaign marked not approved. Nothing has been sent.";
     return Response.json({ campaign, message });
   } catch {
@@ -84,5 +93,25 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     return Response.json({ campaign });
   } catch {
     return Response.json({ error: "That campaign couldn't load. Please retry." }, { status: 503 });
+  }
+}
+
+async function tryAdminCampaignApproval(ownerId: string, campaignId: string, action: "approve" | "reject") {
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin.rpc("set_voom_campaign_approval", {
+      p_owner_user_id: ownerId,
+      p_campaign_id: campaignId,
+      p_action: action,
+    }).single();
+    if (error) {
+      const message = `${error.code ?? ""} ${error.message ?? ""}`;
+      if (/PGRST202|set_voom_campaign_approval|campaign_not_found|relation .* does not exist|schema cache/i.test(message)) return null;
+      throw error;
+    }
+    return data;
+  } catch (error) {
+    if (`${(error as { message?: string })?.message ?? ""}`.includes("supabase_admin_not_configured")) return null;
+    throw error;
   }
 }

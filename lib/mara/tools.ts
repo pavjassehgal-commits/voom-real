@@ -4,9 +4,11 @@ import { z } from "zod";
 import type { BusinessRecord, ProfileRecord } from "@/lib/voom/types";
 import type { ServerSupabase } from "./internal-data";
 import { resolveRelativeDateTime } from "./relative-date";
+import { getResendAvailability } from "@/lib/email/config";
 import { readInstagramConfig } from "@/lib/instagram/config";
 import { getInstagramConnection } from "@/lib/instagram/data";
 import { classifyReelProduction } from "@/lib/mara/reel-production";
+import { getTwilioAvailability } from "@/lib/sms/config";
 import {
   createCalendarItem, createCampaign, deleteCalendarItem, getBrandProfile, getCalendarItem, getCampaign,
   getDraft, listCalendarItems, listCampaigns, listDrafts, updateCalendarItem, updateCampaign,
@@ -117,7 +119,19 @@ async function runTool(c: ToolContext, name: MaraToolName, a: Record<string, unk
   if (name === "get_campaign") { const data = await getCampaign(c.db, c.ownerId, a.campaignId as string); return success(data, data ? "Loaded the campaign draft." : "That campaign was not found."); }
   if (name === "get_connected_channels") {
     const instagram = await getInstagramConnection(c.db, c.ownerId, Boolean(readInstagramConfig()));
-    return success({ selectedChannels: c.business.preferred_channels, integrations: { instagram: instagram.connected, email: false, sms: false }, note: instagram.connected ? "Instagram is connected. Publishing still requires the separate confirmed execution flow." : "Instagram is not connected." }, "Checked channel availability.");
+    const email = getResendAvailability();
+    const sms = getTwilioAvailability();
+    return success({
+      selectedChannels: c.business.preferred_channels,
+      integrations: { instagram: instagram.connected, email: false, sms: false },
+      providerConfig: {
+        email: { configured: email.configured, sendConfigured: email.sendConfigured, webhookConfigured: email.webhookConfigured },
+        sms: { configured: sms.configured },
+      },
+      note: instagram.connected
+        ? "Instagram is connected. Publishing still requires the separate confirmed execution flow. Email and SMS provider configuration is reported separately and does not enable sending."
+        : "Instagram is not connected. Email and SMS provider configuration is reported separately and does not enable sending.",
+    }, "Checked channel availability.");
   }
   if (name === "get_instagram_connection_status") {
     const instagram = await getInstagramConnection(c.db, c.ownerId, Boolean(readInstagramConfig()));

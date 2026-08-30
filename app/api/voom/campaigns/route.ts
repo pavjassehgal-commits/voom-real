@@ -1,5 +1,6 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createCampaign, listCampaigns } from "@/lib/mara/internal-data";
+import { readCampaignDelivery } from "@/lib/voom/campaign-delivery";
 import { createClient } from "@/utils/supabase/server";
 import { z } from "zod";
 
@@ -20,7 +21,10 @@ export async function GET(request: Request) {
   const kind = new URL(request.url).searchParams.get("kind") || undefined;
   if (kind && kind !== "email" && kind !== "sms") return Response.json({ error: "That campaign type is invalid." }, { status: 400 });
   try {
-    return Response.json({ campaigns: await listCampaigns(await createClient(), user.id, kind) });
+    const db = await createClient();
+    const campaigns = await listCampaigns(db, user.id, kind);
+    const deliveries = Object.fromEntries(await Promise.all(campaigns.map(async (campaign) => [campaign.id, await readCampaignDelivery(db, user.id, campaign)] as const)));
+    return Response.json({ campaigns, deliveries });
   } catch {
     return Response.json({ error: "Campaigns couldn't load. Please retry." }, { status: 503 });
   }
