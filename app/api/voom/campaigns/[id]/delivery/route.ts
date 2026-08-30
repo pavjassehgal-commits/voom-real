@@ -115,7 +115,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
     const providerResult = campaign.kind === "email"
       ? await sendEmailCampaign(campaign, recipient)
-      : await sendSmsCampaign(campaign, recipient, request.url);
+      : await sendSmsCampaign(campaign, recipient);
 
     const recorded = await admin.rpc("record_campaign_send_provider_result", {
       p_owner_user_id: user.id,

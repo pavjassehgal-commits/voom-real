@@ -1,8 +1,8 @@
 import "server-only";
 
-import { createTwilioApiClient, type TwilioApiClient, type TwilioClientOptions } from "./core";
-import { requireTwilioConfig } from "./config";
+import { createClickSendApiClient, type ClickSendApiClient, type ClickSendClientOptions } from "./core";
+import { requireClickSendConfig } from "./config";
 
-export function createTwilioClient(options?: TwilioClientOptions): TwilioApiClient {
-  return createTwilioApiClient(requireTwilioConfig(), options);
+export function createClickSendClient(options?: ClickSendClientOptions): ClickSendApiClient {
+  return createClickSendApiClient(requireClickSendConfig(), options);
 }

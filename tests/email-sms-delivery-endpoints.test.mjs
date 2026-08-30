@@ -15,28 +15,27 @@ test("manual send route is approval-gated, provider-backed, and double-send safe
   assert.match(route, /createCampaignSendAttemptKey/);
   assert.match(route, /claimed\.idempotency_key !== attemptKey/);
   assert.match(route, /sendEmailCampaign\(campaign, recipient\)/);
-  assert.match(route, /sendSmsCampaign\(campaign, recipient, request\.url\)/);
+  assert.match(route, /sendSmsCampaign\(campaign, recipient\)/);
   assert.match(route, /Delivered will appear only after a verified provider callback confirms it/);
   assert.doesNotMatch(route, /mark.*Delivered.*provider API success/i);
 });
 
-test("Resend and Twilio webhook routes verify signatures before delivery updates", async () => {
-  const [helper, resend, twilio] = await Promise.all([
+test("Resend webhook route verifies signatures before delivery updates and no unverified SMS webhook exists", async () => {
+  const [helper, resend] = await Promise.all([
     read("lib/voom/campaign-delivery.ts"),
     read("app/api/webhooks/resend/route.ts"),
-    read("app/api/webhooks/twilio/status/route.ts"),
   ]);
 
   assert.match(helper, /new Webhook\(secret\)\.verify/);
-  assert.match(helper, /createHmac\("sha1"/);
-  assert.match(helper, /timingSafeEqual/);
   assert.match(helper, /rpc\("record_campaign_delivery_event"/);
   assert.match(resend, /svix-id/);
   assert.match(resend, /verifyResendWebhook/);
   assert.match(resend, /recordDeliveryFromWebhook/);
-  assert.match(twilio, /x-twilio-signature/);
-  assert.match(twilio, /verifyTwilioSignature/);
-  assert.match(twilio, /recordDeliveryFromWebhook/);
+
+  // The Twilio webhook route was removed with the ClickSend provider swap, and
+  // no ClickSend delivery webhook may be faked without a safe verified path.
+  await assert.rejects(read("app/api/webhooks/twilio/status/route.ts"));
+  assert.doesNotMatch(helper, /verifyTwilioSignature|createHmac\("sha1"|timingSafeEqual|x-twilio-signature/);
 });
 
 test("campaign editor exposes one-recipient send UI with truthful states", async () => {
@@ -91,7 +90,7 @@ test("automation paths still never send campaigns externally", async () => {
     read("lib/voom/weekly-automation.ts"),
     read("lib/mara/tools.ts"),
   ]);
-  assert.doesNotMatch(workflow, /sendApprovedCampaign|claim_campaign_send|record_campaign_send_provider_result|createResendClient|createTwilioClient/);
-  assert.doesNotMatch(automation, /claim_campaign_send|record_campaign_send_provider_result|resend|twilio/i);
+  assert.doesNotMatch(workflow, /sendApprovedCampaign|claim_campaign_send|record_campaign_send_provider_result|createResendClient|createClickSendClient/);
+  assert.doesNotMatch(automation, /claim_campaign_send|record_campaign_send_provider_result|resend|twilio|clicksend/i);
   assert.match(tools, /sendingAvailable: false/);
 });

@@ -238,7 +238,7 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
           <Card className="mb-3.5 border-line-2 bg-surface-2 p-3.5">
             <div className="flex flex-wrap items-center gap-2">
               <Tag tone={deliveryState ? deliveryTone(deliveryState) : "t-grey"}>{deliveryState ? deliveryLabel(deliveryState) : "Ready"}</Tag>
-              <Tag tone={delivery?.provider.configured ? "t-green" : "t-amber"}>{delivery?.provider.label ?? (em ? "Resend" : "Twilio")}</Tag>
+              <Tag tone={delivery?.provider.configured ? "t-green" : "t-amber"}>{delivery?.provider.label ?? (em ? "Resend" : "ClickSend")}</Tag>
             </div>
             <p className="mt-2 text-[13px] leading-[1.55] text-text-2">
               {delivery?.note ?? "This approved campaign can send to one real recipient when the provider is configured."}
@@ -280,7 +280,7 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
               variant="outline"
               disabled={busy || sendBusy || !id || !recipientContact.trim() || !delivery?.canSend}
               onClick={() => void sendApprovedCampaign()}
-              title={!delivery?.provider.configured ? `${delivery?.provider.label ?? (em ? "Resend" : "Twilio")} is not configured on the server yet` : undefined}
+              title={!delivery?.provider.configured ? `${delivery?.provider.label ?? (em ? "Resend" : "ClickSend")} is not configured on the server yet` : undefined}
             >
               <Icon name="send" size={14} /> {sendBusy ? "Sending…" : delivery?.send?.internal_status === "failed" ? `Retry ${em ? "email" : "SMS"}` : `Send approved ${em ? "email" : "SMS"}`}
             </Btn>

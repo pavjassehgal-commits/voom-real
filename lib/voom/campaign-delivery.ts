@@ -1,13 +1,13 @@
 import "server-only";
 
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { Webhook } from "standardwebhooks";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createResendClient } from "@/lib/email/client";
 import { getResendAvailability } from "@/lib/email/config";
-import { createTwilioClient } from "@/lib/sms/client";
-import { getTwilioAvailability, requireTwilioConfig } from "@/lib/sms/config";
-import { resolveSiteUrl } from "@/utils/site-url";
+import { createClickSendClient } from "@/lib/sms/client";
+import { getClickSendAvailability } from "@/lib/sms/config";
+import { clickSendSmsSendPath } from "@/lib/sms/core";
 import type { CampaignRecord, CampaignRecipientRecord, CampaignSendRecord, CampaignDeliveryView, CampaignProviderAvailability, CampaignDeliveryState } from "./types";
 
 export function getCampaignProviderAvailability(kind: "email" | "sms"): CampaignProviderAvailability {
@@ -22,12 +22,16 @@ export function getCampaignProviderAvailability(kind: "email" | "sms"): Campaign
     };
   }
 
-  const config = getTwilioAvailability();
+  const config = getClickSendAvailability();
   return {
-    provider: "twilio",
-    label: "Twilio",
+    provider: "clicksend",
+    label: "ClickSend",
     configured: config.configured,
-    deliveryTrackingConfigured: config.configured,
+    // There is no safe, signature-verified ClickSend delivery callback wired up
+    // yet, so delivery tracking is reported as not configured. An accepted
+    // ClickSend send must therefore stay at "accepted" and never become
+    // "delivered" without a real verified receipt.
+    deliveryTrackingConfigured: false,
     missingEnv: config.missingEnv,
   };
 }
@@ -114,23 +118,30 @@ export async function sendEmailCampaign(campaign: CampaignRecord, recipient: Cam
   };
 }
 
-export async function sendSmsCampaign(campaign: CampaignRecord, recipient: CampaignRecipientRecord, requestUrl: string) {
-  const config = requireTwilioConfig();
-  const callbackUrl = new URL("/api/webhooks/twilio/status", resolveSiteUrl(new URL(requestUrl).origin).toString()).toString();
-  const client = createTwilioClient();
-  const response = await client.postForm("Messages.json", {
-    MessagingServiceSid: config.messagingServiceSid,
-    To: recipient.contact,
-    Body: campaign.content,
-    StatusCallback: callbackUrl,
+export async function sendSmsCampaign(campaign: CampaignRecord, recipient: CampaignRecipientRecord) {
+  const client = createClickSendClient();
+  // One explicit message to the single approved campaign recipient. No Sender
+  // ID / `from` is invented: ClickSend uses the account's own sender settings
+  // when `from` is omitted, so the payload only carries `to` and `body`.
+  const response = await client.postJson(clickSendSmsSendPath(), {
+    messages: [
+      {
+        to: recipient.contact,
+        body: campaign.content,
+      },
+    ],
   });
   const body = await safeProviderBody(response);
+  const responseCode = typeof body?.response_code === "string" ? body.response_code : null;
+  // ClickSend returning SUCCESS only means it accepted the request into its
+  // queue. It is not a delivery confirmation, so this stays "accepted".
+  const accepted = response.ok && responseCode?.toUpperCase() === "SUCCESS";
   return {
-    ok: response.ok && typeof body?.sid === "string" && body.sid.length > 0,
-    providerMessageId: typeof body?.sid === "string" ? body.sid : null,
-    providerStatus: typeof body?.status === "string" ? body.status : "accepted",
-    errorCode: response.ok ? null : String(body?.code ?? `HTTP_${response.status}`),
-    errorMessage: response.ok ? null : providerErrorMessage(body, "Twilio couldn't accept that SMS send."),
+    ok: accepted,
+    providerMessageId: readClickSendMessageId(body),
+    providerStatus: responseCode ?? "accepted",
+    errorCode: response.ok ? null : String(responseCode ?? `HTTP_${response.status}`),
+    errorMessage: response.ok ? null : providerErrorMessage(body, "ClickSend couldn't accept that SMS send."),
   };
 }
 
@@ -142,16 +153,11 @@ export function verifyResendWebhook(payload: string, headers: Headers, secret: s
   }) as Record<string, unknown>;
 }
 
-export function verifyTwilioSignature(input: { authToken: string; url: string; params: Record<string, string>; signature: string | null }) {
-  if (!input.signature) return false;
-  let signed = input.url;
-  for (const [key, value] of Object.entries(input.params).sort(([a], [b]) => a.localeCompare(b))) {
-    signed += key + value;
-  }
-  const expected = createHmac("sha1", input.authToken).update(Buffer.from(signed, "utf8")).digest("base64");
-  const actualBuffer = Buffer.from(input.signature, "utf8");
-  const expectedBuffer = Buffer.from(expected, "utf8");
-  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
+function readClickSendMessageId(body: Record<string, unknown> | null) {
+  const data = body?.data as Record<string, unknown> | undefined;
+  const messages = Array.isArray(data?.messages) ? (data?.messages as unknown[]) : [];
+  const first = messages[0] as Record<string, unknown> | undefined;
+  return typeof first?.message_id === "string" && first.message_id.length > 0 ? first.message_id : null;
 }
 
 export async function recordDeliveryFromWebhook(db: SupabaseClient, input: { provider: "resend" | "twilio"; providerMessageId: string | null; eventId: string; eventType: string; receivedAt: string; providerStatus: string | null }) {
