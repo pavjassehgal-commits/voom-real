@@ -3,7 +3,7 @@ import { PageHead } from "@/components/voom/shell/AppShell";
 import { Icon } from "@/components/voom/icons";
 import { Card, Tag } from "@/components/voom/ui/primitives";
 import { getResendAvailability } from "@/lib/email/config";
-import { getTwilioAvailability } from "@/lib/sms/config";
+import { getClickSendAvailability } from "@/lib/sms/config";
 import { getOperatingData } from "@/lib/voom/operating-data";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +14,7 @@ export default async function ConnectionsPage() {
 
   const selected = new Set(data.business.preferred_channels.map((x) => x.toLowerCase()));
   const email = getResendAvailability();
-  const sms = getTwilioAvailability();
+  const sms = getClickSendAvailability();
 
   return (
     <div>
@@ -40,7 +40,7 @@ export default async function ConnectionsPage() {
           icon="chat"
           name="SMS"
           description={sms.configured
-            ? "Twilio is configured on the server. Approved campaigns can send to one real recipient, and Delivered requires verified status callbacks."
+            ? "ClickSend is configured on the server. Approved campaigns can send to one real recipient, and Delivered requires verified status callbacks."
             : "Messaging delivery integration is not configured yet."}
           selected={selected.has("sms")}
           configured={sms.configured}

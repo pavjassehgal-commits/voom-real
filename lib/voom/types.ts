@@ -227,6 +227,11 @@ export interface CampaignSendRecord {
   id: string;
   recipient_id: string;
   channel: "email" | "sms";
+  /**
+   * Provider literal as persisted by migration 0018 (`claim_campaign_send`
+   * writes 'twilio' for SMS sends). The runtime SMS provider is ClickSend; the
+   * stored literal is a known architecture limitation and is not changed here.
+   */
   provider: "resend" | "twilio";
   provider_message_id: string | null;
   provider_status: string | null;
@@ -244,7 +249,7 @@ export interface CampaignSendRecord {
 export type CampaignDeliveryState = "ready" | "sending" | "accepted" | "delivered" | "failed";
 
 export interface CampaignProviderAvailability {
-  provider: "resend" | "twilio";
+  provider: "resend" | "clicksend";
   label: string;
   configured: boolean;
   deliveryTrackingConfigured: boolean;

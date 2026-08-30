@@ -2,9 +2,9 @@ import "server-only";
 
 export {
   SmsProviderConfigurationError,
-  getTwilioAvailability,
-  readTwilioConfig,
-  requireTwilioConfig,
-  type TwilioAvailability,
-  type TwilioConfig,
+  getClickSendAvailability,
+  readClickSendConfig,
+  requireClickSendConfig,
+  type ClickSendAvailability,
+  type ClickSendConfig,
 } from "./core";

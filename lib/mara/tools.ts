@@ -8,7 +8,7 @@ import { getResendAvailability } from "@/lib/email/config";
 import { readInstagramConfig } from "@/lib/instagram/config";
 import { getInstagramConnection } from "@/lib/instagram/data";
 import { classifyReelProduction } from "@/lib/mara/reel-production";
-import { getTwilioAvailability } from "@/lib/sms/config";
+import { getClickSendAvailability } from "@/lib/sms/config";
 import {
   createCalendarItem, createCampaign, deleteCalendarItem, getBrandProfile, getCalendarItem, getCampaign,
   getDraft, listCalendarItems, listCampaigns, listDrafts, updateCalendarItem, updateCampaign,
@@ -120,7 +120,7 @@ async function runTool(c: ToolContext, name: MaraToolName, a: Record<string, unk
   if (name === "get_connected_channels") {
     const instagram = await getInstagramConnection(c.db, c.ownerId, Boolean(readInstagramConfig()));
     const email = getResendAvailability();
-    const sms = getTwilioAvailability();
+    const sms = getClickSendAvailability();
     return success({
       selectedChannels: c.business.preferred_channels,
       integrations: { instagram: instagram.connected, email: false, sms: false },
