@@ -9,6 +9,10 @@
 @keyframes voom-reel-kenburns-d { from { transform: scale(1.2) translate(0, 2%); } to { transform: scale(1.04) translate(2%, -1%); } }
 
 :root {
+  --font-public-sans: "Inter", "Public Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-bricolage: "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
+  --font-plex-mono: "IBM Plex Mono", "SFMono-Regular", "SFMono-Regular", ui-monospace, Consolas, "Liberation Mono", monospace;
+
   --bg: #0a0e0d;
   --surface: #131817;
   --surface-2: #1b2220;
