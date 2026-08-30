@@ -56,7 +56,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (campaign.status !== "approved") return Response.json({ error: "Approve the campaign before sending it." }, { status: 409 });
 
     const contact = normalizeCampaignContact(campaign.kind, parsed.data.contact);
-    if (!isValidContact(campaign.kind, contact)) return Response.json({ error: campaign.kind === "email" ? "Enter a valid recipient email address." : "Enter a valid E.164 phone number like +971501234567." }, { status: 400 });
+    if (!isValidContact(campaign.kind, contact)) return Response.json({ error: campaign.kind === "email" ? "Enter a valid recipient email address." : "Enter a valid phone number in international format." }, { status: 400 });
 
     const delivery = await readCampaignDelivery(db, user.id, campaign);
     const provider = getCampaignProviderAvailability(campaign.kind);
@@ -169,7 +169,7 @@ function rpcErrorMessage(error: unknown, fallback: string) {
   if (/campaign_not_approved/.test(text)) return "Approve the campaign before sending it.";
   if (/recipient_opted_out/.test(text)) return "That recipient has opted out and cannot be messaged.";
   if (/invalid_email_contact/.test(text)) return "Enter a valid recipient email address.";
-  if (/invalid_sms_contact/.test(text)) return "Enter a valid E.164 phone number like +971501234567.";
+  if (/invalid_sms_contact/.test(text)) return "Enter a valid phone number in international format.";
   if (/delivery migration|PGRST202|relation .* does not exist|schema cache/i.test(text)) return "Campaign delivery is not available until the delivery migration is applied.";
   return fallback;
 }
