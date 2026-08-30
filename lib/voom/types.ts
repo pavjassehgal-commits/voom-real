@@ -193,3 +193,20 @@ export interface BusinessProfileInput {
   automationLevel: string;
   publishingPermission: string;
 }
+
+export type CampaignStatus = "draft" | "approved" | "rejected";
+
+export interface CampaignRecord {
+  id: string;
+  kind: "email" | "sms";
+  name: string;
+  objective: string;
+  audience: string;
+  subject: string | null;
+  preview_text: string | null;
+  content: string;
+  proposed_send_at: string | null;
+  status: CampaignStatus;
+  created_at: string;
+  updated_at: string;
+}

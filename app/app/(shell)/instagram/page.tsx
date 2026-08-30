@@ -21,7 +21,7 @@ type InstagramInsights = {
 
 const GETS = [
   "Read your professional account identity",
-  "Create feed and Reel publishing containers after explicit approval",
+  "Prepare feed and Reel drafts for your explicit approval",
   "Keep access tokens encrypted and server-only",
   "Disconnect the account from Voom at any time",
 ];

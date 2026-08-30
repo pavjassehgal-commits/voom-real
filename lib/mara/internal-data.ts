@@ -102,3 +102,17 @@ export async function updateCampaign(db: ServerSupabase, ownerId: string, id: st
   if (error) throw new Error("campaign_update_failed");
   return data;
 }
+
+export async function approveCampaign(db: ServerSupabase, ownerId: string, id: string) {
+  const { data, error } = await db.from("voom_campaigns").update({ status: "approved" }).eq("owner_user_id", ownerId).eq("id", id)
+    .select("id,kind,name,objective,audience,subject,preview_text,content,proposed_send_at,status,created_at,updated_at").maybeSingle();
+  if (error) throw new Error("campaign_approve_failed");
+  return data;
+}
+
+export async function rejectCampaign(db: ServerSupabase, ownerId: string, id: string) {
+  const { data, error } = await db.from("voom_campaigns").update({ status: "rejected" }).eq("owner_user_id", ownerId).eq("id", id)
+    .select("id,kind,name,objective,audience,subject,preview_text,content,proposed_send_at,status,created_at,updated_at").maybeSingle();
+  if (error) throw new Error("campaign_reject_failed");
+  return data;
+}

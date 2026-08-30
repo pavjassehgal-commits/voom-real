@@ -84,6 +84,13 @@ export default function CalendarPage() {
 
       {calendarError && <div role="alert" className="mb-3 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-sm text-red">{calendarError}</div>}
 
+      <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5">
+        <p className="text-[12.5px] leading-relaxed text-text-2">
+          <span className="mr-1.5 inline-flex items-center gap-1 rounded-[7px] bg-surface px-2 py-[2px] text-[10.5px] font-bold uppercase tracking-[.06em] text-text-3">Sample</span>
+          Events in this sample dataset (Aug 2026) are illustration-only. New posts and MARA-approved items are saved in Voom and stay after refresh.
+        </p>
+      </div>
+
       <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex items-center gap-2">
           <IconBtn onClick={() => calMove(-1)}>

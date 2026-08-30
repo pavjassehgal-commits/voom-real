@@ -272,8 +272,6 @@ interface VoomActions {
   schedulePost: (index: number) => void;
 
   setCampTab: (t: "email" | "sms") => void;
-  sendCampaign: (kind: "email" | "sms", index: number) => void;
-  openNewCampaign: () => number;
 
   setReelTmpl: (i: number) => void;
   setReelTime: (t: string) => void;
@@ -585,44 +583,6 @@ export function VoomProvider({
     setState((s) => ({ ...s, campTab: t }));
   }, []);
 
-  const sendCampaign = useCallback<VoomActions["sendCampaign"]>((kind, index) => {
-    setState((s) => {
-      const key = kind === "email" ? "emails" : "sms";
-      const list = s[key].slice();
-      const c = { ...list[index] };
-      c.st = "Sent";
-      c.t = "t-blue";
-      c.when = "Just now";
-      c.o = kind === "email" ? "38.9%" : "97.4%";
-      c.c = kind === "email" ? "5.9%" : "10.2%";
-      c.r = kind === "email" ? "AED 2,940" : "AED 2,180";
-      list[index] = c;
-      return { ...s, [key]: list };
-    });
-    toast(`${kind === "email" ? "Email" : "SMS"} simulated — sample results added`, "ok", true);
-  }, [toast]);
-
-  const openNewCampaign = useCallback<VoomActions["openNewCampaign"]>(() => {
-    let idx = 0;
-    setState((s) => {
-      const em = s.campTab === "email";
-      const draft: EmailOrSms = {
-        n: em ? "Untitled email" : "Untitled SMS",
-        seg: em ? "All subscribers · 8,412" : "SMS opt-ins · 3,190",
-        st: "Draft",
-        t: "t-grey",
-        o: "—",
-        c: "—",
-        r: "—",
-        when: "Not scheduled",
-      };
-      const key = em ? "emails" : "sms";
-      idx = 0;
-      return { ...s, [key]: [draft, ...s[key]] };
-    });
-    return idx;
-  }, []);
-
   const setReelTmpl = useCallback<VoomActions["setReelTmpl"]>((i) => {
     setState((s) => ({ ...s, reelTmpl: i }));
   }, []);
@@ -660,7 +620,7 @@ export function VoomProvider({
       const post: Post = { d: 25, t: "Reel · " + TMPLS[s.reelTmpl].n, c: "#e8481f", ch: "Reel", time: fmtTime(s.reelTime), st: "Scheduled" };
       return { ...s, reelQueue: [item, ...s.reelQueue], posts: [...s.posts, post] };
     });
-    if (ok) toast("Reel scheduled for Aug 25", "ok", true);
+    if (ok) toast("Sample: Reel added to this workspace — nothing published or scheduled", "ok", true);
     return ok;
   }, [toast]);
 
@@ -692,7 +652,7 @@ export function VoomProvider({
       q[i] = { ...q[i], st: "Scheduled", t2: "t-green", when: "Fri, Aug 28 · " + pack.slot };
       return { ...s, reelQueue: q };
     });
-    toast("Reel scheduled", "ok", true);
+    toast("Sample: marked scheduled in this workspace only", "ok", true);
   }, [toast]);
 
   const reelChangeTime = useCallback<VoomActions["reelChangeTime"]>((i) => {
@@ -712,7 +672,7 @@ export function VoomProvider({
         reelQueue: s.reelQueue.map((r) => (r.st !== "Live" ? { ...r, when: r.when.replace(/· .*/, "· " + pack.slot) } : r)),
       };
     });
-    toast("Whole queue moved to best slot", "ok", true);
+    toast("Sample: queue moved to best slot (workspace only)", "ok", true);
   }, [toast]);
 
   const igDisconnect = useCallback<VoomActions["igDisconnect"]>(() => {
@@ -1085,8 +1045,6 @@ export function VoomProvider({
       deletePost,
       schedulePost,
       setCampTab,
-      sendCampaign,
-      openNewCampaign,
       setReelTmpl,
       setReelTime,
       setReelCaption,
@@ -1139,8 +1097,6 @@ export function VoomProvider({
       deletePost,
       schedulePost,
       setCampTab,
-      sendCampaign,
-      openNewCampaign,
       setReelTmpl,
       setReelTime,
       setReelCaption,

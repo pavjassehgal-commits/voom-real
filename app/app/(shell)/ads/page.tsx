@@ -84,7 +84,7 @@ export default function AdsPage() {
             <Btn variant="outline" size="sm" onClick={() => goTo("plan")}>
               <Icon name="spark" size={14} /> Review strategy
             </Btn>
-            <Btn variant="ghost" size="sm" onClick={() => toast("Spend history exported", "ok", true)}>
+            <Btn variant="ghost" size="sm" onClick={() => toast("Export isn't available in this version — the history is sample data", "info")}>
               <Icon name="down" size={14} /> Export
             </Btn>
           </>

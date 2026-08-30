@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useVoomActions, useVoomState, useCurrentPack } from "@/lib/voom/store";
 import { useModal } from "@/lib/voom/modal";
 import { TMPLS } from "@/lib/voom/demoData";
@@ -7,7 +8,7 @@ import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { ConnectInstagramFirstModal } from "@/components/voom/modals/ConnectInstagramFirstModal";
 import { Btn, Card, IconBtn, Tag, Textarea } from "@/components/voom/ui/primitives";
-import { ExTag } from "@/components/voom/ui/Notes";
+import { DemoTag, ExTag } from "@/components/voom/ui/Notes";
 
 export default function ReelsPage() {
   const { reelTmpl, reelCaption, reelTime, igConnected, reelQueue, brand } = useVoomState();
@@ -15,6 +16,7 @@ export default function ReelsPage() {
     useVoomActions();
   const { open } = useModal();
   const pack = useCurrentPack();
+  const [reelDate, setReelDate] = useState("2026-08-25");
 
   const tmpl = TMPLS[reelTmpl];
   const cap = reelCaption || pack.cap;
@@ -31,7 +33,7 @@ export default function ReelsPage() {
     <div>
       <PageHead
         title="Reel scheduling"
-        description="Build a Reel, and Voom proposes the best-performing slot."
+        description="Sample workspace for building a Reel preview. The persisted MARA Reel production flow is under Approvals."
         actions={
           <>
             <Btn variant="outline" size="sm" onClick={bestTimeAll}>
@@ -43,6 +45,35 @@ export default function ReelsPage() {
           </>
         }
       />
+
+      <Card className="mb-3.5 border-brand/30 bg-[var(--brand-soft)] p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="voom-grad grid h-[26px] w-[26px] flex-none place-items-center rounded-[9px] text-white">
+                <Icon name="film" size={14} />
+              </span>
+              <h2 className="font-display text-[15px] font-semibold">The real MARA Reel workflow</h2>
+            </div>
+            <p className="mt-1.5 max-w-xl text-[13px] leading-[1.55] text-text-2">
+              Create with MARA, asset upload and the playable preview run from <b>Approvals</b>, not from this studio.
+              Click path: <b>Marketing Plan → Generate/Refresh plan → Approvals → “Reel production choice” → Create with MARA</b>.
+              A Reel choice appears only when your plan includes a Reel recommendation.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Btn variant="outline" size="sm" onClick={() => goTo("plan")}>
+              <Icon name="spark" size={14} /> Review marketing plan
+            </Btn>
+            <Btn variant="primary" size="sm" onClick={() => goTo("approvals")}>
+              <Icon name="check" size={14} /> Open real Reel workflow
+            </Btn>
+          </div>
+        </div>
+        <p className="mt-3 rounded-[9px] bg-surface/70 px-3 py-2 text-[11.5px] leading-relaxed text-text-3">
+          <DemoTag /> Everything below this card is a <b>sample workspace</b>: the preview, queue and dates are illustration-only and not saved.
+        </p>
+      </Card>
 
       {!igConnected && (
         <Card className="mb-3.5 flex flex-wrap items-center justify-between gap-3 border-amber bg-amber/[.07] p-3.5">
@@ -135,7 +166,7 @@ export default function ReelsPage() {
             <div className="flex gap-2.5">
               <label className="mb-0 block flex-1">
                 <span className="mb-1.5 block text-[12.5px] font-semibold text-text-2">Date</span>
-                <input type="date" defaultValue="2026-08-25" className="h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px]" />
+                <input type="date" value={reelDate} onChange={(e) => setReelDate(e.target.value)} className="h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px]" />
               </label>
               <label className="mb-0 block flex-1">
                 <span className="mb-1.5 block text-[12.5px] font-semibold text-text-2">Time</span>
@@ -174,7 +205,7 @@ export default function ReelsPage() {
               </div>
             </Card>
             <Btn variant="primary" size="lg" block className="mt-3.5" onClick={handleSchedule}>
-              <Icon name="clock" size={16} /> Schedule Reel for Aug 25
+              <Icon name="clock" size={16} /> Schedule Reel for {labelDate(reelDate)}
             </Btn>
           </Card>
 
@@ -218,4 +249,10 @@ export default function ReelsPage() {
       </div>
     </div>
   );
+}
+
+function labelDate(value: string) {
+  const date = new Date(`${value}T00:00`);
+  if (Number.isNaN(date.getTime())) return "the chosen date";
+  return new Intl.DateTimeFormat("en-AE", { timeZone: "Asia/Dubai", month: "short", day: "numeric" }).format(date);
 }

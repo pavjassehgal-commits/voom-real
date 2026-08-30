@@ -1,4 +1,5 @@
 export const REEL_ASSET_MAX_BYTES = 4 * 1024 * 1024;
+export const REEL_ASSET_PACK_LIMIT = 6;
 export const REEL_ASSET_ACCEPT = ".jpg,.jpeg,.png,.webp,.mp4,.mov";
 
 export type ReelAssetKind = "image" | "video";

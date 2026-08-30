@@ -4,66 +4,76 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useVoomActions, useVoomState, useCurrentPack } from "@/lib/voom/store";
 import { useModal } from "@/lib/voom/modal";
+import type { CampaignRecord, CampaignStatus } from "@/lib/voom/types";
 import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
-import { SendCampaignModal } from "@/components/voom/modals/SendCampaignModal";
-import { Btn, Card, Tag } from "@/components/voom/ui/primitives";
+import { CampaignEditorModal } from "@/components/voom/modals/CampaignEditorModal";
+import { Btn, Card, Chip, Tag } from "@/components/voom/ui/primitives";
 import { DemoTag } from "@/components/voom/ui/Notes";
 
+type StatusFilter = "all" | CampaignStatus;
+
+const FILTERS: Array<{ id: StatusFilter; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "draft", label: "Draft" },
+  { id: "approved", label: "Approved" },
+  { id: "rejected", label: "Not approved" },
+];
+
 export default function CampaignsPage() {
-  const { campTab, emails, sms, brand } = useVoomState();
-  const { setCampTab, goTo, toast, openNewCampaign } = useVoomActions();
+  const { campTab, brand } = useVoomState();
+  const { setCampTab, goTo } = useVoomActions();
   const { open } = useModal();
   const pack = useCurrentPack();
   const brandLabel = brand.name || "your business";
-  const [savedCampaigns, setSavedCampaigns] = useState<Array<{ id: string; kind: "email" | "sms"; name: string; audience: string; proposed_send_at: string | null; status: string }>>([]);
+  const em = campTab === "email";
+
+  const [savedCampaigns, setSavedCampaigns] = useState<CampaignRecord[]>([]);
   const [campaignError, setCampaignError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
   const loadCampaigns = useCallback(async () => {
-    try { const response = await fetch("/api/voom/campaigns", { cache: "no-store" }); const body = await response.json() as { campaigns?: typeof savedCampaigns; error?: string }; if (!response.ok) throw new Error(body.error || "Campaign drafts couldn't load."); setSavedCampaigns(body.campaigns ?? []); setCampaignError(null); }
-    catch (reason) { setCampaignError(reason instanceof Error ? reason.message : "Campaign drafts couldn't load."); }
-  }, []);
+    try {
+      const response = await fetch(`/api/voom/campaigns?kind=${campTab}`, { cache: "no-store" });
+      const body = await response.json() as { campaigns?: CampaignRecord[]; error?: string };
+      if (!response.ok) throw new Error(body.error || "Campaign drafts couldn't load.");
+      setSavedCampaigns(body.campaigns ?? []);
+      setCampaignError(null);
+    } catch (reason) {
+      setCampaignError(reason instanceof Error ? reason.message : "Campaign drafts couldn't load.");
+    }
+  }, [campTab]);
+
   useEffect(() => { const timer = window.setTimeout(() => void loadCampaigns(), 0); return () => window.clearTimeout(timer); }, [loadCampaigns]);
-  useEffect(() => { const refresh = () => void loadCampaigns(); window.addEventListener("voom:data-changed", refresh); return () => window.removeEventListener("voom:data-changed", refresh); }, [loadCampaigns]);
+  useEffect(() => {
+    const refresh = () => void loadCampaigns();
+    window.addEventListener("voom:data-changed", refresh);
+    return () => window.removeEventListener("voom:data-changed", refresh);
+  }, [loadCampaigns]);
 
-  const em = campTab === "email";
-  const savedList = savedCampaigns.filter((item) => item.kind === campTab).map((item) => ({ id: item.id, n: item.name, seg: item.audience || "Audience not set", st: "Draft" as const, t: "t-grey", o: "—", c: "—", r: "—", when: item.proposed_send_at ? new Date(item.proposed_send_at).toLocaleString() : "Not scheduled" }));
-  const list = [...savedList, ...(em ? emails : sms)];
-
-  const stats = em
-    ? [
-        ["Subscribers", "8,412", "+312 this month"],
-        ["Avg. open rate", "41.2%", "+4.1 pts"],
-        ["Revenue / send", "AED 1.45", "+AED 0.22"],
-      ]
-    : [
-        ["SMS opt-ins", "3,190", "+184 this month"],
-        ["Avg. click rate", "11.4%", "+1.8 pts"],
-        ["Revenue / send", "AED 2.93", "+AED 0.41"],
-      ];
+  const visible = savedCampaigns.filter((campaign) => statusFilter === "all" || campaign.status === statusFilter);
 
   const maraTake = em
     ? [
-        ["Win-back 1,284 cold subscribers", "Projected +AED 3,100 recovered"],
-        ["Move sends to Tuesday 9 AM", "Your opens are 12% higher then"],
-        ["Segment out non-openers before launch", "Protects your sender reputation"],
+        ["Re-engage cold subscribers", "Prepare a win-back sequence in Voom first — nothing is sent until a provider is connected."],
+        ["Move sends to Tuesday 9 AM", "From the illustrative sample: your opens are 12% higher then."],
+        ["Segment out non-openers before launch", "Protects sender reputation once real delivery is connected."],
       ]
     : [
-        ["Send only on restock days", "Over-texting is the #1 cause of opt-outs"],
-        ["Keep under 160 characters", "Splitting messages doubles your cost"],
-        ["Add SMS opt-in to checkout", "You're leaving ~40 signups/week on the table"],
+        ["Send only on restock days", "Over-texting is the #1 cause of opt-outs."],
+        ["Keep it short and useful", "Long splits cost more per message once a provider is connected."],
+        ["Add an SMS opt-in to checkout", "Sample insight: roughly 40 signups a week are being missed."],
       ];
 
   function openNew() {
-    openNewCampaign();
-    open(<SendCampaignModal kind={campTab} index={0} />);
+    open(<CampaignEditorModal kind={campTab} />);
   }
 
   return (
     <div>
       <PageHead
         title="Email & SMS"
-        description="Campaigns, flows and broadcasts — prepared by Voom, approved by you."
+        description="Campaign drafts prepared by Voom and approved by you. Nothing is sent until a provider is connected."
         actions={
           <>
             <Btn variant="outline" size="sm" onClick={() => goTo("plan")}>
@@ -96,27 +106,51 @@ export default function CampaignsPage() {
         <div className="flex flex-wrap items-center gap-1.5">
           <DemoTag />
           <Tag>
-            <Icon name="info" size={12} /> No provider connected — sends are simulated
+            <Icon name="info" size={12} /> No provider connected — Voom has not sent anything
           </Tag>
         </div>
       </div>
 
-      <div className="mb-3.5 grid gap-3.5 sm:grid-cols-3">
-        {stats.map(([a, b, c]) => (
-          <Card key={a} className="p-4">
-            <span className="text-[12.5px] text-text-2">{a}</span>
-            <div className="my-1.5 font-display text-[26px]">{b}</div>
-            <span className="text-[12.5px] font-semibold text-green">{c}</span>
-          </Card>
-        ))}
+      <div className="mb-3.5">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <DemoTag />
+          <span className="text-[12.5px] text-text-3">Illustrative sample metrics for this prototype — they are not results from Voom.</span>
+        </div>
+        <div className="grid gap-3.5 sm:grid-cols-3">
+          {(em
+            ? [
+                ["Sample subscribers", "8,412", "+312 this month"],
+                ["Sample open rate", "41.2%", "+4.1 pts"],
+                ["Sample revenue / send", "AED 1.45", "+AED 0.22"],
+              ]
+            : [
+                ["Sample SMS opt-ins", "3,190", "+184 this month"],
+                ["Sample click rate", "11.4%", "+1.8 pts"],
+                ["Sample revenue / send", "AED 2.93", "+AED 0.41"],
+              ]
+          ).map(([a, b, c]) => (
+            <Card key={a} className="p-4">
+              <span className="text-[12.5px] text-text-2">{a}</span>
+              <div className="my-1.5 font-display text-[26px]">{b}</div>
+              <span className="text-[12.5px] font-semibold text-green">{c}</span>
+            </Card>
+          ))}
+        </div>
       </div>
 
       <Card className="p-4">
-        <div className="mb-3.5 flex items-center justify-between">
-          <h2 className="font-display text-lg font-semibold">{em ? "Email campaigns" : "SMS broadcasts"}</h2>
-          <Btn variant="ghost" size="sm" onClick={() => toast("Filters are visual-only", "info")}>
-            <Icon name="filter" size={14} /> Filter
-          </Btn>
+        <div className="mb-3.5 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="font-display text-lg font-semibold">
+            {em ? "Email campaigns" : "SMS broadcasts"}
+            <span className="ml-2 text-[12.5px] font-normal text-text-3">{visible.length} saved</span>
+          </h2>
+          <div className="flex flex-wrap gap-1.5">
+            {FILTERS.map((filter) => (
+              <Chip key={filter.id} active={statusFilter === filter.id} onClick={() => setStatusFilter(filter.id)}>
+                {filter.label}
+              </Chip>
+            ))}
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-[13.5px]">
@@ -124,56 +158,67 @@ export default function CampaignsPage() {
               <tr className="text-left font-mono text-[10.5px] uppercase tracking-[.07em] text-text-3">
                 <th className="pb-2.5">Campaign</th>
                 <th className="pb-2.5">Audience</th>
-                <th className="pb-2.5">{em ? "Open" : "Delivered"}</th>
-                <th className="pb-2.5">Click</th>
-                <th className="pb-2.5 text-right">Revenue</th>
-                <th className="pb-2.5">When</th>
-                <th className="pb-2.5" />
+                <th className="pb-2.5">Draft content</th>
+                <th className="pb-2.5">Proposed send</th>
+                <th className="pb-2.5">Status</th>
+                <th className="pb-2.5 text-right">Action</th>
               </tr>
             </thead>
             <tbody>
-              {list.map((c, i) => (
-                <tr key={`${c.n}-${i}`} className="border-t border-line">
-                  <td className="py-3.5">
-                    <b>{c.n}</b>
-                    <div className="mt-1">
-                      <Tag tone={c.t}>{c.st}</Tag>
-                    </div>
+              {visible.length === 0 && (
+                <tr className="border-t border-line">
+                  <td colSpan={6} className="py-8 text-center text-sm text-text-3">
+                    No {em ? "email" : "SMS"} drafts yet. Create one, or generate a marketing plan so Voom can prepare campaign drafts for you.
                   </td>
-                  <td className="py-3.5 text-text-2">{c.seg}</td>
-                  <td className="py-3.5 font-mono">{c.o}</td>
-                  <td className="py-3.5 font-mono">{c.c}</td>
-                  <td className="py-3.5 text-right font-mono">
-                    <b>{c.r}</b>
+                </tr>
+              )}
+              {visible.map((campaign) => (
+                <tr key={campaign.id} className="border-t border-line">
+                  <td className="py-3.5 pr-3">
+                    <b className="block max-w-[220px] truncate">{campaign.name}</b>
                   </td>
-                  <td className="py-3.5 text-[12.5px] text-text-2">{c.when}</td>
+                  <td className="py-3.5 pr-3 text-text-2">
+                    <span className="block max-w-[200px] truncate">{campaign.audience || "Audience not set"}</span>
+                  </td>
+                  <td className="py-3.5 pr-3 text-text-2">
+                    <span className="block max-w-[260px] truncate">
+                      {campaign.kind === "email"
+                        ? campaign.subject || campaign.content || "No content yet"
+                        : campaign.content || "No message yet"}
+                    </span>
+                  </td>
+                  <td className="py-3.5 pr-3 whitespace-nowrap text-[12.5px] text-text-2">
+                    {campaign.proposed_send_at ? formatWhen(campaign.proposed_send_at) : "Not scheduled"}
+                  </td>
+                  <td className="py-3.5 pr-3 whitespace-nowrap">
+                    <Tag tone={statusTone(campaign.status)}>{statusLabel(campaign.status)}</Tag>
+                  </td>
                   <td className="whitespace-nowrap py-3.5 text-right">
-                    {"id" in c ? (
-                      <Btn variant="outline" size="sm" onClick={() => toast(`“${c.n}” is saved as a draft. Nothing has been sent.`, "info")}>Saved draft</Btn>
-                    ) : c.st === "Draft" ? (
-                      <Btn variant="primary" size="sm" onClick={() => open(<SendCampaignModal kind={campTab} index={i} />)}>
-                        Review & send
-                      </Btn>
-                    ) : c.st === "Scheduled" ? (
-                      <Btn variant="outline" size="sm" onClick={() => open(<SendCampaignModal kind={campTab} index={i} />)}>
+                    <div className="flex items-center justify-end gap-1.5">
+                      {campaign.status === "approved" && (
+                        <span className="text-[11px] font-semibold text-text-3">Ready to send — provider required</span>
+                      )}
+                      <Btn variant="outline" size="sm" onClick={() => open(<CampaignEditorModal kind={campaign.kind} campaign={campaign} />)}>
                         Edit
                       </Btn>
-                    ) : (
-                      <Btn variant="ghost" size="sm" onClick={() => toast(`Opening report for "${c.n}" (demo)`, "info")}>
-                        Report
-                      </Btn>
-                    )}
+                    </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        <p className="mt-3 text-[11.5px] leading-relaxed text-text-3">
+          Every draft here is saved in Voom and survives a refresh. Approving marks it ready for a provider; Voom never records a campaign as Sent without provider confirmation.
+        </p>
       </Card>
 
       <div className="mt-3.5 grid gap-3.5 lg:grid-cols-2">
         <Card className="p-4">
-          <h2 className="mb-3 font-display text-lg font-semibold">{em ? "Email preview" : "SMS preview"}</h2>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <DemoTag />
+            <h2 className="font-display text-lg font-semibold">{em ? "Sample email preview" : "Sample SMS preview"}</h2>
+          </div>
           {em ? (
             <div className="overflow-hidden rounded-2xl border border-line">
               <div className="voom-grad-deep p-[30px_22px] text-center text-white">
@@ -183,7 +228,7 @@ export default function CampaignsPage() {
               <div className="p-5">
                 <h3 className="mb-2.5 font-display text-[17px]">{pack.emailSub}</h3>
                 <p className="text-[13.5px] leading-[1.65] text-text-2">Hi {"{{first_name}}"} — {pack.emailBody}</p>
-                <Btn variant="primary" size="sm" className="mt-3.5">
+                <Btn variant="primary" size="sm" className="mt-3.5" disabled>
                   Read more →
                 </Btn>
                 <div className="my-3.5 h-px bg-line" />
@@ -194,12 +239,9 @@ export default function CampaignsPage() {
             </div>
           ) : (
             <div className="mx-auto max-w-[270px] rounded-[26px] border border-line bg-surface-2 p-4">
-              <p className="mb-3 text-center text-[11px] text-text-3">Today 11:00 AM</p>
+              <p className="mb-3 text-center text-[11px] text-text-3">Sample · no message has been sent</p>
               <div className="ml-auto max-w-[88%] break-words rounded-[17px] rounded-br-[5px] bg-brand px-3.5 py-2.5 text-[13px] leading-[1.5] text-white">
                 {pack.smsT}
-              </div>
-              <div className="mt-1.5 flex justify-end">
-                <span className="text-[10.5px] text-text-3">Delivered</span>
               </div>
             </div>
           )}
@@ -208,6 +250,7 @@ export default function CampaignsPage() {
           <div className="mb-3 flex items-center gap-2">
             <span className="voom-grad h-[26px] w-[26px] flex-none rounded-full" />
             <h2 className="font-display text-lg font-semibold">Voom&apos;s recommendation</h2>
+            <DemoTag />
           </div>
           {maraTake.map(([t, b]) => (
             <div key={t} className="mb-2.5 flex gap-3 rounded-2xl border border-line p-3.5">
@@ -227,4 +270,25 @@ export default function CampaignsPage() {
       </div>
     </div>
   );
+}
+
+function statusTone(status: CampaignStatus) {
+  return status === "approved" ? "t-green" : status === "rejected" ? "t-red" : "t-grey";
+}
+
+function statusLabel(status: CampaignStatus) {
+  if (status === "approved") return "Approved — ready for provider";
+  if (status === "rejected") return "Not approved";
+  return "Draft";
+}
+
+function formatWhen(value: string) {
+  return new Date(value).toLocaleString("en-AE", {
+    timeZone: "Asia/Dubai",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }

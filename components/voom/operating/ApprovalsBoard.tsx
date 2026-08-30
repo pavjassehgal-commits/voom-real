@@ -1,11 +1,11 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- private signed URLs expire and must bypass the public image optimizer */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/voom/icons";
 import { Btn, Card, Input, Tag, Textarea } from "@/components/voom/ui/primitives";
-import { REEL_ASSET_ACCEPT, REEL_ASSET_MAX_BYTES } from "@/lib/media/reel-asset";
+import { REEL_ASSET_ACCEPT, REEL_ASSET_MAX_BYTES, REEL_ASSET_PACK_LIMIT } from "@/lib/media/reel-asset";
 import { ReelCompositionPlayer } from "@/components/voom/operating/ReelCompositionPlayer";
 
 export interface ApprovalItem { id: string; tool_name: string; summary: string; old_value: Record<string, unknown> | null; new_value: Record<string, unknown> | null; status: string; result_summary: string | null; error_summary: string | null; created_at: string; }
@@ -34,7 +34,7 @@ export function ApprovalsBoard({ initial }: { initial: ApprovalItem[] }) {
   const completed = items.filter((item) => item.status !== "pending" && item.status !== "failed");
   return <div>
     {error && <div role="alert" className="mb-4 rounded-xl border border-red/35 bg-red/10 px-4 py-3 text-sm text-red">{error}</div>}
-    {open.length ? <div className="space-y-4">{open.map((item) => item.tool_name === "choose_reel_production" ? <ReelProductionCard key={item.id} item={item} busy={busy === item.id} onDecision={decide} onProduce={produce} /> : <ApprovalCard key={item.id} item={item} busy={busy === item.id} onDecision={decide} />)}</div> : <Card className="p-8 text-center"><span className="mx-auto grid h-12 w-12 place-items-center rounded-full border border-line text-green"><Icon name="check" size={22} /></span><h2 className="mt-3 font-display text-lg font-semibold">Nothing needs your approval</h2><p className="mx-auto mt-1 max-w-md text-sm text-text-3">When Voom recommends a calendar change, approval, deletion, or another protected action, it will appear here first.</p></Card>}
+    {open.length ? <div className="space-y-4">{open.map((item) => item.tool_name === "choose_reel_production" ? <ReelProductionCard key={item.id} item={item} busy={busy === item.id} onDecision={decide} onProduce={produce} /> : <ApprovalCard key={item.id} item={item} busy={busy === item.id} onDecision={decide} />)}</div> : <Card className="p-8 text-center"><span className="mx-auto grid h-12 w-12 place-items-center rounded-full border border-line text-green"><Icon name="check" size={22} /></span><h2 className="mt-3 font-display text-lg font-semibold">Nothing needs your approval</h2><p className="mx-auto mt-1 max-w-md text-sm text-text-3">When Voom recommends a calendar change, approval, deletion, or another protected action, it will appear here first.</p><p className="mx-auto mt-2 max-w-lg text-[12.5px] leading-relaxed text-text-3"><b className="text-text-2">Reel production choices live here too.</b> Generate or refresh your Marketing Plan; if MARA recommends a Reel, a “Reel production choice” card appears on this screen with <b className="text-text-2">Create with MARA</b>, film-it-yourself, and asset-upload options.</p></Card>}
     {completed.length > 0 && <section className="mt-7"><h2 className="mb-3 font-display text-base font-semibold">Recent decisions</h2><Card className="overflow-hidden">{completed.slice(0, 12).map((item) => <div key={item.id} className="flex items-start justify-between gap-4 border-t border-line px-4 py-3 first:border-0"><div><b className="text-sm">{item.summary}</b><p className="mt-1 text-xs text-text-3">{item.result_summary ?? item.error_summary ?? "No database change was made."}</p></div><Tag tone={item.status === "confirmed" ? "t-green" : "t-grey"}>{item.status === "confirmed" && item.result_summary?.startsWith("Auto-approved by Autopilot") ? "Autopilot approved" : item.status}</Tag></div>)}</Card></section>}
   </div>;
 }
@@ -59,35 +59,87 @@ function ReelProductionCard({ item, busy, onDecision, onProduce }: { item: Appro
   </div></Card>;
 }
 
-interface ReelAssetView { name: string; mimeType: string; byteSize: number; status: string; updatedAt: string; previewUrl: string | null; }
+interface ReelAssetView { id: string; name: string; mimeType: string; byteSize: number; status: string; updatedAt: string; previewUrl: string | null; }
 function ReelAssetUpload({ actionId, received, allowedKinds, onReceived }: { actionId: string; received: boolean; allowedKinds: string[]; onReceived: () => void }) {
-  const [asset, setAsset] = useState<ReelAssetView | null>(null); const [uploading, setUploading] = useState(false); const [message, setMessage] = useState(""); const [messageError, setMessageError] = useState(false);
+  const [assets, setAssets] = useState<ReelAssetView[]>([]);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [progress, setProgress] = useState(0);
+  const [message, setMessage] = useState(""); const [messageError, setMessageError] = useState(false);
+  const uploadSeq = useRef(0);
   useEffect(() => {
     if (!received) return;
     let active = true;
-    void fetch(`/api/reels/assets/${actionId}`, { cache: "no-store" }).then((response) => response.json()).then((body: { asset?: ReelAssetView }) => { if (active && body.asset) setAsset(body.asset); }).catch(() => undefined);
+    void fetch(`/api/reels/assets/${actionId}`, { cache: "no-store" }).then((response) => response.json()).then((body: { assets?: ReelAssetView[] }) => { if (active) setAssets(Array.isArray(body.assets) ? body.assets : []); }).catch(() => undefined);
     return () => { active = false; };
   }, [actionId, received]);
-  async function upload(file: File | undefined) {
-    if (!file) return; setUploading(true); setMessage(""); setMessageError(false);
-    if (file.size > REEL_ASSET_MAX_BYTES) { setMessage("That file is too large. Choose one file up to 4 MB."); setMessageError(true); setUploading(false); return; }
+  async function upload(file: File | undefined, replaceId?: string) {
+    if (!file) return; uploadSeq.current += 1; const tempId = `upload-${uploadSeq.current}`;
+    setBusyId(tempId); setProgress(0); setMessage(""); setMessageError(false);
+    if (file.size > REEL_ASSET_MAX_BYTES) { setMessage("That file is too large. Choose one file up to 4 MB."); setMessageError(true); setBusyId(null); return; }
+    if (!replaceId && assets.length >= REEL_ASSET_PACK_LIMIT) { setMessage(`This Reel already has ${REEL_ASSET_PACK_LIMIT} assets. Remove one before adding another.`); setMessageError(true); setBusyId(null); return; }
     const form = new FormData(); form.set("file", file);
     try {
-      const response = await fetch(`/api/reels/assets/${actionId}`, { method: "POST", body: form });
-      const body = await response.json() as { asset?: ReelAssetView; error?: string; message?: string };
-      if (!response.ok || !body.asset) { setMessage(body.error ?? "Voom couldn't upload that asset safely."); setMessageError(true); }
-      else { setAsset(body.asset); setMessage(body.message ?? "Asset received."); onReceived(); window.dispatchEvent(new Event("voom:data-changed")); }
+      const response = await uploadFormData(`/api/reels/assets/${actionId}`, form, (percent) => setProgress(percent));
+      const body = await response.json() as { assets?: ReelAssetView[]; error?: string; message?: string };
+      if (!response.ok || !body.assets) { setMessage(body.error ?? "Voom couldn't upload that asset safely."); setMessageError(true); }
+      else {
+        let next = body.assets;
+        if (replaceId) {
+          const removal = await fetch(`/api/reels/assets/${actionId}/${replaceId}`, { method: "DELETE" });
+          const removed = await removal.json() as { assets?: ReelAssetView[]; error?: string };
+          if (removal.ok && removed.assets) next = removed.assets;
+        }
+        setAssets(next); setMessage(body.message ?? "Asset received."); onReceived(); window.dispatchEvent(new Event("voom:data-changed"));
+      }
     } catch { setMessage("Voom couldn't upload that asset safely."); setMessageError(true); }
-    setUploading(false);
+    setBusyId(null);
+  }
+  async function remove(id: string) {
+    setBusyId(id); setMessage(""); setMessageError(false);
+    try {
+      const response = await fetch(`/api/reels/assets/${actionId}/${id}`, { method: "DELETE" });
+      const body = await response.json() as { assets?: ReelAssetView[]; error?: string; message?: string };
+      if (!response.ok || !body.assets) { setMessage(body.error ?? "Voom couldn't remove that asset safely."); setMessageError(true); }
+      else { setAssets(body.assets); setMessage(body.message ?? "Asset removed."); window.dispatchEvent(new Event("voom:data-changed")); }
+    } catch { setMessage("Voom couldn't remove that asset safely."); setMessageError(true); }
+    setBusyId(null);
   }
   const accept = allowedKinds.length === 1 && allowedKinds[0] === "video" ? ".mp4,.mov" : REEL_ASSET_ACCEPT;
+  const uploading = busyId !== null;
   return <section className="mt-4 rounded-xl border border-line bg-surface-2 p-3.5">
-    <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-xs font-semibold uppercase tracking-wide text-text-3">One Reel asset</h3><p className="mt-1 text-sm text-text-2">{asset ? `${asset.name} · ${formatBytes(asset.byteSize)}` : "Upload the requested footage or an existing asset."}</p></div>{asset && <Tag tone="t-green">Asset received</Tag>}</div>
-    {asset?.previewUrl && (asset.mimeType.startsWith("image/") ? <img className="mt-3 max-h-48 rounded-lg object-contain" src={asset.previewUrl} alt="Secure Reel asset preview" /> : <video className="mt-3 max-h-56 max-w-full rounded-lg" src={asset.previewUrl} controls preload="metadata" />)}
-    <label className="mt-3 inline-flex cursor-pointer items-center rounded-[9px] border border-line bg-surface px-3.5 py-2 text-[13px] font-semibold hover:border-brand"><input className="sr-only" type="file" accept={accept} disabled={uploading} onChange={(event) => void upload(event.currentTarget.files?.[0])} />{uploading ? "Uploading…" : asset ? "Replace asset" : "Choose asset"}</label>
-    <p className="mt-2 text-[11px] text-text-3">{allowedKinds.length === 1 ? "MP4 or MOV" : "JPEG, PNG, WebP, MP4, or MOV"} · maximum 4 MB · private access</p>
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div><h3 className="text-xs font-semibold uppercase tracking-wide text-text-3">Reel asset pack</h3><p className="mt-1 text-sm text-text-2">Up to 6 private photos or videos. One is enough — more give MARA more visual material.</p></div>
+      <Tag tone={assets.length ? "t-green" : "t-amber"}>{assets.length} of {REEL_ASSET_PACK_LIMIT} assets added</Tag>
+    </div>
+    {assets.length > 0 && <div className="mt-3 grid gap-3 sm:grid-cols-2">
+      {assets.map((assetItem, index) => <div key={assetItem.id} className="rounded-lg border border-line bg-surface p-2.5">
+        <div className="relative aspect-video overflow-hidden rounded-md bg-black/40">
+          {assetItem.previewUrl ? (assetItem.mimeType.startsWith("video/") ? <video className="h-full w-full object-cover" src={assetItem.previewUrl} muted playsInline preload="metadata" /> : <img className="h-full w-full object-cover" src={assetItem.previewUrl} alt={`Private Reel asset ${index + 1}`} />) : <div className="grid h-full place-items-center text-[11px] text-text-3">Preview unavailable</div>}
+          {busyId === assetItem.id && <div className="absolute inset-0 grid place-items-center bg-black/60 text-[11px] font-semibold text-white">Removing…</div>}
+        </div>
+        <p className="mt-2 truncate text-xs font-medium text-text-2" title={assetItem.name}>{index + 1}. {assetItem.name}</p>
+        <p className="text-[10.5px] text-text-3">{assetItem.mimeType.startsWith("video/") ? "Video" : "Photo"} · {formatBytes(assetItem.byteSize)}</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <label className="inline-flex cursor-pointer items-center rounded-[8px] border border-line bg-surface px-2.5 py-1.5 text-[11.5px] font-semibold hover:border-brand"><input className="sr-only" type="file" accept={accept} disabled={uploading} onChange={(event) => void upload(event.currentTarget.files?.[0], assetItem.id)} />Replace asset</label>
+          <button type="button" className="inline-flex items-center rounded-[8px] border border-line px-2.5 py-1.5 text-[11.5px] font-semibold text-red hover:border-red/40" disabled={uploading} onClick={() => void remove(assetItem.id)}>Remove</button>
+        </div>
+      </div>)}
+      {busyId && busyId.startsWith("upload-") && <div className="rounded-lg border border-line bg-surface p-3"><div className="flex items-center justify-between text-xs text-text-2"><span>Uploading…</span><span>{progress}%</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-line"><div className="h-full bg-brand transition-[width]" style={{ width: `${progress}%` }} /></div></div>}
+    </div>}
+    {assets.length < REEL_ASSET_PACK_LIMIT && <label className="mt-3 inline-flex cursor-pointer items-center rounded-[9px] border border-line bg-surface px-3.5 py-2 text-[13px] font-semibold hover:border-brand"><input className="sr-only" type="file" accept={accept} disabled={uploading} onChange={(event) => void upload(event.currentTarget.files?.[0])} />{uploading ? "Uploading…" : assets.length ? "Add another asset" : "Choose asset"}</label>}
+    <p className="mt-2 text-[11px] text-text-3">{allowedKinds.length === 1 ? "MP4 or MOV" : "JPEG, PNG, WebP, MP4, or MOV"} · max 4 MB each · private access · {assets.length < REEL_ASSET_PACK_LIMIT ? `${REEL_ASSET_PACK_LIMIT - assets.length} more allowed` : "pack limit reached"}</p>
     {message && <p role="status" className={`mt-2 text-sm ${messageError ? "text-red" : "text-green"}`}>{message}</p>}
   </section>;
+}
+function uploadFormData(url: string, form: FormData, onProgress: (percent: number) => void): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", url);
+    request.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(Math.min(99, Math.round((event.loaded / event.total) * 100))); };
+    request.onload = () => resolve(new Response(request.responseText, { status: request.status, headers: { "Content-Type": request.getResponseHeader("Content-Type") ?? "application/json" } }));
+    request.onerror = () => reject(new Error("upload_failed"));
+    request.send(form);
+  });
 }
 function formatBytes(bytes: number) { return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`; }
 
