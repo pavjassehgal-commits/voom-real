@@ -7,6 +7,9 @@ import { z } from "zod";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const editFields = z.object({
+  // Tolerate kind for backward safety: the editor no longer sends it on PATCH,
+  // but older clients may. kind is immutable on edit, so it is accepted and ignored.
+  kind: z.enum(["email", "sms"]).optional(),
   name: z.string().trim().min(1).max(160).optional(),
   objective: z.string().trim().max(1000).optional(),
   audience: z.string().trim().max(1000).optional(),

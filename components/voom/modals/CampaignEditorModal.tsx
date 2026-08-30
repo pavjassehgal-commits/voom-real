@@ -83,7 +83,9 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
     setError("");
     setMessage("");
     try {
-      const body = { kind, ...payload() };
+      // The campaign kind is fixed at creation. PATCH only edits draft content,
+      // so it must not send kind (PATCH rejects unknown keys); POST still needs it.
+      const body = id ? payload() : { kind, ...payload() };
       const headers = { "Content-Type": "application/json" };
       const response = id
         ? await fetch(`/api/voom/campaigns/${encodeURIComponent(id)}`, { method: "PATCH", headers, body: JSON.stringify(body) })
@@ -242,7 +244,7 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
               {delivery?.note ?? "This approved campaign can send to one real recipient when the provider is configured."}
             </p>
             <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
-              <Field label={em ? "Recipient email" : "Recipient phone"} hint={em ? "One recipient for this MVP." : "Use E.164 format like +971501234567. One recipient for this MVP."}>
+              <Field label={em ? "Recipient email" : "Recipient phone number"} hint={em ? "One recipient for this MVP." : "Use E.164 format like +971501234567. One recipient for this MVP."}>
                 <Input value={recipientContact} onChange={(e) => setRecipientContact(e.target.value)} placeholder={em ? "customer@example.com" : "+971501234567"} />
               </Field>
               <Field label="Recipient name (optional)">

@@ -53,6 +53,38 @@ test("campaign editor exposes one-recipient send UI with truthful states", async
   assert.doesNotMatch(modal, /bulk/i);
 });
 
+test("campaign PATCH accepts kind for backward safety but the editor never sends it on PATCH", async () => {
+  const [itemRoute, modal] = await Promise.all([
+    read("app/api/voom/campaigns/[id]/route.ts"),
+    read("components/voom/modals/CampaignEditorModal.tsx"),
+  ]);
+
+  // PATCH schema may tolerate kind (immutable on edit) so old clients don't 400.
+  assert.match(itemRoute, /kind: z\.enum\(\["email", "sms"\]\)\.optional\(\)/);
+  // The editor keeps kind in the POST payload only; PATCH sends draft content,
+  // so editing an existing campaign no longer rejects on the strict schema.
+  assert.match(modal, /const body = id \? payload\(\) : \{ kind, \.\.\.payload\(\) \};/);
+});
+
+test("campaign editor labels the real destination fields and SMS validation uses international format", async () => {
+  const [modal, deliveryRoute] = await Promise.all([
+    read("components/voom/modals/CampaignEditorModal.tsx"),
+    read("app/api/voom/campaigns/[id]/delivery/route.ts"),
+  ]);
+
+  // Explicit real destination fields: Email -> recipient email, SMS -> recipient phone number.
+  assert.match(modal, /Recipient email/);
+  assert.match(modal, /Recipient phone number/);
+  // Audience stays descriptive only and is not treated as the destination.
+  assert.match(modal, /label="Audience"/);
+  assert.doesNotMatch(modal, /Recipient phone\b(?! number)/);
+
+  // Validation messages per requirement.
+  assert.match(deliveryRoute, /Enter a valid recipient email address\./);
+  assert.match(deliveryRoute, /Enter a valid phone number in international format\./);
+  assert.doesNotMatch(deliveryRoute, /Enter a valid E\.164 phone number like \+971501234567\./);
+});
+
 test("automation paths still never send campaigns externally", async () => {
   const [workflow, automation, tools] = await Promise.all([
     read("lib/mara/plan-workflow.ts"),
