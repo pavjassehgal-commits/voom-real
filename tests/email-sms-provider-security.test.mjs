@@ -222,6 +222,7 @@ test("provider configuration is surfaced truthfully without enabling sending", a
   assert.match(tools, /does not enable sending/);
   assert.match(tools, /sendingAvailable: false/);
   assert.match(connections, /Configured on server/);
-  assert.match(connections, /Real email delivery remains disabled/);
-  assert.match(connections, /Real SMS delivery remains disabled/);
+  assert.match(connections, /Approved campaigns can send to one real recipient/);
+  assert.match(connections, /Delivered requires the verified webhook/);
+  assert.match(connections, /Delivered requires verified status callbacks/);
 });

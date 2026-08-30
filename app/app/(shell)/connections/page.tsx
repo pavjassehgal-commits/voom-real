@@ -31,7 +31,7 @@ export default async function ConnectionsPage() {
           icon="mail"
           name="Email"
           description={email.configured
-            ? "Resend is configured on the server. Real email delivery remains disabled until the approved send path and webhook flow are implemented."
+            ? "Resend is configured on the server. Approved campaigns can send to one real recipient, and Delivered requires the verified webhook."
             : "Campaign delivery integration is not configured yet."}
           selected={selected.has("email")}
           configured={email.configured}
@@ -40,7 +40,7 @@ export default async function ConnectionsPage() {
           icon="chat"
           name="SMS"
           description={sms.configured
-            ? "Twilio is configured on the server. Real SMS delivery remains disabled until the approved send path and status callback flow are implemented."
+            ? "Twilio is configured on the server. Approved campaigns can send to one real recipient, and Delivered requires verified status callbacks."
             : "Messaging delivery integration is not configured yet."}
           selected={selected.has("sms")}
           configured={sms.configured}
