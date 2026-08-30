@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useModal } from "@/lib/voom/modal";
-import type { CampaignRecord, CampaignStatus } from "@/lib/voom/types";
+import type { CampaignDeliveryState, CampaignDeliveryView, CampaignRecord, CampaignStatus } from "@/lib/voom/types";
 import { Icon } from "../icons";
 import { ModalBody, ModalFoot, ModalHead, ModalShell } from "../ui/Modal";
 import { Btn, Card, Field, Input, Tag, Textarea } from "../ui/primitives";
@@ -21,10 +21,50 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
   const [sendTime, setSendTime] = useState(campaign?.proposed_send_at ? toTimeInput(campaign.proposed_send_at) : "");
   const [status, setStatus] = useState<CampaignStatus>(campaign?.status ?? "draft");
   const [busy, setBusy] = useState(false);
+  const [sendBusy, setSendBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [recipientContact, setRecipientContact] = useState("");
+  const [recipientName, setRecipientName] = useState("");
+  const [delivery, setDelivery] = useState<CampaignDeliveryView | null>(null);
 
   const smsLength = content.length;
+
+  const loadDelivery = useCallback(async () => {
+    if (!id) return;
+    try {
+      const response = await fetch(`/api/voom/campaigns/${encodeURIComponent(id)}/delivery`, { cache: "no-store" });
+      const data = await response.json() as { delivery?: CampaignDeliveryView; error?: string };
+      if (!response.ok || !data.delivery) return;
+      setDelivery(data.delivery);
+      setRecipientContact(data.delivery.recipient?.contact ?? "");
+      setRecipientName(data.delivery.recipient?.contact_name ?? "");
+    } catch {
+      setDelivery(null);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await fetch(`/api/voom/campaigns/${encodeURIComponent(id)}/delivery`, { cache: "no-store" });
+        const data = await response.json() as { delivery?: CampaignDeliveryView };
+        if (cancelled || !response.ok || !data.delivery) return;
+        setDelivery(data.delivery);
+        setRecipientContact(data.delivery.recipient?.contact ?? "");
+        setRecipientName(data.delivery.recipient?.contact_name ?? "");
+      } catch {
+        if (!cancelled) setDelivery(null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
   function payload() {
     return {
@@ -43,18 +83,23 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
     setError("");
     setMessage("");
     try {
-      const body = payload();
+      const body = { kind, ...payload() };
       const headers = { "Content-Type": "application/json" };
       const response = id
         ? await fetch(`/api/voom/campaigns/${encodeURIComponent(id)}`, { method: "PATCH", headers, body: JSON.stringify(body) })
         : await fetch("/api/voom/campaigns", { method: "POST", headers, body: JSON.stringify(body) });
-      const data = await response.json() as { campaign?: CampaignRecord; error?: string }; 
+      const data = await response.json() as { campaign?: CampaignRecord; error?: string };
       if (!response.ok || !data.campaign) {
         setError(data.error ?? "Voom couldn't save that draft. Please retry.");
         return;
       }
       setId(data.campaign.id);
-      setStatus("draft");
+      setStatus(data.campaign.status);
+      if (data.campaign.status !== "approved") {
+        setDelivery(null);
+      } else {
+        await loadDelivery();
+      }
       setMessage("Draft saved in Voom. Nothing has been sent.");
       window.dispatchEvent(new Event("voom:data-changed"));
     } catch {
@@ -86,12 +131,45 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
       setStatus(data.campaign.status);
       setMessage(data.message ?? (action === "approve" ? "Campaign approved. Nothing has been sent." : "Campaign marked not approved."));
       window.dispatchEvent(new Event("voom:data-changed"));
+      await loadDelivery();
     } catch {
       setError("Voom couldn't update that campaign. Please retry.");
     } finally {
       setBusy(false);
     }
   }
+
+  async function sendApprovedCampaign() {
+    if (!id) {
+      setError("Save and approve the campaign before sending it.");
+      return;
+    }
+    setSendBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch(`/api/voom/campaigns/${encodeURIComponent(id)}/delivery`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contact: recipientContact, contactName: recipientName }),
+      });
+      const data = await response.json() as { delivery?: CampaignDeliveryView; message?: string; error?: string };
+      if (data.delivery) setDelivery(data.delivery);
+      if (!response.ok) {
+        setError(data.error ?? "Voom couldn't send that campaign safely.");
+        return;
+      }
+      setMessage(data.message ?? `${em ? "Email" : "SMS"} accepted by the provider.`);
+      window.dispatchEvent(new Event("voom:data-changed"));
+      await loadDelivery();
+    } catch {
+      setError("Voom couldn't send that campaign safely. Nothing was simulated.");
+    } finally {
+      setSendBusy(false);
+    }
+  }
+
+  const deliveryState = delivery?.state ?? (status === "approved" ? "ready" : null);
 
   return (
     <ModalShell wide>
@@ -103,9 +181,9 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
       <ModalBody>
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <Tag tone={statusTone(status)}>{statusLabel(status)}</Tag>
-          {status === "approved" && (
-            <Tag tone="t-blue">
-              <Icon name="info" size={12} /> Ready to send — provider connection required
+          {status === "approved" && deliveryState && (
+            <Tag tone={deliveryTone(deliveryState)}>
+              <Icon name="send" size={12} /> {deliveryLabel(deliveryState)}
             </Tag>
           )}
         </div>
@@ -136,7 +214,7 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
             </Field>
           </>
         ) : (
-          <Field label="Message" hint={`${smsLength} characters · ${Math.max(1, Math.ceil(smsLength / 160))} SMS segment${Math.ceil(smsLength / 160) === 1 ? "" : "s"} (cost depends on the connected provider)`}>
+          <Field label="Message" hint={`${smsLength} characters · ${Math.max(1, Math.ceil(Math.max(1, smsLength) / 160))} SMS segment${Math.ceil(Math.max(1, smsLength) / 160) === 1 ? "" : "s"} (cost depends on the connected provider)`}>
             <Textarea rows={6} maxLength={12000} value={content} onChange={(e) => setContent(e.target.value)} placeholder="One short, useful message." />
           </Field>
         )}
@@ -154,12 +232,38 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
           </div>
         </div>
 
+        {status === "approved" && (
+          <Card className="mb-3.5 border-line-2 bg-surface-2 p-3.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <Tag tone={deliveryState ? deliveryTone(deliveryState) : "t-grey"}>{deliveryState ? deliveryLabel(deliveryState) : "Ready"}</Tag>
+              <Tag tone={delivery?.provider.configured ? "t-green" : "t-amber"}>{delivery?.provider.label ?? (em ? "Resend" : "Twilio")}</Tag>
+            </div>
+            <p className="mt-2 text-[13px] leading-[1.55] text-text-2">
+              {delivery?.note ?? "This approved campaign can send to one real recipient when the provider is configured."}
+            </p>
+            <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+              <Field label={em ? "Recipient email" : "Recipient phone"} hint={em ? "One recipient for this MVP." : "Use E.164 format like +971501234567. One recipient for this MVP."}>
+                <Input value={recipientContact} onChange={(e) => setRecipientContact(e.target.value)} placeholder={em ? "customer@example.com" : "+971501234567"} />
+              </Field>
+              <Field label="Recipient name (optional)">
+                <Input value={recipientName} onChange={(e) => setRecipientName(e.target.value)} maxLength={200} placeholder="e.g. Sara" />
+              </Field>
+            </div>
+            {delivery?.send?.provider_message_id ? (
+              <p className="mt-2 text-xs text-text-3">Provider message ID: {delivery.send.provider_message_id}</p>
+            ) : null}
+            {delivery?.send?.last_error_message ? (
+              <p className="mt-2 text-xs text-red">Last provider error: {delivery.send.last_error_message}</p>
+            ) : null}
+          </Card>
+        )}
+
         <Card className="border-amber bg-amber/[.08] p-3.5">
           <div className="flex items-start gap-2.5">
             <Icon name="warn" className="mt-0.5 flex-none text-amber" />
             <p className="text-[13px] leading-[1.55] text-text-2">
-              No {em ? "email" : "SMS"} provider is connected. Saving and approving here only prepares the campaign inside Voom.
-              Voom will never mark it <b>Sent</b> until a provider confirms real delivery. Nothing leaves Voom.
+              Saving and approving stay inside Voom. Only the explicit Send action can contact a real recipient.
+              Voom will never mark it <b>Delivered</b> until a verified provider callback confirms real delivery.
             </p>
           </div>
         </Card>
@@ -170,15 +274,20 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
         </Btn>
         <div className="flex flex-wrap gap-2.5">
           {status === "approved" ? (
-            <Btn variant="outline" disabled title="A sending provider must be connected before anything can be sent">
-              <Icon name="send" size={14} /> Ready to send — provider required
+            <Btn
+              variant="outline"
+              disabled={busy || sendBusy || !id || !recipientContact.trim() || !delivery?.canSend}
+              onClick={() => void sendApprovedCampaign()}
+              title={!delivery?.provider.configured ? `${delivery?.provider.label ?? (em ? "Resend" : "Twilio")} is not configured on the server yet` : undefined}
+            >
+              <Icon name="send" size={14} /> {sendBusy ? "Sending…" : delivery?.send?.internal_status === "failed" ? `Retry ${em ? "email" : "SMS"}` : `Send approved ${em ? "email" : "SMS"}`}
             </Btn>
           ) : (
             <Btn variant="outline" disabled={busy} onClick={() => void markStatus("approve")}>
               Approve for send
             </Btn>
           )}
-          <Btn variant="primary" disabled={busy} onClick={() => void saveDraft()}>
+          <Btn variant="primary" disabled={busy || sendBusy} onClick={() => void saveDraft()}>
             <Icon name="edit" size={14} /> {busy ? "Saving…" : "Save draft"}
           </Btn>
         </div>
@@ -192,9 +301,21 @@ function statusTone(status: CampaignStatus) {
 }
 
 function statusLabel(status: CampaignStatus) {
-  if (status === "approved") return "Approved — ready for provider";
+  if (status === "approved") return "Approved — ready to send";
   if (status === "rejected") return "Not approved";
   return "Draft";
+}
+
+function deliveryTone(status: CampaignDeliveryState) {
+  return status === "delivered" ? "t-green" : status === "accepted" ? "t-blue" : status === "failed" ? "t-red" : status === "sending" ? "t-amber" : "t-grey";
+}
+
+function deliveryLabel(status: CampaignDeliveryState) {
+  if (status === "delivered") return "Delivered";
+  if (status === "accepted") return "Accepted by provider";
+  if (status === "failed") return "Failed";
+  if (status === "sending") return "Sending";
+  return "Ready";
 }
 
 function toDateInput(iso: string) {

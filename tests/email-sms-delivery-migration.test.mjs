@@ -11,12 +11,8 @@ test("email/sms delivery migration keeps voom_campaigns canonical and makes appr
   assert.match(sql, /alter table public\.voom_campaigns\s+add column if not exists approved_at timestamptz/i);
   assert.match(sql, /add constraint voom_campaigns_approved_at_requires_approved_status\s+check \(approved_at is null or status = 'approved'\)/i);
   assert.match(sql, /update public\.voom_campaigns\s+set approved_at = coalesce\(approved_at, updated_at, created_at, now\(\)\)\s+where status = 'approved' and approved_at is null/i);
-  assert.match(sql, /grant insert \([\s\S]*owner_user_id[\s\S]*kind[\s\S]*name[\s\S]*proposed_send_at[\s\S]*\) on table public\.voom_campaigns to authenticated/i);
-  const updateGrant = sql.match(/grant update \([\s\S]+?\) on table public\.voom_campaigns to authenticated/i)?.[0] ?? "";
-  assert.match(updateGrant, /name/);
-  assert.match(updateGrant, /proposed_send_at/);
-  assert.doesNotMatch(updateGrant, /\bstatus\b/);
-  assert.doesNotMatch(updateGrant, /approved_at/);
+  assert.match(sql, /Backwards?-compatible for the existing create\/edit\/approve\/reject flow/i);
+  assert.match(sql, /grant select, insert, update on table public\.voom_campaigns to authenticated/i);
   assert.match(sql, /create or replace function public\.set_voom_campaign_approval\(/i);
   assert.match(sql, /security definer[\s\S]+set search_path = ''/i);
   assert.match(sql, /approved_at = case when v_action = 'approve' then coalesce\(approved_at, now\(\)\) else null end/i);

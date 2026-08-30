@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useVoomActions, useVoomState, useCurrentPack } from "@/lib/voom/store";
 import { useModal } from "@/lib/voom/modal";
-import type { CampaignRecord, CampaignStatus } from "@/lib/voom/types";
+import type { CampaignDeliveryState, CampaignDeliveryView, CampaignRecord, CampaignStatus } from "@/lib/voom/types";
 import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { CampaignEditorModal } from "@/components/voom/modals/CampaignEditorModal";
@@ -29,17 +29,20 @@ export default function CampaignsPage() {
   const em = campTab === "email";
 
   const [savedCampaigns, setSavedCampaigns] = useState<CampaignRecord[]>([]);
+  const [deliveryByCampaignId, setDeliveryByCampaignId] = useState<Record<string, CampaignDeliveryView>>({});
   const [campaignError, setCampaignError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
   const loadCampaigns = useCallback(async () => {
     try {
       const response = await fetch(`/api/voom/campaigns?kind=${campTab}`, { cache: "no-store" });
-      const body = await response.json() as { campaigns?: CampaignRecord[]; error?: string };
+      const body = await response.json() as { campaigns?: CampaignRecord[]; deliveries?: Record<string, CampaignDeliveryView>; error?: string };
       if (!response.ok) throw new Error(body.error || "Campaign drafts couldn't load.");
       setSavedCampaigns(body.campaigns ?? []);
+      setDeliveryByCampaignId(body.deliveries ?? {});
       setCampaignError(null);
     } catch (reason) {
+      setDeliveryByCampaignId({});
       setCampaignError(reason instanceof Error ? reason.message : "Campaign drafts couldn't load.");
     }
   }, [campTab]);
@@ -73,7 +76,7 @@ export default function CampaignsPage() {
     <div>
       <PageHead
         title="Email & SMS"
-        description="Campaign drafts prepared by Voom and approved by you. Nothing is sent until a provider is connected."
+        description="Campaign drafts prepared by Voom and approved by you. External delivery happens only through an explicit send action."
         actions={
           <>
             <Btn variant="outline" size="sm" onClick={() => goTo("plan")}>
@@ -106,7 +109,7 @@ export default function CampaignsPage() {
         <div className="flex flex-wrap items-center gap-1.5">
           <DemoTag />
           <Tag>
-            <Icon name="info" size={12} /> No provider connected — Voom has not sent anything
+            <Icon name="info" size={12} /> Delivery status stays truthful — Voom never fabricates a send
           </Tag>
         </div>
       </div>
@@ -172,44 +175,51 @@ export default function CampaignsPage() {
                   </td>
                 </tr>
               )}
-              {visible.map((campaign) => (
-                <tr key={campaign.id} className="border-t border-line">
-                  <td className="py-3.5 pr-3">
-                    <b className="block max-w-[220px] truncate">{campaign.name}</b>
-                  </td>
-                  <td className="py-3.5 pr-3 text-text-2">
-                    <span className="block max-w-[200px] truncate">{campaign.audience || "Audience not set"}</span>
-                  </td>
-                  <td className="py-3.5 pr-3 text-text-2">
-                    <span className="block max-w-[260px] truncate">
-                      {campaign.kind === "email"
-                        ? campaign.subject || campaign.content || "No content yet"
-                        : campaign.content || "No message yet"}
-                    </span>
-                  </td>
-                  <td className="py-3.5 pr-3 whitespace-nowrap text-[12.5px] text-text-2">
-                    {campaign.proposed_send_at ? formatWhen(campaign.proposed_send_at) : "Not scheduled"}
-                  </td>
-                  <td className="py-3.5 pr-3 whitespace-nowrap">
-                    <Tag tone={statusTone(campaign.status)}>{statusLabel(campaign.status)}</Tag>
-                  </td>
-                  <td className="whitespace-nowrap py-3.5 text-right">
-                    <div className="flex items-center justify-end gap-1.5">
-                      {campaign.status === "approved" && (
-                        <span className="text-[11px] font-semibold text-text-3">Ready to send — provider required</span>
-                      )}
-                      <Btn variant="outline" size="sm" onClick={() => open(<CampaignEditorModal kind={campaign.kind} campaign={campaign} />)}>
-                        Edit
-                      </Btn>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {visible.map((campaign) => {
+                const delivery = deliveryByCampaignId[campaign.id];
+                const state = delivery?.state;
+                return (
+                  <tr key={campaign.id} className="border-t border-line">
+                    <td className="py-3.5 pr-3">
+                      <b className="block max-w-[220px] truncate">{campaign.name}</b>
+                    </td>
+                    <td className="py-3.5 pr-3 text-text-2">
+                      <span className="block max-w-[200px] truncate">{campaign.audience || "Audience not set"}</span>
+                    </td>
+                    <td className="py-3.5 pr-3 text-text-2">
+                      <span className="block max-w-[260px] truncate">
+                        {campaign.kind === "email"
+                          ? campaign.subject || campaign.content || "No content yet"
+                          : campaign.content || "No message yet"}
+                      </span>
+                    </td>
+                    <td className="py-3.5 pr-3 whitespace-nowrap text-[12.5px] text-text-2">
+                      {campaign.proposed_send_at ? formatWhen(campaign.proposed_send_at) : "Not scheduled"}
+                    </td>
+                    <td className="py-3.5 pr-3 whitespace-nowrap">
+                      <div className="flex flex-wrap gap-1.5">
+                        <Tag tone={statusTone(campaign.status)}>{statusLabel(campaign.status)}</Tag>
+                        {state && <Tag tone={deliveryTone(state)}>{deliveryLabel(state)}</Tag>}
+                      </div>
+                    </td>
+                    <td className="py-3.5 text-right">
+                      <div className="flex flex-col items-end gap-1.5">
+                        {campaign.status === "approved" && (
+                          <span className="text-[11px] font-semibold text-text-3">{deliveryActionText(campaign.kind, delivery)}</span>
+                        )}
+                        <Btn variant="outline" size="sm" onClick={() => open(<CampaignEditorModal kind={campaign.kind} campaign={campaign} />)}>
+                          {campaign.status === "approved" ? "Open" : "Edit"}
+                        </Btn>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
         <p className="mt-3 text-[11.5px] leading-relaxed text-text-3">
-          Every draft here is saved in Voom and survives a refresh. Approving marks it ready for a provider; Voom never records a campaign as Sent without provider confirmation.
+          Every draft here is saved in Voom and survives a refresh. Approving marks it ready for an explicit send; Voom never records a campaign as Delivered without provider confirmation.
         </p>
       </Card>
 
@@ -277,9 +287,31 @@ function statusTone(status: CampaignStatus) {
 }
 
 function statusLabel(status: CampaignStatus) {
-  if (status === "approved") return "Approved — ready for provider";
+  if (status === "approved") return "Approved — ready to send";
   if (status === "rejected") return "Not approved";
   return "Draft";
+}
+
+function deliveryTone(status: CampaignDeliveryState) {
+  return status === "delivered" ? "t-green" : status === "accepted" ? "t-blue" : status === "failed" ? "t-red" : status === "sending" ? "t-amber" : "t-grey";
+}
+
+function deliveryLabel(status: CampaignDeliveryState) {
+  if (status === "delivered") return "Delivered";
+  if (status === "accepted") return "Accepted";
+  if (status === "failed") return "Failed";
+  if (status === "sending") return "Sending";
+  return "Ready";
+}
+
+function deliveryActionText(kind: "email" | "sms", delivery?: CampaignDeliveryView) {
+  if (!delivery) return `Ready — open campaign to send`;
+  if (!delivery.provider.configured) return `${delivery.provider.label} not configured`;
+  if (delivery.state === "accepted") return `${kind === "email" ? "Email" : "SMS"} accepted — waiting for callback`;
+  if (delivery.state === "delivered") return `${kind === "email" ? "Email" : "SMS"} delivered`;
+  if (delivery.state === "failed") return `${kind === "email" ? "Email" : "SMS"} failed — open to retry`;
+  if (delivery.state === "sending") return `Send in progress`;
+  return `Ready — open campaign to send`;
 }
 
 function formatWhen(value: string) {

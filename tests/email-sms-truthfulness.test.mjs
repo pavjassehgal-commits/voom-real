@@ -11,15 +11,15 @@ test("campaign screens never claim a send and clearly separate Draft / Approved 
     read("components/voom/ui/Notes.tsx"),
   ]);
   assert.match(page, /CampaignEditorModal/);
-  assert.match(page, /No provider connected — Voom has not sent anything/);
-  assert.match(page, /Approved — ready for provider/);
-  assert.match(page, /Ready to send — provider required/);
-  assert.match(page, /never records a campaign as Sent without provider confirmation/);
-  assert.match(modal, /Ready to send — provider required/);
+  assert.match(page, /Delivery status stays truthful — Voom never fabricates a send/);
+  assert.match(page, /Approved — ready to send/);
+  assert.match(page, /Ready — open campaign to send/);
+  assert.match(page, /never records a campaign as Delivered without provider confirmation/);
+  assert.match(modal, /Send approved/);
   assert.match(modal, /Save draft/);
   assert.match(modal, /Approve for send/);
-  assert.match(modal, /Nothing leaves Voom/);
-  assert.match(modal, /Voom will never mark it <b>Sent<\/b>/);
+  assert.match(modal, /Only the explicit Send action can contact a real recipient/);
+  assert.match(modal, /Voom will never mark it <b>Delivered<\/b>/);
   assert.match(notes, /Prototype demonstration/);
   assert.doesNotMatch(page + modal, />Send now</);
   assert.doesNotMatch(page + modal, />Send test</);

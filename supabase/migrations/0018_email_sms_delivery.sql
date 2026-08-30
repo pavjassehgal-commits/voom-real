@@ -16,14 +16,9 @@ update public.voom_campaigns
 set approved_at = coalesce(approved_at, updated_at, created_at, now())
 where status = 'approved' and approved_at is null;
 
-revoke all on table public.voom_campaigns from anon, authenticated;
-grant select on table public.voom_campaigns to authenticated;
-grant insert (
-  owner_user_id, kind, name, objective, audience, subject, preview_text, content, proposed_send_at
-) on table public.voom_campaigns to authenticated;
-grant update (
-  name, objective, audience, subject, preview_text, content, proposed_send_at
-) on table public.voom_campaigns to authenticated;
+-- Backward-compatible for the existing create/edit/approve/reject flow.
+-- Do not narrow authenticated campaign writes in this migration.
+grant select, insert, update on table public.voom_campaigns to authenticated;
 grant select, update on table public.voom_campaigns to service_role;
 
 create table if not exists public.campaign_recipients (

@@ -207,6 +207,56 @@ export interface CampaignRecord {
   content: string;
   proposed_send_at: string | null;
   status: CampaignStatus;
+  approved_at?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface CampaignRecipientRecord {
+  id: string;
+  contact: string;
+  contact_name: string | null;
+  consent_at: string;
+  consent_source: string;
+  opt_out_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CampaignSendRecord {
+  id: string;
+  recipient_id: string;
+  channel: "email" | "sms";
+  provider: "resend" | "twilio";
+  provider_message_id: string | null;
+  provider_status: string | null;
+  internal_status: "queued" | "sending" | "accepted" | "delivered" | "failed" | "skipped";
+  attempts: number;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  claimed_at: string | null;
+  accepted_at: string | null;
+  delivered_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type CampaignDeliveryState = "ready" | "sending" | "accepted" | "delivered" | "failed";
+
+export interface CampaignProviderAvailability {
+  provider: "resend" | "twilio";
+  label: string;
+  configured: boolean;
+  deliveryTrackingConfigured: boolean;
+  missingEnv: string[];
+}
+
+export interface CampaignDeliveryView {
+  recipient: CampaignRecipientRecord | null;
+  send: CampaignSendRecord | null;
+  state: CampaignDeliveryState | null;
+  provider: CampaignProviderAvailability;
+  canSend: boolean;
+  note: string;
+  schemaReady: boolean;
 }
