@@ -42,7 +42,11 @@ create table if not exists public.contacts (
   constraint contacts_unique_email_per_owner
     unique (owner_id, email),
   constraint contacts_unique_phone_per_owner
-    unique (owner_id, phone)
+    unique (owner_id, phone),
+
+  -- composite unique required by audience_members FK before that table is created
+  constraint contacts_id_owner_id_unique
+    unique (id, owner_id)
 );
 
 create index if not exists contacts_owner_created_idx
@@ -89,7 +93,11 @@ create table if not exists public.audiences (
   constraint audiences_tag_requires_filter
     check (type <> 'tag' or tag_filter is not null),
   constraint audiences_non_tag_no_filter
-    check (type = 'tag' or tag_filter is null)
+    check (type = 'tag' or tag_filter is null),
+
+  -- composite unique required by audience_members FK before that table is created
+  constraint audiences_id_owner_id_unique
+    unique (id, owner_id)
 );
 
 create index if not exists audiences_owner_created_idx
@@ -124,32 +132,6 @@ create table if not exists public.audience_members (
   foreign key (contact_id, owner_id)
     references public.contacts (id, owner_id) on delete cascade
 );
-
--- audiences table needs composite (id, owner_id) unique for the FK to work
-do $$
-begin
-  if not exists (
-    select 1 from pg_constraint
-    where conname = 'audiences_id_owner_id_unique'
-    and conrelid = 'public.audiences'::regclass
-  ) then
-    alter table public.audiences add constraint audiences_id_owner_id_unique unique (id, owner_id);
-  end if;
-end
-$$;
-
--- contacts table needs composite (id, owner_id) unique for the FK to work
-do $$
-begin
-  if not exists (
-    select 1 from pg_constraint
-    where conname = 'contacts_id_owner_id_unique'
-    and conrelid = 'public.contacts'::regclass
-  ) then
-    alter table public.contacts add constraint contacts_id_owner_id_unique unique (id, owner_id);
-  end if;
-end
-$$;
 
 create index if not exists audience_members_owner_audience_idx
   on public.audience_members (owner_id, audience_id, created_at desc);
