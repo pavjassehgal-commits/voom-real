@@ -34,6 +34,7 @@ export const NAV: NavGroup[] = [
       { id: "automations", n: "Automations", i: "bolt" },
       { id: "performance", n: "Performance", i: "trend" },
       { id: "connections", n: "Connections", i: "globe" },
+      { id: "contacts", n: "Contacts", i: "users" },
     ],
   },
   {
@@ -55,6 +56,7 @@ export const TITLES: Record<string, string> = {
   automations: "Automations",
   performance: "Performance",
   connections: "Connections",
+  contacts: "Contacts",
   settings: "Settings",
 };
 

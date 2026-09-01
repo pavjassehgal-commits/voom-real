@@ -54,6 +54,7 @@ const NAV_PATHS: Record<string, string> = {
   automations: "/app/automations",
   performance: "/app/performance",
   connections: "/app/connections",
+  contacts: "/app/contacts",
   instagram: "/app/instagram",
   pricing: "/app/pricing",
   settings: "/app/settings",
