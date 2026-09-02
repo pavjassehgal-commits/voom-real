@@ -10,6 +10,7 @@ import {
   sendEmailCampaign,
   sendSmsCampaign,
 } from "@/lib/voom/campaign-delivery";
+import { planAudienceSend } from "@/lib/voom/audience-send-plan";
 import { resolveAudienceChannelEligibility } from "@/lib/contacts/server-data";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import type { AudienceSendResultEntry, AudienceSendResults, CampaignRecord, CampaignRecipientRecord, CampaignSendRecord } from "@/lib/voom/types";
@@ -180,8 +181,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
  * - Eligibility: email needs subscribed + valid email, SMS needs subscribed +
  *   valid E.164 phone; unknown/unsubscribed are excluded and duplicate
  *   destinations are deduped.
- * - At most BULK_SEND_CAP recipients are attempted; the rest are truthfully
- *   reported as over-limit and left for a later send.
+ * - STRICT cap: if the audience resolves to more than BULK_SEND_CAP eligible
+ *   destinations, the entire send is REFUSED — zero recipients are contacted
+ *   and zero provider calls are made. The eligible list is never sliced and
+ *   a partial send is impossible (see planAudienceSend).
  * - Reuses the 0018 per-recipient claim lifecycle, so a recipient with an
  *   active or completed send is returned as-is and never resent, while failed
  *   or never-attempted recipients remain safely retryable.
@@ -198,13 +201,6 @@ async function sendToLinkedAudience(db: SupabaseClient, ownerId: string, campaig
   }
   if (!delivery.schemaReady) {
     return Response.json({ error: "Campaign delivery is not available until the delivery migration is applied.", delivery }, { status: 503 });
-  }
-
-  let admin;
-  try {
-    admin = createAdminClient();
-  } catch {
-    return Response.json({ error: "Campaign delivery is not fully configured on the server yet.", delivery }, { status: 503 });
   }
 
   // Send-time re-resolution: this owner-scoped lookup is also the ownership
@@ -226,8 +222,38 @@ async function sendToLinkedAudience(db: SupabaseClient, ownerId: string, campaig
     }, { status: 409 });
   }
 
-  const batch = eligible.slice(0, BULK_SEND_CAP);
-  const overLimit = eligible.length - batch.length;
+  // STRICT over-cap gate: more than BULK_SEND_CAP eligible destinations
+  // refuses the ENTIRE send. This returns before the admin client is created
+  // and before any add_campaign_recipient, claim_campaign_send, Resend or
+  // ClickSend call — zero recipients are contacted and zero provider calls
+  // are made. A refused plan exposes no batch to iterate, so a partial or
+  // sliced send is impossible.
+  const plan = planAudienceSend(eligible, BULK_SEND_CAP);
+  if (!plan.ok) {
+    const latest = await readCampaignDelivery(db, ownerId, campaign);
+    const results: AudienceSendResults = {
+      attempted: 0,
+      accepted: 0,
+      failed: 0,
+      skipped: plan.total,
+      overLimit: plan.overLimit,
+      cap: plan.cap,
+      recipients: [],
+    };
+    return Response.json({
+      error: `"${eligibility.data.audience.name}" has ${plan.total} eligible destinations — over the limit of ${plan.cap} per send. The entire send was refused and no recipient was contacted. Narrow the audience to ${plan.cap} or fewer eligible destinations and try again.`,
+      results,
+      delivery: latest,
+    }, { status: 422 });
+  }
+  const batch = plan.batch;
+
+  let admin;
+  try {
+    admin = createAdminClient();
+  } catch {
+    return Response.json({ error: "Campaign delivery is not fully configured on the server yet.", delivery }, { status: 503 });
+  }
 
   const recipients: AudienceSendResultEntry[] = [];
   let accepted = 0;
@@ -307,17 +333,15 @@ async function sendToLinkedAudience(db: SupabaseClient, ownerId: string, campaig
     }
   }
 
-  const results: AudienceSendResults = { attempted: batch.length, accepted, failed, skipped, overLimit, cap: BULK_SEND_CAP, recipients };
+  // plan.ok guarantees the whole eligible set fits within the cap.
+  const results: AudienceSendResults = { attempted: batch.length, accepted, failed, skipped, overLimit: 0, cap: BULK_SEND_CAP, recipients };
   const latest = await readCampaignDelivery(db, ownerId, campaign);
 
   const summary = accepted === 0 && failed === 0 && skipped > 0
     ? `No new sends were needed in "${eligibility.data.audience.name}": every eligible recipient already has an active or completed send, and successful recipients are never resent.`
     : `${provider.label} run finished for "${eligibility.data.audience.name}": ${accepted} accepted, ${failed} failed, ${skipped} skipped (already sent or in progress) out of ${eligible.length} eligible destination${eligible.length === 1 ? "" : "s"}.`;
-  const overLimitNote = overLimit > 0
-    ? ` ${overLimit} more eligible destination${overLimit === 1 ? "" : "s"} exceeded the cap of ${BULK_SEND_CAP} per send and ${overLimit === 1 ? "was" : "were"} left for a later send.`
-    : "";
   const trackingNote = " Accepted means the provider took the message; Delivered is only ever set by a verified provider callback.";
-  const message = `${summary}${overLimitNote}${trackingNote}`;
+  const message = `${summary}${trackingNote}`;
 
   const allFailed = batch.length > 0 && failed === batch.length;
   return Response.json(

@@ -13,10 +13,10 @@ import type { AudienceChannelEligibility, AudienceEligibilityPreview } from "@/l
 import type { CampaignRecord, CampaignRecipientRecord, CampaignSendRecord, CampaignDeliveryView, CampaignProviderAvailability, CampaignDeliveryState, CampaignSendSummary } from "./types";
 
 /**
- * Maximum recipients processed per explicit send. Eligible destinations beyond
- * the cap are left unsent (truthfully reported as skipped/over-limit) and can
- * be reached by a later explicit send; successful recipients are never resent
- * thanks to the 0018 per-recipient idempotency.
+ * Maximum recipients an audience send may target. STRICT semantics: a
+ * campaign whose audience resolves to more eligible destinations than this
+ * cap has its entire send refused — zero recipients are contacted and zero
+ * provider calls are made. The eligible list is never sliced.
  */
 export const BULK_SEND_CAP = 100;
 
@@ -109,7 +109,9 @@ export async function readCampaignDelivery(db: SupabaseClient, ownerId: string, 
       provider,
       canSend: campaign.status === "approved" && provider.configured && (
         campaign.audience_id
-          ? audience !== null && audience.eligibleCount > 0
+          // Over-cap audiences must be refused entirely — sending stays
+          // blocked until the audience is narrowed back within the cap.
+          ? audience !== null && audience.eligibleCount > 0 && audience.overLimitCount === 0
           : (!send || send.internal_status === "failed")
       ),
       note: audienceNote ?? buildDeliveryNote(campaign, provider, send, audience, sendsSummary),
@@ -278,7 +280,7 @@ function buildDeliveryNote(campaign: CampaignRecord, provider: CampaignProviderA
       return `No contacts in “${audience.audience.name}” are eligible for ${campaign.kind} right now — subscribed status plus a valid destination is required. Nothing would be sent.${progress}`;
     }
     const capNote = audience.overLimitCount > 0
-      ? ` Only the first ${audience.sendCap} are attempted per send; ${audience.overLimitCount} stay queued for a later explicit send.`
+      ? ` Sending is blocked: ${audience.eligibleCount} eligible destinations exceed the ${audience.sendCap}-recipient limit, and an over-limit send is refused entirely. Narrow the audience to ${audience.sendCap} or fewer eligible destinations to send.`
       : "";
     const trackingNote = !provider.deliveryTrackingConfigured
       ? ` ${provider.label} sends stay at Accepted — Delivered is only set by a verified provider callback.`

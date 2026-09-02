@@ -122,14 +122,46 @@ test("audience sends reuse the 0018 per-recipient claim lifecycle", async () => 
   assert.match(route, /voom-campaign-audience-send/);
 });
 
-test("audience sends are capped and results stay truthful and masked", async () => {
-  const [route, helper] = await Promise.all([
+test("audience sends over BULK_SEND_CAP are refused entirely — zero recipients are contacted", async () => {
+  const [route, helper, planner] = await Promise.all([
     read("app/api/voom/campaigns/[id]/delivery/route.ts"),
     read("lib/voom/campaign-delivery.ts"),
+    read("lib/voom/audience-send-plan.ts"),
   ]);
   assert.match(helper, /export const BULK_SEND_CAP = 100;/);
-  assert.match(route, /eligible\.slice\(0, BULK_SEND_CAP\)/);
-  assert.match(route, /overLimit/);
+  assert.match(route, /planAudienceSend\(eligible, BULK_SEND_CAP\)/);
+  assert.match(route, /if \(!plan\.ok\)/);
+  // No slicing to the first N — a partial send is impossible.
+  assert.doesNotMatch(route, /\.slice\(0,\s*BULK_SEND_CAP\)/);
+  // The planner either refuses with over_cap or yields the complete batch.
+  assert.match(planner, /destinations\.length > cap/);
+  assert.match(planner, /reason: "over_cap"/);
+  // REFUSE path: the response carries a clear over-cap error and zero sends.
+  assert.match(route, /The entire send was refused and no recipient was contacted/);
+  assert.match(route, /attempted: 0/);
+  assert.match(route, /accepted: 0/);
+  assert.match(route, /failed: 0/);
+  assert.match(route, /recipients: \[\]/);
+  // The guard returns BEFORE any recipient write, send claim, admin client
+  // creation or Resend/ClickSend call in the audience path.
+  const audienceFn = route.slice(route.indexOf("async function sendToLinkedAudience"));
+  const guard = audienceFn.indexOf("if (!plan.ok)");
+  assert.ok(guard > -1, "the over-cap guard must exist in the audience send path");
+  for (const call of [
+    "createAdminClient(",
+    'rpc("add_campaign_recipient"',
+    'rpc("claim_campaign_send"',
+    'rpc("record_campaign_send_provider_result"',
+    "sendEmailCampaign(campaign, recipient)",
+    "sendSmsCampaign(campaign, recipient)",
+  ]) {
+    const callIndex = audienceFn.indexOf(call);
+    assert.ok(callIndex > guard, `${call} must only run when NOT over cap — it must come after the over-cap guard that returns`);
+  }
+});
+
+test("audience send results stay truthful and masked within the cap", async () => {
+  const route = await read("app/api/voom/campaigns/[id]/delivery/route.ts");
   // Truthful per-recipient outcomes with masked destinations.
   assert.match(route, /status: "accepted"/);
   assert.match(route, /status: "failed"/);
@@ -164,6 +196,10 @@ test("the editor offers single-recipient or audience mode with a live eligibilit
   assert.match(modal, /duplicateCount/);
   assert.match(modal, /overLimitCount/);
   assert.match(modal, /re-resolved on the server at send time/);
+  // Over-cap audiences are visibly blocked in the UI, not partially sent.
+  assert.match(modal, /the send is refused entirely/);
+  assert.match(modal, /send blocked until the audience is narrowed/);
+  assert.match(modal, /Sending is refused while more than/);
   // The existing single-recipient flow is preserved.
   assert.match(modal, /Recipient email/);
   assert.match(modal, /Recipient phone number/);

@@ -347,7 +347,7 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
                     </p>
                     {audiencePreview.overLimitCount > 0 && (
                       <p className="mt-2 text-[12.5px] font-semibold text-amber">
-                        Up to {audiencePreview.sendCap} recipients are attempted per send — {audiencePreview.overLimitCount} eligible destination{audiencePreview.overLimitCount === 1 ? "" : "s"} will stay queued for a later explicit send.
+                        Over the {audiencePreview.sendCap}-recipient limit per send — the send is refused entirely while this audience has more than {audiencePreview.sendCap} eligible destinations ({audiencePreview.overLimitCount} too many). Narrow the audience in Contacts, then try again.
                       </p>
                     )}
                     {audiencePreview.recipients.length > 0 && (
@@ -434,7 +434,7 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
             {delivery?.audience && (
               <p className="mt-2 text-[12.5px] text-text-2">
                 {delivery.audience.audience.name}: {delivery.audience.eligibleCount} eligible of {delivery.audience.totalMembers} contacts
-                {delivery.audience.overLimitCount > 0 ? ` · ${delivery.audience.overLimitCount} over the per-send limit of ${delivery.audience.sendCap}` : ""}.
+                {delivery.audience.overLimitCount > 0 ? ` · ${delivery.audience.overLimitCount} over the ${delivery.audience.sendCap} per-send limit — send blocked until the audience is narrowed` : ""}.
               </p>
             )}
             {delivery && delivery.sendsSummary.total > 0 && (
@@ -476,9 +476,17 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
             recipientMode === "audience" ? (
               <Btn
                 variant="outline"
+                // The server refuses an over-cap audience send entirely; the
+                // button stays disabled so the UI blocks it too.
                 disabled={busy || sendBusy || !id || !delivery?.canSend}
                 onClick={() => void sendApprovedCampaignToAudience()}
-                title={!delivery?.provider.configured ? `${delivery?.provider.label ?? (em ? "Resend" : "ClickSend")} is not configured on the server yet` : undefined}
+                title={
+                  delivery?.audience && delivery.audience.overLimitCount > 0
+                    ? `Sending is refused while more than ${delivery.audience.sendCap} destinations are eligible — narrow the audience first`
+                    : !delivery?.provider.configured
+                      ? `${delivery?.provider.label ?? (em ? "Resend" : "ClickSend")} is not configured on the server yet`
+                      : undefined
+                }
               >
                 <Icon name="send" size={14} /> {sendBusy ? "Sending…" : `Send approved ${em ? "email" : "SMS"} to audience`}
               </Btn>
