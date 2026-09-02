@@ -8,7 +8,17 @@ import { getResendAvailability } from "@/lib/email/config";
 import { createClickSendClient } from "@/lib/sms/client";
 import { getClickSendAvailability } from "@/lib/sms/config";
 import { clickSendSmsSendPath } from "@/lib/sms/core";
-import type { CampaignRecord, CampaignRecipientRecord, CampaignSendRecord, CampaignDeliveryView, CampaignProviderAvailability, CampaignDeliveryState } from "./types";
+import { resolveAudienceChannelEligibility } from "@/lib/contacts/server-data";
+import type { AudienceChannelEligibility, AudienceEligibilityPreview } from "@/lib/contacts/types";
+import type { CampaignRecord, CampaignRecipientRecord, CampaignSendRecord, CampaignDeliveryView, CampaignProviderAvailability, CampaignDeliveryState, CampaignSendSummary } from "./types";
+
+/**
+ * Maximum recipients processed per explicit send. Eligible destinations beyond
+ * the cap are left unsent (truthfully reported as skipped/over-limit) and can
+ * be reached by a later explicit send; successful recipients are never resent
+ * thanks to the 0018 per-recipient idempotency.
+ */
+export const BULK_SEND_CAP = 100;
 
 export function getCampaignProviderAvailability(kind: "email" | "sms"): CampaignProviderAvailability {
   if (kind === "email") {
@@ -40,7 +50,7 @@ export async function readCampaignDelivery(db: SupabaseClient, ownerId: string, 
   const provider = getCampaignProviderAvailability(campaign.kind);
 
   try {
-    const [recipientResult, sendResult] = await Promise.all([
+    const [recipientResult, sendResult, sendsResult] = await Promise.all([
       db.from("campaign_recipients")
         .select("id,contact,contact_name,consent_at,consent_source,opt_out_at,created_at,updated_at")
         .eq("owner_user_id", ownerId)
@@ -55,31 +65,94 @@ export async function readCampaignDelivery(db: SupabaseClient, ownerId: string, 
         .order("updated_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
+      // All recorded sends for truthful aggregate counts. Capped sends mean
+      // this stays small (see BULK_SEND_CAP).
+      db.from("campaign_sends")
+        .select("internal_status")
+        .eq("owner_user_id", ownerId)
+        .eq("campaign_id", campaign.id),
     ]);
 
-    if (recipientResult.error || sendResult.error) {
-      if (isDeliverySchemaMissing(recipientResult.error) || isDeliverySchemaMissing(sendResult.error)) {
+    if (recipientResult.error || sendResult.error || sendsResult.error) {
+      if (isDeliverySchemaMissing(recipientResult.error) || isDeliverySchemaMissing(sendResult.error) || isDeliverySchemaMissing(sendsResult.error)) {
         return fallbackDelivery(campaign, provider, "Campaign delivery is not available until the delivery migration is applied.");
       }
-      throw recipientResult.error || sendResult.error;
+      throw recipientResult.error || sendResult.error || sendsResult.error;
     }
 
     const recipient = ((recipientResult.data as CampaignRecipientRecord | null) ?? null);
     const send = ((sendResult.data as CampaignSendRecord | null) ?? null);
+    const sendsSummary = summarizeCampaignSends(sendsResult.data);
     const state = getCampaignDeliveryState(campaign.status, send);
+
+    // Audience campaigns: re-resolve eligibility server-side on every read so
+    // the UI never displays stale or client-decided recipient data.
+    let audience: AudienceEligibilityPreview | null = null;
+    let audienceNote: string | null = null;
+    if (campaign.audience_id) {
+      const eligibility = await resolveAudienceChannelEligibility(db, ownerId, campaign.audience_id, campaign.kind);
+      if (eligibility.ok) {
+        audience = toAudienceEligibilityPreview(eligibility.data);
+      } else if (eligibility.error.code === "not_found") {
+        audienceNote = "The linked audience was not found. Choose an audience again before sending.";
+      } else {
+        throw new Error(eligibility.error.code);
+      }
+    }
 
     return {
       recipient,
       send,
+      audience,
+      sendsSummary,
       state,
       provider,
-      canSend: campaign.status === "approved" && provider.configured && (!send || send.internal_status === "failed"),
-      note: buildDeliveryNote(campaign, provider, send),
+      canSend: campaign.status === "approved" && provider.configured && (
+        campaign.audience_id
+          ? audience !== null && audience.eligibleCount > 0
+          : (!send || send.internal_status === "failed")
+      ),
+      note: audienceNote ?? buildDeliveryNote(campaign, provider, send, audience, sendsSummary),
       schemaReady: true,
     };
   } catch {
     return fallbackDelivery(campaign, provider, "Campaign delivery is temporarily unavailable.");
   }
+}
+
+/** Browser-safe eligibility preview: masked destinations only, never raw. */
+export function toAudienceEligibilityPreview(eligibility: AudienceChannelEligibility): AudienceEligibilityPreview {
+  return {
+    audience: {
+      id: eligibility.audience.id,
+      name: eligibility.audience.name,
+      type: eligibility.audience.type,
+    },
+    channel: eligibility.channel,
+    totalMembers: eligibility.totalMembers,
+    eligibleCount: eligibility.eligibleCount,
+    excludedCount: eligibility.excludedCount,
+    duplicateCount: eligibility.duplicateCount,
+    sendCap: BULK_SEND_CAP,
+    overLimitCount: Math.max(0, eligibility.eligibleCount - BULK_SEND_CAP),
+    recipients: eligibility.eligible.map((r) => ({
+      contactId: r.contactId,
+      destination: r.masked,
+      contactName: r.contactName,
+    })),
+  };
+}
+
+function summarizeCampaignSends(rows: Array<{ internal_status?: string | null }> | null): CampaignSendSummary {
+  const summary: CampaignSendSummary = { total: 0, queued: 0, sending: 0, accepted: 0, delivered: 0, failed: 0, skipped: 0 };
+  for (const row of rows ?? []) {
+    const status = row.internal_status;
+    if (status === "queued" || status === "sending" || status === "accepted" || status === "delivered" || status === "failed" || status === "skipped") {
+      summary[status] += 1;
+      summary.total += 1;
+    }
+  }
+  return summary;
 }
 
 export function normalizeCampaignContact(kind: "email" | "sms", value: string) {
@@ -183,6 +256,8 @@ function fallbackDelivery(campaign: CampaignRecord, provider: CampaignProviderAv
   return {
     recipient: null,
     send: null,
+    audience: null,
+    sendsSummary: { total: 0, queued: 0, sending: 0, accepted: 0, delivered: 0, failed: 0, skipped: 0 },
     state: campaign.status === "approved" ? "ready" : null,
     provider,
     canSend: false,
@@ -191,9 +266,26 @@ function fallbackDelivery(campaign: CampaignRecord, provider: CampaignProviderAv
   };
 }
 
-function buildDeliveryNote(campaign: CampaignRecord, provider: CampaignProviderAvailability, send: CampaignSendRecord | null) {
+function buildDeliveryNote(campaign: CampaignRecord, provider: CampaignProviderAvailability, send: CampaignSendRecord | null, audience: AudienceEligibilityPreview | null = null, sendsSummary: CampaignSendSummary | null = null) {
   if (campaign.status !== "approved") return "Approve the campaign before sending anything externally.";
   if (!provider.configured) return `${provider.label} is not configured on the server yet, so Voom cannot send this campaign.`;
+
+  if (campaign.audience_id && audience) {
+    const progress = sendsSummary && sendsSummary.total > 0
+      ? ` So far: ${sendsSummary.accepted} accepted, ${sendsSummary.delivered} delivered, ${sendsSummary.failed} failed. Successful recipients are never resent.`
+      : "";
+    if (audience.eligibleCount === 0) {
+      return `No contacts in “${audience.audience.name}” are eligible for ${campaign.kind} right now — subscribed status plus a valid destination is required. Nothing would be sent.${progress}`;
+    }
+    const capNote = audience.overLimitCount > 0
+      ? ` Only the first ${audience.sendCap} are attempted per send; ${audience.overLimitCount} stay queued for a later explicit send.`
+      : "";
+    const trackingNote = !provider.deliveryTrackingConfigured
+      ? ` ${provider.label} sends stay at Accepted — Delivered is only set by a verified provider callback.`
+      : " Delivered is only set by a verified provider callback.";
+    return `This approved campaign sends to “${audience.audience.name}”: ${audience.eligibleCount} eligible ${campaign.kind} destination${audience.eligibleCount === 1 ? "" : "s"} (re-resolved at send time; unsubscribed, unknown and duplicate entries are excluded).${capNote}${trackingNote}${progress}`;
+  }
+
   if (send?.internal_status === "accepted" && !provider.deliveryTrackingConfigured) return `${provider.label} accepted the send. Delivery will stay at Accepted until verified callback tracking is configured.`;
   if (send?.internal_status === "accepted") return `${provider.label} accepted the message. Delivered appears only after a verified provider callback confirms it.`;
   if (send?.internal_status === "delivered") return "Delivered was verified by the provider callback.";

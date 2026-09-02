@@ -1,6 +1,8 @@
 import { z } from "zod";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getCampaign } from "@/lib/mara/internal-data";
 import {
+  BULK_SEND_CAP,
   createCampaignSendAttemptKey,
   getCampaignProviderAvailability,
   normalizeCampaignContact,
@@ -8,17 +10,27 @@ import {
   sendEmailCampaign,
   sendSmsCampaign,
 } from "@/lib/voom/campaign-delivery";
+import { resolveAudienceChannelEligibility } from "@/lib/contacts/server-data";
 import { getCurrentUser } from "@/lib/voom/server-data";
-import type { CampaignRecipientRecord, CampaignSendRecord } from "@/lib/voom/types";
+import type { AudienceSendResultEntry, AudienceSendResults, CampaignRecord, CampaignRecipientRecord, CampaignSendRecord } from "@/lib/voom/types";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const deliveryPayload = z.object({
+const singleRecipientPayload = z.object({
   contact: z.string().trim().min(1).max(320),
   contactName: z.string().trim().max(200).optional().or(z.literal("")),
 }).strict();
+
+// Explicit confirmation to send to the campaign's linked audience. The
+// audience is re-resolved server-side at send time — a client-supplied
+// recipient list is never accepted (both branches stay strict).
+const audienceSendPayload = z.object({
+  audienceSend: z.literal(true),
+}).strict();
+
+const deliveryPayload = z.union([singleRecipientPayload, audienceSendPayload]);
 
 export const runtime = "nodejs";
 
@@ -53,7 +65,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const db = await createClient();
     const campaign = await getCampaign(db, user.id, id);
     if (!campaign) return Response.json({ error: "That campaign was not found." }, { status: 404 });
+    // Explicit approval is always required before any send — single recipient
+    // or audience.
     if (campaign.status !== "approved") return Response.json({ error: "Approve the campaign before sending it." }, { status: 409 });
+
+    if (campaign.audience_id) {
+      if (!("audienceSend" in parsed.data)) {
+        return Response.json({ error: "This campaign sends to its linked audience. Confirm the audience send from the campaign editor — individual recipients can't be entered for it." }, { status: 400 });
+      }
+      return await sendToLinkedAudience(db, user.id, campaign);
+    }
+
+    if ("audienceSend" in parsed.data) {
+      return Response.json({ error: "No audience is linked to this campaign. Link an audience in the campaign editor, or send to a single recipient." }, { status: 400 });
+    }
 
     const contact = normalizeCampaignContact(campaign.kind, parsed.data.contact);
     if (!isValidContact(campaign.kind, contact)) return Response.json({ error: campaign.kind === "email" ? "Enter a valid recipient email address." : "Enter a valid phone number in international format." }, { status: 400 });
@@ -142,6 +167,165 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   } catch {
     return Response.json({ error: "Voom couldn't send that campaign safely. Nothing was simulated." }, { status: 503 });
   }
+}
+
+/**
+ * Explicit send to the campaign's linked audience.
+ *
+ * Safety properties:
+ * - Requires prior explicit approval (enforced by the caller) plus this
+ *   explicit send request — nothing is ever sent automatically.
+ * - The audience is re-resolved server-side at send time from live contacts;
+ *   the client never supplies recipients.
+ * - Eligibility: email needs subscribed + valid email, SMS needs subscribed +
+ *   valid E.164 phone; unknown/unsubscribed are excluded and duplicate
+ *   destinations are deduped.
+ * - At most BULK_SEND_CAP recipients are attempted; the rest are truthfully
+ *   reported as over-limit and left for a later send.
+ * - Reuses the 0018 per-recipient claim lifecycle, so a recipient with an
+ *   active or completed send is returned as-is and never resent, while failed
+ *   or never-attempted recipients remain safely retryable.
+ * - Results are always truthful accepted/failed/skipped; destinations in the
+ *   response are masked. Accepted means provider-accepted only — Delivered is
+ *   only ever set by a verified provider callback.
+ */
+async function sendToLinkedAudience(db: SupabaseClient, ownerId: string, campaign: CampaignRecord) {
+  const audienceId = campaign.audience_id as string;
+  const delivery = await readCampaignDelivery(db, ownerId, campaign);
+  const provider = getCampaignProviderAvailability(campaign.kind);
+  if (!provider.configured) {
+    return Response.json({ error: `${provider.label} is not configured on the server yet, so Voom cannot send this ${campaign.kind}.`, delivery }, { status: 503 });
+  }
+  if (!delivery.schemaReady) {
+    return Response.json({ error: "Campaign delivery is not available until the delivery migration is applied.", delivery }, { status: 503 });
+  }
+
+  let admin;
+  try {
+    admin = createAdminClient();
+  } catch {
+    return Response.json({ error: "Campaign delivery is not fully configured on the server yet.", delivery }, { status: 503 });
+  }
+
+  // Send-time re-resolution: this owner-scoped lookup is also the ownership
+  // re-validation, so an audience from another workspace can never be used.
+  const eligibility = await resolveAudienceChannelEligibility(db, ownerId, audienceId, campaign.kind);
+  if (!eligibility.ok) {
+    if (eligibility.error.code === "not_found") {
+      return Response.json({ error: "The linked audience was not found in your workspace. Nothing was initiated.", delivery }, { status: 404 });
+    }
+    return Response.json({ error: "Audience eligibility is temporarily unavailable. Nothing was initiated.", delivery }, { status: 503 });
+  }
+
+  const eligible = eligibility.data.eligible;
+  if (eligible.length === 0) {
+    const latest = await readCampaignDelivery(db, ownerId, campaign);
+    return Response.json({
+      error: `No contacts in "${eligibility.data.audience.name}" are eligible for this ${campaign.kind} right now — subscribed status plus a valid destination is required. Nothing was initiated.`,
+      delivery: latest,
+    }, { status: 409 });
+  }
+
+  const batch = eligible.slice(0, BULK_SEND_CAP);
+  const overLimit = eligible.length - batch.length;
+
+  const recipients: AudienceSendResultEntry[] = [];
+  let accepted = 0;
+  let failed = 0;
+  let skipped = 0;
+  const consentAt = new Date().toISOString();
+
+  // Sequential processing keeps this a safe, provider-polite batch and gives
+  // each recipient its own truthful outcome.
+  for (const target of batch) {
+    const recipientResult = await admin.rpc("add_campaign_recipient", {
+      p_owner_user_id: ownerId,
+      p_campaign_id: campaign.id,
+      p_contact: target.destination,
+      p_contact_name: target.contactName,
+      p_consent_at: consentAt,
+      p_consent_source: "voom-campaign-audience-send",
+    }).single();
+
+    if (recipientResult.error || !recipientResult.data) {
+      failed += 1;
+      recipients.push({ destination: target.masked, status: "failed", detail: rpcErrorMessage(recipientResult.error, "Voom couldn't save that recipient safely.") });
+      continue;
+    }
+
+    const recipient = recipientResult.data as CampaignRecipientRecord;
+    const attemptKey = createCampaignSendAttemptKey();
+    const claimResult = await admin.rpc("claim_campaign_send", {
+      p_owner_user_id: ownerId,
+      p_campaign_id: campaign.id,
+      p_recipient_id: recipient.id,
+      p_idempotency_key: attemptKey,
+    }).single();
+
+    if (claimResult.error || !claimResult.data) {
+      // e.g. recipient_opted_out: never claimable, left unsent.
+      skipped += 1;
+      recipients.push({ destination: target.masked, status: "skipped", detail: rpcErrorMessage(claimResult.error, "That recipient couldn't be claimed safely and was left unsent.") });
+      continue;
+    }
+
+    const claimed = claimResult.data as CampaignSendRecord & { idempotency_key?: string | null };
+    if (claimed.idempotency_key !== attemptKey) {
+      // The 0018 claim returned the existing row: this recipient already has
+      // an active or completed send, so it is never resent.
+      skipped += 1;
+      recipients.push({ destination: target.masked, status: "skipped", detail: "Already sent or in progress — not sent again." });
+      continue;
+    }
+
+    const providerResult = campaign.kind === "email"
+      ? await sendEmailCampaign(campaign, recipient)
+      : await sendSmsCampaign(campaign, recipient);
+
+    const recorded = await admin.rpc("record_campaign_send_provider_result", {
+      p_owner_user_id: ownerId,
+      p_send_id: claimed.id,
+      p_outcome: providerResult.ok ? "accepted" : "failed",
+      p_provider_status: providerResult.providerStatus,
+      p_provider_message_id: providerResult.providerMessageId,
+      p_error_code: providerResult.errorCode,
+      p_error_message: providerResult.errorMessage,
+    }).single();
+
+    if (recorded.error) {
+      failed += 1;
+      recipients.push({ destination: target.masked, status: "failed", detail: "The provider responded, but Voom could not store the send status safely." });
+      continue;
+    }
+
+    if (providerResult.ok) {
+      accepted += 1;
+      recipients.push({ destination: target.masked, status: "accepted", detail: `${provider.label} accepted the ${campaign.kind}.` });
+    } else {
+      failed += 1;
+      recipients.push({ destination: target.masked, status: "failed", detail: providerResult.errorMessage || `${provider.label} could not send that ${campaign.kind}.` });
+    }
+  }
+
+  const results: AudienceSendResults = { attempted: batch.length, accepted, failed, skipped, overLimit, cap: BULK_SEND_CAP, recipients };
+  const latest = await readCampaignDelivery(db, ownerId, campaign);
+
+  const summary = accepted === 0 && failed === 0 && skipped > 0
+    ? `No new sends were needed in "${eligibility.data.audience.name}": every eligible recipient already has an active or completed send, and successful recipients are never resent.`
+    : `${provider.label} run finished for "${eligibility.data.audience.name}": ${accepted} accepted, ${failed} failed, ${skipped} skipped (already sent or in progress) out of ${eligible.length} eligible destination${eligible.length === 1 ? "" : "s"}.`;
+  const overLimitNote = overLimit > 0
+    ? ` ${overLimit} more eligible destination${overLimit === 1 ? "" : "s"} exceeded the cap of ${BULK_SEND_CAP} per send and ${overLimit === 1 ? "was" : "were"} left for a later send.`
+    : "";
+  const trackingNote = " Accepted means the provider took the message; Delivered is only ever set by a verified provider callback.";
+  const message = `${summary}${overLimitNote}${trackingNote}`;
+
+  const allFailed = batch.length > 0 && failed === batch.length;
+  return Response.json(
+    allFailed
+      ? { error: `All ${failed} send attempts failed. ${message}`, results, delivery: latest }
+      : { message, results, delivery: latest },
+    { status: allFailed ? 502 : 200 },
+  );
 }
 
 function isValidContact(kind: "email" | "sms", contact: string) {

@@ -5,6 +5,7 @@ import { createClient } from "@/utils/supabase/server";
 import { z } from "zod";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_VALUE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const editFields = z.object({
   // Tolerate kind for backward safety: the editor no longer sends it on PATCH,
@@ -13,6 +14,9 @@ const editFields = z.object({
   name: z.string().trim().min(1).max(160).optional(),
   objective: z.string().trim().max(1000).optional(),
   audience: z.string().trim().max(1000).optional(),
+  // Set to link an owned audience, null to unlink, omit to leave unchanged.
+  // Ownership is always re-validated server-side below.
+  audienceId: z.string().trim().regex(UUID_VALUE_RE).nullable().optional(),
   subject: z.string().trim().max(300).nullable().optional(),
   previewText: z.string().trim().max(500).nullable().optional(),
   content: z.string().trim().max(12000).optional(),
@@ -35,10 +39,36 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
 
   try {
-    const campaign = await updateCampaign(await createClient(), user.id, id, {
+    const db = await createClient();
+
+    // Only touch audience_id when the client explicitly provided the field;
+    // when provided, ownership is re-validated server-side before linking.
+    let audienceId: string | null | undefined;
+    if (parsed.data.audienceId !== undefined) {
+      if (parsed.data.audienceId === null) {
+        audienceId = null;
+      } else {
+        const { data: audience, error: audienceError } = await db
+          .from("audiences")
+          .select("id")
+          .eq("owner_id", user.id)
+          .eq("id", parsed.data.audienceId)
+          .maybeSingle();
+        if (audienceError) {
+          return Response.json({ error: "Voom couldn't verify that audience. Please retry." }, { status: 503 });
+        }
+        if (!audience) {
+          return Response.json({ error: "That audience was not found in your workspace." }, { status: 404 });
+        }
+        audienceId = audience.id;
+      }
+    }
+
+    const campaign = await updateCampaign(db, user.id, id, {
       name: parsed.data.name,
       objective: parsed.data.objective,
       audience: parsed.data.audience,
+      audience_id: audienceId,
       subject: parsed.data.subject,
       preview_text: parsed.data.previewText,
       content: parsed.data.content,

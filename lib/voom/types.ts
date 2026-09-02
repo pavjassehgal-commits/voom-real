@@ -1,3 +1,7 @@
+import type { AudienceEligibilityPreview } from "@/lib/contacts/types";
+
+export type { AudienceEligibilityPreview } from "@/lib/contacts/types";
+
 export type Channel = "Reel" | "Feed" | "Email" | "SMS";
 
 export type PostStatus = "Scheduled" | "Draft" | "Idea" | "Live" | "Sent";
@@ -201,7 +205,11 @@ export interface CampaignRecord {
   kind: "email" | "sms";
   name: string;
   objective: string;
+  /** Free-text audience description; display-only, never a recipient source. */
   audience: string;
+  /** Linked audience id (migration 0020). When set, sends target the audience
+   *  resolved server-side at send time — never a client-supplied list. */
+  audience_id: string | null;
   subject: string | null;
   preview_text: string | null;
   content: string;
@@ -256,9 +264,46 @@ export interface CampaignProviderAvailability {
   missingEnv: string[];
 }
 
+/** Aggregate of campaign_sends rows by internal status — truthful counts only. */
+export interface CampaignSendSummary {
+  total: number;
+  queued: number;
+  sending: number;
+  accepted: number;
+  delivered: number;
+  failed: number;
+  skipped: number;
+}
+
+/** Truthful outcome for one audience send attempt. Destination is masked. */
+export interface AudienceSendResultEntry {
+  destination: string;
+  status: "accepted" | "failed" | "skipped";
+  detail?: string;
+}
+
+/** Summary of an explicit audience send. Counts are always truthful: accepted
+ *  means the provider accepted the message, never that it was delivered. */
+export interface AudienceSendResults {
+  attempted: number;
+  accepted: number;
+  failed: number;
+  /** Already sent/in flight (never resent), opted out, or not claimable. */
+  skipped: number;
+  /** Eligible destinations beyond the per-send cap — left unsent. */
+  overLimit: number;
+  cap: number;
+  recipients: AudienceSendResultEntry[];
+}
+
 export interface CampaignDeliveryView {
   recipient: CampaignRecipientRecord | null;
   send: CampaignSendRecord | null;
+  /** Present when the campaign targets an audience (eligibility re-resolved
+   *  on the server; destinations masked). */
+  audience: AudienceEligibilityPreview | null;
+  /** All recorded sends for this campaign, by internal status. */
+  sendsSummary: CampaignSendSummary;
   state: CampaignDeliveryState | null;
   provider: CampaignProviderAvailability;
   canSend: boolean;

@@ -4,11 +4,17 @@ import { readCampaignDelivery } from "@/lib/voom/campaign-delivery";
 import { createClient } from "@/utils/supabase/server";
 import { z } from "zod";
 
+const UUID_VALUE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const campaignFields = z.object({
   kind: z.enum(["email", "sms"]),
   name: z.string().trim().min(1).max(160),
   objective: z.string().trim().max(1000).default(""),
   audience: z.string().trim().max(1000).default(""),
+  // Links the campaign to one owned audience. The linked audience is
+  // re-resolved server-side at send time; a client-supplied recipient list
+  // is never accepted (the schema stays strict).
+  audienceId: z.string().trim().regex(UUID_VALUE_RE).nullable().optional(),
   subject: z.string().trim().max(300).nullable().optional(),
   previewText: z.string().trim().max(500).nullable().optional(),
   content: z.string().trim().max(12000).default(""),
@@ -40,11 +46,32 @@ export async function POST(request: Request) {
   if (!parsed.success) return Response.json({ error: "Check the campaign details before saving." }, { status: 400 });
 
   try {
-    const campaign = await createCampaign(await createClient(), user.id, {
+    const db = await createClient();
+
+    // Server-side audience ownership validation before the link is persisted.
+    let audienceId: string | null = null;
+    if (parsed.data.audienceId) {
+      const { data: audience, error: audienceError } = await db
+        .from("audiences")
+        .select("id")
+        .eq("owner_id", user.id)
+        .eq("id", parsed.data.audienceId)
+        .maybeSingle();
+      if (audienceError) {
+        return Response.json({ error: "Voom couldn't verify that audience. Please retry." }, { status: 503 });
+      }
+      if (!audience) {
+        return Response.json({ error: "That audience was not found in your workspace." }, { status: 404 });
+      }
+      audienceId = audience.id;
+    }
+
+    const campaign = await createCampaign(db, user.id, {
       kind: parsed.data.kind,
       name: parsed.data.name,
       objective: parsed.data.objective,
       audience: parsed.data.audience,
+      audience_id: audienceId,
       subject: parsed.data.subject ?? null,
       preview_text: parsed.data.previewText ?? null,
       content: parsed.data.content,

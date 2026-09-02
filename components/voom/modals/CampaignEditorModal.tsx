@@ -2,10 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useModal } from "@/lib/voom/modal";
-import type { CampaignDeliveryState, CampaignDeliveryView, CampaignRecord, CampaignStatus } from "@/lib/voom/types";
+import type { AudienceEligibilityPreview, AudienceRecord } from "@/lib/contacts/types";
+import type { AudienceSendResults, CampaignDeliveryState, CampaignDeliveryView, CampaignRecord, CampaignStatus } from "@/lib/voom/types";
 import { Icon } from "../icons";
 import { ModalBody, ModalFoot, ModalHead, ModalShell } from "../ui/Modal";
 import { Btn, Card, Field, Input, Tag, Textarea } from "../ui/primitives";
+
+type RecipientMode = "single" | "audience";
 
 export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms"; campaign?: CampaignRecord | null }) {
   const { close } = useModal();
@@ -14,6 +17,11 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
   const [name, setName] = useState(campaign?.name ?? (em ? "Untitled email" : "Untitled SMS"));
   const [objective, setObjective] = useState(campaign?.objective ?? "");
   const [audience, setAudience] = useState(campaign?.audience ?? "");
+  const [recipientMode, setRecipientMode] = useState<RecipientMode>(campaign?.audience_id ? "audience" : "single");
+  const [audienceId, setAudienceId] = useState<string | null>(campaign?.audience_id ?? null);
+  const [audienceOptions, setAudienceOptions] = useState<AudienceRecord[]>([]);
+  const [audiencePreview, setAudiencePreview] = useState<AudienceEligibilityPreview | null>(null);
+  const [lastResults, setLastResults] = useState<AudienceSendResults | null>(null);
   const [subject, setSubject] = useState(campaign?.subject ?? "");
   const [previewText, setPreviewText] = useState(campaign?.preview_text ?? "");
   const [content, setContent] = useState(campaign?.content ?? "");
@@ -66,11 +74,58 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
     };
   }, [id]);
 
+  // The picker lists only the owner's own audiences (enforced server-side).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("/api/voom/audiences", { cache: "no-store" });
+        const data = await response.json() as { audiences?: AudienceRecord[] };
+        if (!cancelled && response.ok && data.audiences) setAudienceOptions(data.audiences);
+      } catch {
+        // The picker stays empty; reopening the modal retries.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Server-computed eligibility preview for the chosen audience. The browser
+  // only ever receives masked destinations. The preview is cleared in the
+  // change handler (chooseAudience) so no synchronous setState runs here.
+  useEffect(() => {
+    if (recipientMode !== "audience" || !audienceId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch(`/api/voom/audiences/${encodeURIComponent(audienceId)}/eligibility?kind=${kind}`, { cache: "no-store" });
+        const data = await response.json() as { preview?: AudienceEligibilityPreview };
+        if (!cancelled) setAudiencePreview(response.ok ? data.preview ?? null : null);
+      } catch {
+        if (!cancelled) setAudiencePreview(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [recipientMode, audienceId, kind]);
+
+  function chooseAudience(nextId: string | null) {
+    setAudienceId(nextId);
+    // Drop the previous preview immediately; the effect below refetches.
+    setAudiencePreview(null);
+    setLastResults(null);
+    const chosen = audienceOptions.find((option) => option.id === nextId);
+    if (chosen) setAudience(chosen.name);
+  }
+
   function payload() {
     return {
       name: name.trim() || (em ? "Untitled email" : "Untitled SMS"),
       objective: objective.trim(),
       audience: audience.trim(),
+      audienceId: recipientMode === "audience" ? audienceId : null,
       subject: em ? subject.trim() || null : null,
       previewText: em ? previewText.trim() || null : null,
       content: content.trim(),
@@ -79,6 +134,10 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
   }
 
   async function saveDraft() {
+    if (recipientMode === "audience" && !audienceId) {
+      setError("Choose an audience (or switch back to a single recipient) before saving this draft.");
+      return;
+    }
     setBusy(true);
     setError("");
     setMessage("");
@@ -97,6 +156,8 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
       }
       setId(data.campaign.id);
       setStatus(data.campaign.status);
+      setRecipientMode(data.campaign.audience_id ? "audience" : "single");
+      setAudienceId(data.campaign.audience_id ?? null);
       if (data.campaign.status !== "approved") {
         setDelivery(null);
       } else {
@@ -171,7 +232,45 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
     }
   }
 
+  async function sendApprovedCampaignToAudience() {
+    if (!id) {
+      setError("Save and approve the campaign before sending it.");
+      return;
+    }
+    if (!audienceId) {
+      setError("Choose an audience before sending.");
+      return;
+    }
+    setSendBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      // Only an explicit confirmation is posted — the server re-resolves the
+      // linked audience itself; no recipient list ever leaves the browser.
+      const response = await fetch(`/api/voom/campaigns/${encodeURIComponent(id)}/delivery`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audienceSend: true }),
+      });
+      const data = await response.json() as { delivery?: CampaignDeliveryView; results?: AudienceSendResults; message?: string; error?: string };
+      if (data.delivery) setDelivery(data.delivery);
+      setLastResults(data.results ?? null);
+      if (!response.ok) {
+        setError(data.error ?? "Voom couldn't send that campaign safely.");
+        return;
+      }
+      setMessage(data.message ?? "The audience send finished.");
+      window.dispatchEvent(new Event("voom:data-changed"));
+      await loadDelivery();
+    } catch {
+      setError("Voom couldn't send that campaign safely. Nothing was simulated.");
+    } finally {
+      setSendBusy(false);
+    }
+  }
+
   const deliveryState = delivery?.state ?? (status === "approved" ? "ready" : null);
+  const selectClass = "h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px] text-text outline-none focus:border-brand focus:bg-surface focus:ring-4 focus:ring-[var(--brand-soft)]";
 
   return (
     <ModalShell wide>
@@ -199,9 +298,72 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
         <Field label={em ? "Objective" : "Purpose"} hint="Why Voom prepared this for you.">
           <Textarea rows={2} maxLength={1000} value={objective} onChange={(e) => setObjective(e.target.value)} placeholder={em ? "Re-engage cold subscribers before the weekend." : "Tell regulars about the restock in one short message."} />
         </Field>
-        <Field label="Audience">
-          <Input value={audience} onChange={(e) => setAudience(e.target.value)} maxLength={1000} placeholder="e.g. All subscribers · segment not connected" />
+
+        <Field label="Send to">
+          <div className="flex w-fit gap-1 rounded-[13px] border border-line bg-surface-2 p-1">
+            <button
+              type="button"
+              onClick={() => setRecipientMode("single")}
+              className={`rounded-[10px] px-4 py-2 text-[13.5px] font-semibold transition ${recipientMode === "single" ? "bg-surface text-text shadow-[var(--shadow)]" : "text-text-2"}`}
+            >Single recipient</button>
+            <button
+              type="button"
+              onClick={() => setRecipientMode("audience")}
+              className={`rounded-[10px] px-4 py-2 text-[13.5px] font-semibold transition ${recipientMode === "audience" ? "bg-surface text-text shadow-[var(--shadow)]" : "text-text-2"}`}
+            >Audience</button>
+          </div>
         </Field>
+
+        {recipientMode === "single" ? (
+          <Field label="Audience">
+            <Input value={audience} onChange={(e) => setAudience(e.target.value)} maxLength={1000} placeholder="e.g. All subscribers · segment not connected" />
+          </Field>
+        ) : (
+          <>
+            <Field label="Audience" hint="Sent only to eligible, subscribed contacts — the audience is re-resolved on the server at send time, never from this browser.">
+              <select className={selectClass} value={audienceId ?? ""} onChange={(e) => chooseAudience(e.target.value || null)}>
+                <option value="">Choose an audience…</option>
+                {audienceOptions.map((option) => (
+                  <option key={option.id} value={option.id}>{option.name}</option>
+                ))}
+              </select>
+            </Field>
+
+            {audienceId && (
+              <Card className="mb-3.5 border-line-2 bg-surface-2 p-3.5">
+                {!audiencePreview ? (
+                  <p className="text-[13px] text-text-3">Checking eligibility on the server…</p>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Tag tone={audiencePreview.eligibleCount > 0 ? "t-green" : "t-amber"}>
+                        {audiencePreview.eligibleCount} eligible {em ? "email" : "SMS"} destination{audiencePreview.eligibleCount === 1 ? "" : "s"}
+                      </Tag>
+                      <Tag>{audiencePreview.totalMembers} contacts in audience</Tag>
+                    </div>
+                    <p className="mt-2 text-[12.5px] leading-[1.55] text-text-2">
+                      Excluded: {audiencePreview.excludedCount} unsubscribed, unknown or missing a valid {em ? "email address" : "phone number"}
+                      {audiencePreview.duplicateCount > 0 ? ` · ${audiencePreview.duplicateCount} duplicate destination${audiencePreview.duplicateCount === 1 ? "" : "s"} removed` : ""}.
+                    </p>
+                    {audiencePreview.overLimitCount > 0 && (
+                      <p className="mt-2 text-[12.5px] font-semibold text-amber">
+                        Up to {audiencePreview.sendCap} recipients are attempted per send — {audiencePreview.overLimitCount} eligible destination{audiencePreview.overLimitCount === 1 ? "" : "s"} will stay queued for a later explicit send.
+                      </p>
+                    )}
+                    {audiencePreview.recipients.length > 0 && (
+                      <ul className="mt-2 space-y-1 font-mono text-[11.5px] text-text-3">
+                        {audiencePreview.recipients.slice(0, 8).map((r) => (
+                          <li key={r.contactId}>{r.contactName ? `${r.contactName} · ` : ""}{r.destination}</li>
+                        ))}
+                        {audiencePreview.recipients.length > 8 && <li>+ {audiencePreview.recipients.length - 8} more…</li>}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </Card>
+            )}
+          </>
+        )}
 
         {em ? (
           <>
@@ -234,7 +396,7 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
           </div>
         </div>
 
-        {status === "approved" && (
+        {status === "approved" && recipientMode === "single" && (
           <Card className="mb-3.5 border-line-2 bg-surface-2 p-3.5">
             <div className="flex flex-wrap items-center gap-2">
               <Tag tone={deliveryState ? deliveryTone(deliveryState) : "t-grey"}>{deliveryState ? deliveryLabel(deliveryState) : "Ready"}</Tag>
@@ -260,6 +422,41 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
           </Card>
         )}
 
+        {status === "approved" && recipientMode === "audience" && (
+          <Card className="mb-3.5 border-line-2 bg-surface-2 p-3.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <Tag tone={deliveryState ? deliveryTone(deliveryState) : "t-grey"}>{deliveryState ? deliveryLabel(deliveryState) : "Ready"}</Tag>
+              <Tag tone={delivery?.provider.configured ? "t-green" : "t-amber"}>{delivery?.provider.label ?? (em ? "Resend" : "ClickSend")}</Tag>
+            </div>
+            <p className="mt-2 text-[13px] leading-[1.55] text-text-2">
+              {delivery?.note ?? "This approved campaign can send to its linked audience when the provider is configured. The audience is re-resolved on the server at send time."}
+            </p>
+            {delivery?.audience && (
+              <p className="mt-2 text-[12.5px] text-text-2">
+                {delivery.audience.audience.name}: {delivery.audience.eligibleCount} eligible of {delivery.audience.totalMembers} contacts
+                {delivery.audience.overLimitCount > 0 ? ` · ${delivery.audience.overLimitCount} over the per-send limit of ${delivery.audience.sendCap}` : ""}.
+              </p>
+            )}
+            {delivery && delivery.sendsSummary.total > 0 && (
+              <p className="mt-2 text-[12.5px] text-text-2">
+                Recorded sends: {delivery.sendsSummary.accepted} accepted · {delivery.sendsSummary.delivered} delivered · {delivery.sendsSummary.failed} failed · {delivery.sendsSummary.sending} in progress. Successful recipients are never resent.
+              </p>
+            )}
+            {lastResults && (
+              <div className="mt-2.5 rounded-xl border border-line p-2.5">
+                <p className="text-[12.5px] font-semibold text-text-2">
+                  Last run: {lastResults.accepted} accepted · {lastResults.failed} failed · {lastResults.skipped} skipped{lastResults.overLimit > 0 ? ` · ${lastResults.overLimit} over the per-send limit of ${lastResults.cap}` : ""}
+                </p>
+                <ul className="mt-1.5 max-h-40 space-y-1 overflow-y-auto font-mono text-[11.5px] text-text-3">
+                  {lastResults.recipients.map((r, index) => (
+                    <li key={`${r.destination}-${index}`}>{r.destination} — {r.status}{r.detail ? ` (${r.detail})` : ""}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </Card>
+        )}
+
         <Card className="border-amber bg-amber/[.08] p-3.5">
           <div className="flex items-start gap-2.5">
             <Icon name="warn" className="mt-0.5 flex-none text-amber" />
@@ -276,14 +473,25 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
         </Btn>
         <div className="flex flex-wrap gap-2.5">
           {status === "approved" ? (
-            <Btn
-              variant="outline"
-              disabled={busy || sendBusy || !id || !recipientContact.trim() || !delivery?.canSend}
-              onClick={() => void sendApprovedCampaign()}
-              title={!delivery?.provider.configured ? `${delivery?.provider.label ?? (em ? "Resend" : "ClickSend")} is not configured on the server yet` : undefined}
-            >
-              <Icon name="send" size={14} /> {sendBusy ? "Sending…" : delivery?.send?.internal_status === "failed" ? `Retry ${em ? "email" : "SMS"}` : `Send approved ${em ? "email" : "SMS"}`}
-            </Btn>
+            recipientMode === "audience" ? (
+              <Btn
+                variant="outline"
+                disabled={busy || sendBusy || !id || !delivery?.canSend}
+                onClick={() => void sendApprovedCampaignToAudience()}
+                title={!delivery?.provider.configured ? `${delivery?.provider.label ?? (em ? "Resend" : "ClickSend")} is not configured on the server yet` : undefined}
+              >
+                <Icon name="send" size={14} /> {sendBusy ? "Sending…" : `Send approved ${em ? "email" : "SMS"} to audience`}
+              </Btn>
+            ) : (
+              <Btn
+                variant="outline"
+                disabled={busy || sendBusy || !id || !recipientContact.trim() || !delivery?.canSend}
+                onClick={() => void sendApprovedCampaign()}
+                title={!delivery?.provider.configured ? `${delivery?.provider.label ?? (em ? "Resend" : "ClickSend")} is not configured on the server yet` : undefined}
+              >
+                <Icon name="send" size={14} /> {sendBusy ? "Sending…" : delivery?.send?.internal_status === "failed" ? `Retry ${em ? "email" : "SMS"}` : `Send approved ${em ? "email" : "SMS"}`}
+              </Btn>
+            )
           ) : (
             <Btn variant="outline" disabled={busy} onClick={() => void markStatus("approve")}>
               Approve for send

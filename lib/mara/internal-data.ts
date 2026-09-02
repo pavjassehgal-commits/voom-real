@@ -74,7 +74,7 @@ export async function getDraft(db: ServerSupabase, ownerId: string, id: string) 
 }
 
 export async function listCampaigns(db: ServerSupabase, ownerId: string, kind?: string) {
-  let query = db.from("voom_campaigns").select("id,kind,name,objective,audience,subject,preview_text,content,proposed_send_at,status,created_at,updated_at")
+  let query = db.from("voom_campaigns").select("id,kind,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,created_at,updated_at")
     .eq("owner_user_id", ownerId).order("updated_at", { ascending: false }).limit(50);
   if (kind) query = query.eq("kind", kind);
   const { data, error } = await query;
@@ -83,7 +83,7 @@ export async function listCampaigns(db: ServerSupabase, ownerId: string, kind?: 
 }
 
 export async function getCampaign(db: ServerSupabase, ownerId: string, id: string) {
-  const { data, error } = await db.from("voom_campaigns").select("id,kind,name,objective,audience,subject,preview_text,content,proposed_send_at,status,created_at,updated_at")
+  const { data, error } = await db.from("voom_campaigns").select("id,kind,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,created_at,updated_at")
     .eq("owner_user_id", ownerId).eq("id", id).maybeSingle();
   if (error) throw new Error("campaign_unavailable");
   return data;
@@ -91,28 +91,28 @@ export async function getCampaign(db: ServerSupabase, ownerId: string, id: strin
 
 export async function createCampaign(db: ServerSupabase, ownerId: string, input: Record<string, unknown>) {
   const { data, error } = await db.from("voom_campaigns").insert({ ...input, owner_user_id: ownerId, status: "draft" })
-    .select("id,kind,name,objective,audience,subject,preview_text,content,proposed_send_at,status,created_at,updated_at").single();
+    .select("id,kind,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,created_at,updated_at").single();
   if (error) throw new Error("campaign_create_failed");
   return data;
 }
 
 export async function updateCampaign(db: ServerSupabase, ownerId: string, id: string, input: Record<string, unknown>) {
   const { data, error } = await db.from("voom_campaigns").update({ ...input, status: "draft" }).eq("owner_user_id", ownerId).eq("id", id)
-    .select("id,kind,name,objective,audience,subject,preview_text,content,proposed_send_at,status,created_at,updated_at").maybeSingle();
+    .select("id,kind,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,created_at,updated_at").maybeSingle();
   if (error) throw new Error("campaign_update_failed");
   return data;
 }
 
 export async function approveCampaign(db: ServerSupabase, ownerId: string, id: string) {
   const { data, error } = await db.from("voom_campaigns").update({ status: "approved" }).eq("owner_user_id", ownerId).eq("id", id)
-    .select("id,kind,name,objective,audience,subject,preview_text,content,proposed_send_at,status,created_at,updated_at").maybeSingle();
+    .select("id,kind,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,created_at,updated_at").maybeSingle();
   if (error) throw new Error("campaign_approve_failed");
   return data;
 }
 
 export async function rejectCampaign(db: ServerSupabase, ownerId: string, id: string) {
   const { data, error } = await db.from("voom_campaigns").update({ status: "rejected" }).eq("owner_user_id", ownerId).eq("id", id)
-    .select("id,kind,name,objective,audience,subject,preview_text,content,proposed_send_at,status,created_at,updated_at").maybeSingle();
+    .select("id,kind,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,created_at,updated_at").maybeSingle();
   if (error) throw new Error("campaign_reject_failed");
   return data;
 }
