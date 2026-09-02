@@ -98,6 +98,66 @@ export interface ListAudiencesOptions {
   offset?: number;
 }
 
+// ─── Channel eligibility (campaign sends) ──────────────────────────────────
+
+export type ContactChannel = "email" | "sms";
+
+export interface ChannelEligibilityInput {
+  email: string | null;
+  phone: string | null;
+  email_status: ConsentStatus;
+  sms_status: ConsentStatus;
+}
+
+export interface ChannelEligibilitySummary<T extends ChannelEligibilityInput> {
+  /** One entry per unique eligible destination; first occurrence wins. */
+  eligible: Array<{ contact: T; destination: string }>;
+  /** Not eligible: unsubscribed, unknown, or missing/invalid destination. */
+  excluded: T[];
+  /** Eligible but dropped: another contact already holds this destination. */
+  duplicates: T[];
+}
+
+export interface EligibleAudienceRecipient {
+  contactId: string;
+  /** Full raw destination. Server-only — never expose to the browser. */
+  destination: string;
+  /** Masked display form, safe for the browser. */
+  masked: string;
+  contactName: string | null;
+}
+
+export interface AudienceChannelEligibility {
+  audience: AudienceRecord;
+  channel: ContactChannel;
+  totalMembers: number;
+  eligibleCount: number;
+  excludedCount: number;
+  duplicateCount: number;
+  eligible: EligibleAudienceRecipient[];
+}
+
+/**
+ * Browser-safe eligibility preview: destinations are masked, never raw.
+ * `sendCap`/`overLimitCount` describe the per-send recipient limit.
+ */
+export interface AudienceEligibilityPreview {
+  audience: { id: string; name: string; type: AudienceType };
+  channel: ContactChannel;
+  totalMembers: number;
+  eligibleCount: number;
+  excludedCount: number;
+  duplicateCount: number;
+  sendCap: number;
+  overLimitCount: number;
+  recipients: Array<{
+    contactId: string;
+    /** Masked destination only. */
+    destination: string;
+    contactName: string | null;
+  }>;
+}
+
 // ─── Result types ──────────────────────────────────────────────────────────
 
 export type ContactsResult<T> =

@@ -9,6 +9,9 @@ import type {
   CreateAudienceInput,
   ContactsError,
   AudienceType,
+  ContactChannel,
+  ChannelEligibilityInput,
+  ChannelEligibilitySummary,
 } from "./types";
 
 // ─── Email normalization ────────────────────────────────────────────────────
@@ -220,4 +223,93 @@ export function isDuplicateConstraint(
     return (error.message ?? "").includes(constraintName);
   }
   return true;
+}
+
+// ─── Channel eligibility for campaign sends ────────────────────────────────
+//
+// Pure eligibility rules shared by the audience preview and the send-time
+// re-resolution, so the browser never decides who receives a campaign.
+
+// Matches the 0018 campaign_recipients contact check for email.
+const EMAIL_DESTINATION_RE = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
+
+/**
+ * The destination a contact may receive a campaign on for the given channel,
+ * or null when the contact is not eligible.
+ *
+ * - Email requires email_status "subscribed" AND a valid email address.
+ * - SMS requires sms_status "subscribed" AND a valid E.164 phone number.
+ * - "unknown" and "unsubscribed" are never eligible for either channel.
+ */
+export function channelEligibleDestination(
+  contact: ChannelEligibilityInput,
+  channel: ContactChannel
+): string | null {
+  if (channel === "email") {
+    if (contact.email_status !== "subscribed") return null;
+    const email = normalizeEmail(contact.email);
+    if (!email || !EMAIL_DESTINATION_RE.test(email)) return null;
+    return email;
+  }
+  if (contact.sms_status !== "subscribed") return null;
+  const phone = contact.phone?.trim() ?? null;
+  if (!phone || !isValidE164(phone)) return null;
+  return phone;
+}
+
+/**
+ * Split resolved audience contacts into eligible destinations, excluded
+ * contacts (unsubscribed, unknown, or missing/invalid destination), and
+ * duplicates (eligible, but another contact already holds the same
+ * destination — first occurrence wins). Destinations are normalized, so the
+ * same address in different letter-cases is deduped to a single send.
+ */
+export function computeChannelEligibility<T extends ChannelEligibilityInput>(
+  contacts: readonly T[],
+  channel: ContactChannel
+): ChannelEligibilitySummary<T> {
+  const seen = new Set<string>();
+  const eligible: Array<{ contact: T; destination: string }> = [];
+  const excluded: T[] = [];
+  const duplicates: T[] = [];
+
+  for (const contact of contacts) {
+    const destination = channelEligibleDestination(contact, channel);
+    if (!destination) {
+      excluded.push(contact);
+      continue;
+    }
+    if (seen.has(destination)) {
+      duplicates.push(contact);
+      continue;
+    }
+    seen.add(destination);
+    eligible.push({ contact, destination });
+  }
+
+  return { eligible, excluded, duplicates };
+}
+
+/**
+ * Mask a destination for display. The masked form must never let the raw
+ * address or phone number be recovered: emails keep a two-letter local hint,
+ * a one-letter domain hint and the TLD; phones keep a two-digit country hint
+ * and the last two digits.
+ */
+export function maskDestination(destination: string): string {
+  const value = destination.trim();
+  if (!value) return "";
+  if (value.includes("@")) {
+    const [localRaw = "", ...domainParts] = value.split("@");
+    const local = localRaw.toLowerCase();
+    const domain = domainParts.join("@").toLowerCase();
+    const [domainName = "", ...tldParts] = domain.split(".");
+    const tld = tldParts.join(".");
+    const maskedLocal = `${local.slice(0, Math.min(2, local.length))}…`;
+    const maskedDomain = `${domainName.slice(0, 1)}…${tld ? `.${tld}` : ""}`;
+    return `${maskedLocal}@${maskedDomain}`;
+  }
+  const digits = value.replace(/[^0-9]/g, "");
+  if (digits.length < 4) return "+••••";
+  return `+${digits.slice(0, 2)}••••${digits.slice(-2)}`;
 }

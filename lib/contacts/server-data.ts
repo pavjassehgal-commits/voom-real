@@ -7,6 +7,8 @@ import {
   validateCreateAudience,
   normalizeContactInput,
   isDuplicateConstraint,
+  computeChannelEligibility,
+  maskDestination,
 } from "./core";
 import type {
   ContactRecord,
@@ -19,6 +21,8 @@ import type {
   UpdateAudienceInput,
   ListAudiencesOptions,
   ContactsResult,
+  ContactChannel,
+  AudienceChannelEligibility,
 } from "./types";
 
 // ─── Contacts ──────────────────────────────────────────────────────────────
@@ -418,4 +422,80 @@ export async function resolveAudienceContacts(
     .filter(Boolean) as ContactRecord[];
 
   return { ok: true, data: contacts };
+}
+
+// ─── Channel eligibility for campaign sends ────────────────────────────────
+
+/**
+ * Resolve an audience and compute channel-aware eligibility in one step.
+ * Ownership is re-validated here (owner-scoped audience lookup), so the send
+ * path can re-resolve the audience at send time without trusting the client.
+ *
+ * Eligibility rules: email requires subscribed + valid email; SMS requires
+ * subscribed + valid E.164 phone. Unknown/unsubscribed are excluded and
+ * duplicate destinations are deduped. No sending is performed here.
+ *
+ * The returned eligible destinations are raw and server-only — callers that
+ * answer browser requests must only ever return the masked form.
+ */
+export async function resolveAudienceChannelEligibility(
+  db: SupabaseClient,
+  ownerId: string,
+  audienceId: string,
+  channel: ContactChannel
+): Promise<ContactsResult<AudienceChannelEligibility>> {
+  if (channel !== "email" && channel !== "sms") {
+    return {
+      ok: false,
+      error: { code: "validation_error", message: "Channel must be email or sms." },
+    };
+  }
+
+  // Fetch the audience first: owner-scoped, so this doubles as the ownership
+  // check for both the preview and the send-time re-resolution.
+  const { data: audience, error: audienceError } = await db
+    .from("audiences")
+    .select("*")
+    .eq("owner_id", ownerId)
+    .eq("id", audienceId)
+    .maybeSingle();
+
+  if (audienceError) {
+    return { ok: false, error: { code: "db_error", message: audienceError.message } };
+  }
+  if (!audience) {
+    return {
+      ok: false,
+      error: { code: "not_found", message: "Audience not found." },
+    };
+  }
+
+  const resolved = await resolveAudienceContacts(db, ownerId, audienceId);
+  if (!resolved.ok) return resolved;
+
+  const summary = computeChannelEligibility(resolved.data, channel);
+  const eligible = summary.eligible.map(({ contact, destination }) => ({
+    contactId: contact.id,
+    destination,
+    masked: maskDestination(destination),
+    contactName:
+      [contact.first_name, contact.last_name].filter(Boolean).join(" ") || null,
+  }));
+
+  // Deterministic order by destination so the per-send cap and retries are
+  // stable across requests.
+  eligible.sort((a, b) => a.destination.localeCompare(b.destination));
+
+  return {
+    ok: true,
+    data: {
+      audience: audience as AudienceRecord,
+      channel,
+      totalMembers: resolved.data.length,
+      eligibleCount: eligible.length,
+      excludedCount: summary.excluded.length,
+      duplicateCount: summary.duplicates.length,
+      eligible,
+    },
+  };
 }
