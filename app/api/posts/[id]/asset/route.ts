@@ -1,8 +1,5 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
-import {
-  allowedAssetKindsFor, isPostDraftKind, isPostOrigin, normalizePostFormat, postAssetKindForMime,
-  type PostFormat, type PostOrigin,
-} from "@/lib/post/core";
+import { allowedAssetKindsFor, isPostDraftKind, isPostOrigin, postAssetKindForMime, type PostOrigin } from "@/lib/post/core";
 import { POST_ASSET_MAX_BYTES, describeAllowedKinds, detectPostAsset, safePostAssetName } from "@/lib/post/asset";
 import { deletePostAsset, getPostDraft, putPostAsset, removePostAssetObject } from "@/lib/post/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
@@ -52,16 +49,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return Response.json({ error: `This ${wanted === "video" ? "Reel" : "Instagram Post"} needs ${describeAllowedKinds(allowed)}.` }, { status: 400 });
   }
 
-  const rawFormat = form.get("format");
-  const format: PostFormat = normalizePostFormat(typeof rawFormat === "string" ? rawFormat : post.format);
-
+  // The format is deliberately NOT read from the upload: the draft's persisted
+  // format is the source of truth, so an upload can never overwrite it.
   try {
     const { storagePath, previousStoragePath } = await putPostAsset(admin, user.id, id, {
       bytes,
       mimeType: detected.mimeType,
       extension: detected.extension,
       displayName: safePostAssetName(file.name),
-      format,
       origin,
     });
     // Only drop the replaced object, and never the one just written.

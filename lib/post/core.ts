@@ -69,6 +69,53 @@ export function isPostDraftKind(value: unknown): value is PostDraftKind {
   return value === POST_DRAFT_KIND || value === REEL_DRAFT_KIND;
 }
 
+// ---------------------------------------------------------------------------
+// Persisting the selected format on the draft itself
+//
+// mara_drafts has no JSON column and no free metadata column, so the selected
+// format is encoded into mara_drafts.channel — a free-form label constrained
+// only to 1-60 characters, with no enum, no foreign key, and nothing in the
+// codebase that filters mara_drafts by channel. This keeps the choice alive on
+// the draft even when no visual exists yet, and needs no schema migration.
+//
+// The draft's channel is the single source of truth for format. The mirrored
+// post_draft_assets.format column is written from it and never read back, so
+// the two can never disagree.
+// ---------------------------------------------------------------------------
+
+export const POST_CHANNEL_SEPARATOR = " · ";
+
+/** The clean channel label, matching what the rest of Voom writes. */
+export function baseChannelFor(kind: string): "Instagram" | "Reel" {
+  return kind === REEL_DRAFT_KIND ? "Reel" : "Instagram";
+}
+
+/** Encodes the selected format into the free-form mara_drafts.channel label. */
+export function encodeDraftChannel(kind: string, format: PostFormat): string {
+  return `${baseChannelFor(kind)}${POST_CHANNEL_SEPARATOR}${normalizePostFormat(format)}`;
+}
+
+/** Strips the encoded format back off, leaving the clean channel label. */
+export function baseChannelFromDraftChannel(channel: string | null | undefined): string {
+  const value = String(channel ?? "").trim();
+  const base = value.split(POST_CHANNEL_SEPARATOR)[0]?.trim();
+  return base || "Instagram";
+}
+
+/**
+ * Reads the persisted format back out of mara_drafts.channel.
+ *
+ * Deliberately tolerant for backward compatibility: drafts written before this
+ * change carry a bare "Instagram" or "Reel" with no encoded format, and any
+ * unrecognised value falls back to 1:1 rather than throwing.
+ */
+export function decodeDraftFormat(channel: string | null | undefined, fallback: PostFormat = "1:1"): PostFormat {
+  const value = String(channel ?? "");
+  const segments = value.split(POST_CHANNEL_SEPARATOR);
+  const encoded = segments[segments.length - 1]?.trim();
+  return isPostFormat(encoded) ? encoded : normalizePostFormat(fallback, "1:1");
+}
+
 export function isPostOrigin(value: unknown): value is PostOrigin {
   return typeof value === "string" && (POST_ORIGINS as readonly string[]).includes(value);
 }

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createAiProvider, AiError } from "@/lib/ai";
 import { createMediaProvider, getMediaConfig, MediaError } from "@/lib/media";
 import { getCurrentUser } from "@/lib/voom/server-data";
-import { composePostCaption, normalizePostFormat } from "@/lib/post/core";
+import { composePostCaption } from "@/lib/post/core";
 import { buildPostContextPayload, POST_COPY_SYSTEM_PROMPT, postDraftSchema } from "@/lib/post/prompt";
 import { getPostDraft, loadPostBrandContext, loadPostPlanContext, putPostAsset, removePostAssetObject } from "@/lib/post/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
@@ -29,9 +29,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   let brief = "";
   try {
-    const body = await request.json() as { brief?: unknown; format?: unknown };
+    const body = await request.json() as { brief?: unknown };
     if (typeof body.brief === "string") brief = body.brief.trim().slice(0, 800);
-    if (body.format === "1:1" || body.format === "4:5") await setFormat(createAdminClient(), user.id, id, body.format);
   } catch { /* an empty body is fine */ }
 
   const admin = createAdminClient();
@@ -78,8 +77,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     .eq("owner_user_id", user.id).eq("id", id);
   if (copyError) return Response.json({ error: "MARA wrote the copy but Voom couldn't save it. Please retry." }, { status: 503 });
 
-  // 2) Then the visual, through the existing provider abstraction.
-  const format = normalizePostFormat(post.format);
+  // 2) Then the visual, through the existing provider abstraction. The format
+  // is read from the draft, so generating cannot change the user's choice.
+  const format = post.format;
   const generationId = randomUUID();
   const { error: queuedError } = await admin.from("mara_media_generations").insert({
     id: generationId,
@@ -106,7 +106,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       mimeType: result.mimeType,
       extension,
       displayName: `MARA visual · ${copy.concept.slice(0, 60)}`,
-      format,
       origin: "mara",
     });
 
@@ -146,6 +145,4 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
 }
 
-async function setFormat(admin: ReturnType<typeof createAdminClient>, ownerId: string, draftId: string, format: "1:1" | "4:5") {
-  await admin.from("post_draft_assets").update({ format }).eq("owner_user_id", ownerId).eq("draft_id", draftId);
-}
+

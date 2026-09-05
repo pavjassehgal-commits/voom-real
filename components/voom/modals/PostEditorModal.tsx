@@ -115,8 +115,22 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
     const form = new FormData();
     form.set("file", file);
     form.set("origin", origin);
-    form.set("format", format);
+    // No format is sent: the draft's persisted format wins, so an upload can
+    // never change the framing the user chose.
     await send(`${endpoint}/asset`, { method: "POST", body: form }, "upload", "Stored privately in Voom.");
+  }
+
+  /**
+   * The format is persisted on the draft immediately, so it survives a reload
+   * even when this post has no visual yet.
+   */
+  async function chooseFormat(value: PostFormat) {
+    setFormat(value);
+    await send(endpoint, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save", format: value }),
+    }, "format", `Format set to ${value}.`);
   }
 
   const isPost = post?.kind === "instagram_post";
@@ -171,16 +185,19 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
 
               <div className="mt-3.5">
                 <h3 className="mb-1.5 text-xs font-semibold text-text-2">Format</h3>
+                <p className="mb-1.5 text-[11px] leading-relaxed text-text-3">
+                  Saved with the draft, so it is still {format} when you come back — even before a visual exists.
+                </p>
                 <div className="flex flex-wrap gap-1.5">
                   {POST_FORMATS.map((value) => (
-                    <Chip key={value} active={format === value} onClick={() => setFormat(value)}>{value}</Chip>
+                    <Chip key={value} active={format === value} onClick={() => void chooseFormat(value)}>{value}</Chip>
                   ))}
                 </div>
               </div>
 
               <div className="mt-3.5 space-y-2">
                 {isPost && !post.visualReady ? (
-                  <Btn variant="primary" size="sm" block disabled={busy === "mara"} onClick={() => void send(`${endpoint}/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ format }) }, "mara", "MARA created this post.")}>
+                  <Btn variant="primary" size="sm" block disabled={busy === "mara"} onClick={() => void send(`${endpoint}/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }, "mara", "MARA created this post.")}>
                     <Icon name="spark" size={14} /> {busy === "mara" ? "MARA is working…" : "Create with MARA"}
                   </Btn>
                 ) : null}

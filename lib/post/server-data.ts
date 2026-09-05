@@ -3,9 +3,10 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { createAdminClient } from "@/utils/supabase/admin";
 import {
-  assetOriginFor, calendarChannelFor, calendarStatusFor, composePostCaption, internalPostState,
-  isPostDraftKind, normalizePostFormat, originForAsset, postTypeLabel, splitPostCaption,
-  type PostDraftKind, type PostFormat, type PostInternalState, type PostOrigin, POST_STATE_LABELS,
+  assetOriginFor, calendarChannelFor, calendarStatusFor, composePostCaption, decodeDraftFormat,
+  encodeDraftChannel, internalPostState, isPostDraftKind, originForAsset, postTypeLabel,
+  splitPostCaption, type PostDraftKind, type PostFormat, type PostInternalState, type PostOrigin,
+  POST_STATE_LABELS,
 } from "./core";
 
 export const POST_ASSET_BUCKET = "mara-media";
@@ -87,11 +88,14 @@ export async function createPostDraft(admin: AdminClient, ownerId: string, input
   if (!isPostDraftKind(input.kind)) throw new Error("post_kind_invalid");
   const conversationId = await ensureStudioConversation(admin, ownerId);
   const caption = composePostCaption({ caption: input.caption ?? "", cta: input.cta, hashtags: input.hashtags });
+  const format = normalizeFormatInput(input.format);
   const { data, error } = await admin.from("mara_drafts").insert({
     conversation_id: conversationId,
     owner_user_id: ownerId,
     kind: input.kind,
-    channel: input.kind === "reel" ? "Reel" : "Instagram",
+    // The selected format is encoded here so it survives even when no visual
+    // exists yet. mara_drafts has no JSON column and no free metadata column.
+    channel: encodeDraftChannel(input.kind, format),
     title: input.concept.trim().slice(0, 160),
     // mara_drafts.content is NOT NULL and must be at least one character, so a
     // caption-less post is stored with its concept until the user writes one.
@@ -141,7 +145,10 @@ export async function toPostView(
   const scheduledAt = typeof draft.proposed_publish_at === "string" ? draft.proposed_publish_at : null;
   const parts = splitPostCaption(String(draft.content ?? ""));
   const origin = originForAsset(asset?.origin as string | undefined);
-  const format = normalizePostFormat(asset?.format);
+  // The draft is the single source of truth for format. asset.format is a
+  // mirror written from it and is deliberately never read back here, so the
+  // draft and the asset metadata cannot disagree.
+  const format = decodeDraftFormat(draft.channel as string | undefined);
   const state = internalPostState({ status: String(draft.status ?? "draft"), scheduledAt, hasVisual });
   const calendarItemId = await findCalendarItemId(admin, ownerId, String(draft.id));
   return {
@@ -205,22 +212,33 @@ export async function savePostDraft(admin: AdminClient, ownerId: string, draftId
   const hashtags = input.hashtags !== undefined ? input.hashtags : existing.hashtags;
   const composed = composePostCaption({ caption, cta, hashtags });
   const scheduledAt = input.scheduledAt !== undefined ? input.scheduledAt : existing.scheduledAt;
+  const nextFormat = input.format !== undefined ? normalizeFormatInput(input.format) : existing.format;
   const patch: Record<string, unknown> = {
     title: concept,
     content: (composed || concept).slice(0, 12000),
     proposed_publish_at: scheduledAt,
+    // Format is persisted on the draft itself, so it is not lost when the post
+    // has no visual. See encodeDraftChannel.
+    channel: encodeDraftChannel(existing.kind, nextFormat),
   };
   const { data, error } = await admin.from("mara_drafts").update(patch)
     .eq("owner_user_id", ownerId).eq("id", draftId).select("id").maybeSingle();
   if (error || !data) throw new Error("post_update_failed");
-  if (input.format !== undefined) await setAssetFormat(admin, ownerId, draftId, input.format);
+  await mirrorAssetFormat(admin, ownerId, draftId, nextFormat);
   return syncPostToCalendar(admin, ownerId, draftId);
 }
 
-async function setAssetFormat(admin: AdminClient, ownerId: string, draftId: string, format: PostFormat) {
-  // Updating the display format never rewrites the stored bytes.
+/**
+ * Keeps the mirrored asset column equal to the draft's format so the two can
+ * never drift apart. Never touches the stored bytes.
+ */
+async function mirrorAssetFormat(admin: AdminClient, ownerId: string, draftId: string, format: PostFormat) {
   await admin.from(POST_ASSET_TABLE).update({ format })
     .eq("owner_user_id", ownerId).eq("draft_id", draftId);
+}
+
+function normalizeFormatInput(value: unknown): PostFormat {
+  return value === "4:5" ? "4:5" : "1:1";
 }
 
 /** Approves a post. Approval saves state only; nothing is published. */
@@ -264,9 +282,14 @@ export async function syncPostToCalendar(admin: AdminClient, ownerId: string, dr
  * not own. Returns the previous storage path so the caller can delete it.
  */
 export async function putPostAsset(admin: AdminClient, ownerId: string, draftId: string, input: {
-  bytes: Uint8Array; mimeType: string; extension: string; displayName: string;
-  format: PostFormat; origin: PostOrigin;
+  bytes: Uint8Array; mimeType: string; extension: string; displayName: string; origin: PostOrigin;
 }): Promise<{ storagePath: string; previousStoragePath: string | null }> {
+  // The format is taken from the draft, never from the caller. Uploading or
+  // generating a visual therefore cannot change the user's chosen format.
+  const { data: draftRow } = await admin.from("mara_drafts").select("channel")
+    .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
+  if (!draftRow) throw new Error("post_draft_missing");
+  const format = decodeDraftFormat(draftRow.channel as string | undefined);
   const digest = createHash("sha256").update(input.bytes).digest("hex").slice(0, 16);
   const storagePath = `${ownerId}/post-assets/${digest}-${draftId}.${input.extension}`;
   // The path is derived from the content digest and the draft, so re-uploading
@@ -285,7 +308,8 @@ export async function putPostAsset(admin: AdminClient, ownerId: string, draftId:
     display_name: input.displayName.slice(0, 180),
     mime_type: input.mimeType,
     byte_size: input.bytes.length,
-    format: input.format,
+    // Mirrored from the draft so the two records cannot disagree.
+    format,
     origin: assetOriginFor(input.origin),
     status: "uploaded",
   };
