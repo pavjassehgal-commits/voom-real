@@ -22,6 +22,7 @@ export const NAV: NavGroup[] = [
   {
     g: "Content",
     items: [
+      { id: "studio", n: "Create Content", i: "plus" },
       { id: "calendar", n: "Content Calendar", i: "cal" },
       { id: "reels", n: "Content Studio", i: "film" },
       { id: "campaigns", n: "Campaigns", i: "mail" },
@@ -47,6 +48,7 @@ export const NAV: NavGroup[] = [
 
 export const TITLES: Record<string, string> = {
   today: "Today",
+  studio: "Create Content",
   approvals: "Approvals",
   plan: "Marketing Plan",
   calendar: "Content Calendar",
