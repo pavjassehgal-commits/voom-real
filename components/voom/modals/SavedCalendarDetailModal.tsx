@@ -11,6 +11,7 @@ interface CalendarDetail {
   content: string;
   publishAt: string;
   status: string;
+  contentType: string | null;
   source: string | null;
   createdAt: string;
   updatedAt: string;
@@ -40,7 +41,7 @@ export function SavedCalendarDetailModal({ itemId }: { itemId: string }) {
   return (
     <ModalShell>
       <ModalHead
-        title={item ? <><Tag tone="t-grey" className="mb-2">{item.channel}</Tag><div>{item.title}</div></> : "Calendar item"}
+        title={item ? <><span className="mb-2 flex flex-wrap gap-1.5">{item.contentType ? <Tag tone="t-brand">{item.contentType}</Tag> : null}<Tag tone="t-grey">{item.channel}</Tag></span><div>{item.title}</div></> : "Calendar item"}
         sub={item ? formatDateTime(item.publishAt) : "Loading final saved content…"}
         onClose={close}
       />
@@ -53,7 +54,9 @@ export function SavedCalendarDetailModal({ itemId }: { itemId: string }) {
             <Detail label="Scheduled for"><p className="text-sm font-semibold">{formatDateTime(item.publishAt)}</p></Detail>
             <Detail label="Internal status"><Tag tone={statusTone(item.status)}>{statusLabel(item.status)}</Tag></Detail>
           </div>
-          {item.source ? <Detail label="Source"><p className="text-sm text-text-2">{item.source}</p></Detail> : null}
+          {item.contentType
+            ? <Detail label="Content type"><p className="text-sm text-text-2">{item.contentType} · created in Voom</p></Detail>
+            : item.source ? <Detail label="Source"><p className="text-sm text-text-2">{item.source}</p></Detail> : null}
           <div className="grid gap-3 border-t border-line pt-4 text-xs text-text-3 sm:grid-cols-2">
             <p><b className="text-text-2">Created</b><br />{formatDateTime(item.createdAt)}</p>
             <p><b className="text-text-2">Last updated</b><br />{formatDateTime(item.updatedAt)}</p>

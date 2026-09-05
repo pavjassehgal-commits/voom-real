@@ -6,6 +6,7 @@ import { useModal } from "@/lib/voom/modal";
 import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { ComposeModal } from "@/components/voom/modals/ComposeModal";
+import { CreateContentModal } from "@/components/voom/modals/CreateContentModal";
 import { PostDetailModal } from "@/components/voom/modals/PostDetailModal";
 import { SavedCalendarDetailModal } from "@/components/voom/modals/SavedCalendarDetailModal";
 import { Btn, Card, Chip, IconBtn, Tag } from "@/components/voom/ui/primitives";
@@ -21,7 +22,7 @@ export default function CalendarPage() {
   const { calMonth, calYear, calFilter, posts } = useVoomState();
   const { calMove, calToday, setCalFilter, goTo } = useVoomActions();
   const { open } = useModal();
-  const [savedItems, setSavedItems] = useState<Array<{ id: string; title: string; channel: string; publish_at: string; status: string }>>([]);
+  const [savedItems, setSavedItems] = useState<Array<{ id: string; title: string; channel: string; publish_at: string; status: string; contentType: string | null }>>([]);
   const [calendarError, setCalendarError] = useState<string | null>(null);
 
   const loadSavedItems = useCallback(async () => {
@@ -56,7 +57,7 @@ export default function CalendarPage() {
     const saved = savedItems.filter((item) => { const date = new Date(item.publish_at); const filter = calFilter === "All" || item.channel === calFilter || (calFilter === "Feed" && item.channel === "Instagram"); return date.getFullYear() === calYear && date.getMonth() === calMonth && date.getDate() === d && filter; });
     return [
       ...demo.map((item) => ({ source: "demo" as const, key: `demo-${posts.indexOf(item)}`, label: item.t.includes("· ") ? item.t.split("· ")[1] : item.t, color: item.c, index: posts.indexOf(item) })),
-      ...saved.map((item) => ({ source: "saved" as const, key: item.id, label: item.title, color: "#e8481f", index: -1 })),
+      ...saved.map((item) => ({ source: "saved" as const, key: item.id, label: item.contentType ? `${item.contentType} · ${item.title}` : item.title, color: item.contentType === "Reel" ? "#7c3aed" : item.contentType === "Existing content" ? "#0f766e" : "#e8481f", index: -1 })),
     ];
   }
 
@@ -74,6 +75,9 @@ export default function CalendarPage() {
           <>
             <Btn variant="outline" size="sm" onClick={() => goTo("plan")}>
               <Icon name="spark" size={14} /> Review weekly plan
+            </Btn>
+            <Btn variant="outline" size="sm" onClick={() => open(<CreateContentModal onChanged={() => void loadSavedItems()} />)}>
+              <Icon name="ig" size={14} /> Create content
             </Btn>
             <Btn variant="primary" size="sm" onClick={() => open(<ComposeModal />)}>
               <Icon name="plus" size={14} /> New post

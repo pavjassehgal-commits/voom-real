@@ -47,6 +47,7 @@ const NAV_PATHS: Record<string, string> = {
   today: "/app/today",
   approvals: "/app/approvals",
   plan: "/app/plan",
+  studio: "/app/studio",
   calendar: "/app/calendar",
   reels: "/app/reels",
   campaigns: "/app/campaigns",

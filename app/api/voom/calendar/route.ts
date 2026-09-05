@@ -1,5 +1,7 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createCalendarItem, listCalendarItems } from "@/lib/mara/internal-data";
+import { resolveCalendarContentTypes } from "@/lib/post/server-data";
+import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
 import { z } from "zod";
 
@@ -21,7 +23,18 @@ export async function GET(request: Request) {
   const channel = url.searchParams.get("channel") || undefined;
   if (!start || !end || Number.isNaN(Date.parse(start)) || Number.isNaN(Date.parse(end))) return Response.json({ error: "Choose a valid date range." }, { status: 400 });
   try {
-    return Response.json({ items: await listCalendarItems(await createClient(), user.id, { start: new Date(start).toISOString(), end: new Date(end).toISOString(), channel }) });
+    const items = await listCalendarItems(await createClient(), user.id, { start: new Date(start).toISOString(), end: new Date(end).toISOString(), channel });
+    // Post Studio entries carry a content type (Instagram Post / Reel /
+    // Existing content) so the calendar can tell them apart.
+    const labels = await resolveCalendarContentTypes(
+      createAdminClient(), user.id, items.map((item) => item.source_draft_id as string | null),
+    );
+    return Response.json({
+      items: items.map((item) => ({
+        id: item.id, title: item.title, channel: item.channel, publish_at: item.publish_at, status: item.status,
+        contentType: labels.get(String(item.source_draft_id)) ?? null,
+      })),
+    });
   } catch {
     return Response.json({ error: "The calendar couldn't load. Please retry." }, { status: 503 });
   }

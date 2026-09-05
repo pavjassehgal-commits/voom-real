@@ -40,10 +40,13 @@ test("0020 changes no 0018/0019 table semantics", async () => {
   assert.doesNotMatch(sql, /\bgrant\b|\brevoke\b/i);
 });
 
-test("there is no migration 0021 and 0018/0019 remain untouched", async () => {
+test("0020 is the last audience migration, 0018/0019 remain untouched, and there is no 0022", async () => {
   const files = await readdir(new URL("supabase/migrations/", root));
   assert.ok(files.includes("0020_audience_campaigns.sql"));
-  assert.ok(!files.some((name) => /^0021_/.test(name)), "no 0021 migration may exist");
   assert.ok(files.includes("0018_email_sms_delivery.sql"));
   assert.ok(files.includes("0019_contacts_audiences.sql"));
+  // 0021 is the Instagram Post Studio schema and is already applied in
+  // production, so it is checked in but never re-run. Post Studio deliberately
+  // stops there: no 0022 may be introduced.
+  assert.ok(!files.some((name) => /^0022_/.test(name)), "no 0022 migration may exist");
 });
