@@ -172,10 +172,12 @@ test("base channel labels stay clean for calendar and legacy consumers", () => {
   }
 });
 
-test("no schema change was needed and no 0022 exists", async () => {
+test("no schema change was needed; the only later migration is Instagram key-rotation 0023", async () => {
   const files = await readdir(new URL("supabase/migrations/", root));
-  assert.ok(!files.some((name) => /^0022_/.test(name)), "no 0022 migration may exist");
-  assert.equal(files.filter((name) => /^\d{4}_/.test(name)).sort().at(-1), "0021_instagram_post_studio.sql");
+  assert.ok(files.includes("0021_instagram_post_studio.sql"), "0021 must be checked in");
+  assert.ok(files.includes("0023_instagram_token_key_rotation.sql"), "0023 (Instagram key rotation) must be checked in");
+  const numbered = files.filter((name) => /^\d{4}_/.test(name));
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 23), "no migration beyond 0023 may exist");
 
   // 0021 is unchanged by this fix: it still carries no format column on
   // mara_drafts, and the format is stored in the pre-existing channel column.

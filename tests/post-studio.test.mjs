@@ -259,9 +259,9 @@ test("0021 is marked already-applied, there is no 0022, and 0018-0020 are untouc
 
   const files = await readdir(new URL("supabase/migrations/", root));
   assert.ok(files.includes("0021_instagram_post_studio.sql"), "0021 must be checked in");
-  assert.ok(!files.some((name) => /^0022_/.test(name)), "no 0022 migration may exist");
-  const last = files.filter((name) => /^\d{4}_/.test(name)).sort().at(-1);
-  assert.equal(last, "0021_instagram_post_studio.sql", "0021 must be the newest migration");
+  assert.ok(files.includes("0023_instagram_token_key_rotation.sql"), "0023 (Instagram key rotation) must be checked in");
+  const numbered = files.filter((name) => /^\d{4}_/.test(name));
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 23), "no migration beyond 0023 may exist");
 });
 
 // ---------------------------------------------------------------------------

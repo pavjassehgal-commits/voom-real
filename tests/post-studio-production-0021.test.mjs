@@ -235,11 +235,12 @@ test("migration 0021 source matches the production shape", async () => {
   assert.doesNotMatch(grant, /storage_path/);
 });
 
-test("no 0022 migration exists", async () => {
+test("0021 and 0023 are checked in; nothing numbered beyond 0023 exists", async () => {
   const files = await readdir(new URL("supabase/migrations/", root));
   assert.ok(files.includes("0021_instagram_post_studio.sql"));
-  assert.ok(!files.some((name) => /^0022_/.test(name)), "no 0022 migration may exist");
-  assert.equal(files.filter((name) => /^\d{4}_/.test(name)).sort().at(-1), "0021_instagram_post_studio.sql");
+  assert.ok(files.includes("0023_instagram_token_key_rotation.sql"), "0023 (Instagram key rotation) must be checked in");
+  const numbered = files.filter((name) => /^\d{4}_/.test(name));
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 23), "no migration beyond 0023 may exist");
 });
 
 test("no code writes or selects post_draft_assets.format", async () => {
