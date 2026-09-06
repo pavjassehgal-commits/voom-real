@@ -168,7 +168,19 @@ test("Reel assets are signature-validated and use one private owner-scoped recor
   assert.equal(detectReelAsset(Uint8Array.from([0xff, 0xd8, 0xff]))?.mimeType, "image/jpeg");
   assert.equal(detectReelAsset(Uint8Array.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]))?.mimeType, "image/png");
   assert.equal(detectReelAsset(new TextEncoder().encode("RIFFxxxxWEBP"))?.mimeType, "image/webp");
-  assert.equal(detectReelAsset(Uint8Array.from([0,0,0,0,...new TextEncoder().encode("ftypqt  ")]))?.mimeType, "video/quicktime");
+  // A structurally valid ISO-BMFF container solves the brand vs extension
+  // question with the filename, so an Apple `qt`-branded MP4 stays MP4.
+  const brand = (s) => { const out = new Uint8Array(4); for (let i = 0; i < 4; i++) out[i] = s.charCodeAt(i) || 0x20; return out; };
+  const ftyp = (major, compat = []) => {
+    const size = 16 + 4 * compat.length; const bytes = new Uint8Array(size);
+    bytes[0] = (size >> 24) & 0xff; bytes[1] = (size >> 16) & 0xff; bytes[2] = (size >> 8) & 0xff; bytes[3] = size & 0xff;
+    bytes.set(new TextEncoder().encode("ftyp"), 4); bytes.set(brand(major), 8);
+    compat.forEach((c, i) => bytes.set(brand(c), 16 + i * 4)); return bytes;
+  };
+  const qtMp4 = ftyp("qt  ", ["isom"]);
+  assert.equal(detectReelAsset(qtMp4)?.mimeType, "video/mp4", "no .mov hint means MP4, never rewritten to MOV");
+  assert.equal(detectReelAsset(qtMp4, { name: "SYNRAPAY_REEL_FINAL.mp4" })?.mimeType, "video/mp4");
+  assert.equal(detectReelAsset(qtMp4, { name: "clip.mov" })?.mimeType, "video/quicktime");
   assert.equal(detectReelAsset(new TextEncoder().encode("not media")), null);
   assert.equal(REEL_ASSET_MAX_BYTES, 4194304);
   assert.equal(safeAssetName("../unsafe/name.mov"), "..-unsafe-name.mov");
@@ -178,7 +190,7 @@ test("Reel assets are signature-validated and use one private owner-scoped recor
     read("components/voom/operating/ApprovalsBoard.tsx"), read("lib/voom/operating-data.ts"),
   ]);
   assert.match(route + helper, /eq\("owner_user_id", user\.id\)/);
-  assert.match(route, /detectReelAsset\(bytes\)/);
+  assert.match(route, /detectReelAsset\(bytes, \{ name: file\.name \}\)/);
   assert.match(helper, /createSignedUrl/);
   assert.match(route, /randomUUID\(\)/);
   assert.doesNotMatch(route, /NEXT_PUBLIC.*SECRET|publish|instagram|generateVideo/);

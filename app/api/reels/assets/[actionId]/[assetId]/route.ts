@@ -8,15 +8,15 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   const context = await ownedReelAction(params, true);
   if (context instanceof Response) return context;
   const { assetId } = await params;
-  if (!UUID_RE.test(assetId)) return invalidJson("That asset is not valid.");
+  if (!UUID_RE.test(assetId)) return invalidJson("That asset is not valid.", 400, "invalid_file");
   const admin = createAdminClient();
   const { data: removed, error } = await admin.rpc("remove_reel_draft_asset", {
     p_owner_user_id: context.userId, p_action_id: context.actionId, p_draft_id: context.draftId, p_asset_id: assetId,
   });
   if (error) {
     const migrationMissing = String(error.code ?? "") === "PGRST202" || /could not find the function/i.test(String(error.message ?? ""));
-    if (/asset_not_found/i.test(String(error.message ?? ""))) return invalidJson("That asset was not found for this Reel. Nothing changed.", 404);
-    return invalidJson(migrationMissing ? "Removing individual assets needs the new asset-pack storage step, which is awaiting approval. Nothing changed." : "Voom couldn't remove that asset safely. Nothing changed.", 503);
+    if (/asset_not_found/i.test(String(error.message ?? ""))) return invalidJson("That asset was not found for this Reel. Nothing changed.", 404, "not_found");
+    return invalidJson(migrationMissing ? "Removing individual assets needs the new asset-pack storage step, which is awaiting approval. Nothing changed." : "Voom couldn't remove that asset safely. Nothing changed.", 503, migrationMissing ? "action_required" : "storage_failure");
   }
   const storagePath = Array.isArray(removed) && typeof removed[0]?.storage_path === "string" ? removed[0].storage_path : null;
   if (storagePath) await admin.storage.from(REEL_ASSET_BUCKET).remove([storagePath]);

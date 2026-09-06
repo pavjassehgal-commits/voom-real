@@ -85,7 +85,7 @@ test("asset routes: pack list is ordered, add enforces six, delete is owner-scop
   assert.match(getPost, /asset_pack_full/);
   assert.match(getPost, /This Reel already has \$\{REEL_ASSET_PACK_LIMIT\} assets/);
   assert.match(getPost, /randomUUID\(\)/);
-  assert.match(getPost, /detectReelAsset\(bytes\)/);
+  assert.match(getPost, /detectReelAsset\(bytes, \{ name: file\.name \}\)/);
   assert.match(remove, /remove_reel_draft_asset/);
   assert.match(remove, /asset_not_found/);
   assert.match(remove, /That asset was not found for this Reel/);
