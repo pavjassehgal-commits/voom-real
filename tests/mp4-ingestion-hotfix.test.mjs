@@ -208,18 +208,18 @@ test("ingestion routes never leak secrets or publish to Instagram", async () => 
 });
 
 // ---------------------------------------------------------------------------
-// No schema migration, no 0022, no production DB assumptions changed
+// No schema migration by this hotfix; production DB assumptions unchanged
 // ---------------------------------------------------------------------------
 
-test("no 0022 migration is added and no migration file is touched by this fix", async () => {
+test("the mp4 hotfix adds no migration of its own and touches no migration file", async () => {
   const migrations = (await readdir(new URL("supabase/migrations/", root))).sort();
   assert.ok(migrations.includes("0021_instagram_post_studio.sql"));
-  assert.ok(!migrations.some((name) => name.startsWith("0022")), "0022 must not exist");
+  assert.deepEqual(migrations.filter((name) => name.startsWith("0022")), ["0022_instagram_auto_publishing.sql"]);
 });
 
 test("the hotfix touches Post Studio upload only; it never rewrites the existing Reel asset schema", async () => {
   // The bucket and tables already accept video/mp4; the fix is classification
   // only, so no storage.buckets / RPC change is required.
   const migrations = (await readdir(new URL("supabase/migrations/", root))).sort();
-  assert.ok(migrations.every((name) => !name.startsWith("0022")), "no new migration");
+  assert.deepEqual(migrations.filter((name) => name.startsWith("0022")), ["0022_instagram_auto_publishing.sql"]);
 });

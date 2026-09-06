@@ -201,7 +201,7 @@ test("post context payloads carry brand and plan context but never media bytes",
 });
 
 // ---------------------------------------------------------------------------
-// Migration 0021: corrected DROP POLICY syntax, RLS, grants, no 0022
+// Migration 0021: corrected DROP POLICY syntax, RLS, grants
 // ---------------------------------------------------------------------------
 
 test("migration 0021 uses the corrected DROP POLICY syntax, never `on table`", async () => {
@@ -243,11 +243,11 @@ test("post_draft_assets is owner-scoped, service-written, and hides storage_path
   assert.match(sql, /update storage\.buckets set public = false where id = 'mara-media'/);
 });
 
-test("0021 is marked already-applied, there is no 0022, and 0018-0020 are untouched", async () => {
+test("0021 is marked already-applied; the only 0022 is Instagram auto-publishing; 0023 is key rotation; 0018-0020 are untouched", async () => {
   const sql = await read("supabase/migrations/0021_instagram_post_studio.sql");
   assert.match(sql, /ALREADY APPLIED to the production Supabase database/i);
   assert.match(sql, /Do NOT run this file again/i);
-  assert.match(sql, /NO 0022 migration/i);
+  assert.match(sql, /NO 0022 migration/i); // 0021 itself still says Post Studio needs none.
   assert.match(sql, /Migrations 0018, 0019 and 0020 are untouched/i);
   // 0021 must not rewrite the earlier audience/campaign schema, and must not
   // drop anything. Checked against executable statements so the documented
@@ -259,6 +259,7 @@ test("0021 is marked already-applied, there is no 0022, and 0018-0020 are untouc
 
   const files = await readdir(new URL("supabase/migrations/", root));
   assert.ok(files.includes("0021_instagram_post_studio.sql"), "0021 must be checked in");
+  assert.deepEqual(files.filter((name) => /^0022_/.test(name)), ["0022_instagram_auto_publishing.sql"], "the only 0022 is Instagram auto-publishing");
   assert.ok(files.includes("0023_instagram_token_key_rotation.sql"), "0023 (Instagram key rotation) must be checked in");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
   assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 23), "no migration beyond 0023 may exist");
@@ -383,7 +384,7 @@ test("posts can be saved as a draft, scheduled, and approved without publishing"
   assert.match(route, /approvePostDraft\(admin, user\.id, id\)/);
   assert.match(route, /postApprovalBlockers\(\{ caption: existing\.caption, hasVisual: existing\.visualReady \}\)/);
   assert.match(route, /Choose a date in the future to schedule this\./);
-  assert.match(route, /Nothing was published to Instagram\./);
+  assert.match(route, /Voom will automatically publish this to Instagram at the scheduled time\./);
   const data = await read("lib/post/server-data.ts");
   assert.match(data, /update\(\{ status: "approved" \}\)/);
   assert.match(data, /export async function syncPostToCalendar/);

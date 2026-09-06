@@ -10,6 +10,8 @@ import {
   POST_STATE_LABELS,
 } from "./core";
 import { persistUploadedPostAsset, PostAssetPersistError } from "./asset-persist";
+import { cancelPublishItem, enqueuePublishItem } from "@/lib/instagram/publish-queue";
+import { isPublishableMime, publishMediaKindForMime, truncateCaption } from "@/lib/instagram/publishing";
 
 export const POST_ASSET_BUCKET = "mara-media";
 /** Short-lived signed previews; storage_path itself never leaves the server. */
@@ -275,6 +277,9 @@ export async function syncPostToCalendar(admin: AdminClient, ownerId: string, dr
     const { data: existing } = await admin.from("content_calendar_items").select("id")
       .eq("owner_user_id", ownerId).eq("source_draft_id", draftId).maybeSingle();
     if (existing?.id) await admin.from("content_calendar_items").delete().eq("owner_user_id", ownerId).eq("id", existing.id);
+    // Un-approving must also stop auto-publishing. Published/in-flight items
+    // are never cancelled by this.
+    await cancelPublishItem(admin, ownerId, draftId).catch(() => false);
     return getPostDraft(admin, ownerId, draftId);
   }
   await admin.from("content_calendar_items").upsert({
@@ -287,7 +292,39 @@ export async function syncPostToCalendar(admin: AdminClient, ownerId: string, dr
     publish_at: publishAt,
     status: calendarStatusFor(view.internalState),
   }, { onConflict: "owner_user_id,source_draft_id" });
+  await syncPostToPublishQueue(admin, ownerId, draftId, view, publishAt);
   return getPostDraft(admin, ownerId, draftId);
+}
+
+/**
+ * Mirrors an approved+scheduled post into the durable Instagram publish queue,
+ * so the cron worker can auto-publish it. Idempotent by (owner, draft), so
+ * repeated saves/approvals never create a second publish identity, and a
+ * published item is never re-queued.
+ *
+ * A post with no schedule, no stored visual, or an unpublishable file type is
+ * NOT queued — Voom would rather show nothing than promise a publish it cannot
+ * perform.
+ */
+export async function syncPostToPublishQueue(
+  admin: AdminClient, ownerId: string, draftId: string, view: PostView, publishAt: string,
+): Promise<void> {
+  if (!view.scheduledAt || !view.visualReady || !view.visual) {
+    await cancelPublishItem(admin, ownerId, draftId).catch(() => false);
+    return;
+  }
+  if (!isPublishableMime(view.visual.mimeType)) return;
+  const mediaKind = publishMediaKindForMime(view.visual.mimeType, view.kind);
+  if (!mediaKind) return;
+  const calendarItemId = await findCalendarItemId(admin, ownerId, draftId);
+  await enqueuePublishItem(admin, {
+    ownerId,
+    draftId,
+    calendarItemId,
+    mediaKind,
+    caption: truncateCaption(view.composedCaption),
+    scheduledAt: view.scheduledAt ?? publishAt,
+  }).catch(() => null);
 }
 
 /**

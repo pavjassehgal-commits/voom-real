@@ -10,6 +10,7 @@ import { CreateContentModal } from "@/components/voom/modals/CreateContentModal"
 import { PostDetailModal } from "@/components/voom/modals/PostDetailModal";
 import { SavedCalendarDetailModal } from "@/components/voom/modals/SavedCalendarDetailModal";
 import { Btn, Card, Chip, IconBtn, Tag } from "@/components/voom/ui/primitives";
+import { PublishingQueue } from "@/components/voom/PublishingQueue";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -85,6 +86,8 @@ export default function CalendarPage() {
           </>
         }
       />
+
+      <PublishingQueue />
 
       {calendarError && <div role="alert" className="mb-3 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-sm text-red">{calendarError}</div>}
 

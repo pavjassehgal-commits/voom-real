@@ -4,7 +4,7 @@ import { createMediaProvider, getMediaConfig, MediaError } from "@/lib/media";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { composePostCaption } from "@/lib/post/core";
 import { buildPostContextPayload, POST_COPY_SYSTEM_PROMPT, postDraftSchema } from "@/lib/post/prompt";
-import { getPostDraft, loadPostBrandContext, loadPostPlanContext, putPostAsset, removePostAssetObject } from "@/lib/post/server-data";
+import { getPostDraft, loadPostBrandContext, loadPostPlanContext, putPostAsset, removePostAssetObject, syncPostToCalendar } from "@/lib/post/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 
 export const runtime = "nodejs";
@@ -122,6 +122,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (previousStoragePath && previousStoragePath !== storagePath) {
       await removePostAssetObject(admin, user.id, previousStoragePath);
     }
+    await syncPostToCalendar(admin, user.id, id).catch(() => null);
     const updated = await getPostDraft(admin, user.id, id);
     return Response.json({
       post: updated,

@@ -60,9 +60,15 @@ test("tokens are encrypted before service-role storage and never returned by sta
   assert.doesNotMatch(status, /access_token|encrypted_access_token|token_auth_tag/);
 });
 
-test("Instagram reads do not expose a publishing operation", async () => {
+test("Instagram publishing is server-only and MARA still cannot publish on its own", async () => {
+  // Publishing now exists, but only inside the server-side scheduled worker.
   const client = await read("lib/instagram/client.ts");
-  assert.doesNotMatch(client, /media_publish/);
+  assert.match(client, /media_publish/);
+  const worker = await read("lib/instagram/publish-worker.ts");
+  assert.match(worker, /import "server-only"/);
+  const cron = await read("app/api/cron/instagram-publish/route.ts");
+  assert.match(cron, /process\.env\.CRON_SECRET/);
+  // MARA tools still expose no direct publish capability.
   const tools = await read("lib/mara/tools.ts");
   assert.match(tools, /publishingAvailable: false/);
 });

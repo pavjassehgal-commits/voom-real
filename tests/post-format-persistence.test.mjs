@@ -172,9 +172,10 @@ test("base channel labels stay clean for calendar and legacy consumers", () => {
   }
 });
 
-test("no schema change was needed; the only later migration is Instagram key-rotation 0023", async () => {
+test("Post format needed no schema change; 0022 is Instagram auto-publishing and 0023 is the key rotation", async () => {
   const files = await readdir(new URL("supabase/migrations/", root));
   assert.ok(files.includes("0021_instagram_post_studio.sql"), "0021 must be checked in");
+  assert.deepEqual(files.filter((name) => /^0022_/.test(name)), ["0022_instagram_auto_publishing.sql"], "the only 0022 is Instagram auto-publishing");
   assert.ok(files.includes("0023_instagram_token_key_rotation.sql"), "0023 (Instagram key rotation) must be checked in");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
   assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 23), "no migration beyond 0023 may exist");

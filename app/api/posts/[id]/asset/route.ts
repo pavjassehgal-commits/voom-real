@@ -9,6 +9,7 @@ import {
   putPostAsset,
   removePostAssetObject,
   verifyPostAssetStored,
+  syncPostToCalendar,
   type PostAssetIngestionDiagnostics,
 } from "@/lib/post/server-data";
 import {
@@ -153,6 +154,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (previousStoragePath && previousStoragePath !== storagePath) {
     await removePostAssetObject(admin, user.id, previousStoragePath);
   }
+
+  // A late-arriving visual can complete an already-approved, already-scheduled
+  // post, so the auto-publish queue is re-synced here too.
+  await syncPostToCalendar(admin, user.id, id).catch(() => null);
 
   try {
     const updated = await getPostDraftForIngestion(admin, user.id, id, "stored");
