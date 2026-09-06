@@ -2,38 +2,30 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  CURRENT_KEY_VERSION,
-  encryptInstagramToken,
-  inspectStoredToken,
+  STAGED_KEY_VERSION,
   decryptInstagramToken,
+  encryptInstagramTokenForStagedRotation,
+  inspectStoredToken,
+  toKeyRing,
+  type EncryptedInstagramToken,
   type InstagramKeyRing,
 } from "./crypto.ts";
 
 /**
- * Instagram token encryption-key rotation.
+ * Staged Instagram token encryption-key rotation.
  *
- * Re-encrypts stored Instagram access tokens from a legacy key onto the current
- * primary key, without ever changing account metadata, scopes or status.
- *
- * Safety properties:
- *  - Idempotent. A row already readable with the primary key is reported as
- *    `alreadyCurrent` and left completely untouched.
- *  - Non-destructive. A row that no key can decrypt is reported as `failed` and
- *    left EXACTLY as it was. Rotation never deletes or overwrites a token it
- *    could not first read.
- *  - Verified. Every re-encrypted value is decrypted back and compared to the
- *    original plaintext BEFORE it is written. A bad write is impossible.
- *  - Silent about secrets. Counts and owner ids only — never token plaintext,
- *    never ciphertext, never key material.
+ * PRIMARY remains the normal write key. The job reads with the complete
+ * PRIMARY -> NEXT -> LEGACY ring but re-encrypts with NEXT specifically. Each
+ * replacement is authenticated and compared with the source plaintext under
+ * NEXT alone before the existing single-row RPC is allowed to write it.
  */
 
 export interface RotationOutcome {
   scanned: number;
+  migratable: number;
   migrated: number;
-  alreadyCurrent: number;
+  alreadyOnNext: number;
   failed: number;
-  /** Owner ids only, so an operator can investigate without exposing secrets. */
-  failedOwnerIds: string[];
 }
 
 export interface RotationRow {
@@ -41,98 +33,155 @@ export interface RotationRow {
   encryptedToken: string;
   iv: string;
   authTag: string;
+  keyVersion: number;
 }
 
-export type RotationRowResult = "migrated" | "alreadyCurrent" | "failed";
+/** Allowlists the only fields the protected endpoint may return. */
+export function publicRotationResult(outcome: RotationOutcome, dryRun: boolean) {
+  return dryRun
+    ? {
+        scanned: outcome.scanned,
+        migratable: outcome.migratable,
+        alreadyOnNext: outcome.alreadyOnNext,
+        failed: outcome.failed,
+      }
+    : {
+        scanned: outcome.scanned,
+        migrated: outcome.migrated,
+        alreadyOnNext: outcome.alreadyOnNext,
+        failed: outcome.failed,
+      };
+}
+
+export type RotationRowResult = "migratable" | "alreadyOnNext" | "failed";
+
+export class InstagramStagedRotationConfigurationError extends Error {
+  readonly code = "instagram_staged_rotation_not_configured";
+  constructor() {
+    super("instagram_staged_rotation_not_configured");
+    this.name = "InstagramStagedRotationConfigurationError";
+  }
+}
+
+function requireNextKey(keyRing: InstagramKeyRing): { ring: InstagramKeyRing & { next: string }; next: string } {
+  const ring = toKeyRing(keyRing);
+  if (!ring.next) throw new InstagramStagedRotationConfigurationError();
+  return { ring: ring as InstagramKeyRing & { next: string }, next: ring.next };
+}
 
 /**
- * Decides what should happen to one row and produces the replacement payload.
- * Pure: no database, no environment. This is the part worth unit testing hard.
+ * Plans one row without touching the database.
+ *
+ * A row counts as already-on-NEXT only when NEXT authenticates it and both its
+ * ciphertext marker and database key_version identify staged v3. Thus every
+ * row produced by this job is explicit and a second run is a byte-for-byte
+ * no-op. An older-format value that happens to use NEXT is safely normalized
+ * to the explicit staged format.
  */
 export function planRowRotation(
   row: RotationRow,
   keyRing: InstagramKeyRing,
-): { result: RotationRowResult; next?: { encryptedToken: string; iv: string; authTag: string; keyVersion: number } } {
+): { result: RotationRowResult; next?: EncryptedInstagramToken } {
+  const { ring, next: nextKey } = requireNextKey(keyRing);
   const stored = { encryptedToken: row.encryptedToken, iv: row.iv, authTag: row.authTag };
-  const inspection = inspectStoredToken(stored, keyRing);
+  const inspection = inspectStoredToken(stored, ring);
 
-  // Unreadable by every key we hold. Leave it strictly alone.
   if (!inspection.readable) return { result: "failed" };
 
-  // Already on the primary key AND already self-describing: nothing to do.
-  // This is what makes a second run a no-op.
-  if (inspection.usesPrimary && inspection.declaredVersion === CURRENT_KEY_VERSION) {
-    return { result: "alreadyCurrent" };
+  if (
+    inspection.usesNext
+    && inspection.declaredVersion === STAGED_KEY_VERSION
+    && row.keyVersion === STAGED_KEY_VERSION
+  ) {
+    return { result: "alreadyOnNext" };
   }
 
   let plaintext: string;
+  let next: EncryptedInstagramToken;
   try {
-    plaintext = decryptInstagramToken(stored, keyRing);
-  } catch {
-    return { result: "failed" };
-  }
+    plaintext = decryptInstagramToken(stored, ring);
+    next = encryptInstagramTokenForStagedRotation(plaintext, nextKey);
 
-  const next = encryptInstagramToken(plaintext, keyRing);
-
-  // Verify the new ciphertext round-trips under the primary key alone before
-  // anyone is allowed to write it.
-  let verified: string;
-  try {
-    verified = decryptInstagramToken(
+    // NEXT alone must authenticate the replacement before any write occurs.
+    const verified = decryptInstagramToken(
       { encryptedToken: next.encryptedToken, iv: next.iv, authTag: next.authTag },
-      { primary: keyRing.primary, legacy: [] },
+      nextKey,
     );
+    if (verified !== plaintext) return { result: "failed" };
   } catch {
     return { result: "failed" };
   }
-  if (verified !== plaintext) return { result: "failed" };
 
-  return {
-    result: "migrated",
-    next: { encryptedToken: next.encryptedToken, iv: next.iv, authTag: next.authTag, keyVersion: next.keyVersion },
-  };
+  return { result: "migratable", next };
 }
 
 export interface RotationStore {
   /** Every stored secret, owner-scoped. Service-role/security-definer only. */
   listRows(): Promise<RotationRow[]>;
-  /** Replaces only the ciphertext columns for one owner. */
-  writeRow(ownerUserId: string, next: { encryptedToken: string; iv: string; authTag: string; keyVersion: number }): Promise<void>;
+  /** Atomically replaces only the ciphertext columns for one owner. */
+  writeRow(ownerUserId: string, next: EncryptedInstagramToken): Promise<void>;
 }
 
-/** Runs the rotation over every stored connection. */
-export async function rotateInstagramTokens(store: RotationStore, keyRing: InstagramKeyRing): Promise<RotationOutcome> {
+/**
+ * Runs the staged rotation. A dry run executes the full decrypt/encrypt/verify
+ * plan but never calls writeRow. Missing NEXT is rejected before reading rows.
+ */
+export async function rotateInstagramTokens(
+  store: RotationStore,
+  keyRing: InstagramKeyRing,
+  options: { dryRun?: boolean } = {},
+): Promise<RotationOutcome> {
+  // Validate before listRows so a missing or same-as-PRIMARY target cannot even
+  // scan production secrets.
+  requireNextKey(keyRing);
+
   const rows = await store.listRows();
-  const outcome: RotationOutcome = { scanned: rows.length, migrated: 0, alreadyCurrent: 0, failed: 0, failedOwnerIds: [] };
+  const outcome: RotationOutcome = {
+    scanned: rows.length,
+    migratable: 0,
+    migrated: 0,
+    alreadyOnNext: 0,
+    failed: 0,
+  };
 
   for (const row of rows) {
-    const plan = planRowRotation(row, keyRing);
-    if (plan.result === "alreadyCurrent") {
-      outcome.alreadyCurrent += 1;
+    let plan: ReturnType<typeof planRowRotation>;
+    try {
+      plan = planRowRotation(row, keyRing);
+    } catch {
+      outcome.failed += 1;
+      continue;
+    }
+
+    if (plan.result === "alreadyOnNext") {
+      outcome.alreadyOnNext += 1;
       continue;
     }
     if (plan.result === "failed" || !plan.next) {
       outcome.failed += 1;
-      outcome.failedOwnerIds.push(row.ownerUserId);
       continue;
     }
+    if (options.dryRun) {
+      outcome.migratable += 1;
+      continue;
+    }
+
     try {
+      // The RPC is one PostgreSQL statement/transaction for this owner. An RPC
+      // error rolls back that row and is safely retriable.
       await store.writeRow(row.ownerUserId, plan.next);
       outcome.migrated += 1;
     } catch {
-      // A write failure leaves the original row intact; it will be retried on
-      // the next run. Never surface the underlying database error.
       outcome.failed += 1;
-      outcome.failedOwnerIds.push(row.ownerUserId);
     }
   }
   return outcome;
 }
 
 /**
- * The production store. Both calls go through service-role-only
- * security-definer RPCs, because 0005 deliberately revokes direct
- * service_role access to instagram_connection_secrets.
+ * Production storage adapter. 0023 is already sufficient: both operations use
+ * its service-role-only security-definer RPCs, and no direct secret-table grant
+ * or new migration is required.
  */
 export function createRotationStore(db: SupabaseClient): RotationStore {
   return {
@@ -144,17 +193,18 @@ export function createRotationStore(db: SupabaseClient): RotationStore {
         encryptedToken: String(row.encrypted_access_token),
         iv: String(row.token_iv),
         authTag: String(row.token_auth_tag),
+        keyVersion: Number(row.key_version),
       }));
     },
     async writeRow(ownerUserId, next) {
-      const { error } = await db.rpc("update_instagram_connection_secret", {
+      const { data, error } = await db.rpc("update_instagram_connection_secret", {
         p_owner_user_id: ownerUserId,
         p_encrypted_access_token: next.encryptedToken,
         p_token_iv: next.iv,
         p_token_auth_tag: next.authTag,
         p_key_version: next.keyVersion,
       });
-      if (error) throw new Error("instagram_rotation_write_failed");
+      if (error || data !== true) throw new Error("instagram_rotation_write_failed");
     },
   };
 }

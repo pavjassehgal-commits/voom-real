@@ -1,128 +1,45 @@
 import "./helpers/server-only-shim.mjs";
 
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 const root = new URL("../", import.meta.url);
 const read = (path) => readFile(new URL(path, root), "utf8");
 
 const crypto = await import("../lib/instagram/crypto.ts");
+const dataApi = await import("../lib/instagram/data.ts");
 const rotation = await import("../lib/instagram/key-rotation.ts");
 
-const OLD_KEY = "legacy-instagram-key-000000000000000000";
-const NEW_KEY = "primary-instagram-key-11111111111111111";
-const OTHER_KEY = "unrelated-instagram-key-2222222222222222";
+const OLD_KEY = "old-primary-instagram-key-0000000000000";
+const NEW_KEY = "new-next-instagram-key-111111111111111";
+const LEGACY_KEY = "older-legacy-instagram-key-22222222222";
+const OTHER_KEY = "unrelated-instagram-key-333333333333333";
 
-const RING = { primary: NEW_KEY, legacy: [OLD_KEY] };
-const PRIMARY_ONLY = { primary: NEW_KEY, legacy: [] };
+const STAGED_RING = { primary: OLD_KEY, next: NEW_KEY, legacy: [] };
+const OLD_ONLY = { primary: OLD_KEY, legacy: [] };
+const NEW_ONLY = { primary: NEW_KEY, legacy: [] };
 
 const SYNRAPAY = "11111111-1111-4111-8111-111111111111";
 const VIBEBLING_A = "22222222-2222-4222-8222-222222222222";
 const VIBEBLING_B = "33333333-3333-4333-8333-333333333333";
 
-/** The exact pre-rotation on-disk format: bare base64, no version prefix. */
+/** Exact original v1 storage shape: bare base64 and key_version=1. */
 function legacyEncrypt(token, key) {
   const blob = crypto.encryptInstagramToken(token, { primary: key, legacy: [] });
   const { payload } = crypto.parseStoredToken(blob.encryptedToken);
-  return { encryptedToken: payload, iv: blob.iv, authTag: blob.authTag };
+  return { encryptedToken: payload, iv: blob.iv, authTag: blob.authTag, keyVersion: 1 };
 }
 
-// ---------------------------------------------------------------------------
-// Dual-key reads and writes
-// ---------------------------------------------------------------------------
+function primaryRow(ownerUserId, token) {
+  return { ownerUserId, ...crypto.encryptInstagramToken(token, OLD_ONLY) };
+}
 
-test("a token encrypted with the new primary key decrypts", () => {
-  const blob = crypto.encryptInstagramToken("IGQV-token-new", RING);
-  assert.equal(crypto.decryptInstagramToken(blob, RING), "IGQV-token-new");
-  // and with the primary key alone, which is the post-rotation steady state
-  assert.equal(crypto.decryptInstagramToken(blob, PRIMARY_ONLY), "IGQV-token-new");
-});
+function stagedRow(ownerUserId, token) {
+  return { ownerUserId, ...crypto.encryptInstagramTokenForStagedRotation(token, NEW_KEY) };
+}
 
-test("a legacy token decrypts via the fallback key", () => {
-  const stored = legacyEncrypt("IGQV-token-vibebling", OLD_KEY);
-  // The legacy row has no version marker at all.
-  assert.equal(crypto.parseStoredToken(stored.encryptedToken).version, crypto.LEGACY_KEY_VERSION);
-  assert.equal(crypto.decryptInstagramToken(stored, RING), "IGQV-token-vibebling");
-});
-
-test("a legacy token is unreadable once the legacy key is removed", () => {
-  const stored = legacyEncrypt("IGQV-token-vibebling", OLD_KEY);
-  assert.throws(
-    () => crypto.decryptInstagramToken(stored, PRIMARY_ONLY),
-    (error) => error instanceof crypto.InstagramTokenDecryptionError,
-  );
-});
-
-test("new writes always use the primary key, never a legacy key", () => {
-  const blob = crypto.encryptInstagramToken("IGQV-fresh", RING);
-  assert.equal(blob.keyVersion, crypto.CURRENT_KEY_VERSION);
-  assert.match(blob.encryptedToken, /^v2:/);
-  // Provably not encrypted under the legacy key.
-  assert.throws(() => crypto.decryptInstagramToken(blob, { primary: OLD_KEY, legacy: [] }));
-  assert.equal(crypto.decryptInstagramToken(blob, PRIMARY_ONLY), "IGQV-fresh");
-});
-
-test("a bare string key still works, so existing call sites keep functioning", () => {
-  const blob = crypto.encryptInstagramToken("IGQV-compat", NEW_KEY);
-  assert.equal(crypto.decryptInstagramToken(blob, NEW_KEY), "IGQV-compat");
-  assert.deepEqual(crypto.toKeyRing(NEW_KEY), { primary: NEW_KEY, legacy: [] });
-});
-
-test("a key listed as both primary and legacy is not tried twice", () => {
-  const ring = crypto.toKeyRing({ primary: NEW_KEY, legacy: [NEW_KEY, OLD_KEY] });
-  assert.deepEqual(ring.legacy, [OLD_KEY]);
-});
-
-// ---------------------------------------------------------------------------
-// Failing safely
-// ---------------------------------------------------------------------------
-
-test("unknown ciphertext fails safely with a typed error and no detail", () => {
-  const bogus = { encryptedToken: "v2:bm90LXJlYWwtY2lwaGVy", iv: "AAAAAAAAAAAAAAAA", authTag: "AAAAAAAAAAAAAAAAAAAAAA==" };
-  assert.throws(
-    () => crypto.decryptInstagramToken(bogus, RING),
-    (error) => {
-      assert.ok(error instanceof crypto.InstagramTokenDecryptionError);
-      assert.equal(error.code, "instagram_token_undecryptable");
-      return true;
-    },
-  );
-});
-
-test("garbage input never returns plausible plaintext under a wrong key", () => {
-  const stored = legacyEncrypt("IGQV-real-token", OLD_KEY);
-  let falseAccepts = 0;
-  for (let index = 0; index < 500; index++) {
-    try {
-      crypto.decryptInstagramToken(stored, { primary: `wrong-key-${index}-aaaaaaaaaaaaaaaaaaaaaaaa`, legacy: [] });
-      falseAccepts += 1;
-    } catch {
-      // expected: AES-GCM authenticates
-    }
-  }
-  assert.equal(falseAccepts, 0, "AES-GCM must make trial decryption safe");
-});
-
-test("no error ever carries token plaintext or key material", () => {
-  const token = "IGQV-super-secret-token-value";
-  const stored = legacyEncrypt(token, OLD_KEY);
-  try {
-    crypto.decryptInstagramToken(stored, { primary: OTHER_KEY, legacy: [] });
-    assert.fail("should have thrown");
-  } catch (error) {
-    const text = `${error.message}${error.stack}${JSON.stringify(Object.entries(error))}`;
-    assert.ok(!text.includes(token), "the token must never appear in an error");
-    assert.ok(!text.includes(OLD_KEY) && !text.includes(OTHER_KEY), "no key may appear in an error");
-    assert.ok(!text.includes(stored.encryptedToken), "ciphertext must not appear either");
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Re-encryption
-// ---------------------------------------------------------------------------
-
-/** In-memory store mirroring the production RPC store. */
+/** In-memory equivalent of the two 0023 RPCs. */
 function makeStore(rows) {
   const state = rows.map((row) => ({ ...row }));
   const writes = [];
@@ -135,6 +52,7 @@ function makeStore(rows) {
         encryptedToken: row.encryptedToken,
         iv: row.iv,
         authTag: row.authTag,
+        keyVersion: row.keyVersion,
       }));
     },
     async writeRow(ownerUserId, next) {
@@ -146,177 +64,392 @@ function makeStore(rows) {
   };
 }
 
-function legacyRow(ownerUserId, token) {
-  return { ownerUserId, ...legacyEncrypt(token, OLD_KEY) };
+function credentialsDb(blob) {
+  return {
+    rpc(name) {
+      assert.equal(name, "get_instagram_connection_secret");
+      return {
+        async maybeSingle() {
+          return {
+            error: null,
+            data: {
+              connection_status: "connected",
+              instagram_user_id: "17841400000000000",
+              encrypted_access_token: blob.encryptedToken,
+              token_iv: blob.iv,
+              token_auth_tag: blob.authTag,
+              key_version: blob.keyVersion,
+              token_expires_at: null,
+            },
+          };
+        },
+      };
+    },
+  };
 }
 
-test("migration converts legacy rows onto the primary key and preserves the token", async () => {
+// ---------------------------------------------------------------------------
+// PRIMARY -> NEXT read behavior and version compatibility
+// ---------------------------------------------------------------------------
+
+test("1. a token encrypted with the current old PRIMARY decrypts", () => {
+  const blob = crypto.encryptInstagramToken("IGQV-primary-old", OLD_ONLY);
+  assert.equal(blob.keyVersion, crypto.CURRENT_KEY_VERSION);
+  assert.match(blob.encryptedToken, /^v2:/);
+  assert.equal(crypto.decryptInstagramToken(blob, STAGED_RING), "IGQV-primary-old");
+});
+
+test("2. getInstagramServerCredentials decrypts a NEXT row while PRIMARY is still old", async () => {
+  const blob = crypto.encryptInstagramTokenForStagedRotation("IGQV-next-before-cutover", NEW_KEY);
+  const credentials = await dataApi.getInstagramServerCredentials(credentialsDb(blob), SYNRAPAY, STAGED_RING);
+  assert.equal(credentials.accessToken, "IGQV-next-before-cutover");
+  assert.equal(crypto.inspectStoredToken(blob, STAGED_RING).keySource, "next");
+});
+
+test("existing unprefixed v1 and prefixed v2 values remain readable", () => {
+  const v1 = legacyEncrypt("IGQV-v1", LEGACY_KEY);
+  const v2 = crypto.encryptInstagramToken("IGQV-v2", OLD_ONLY);
+  const ring = { primary: OLD_KEY, next: NEW_KEY, legacy: [LEGACY_KEY] };
+
+  assert.equal(crypto.parseStoredToken(v1.encryptedToken).version, crypto.LEGACY_KEY_VERSION);
+  assert.equal(crypto.parseStoredToken(v2.encryptedToken).version, crypto.CURRENT_KEY_VERSION);
+  assert.equal(crypto.decryptInstagramToken(v1, ring), "IGQV-v1");
+  assert.equal(crypto.decryptInstagramToken(v2, ring), "IGQV-v2");
+});
+
+test("staged v3 records identify the exact NEXT key without exposing it", () => {
+  const blob = crypto.encryptInstagramTokenForStagedRotation("IGQV-v3", NEW_KEY);
+  const parsed = crypto.parseStoredToken(blob.encryptedToken);
+
+  assert.equal(blob.keyVersion, crypto.STAGED_KEY_VERSION);
+  assert.equal(parsed.version, crypto.STAGED_KEY_VERSION);
+  assert.match(blob.encryptedToken, /^v3:[A-Za-z0-9_-]{22}:/);
+  assert.equal(crypto.inspectStoredToken(blob, STAGED_RING).keySource, "next");
+  assert.throws(() => crypto.decryptInstagramToken(blob, OLD_ONLY));
+  assert.equal(crypto.decryptInstagramToken(blob, NEW_ONLY), "IGQV-v3");
+  assert.ok(!blob.encryptedToken.includes(NEW_KEY));
+});
+
+test("key-ring fallback order is PRIMARY, NEXT, LEGACY and duplicate keys are removed", () => {
+  const ring = crypto.toKeyRing({
+    primary: OLD_KEY,
+    next: NEW_KEY,
+    legacy: [OLD_KEY, NEW_KEY, LEGACY_KEY, LEGACY_KEY],
+  });
+  assert.deepEqual(ring, { primary: OLD_KEY, next: NEW_KEY, legacy: [LEGACY_KEY] });
+
+  assert.equal(crypto.inspectStoredToken(crypto.encryptInstagramToken("old", OLD_ONLY), ring).keySource, "primary");
+  assert.equal(crypto.inspectStoredToken(crypto.encryptInstagramTokenForStagedRotation("new", NEW_KEY), ring).keySource, "next");
+  assert.equal(crypto.inspectStoredToken(legacyEncrypt("legacy", LEGACY_KEY), ring).keySource, "legacy");
+});
+
+// ---------------------------------------------------------------------------
+// Normal writes stay on PRIMARY
+// ---------------------------------------------------------------------------
+
+test("3. normal saveInstagramConnection writes with PRIMARY, never NEXT", async () => {
+  let call;
+  const db = {
+    async rpc(name, args) {
+      call = { name, args };
+      return { error: null };
+    },
+  };
+
+  await dataApi.saveInstagramConnection(db, {
+    ownerId: SYNRAPAY,
+    instagramUserId: "17841400000000000",
+    username: "synrapay.ai",
+    name: "Synra Pay",
+    accountType: "BUSINESS",
+    profilePictureUrl: null,
+    accessToken: "IGQV-normal-write",
+    expiresIn: 3600,
+    encryptionKey: STAGED_RING,
+  });
+
+  assert.equal(call.name, "save_instagram_connection");
+  const stored = {
+    encryptedToken: call.args.p_encrypted_access_token,
+    iv: call.args.p_token_iv,
+    authTag: call.args.p_token_auth_tag,
+  };
+  assert.equal(call.args.p_key_version, crypto.CURRENT_KEY_VERSION);
+  assert.match(stored.encryptedToken, /^v2:/);
+  assert.equal(crypto.decryptInstagramToken(stored, OLD_ONLY), "IGQV-normal-write");
+  assert.throws(() => crypto.decryptInstagramToken(stored, NEW_ONLY));
+});
+
+// ---------------------------------------------------------------------------
+// Staged dry run and real migration
+// ---------------------------------------------------------------------------
+
+test("4. staged dry run reports migratable/already/failed counts and writes nothing", async () => {
+  const store = makeStore([
+    primaryRow(SYNRAPAY, "IGQV-old"),
+    stagedRow(VIBEBLING_A, "IGQV-next"),
+    { ownerUserId: VIBEBLING_B, ...crypto.encryptInstagramToken("IGQV-orphan", OTHER_KEY) },
+  ]);
+  const before = structuredClone(store.state);
+
+  const outcome = await rotation.rotateInstagramTokens(store, STAGED_RING, { dryRun: true });
+
+  assert.deepEqual(outcome, {
+    scanned: 3,
+    migratable: 1,
+    migrated: 0,
+    alreadyOnNext: 1,
+    failed: 1,
+  });
+  assert.deepEqual(store.writes, []);
+  assert.deepEqual(store.state, before);
+  assert.deepEqual(rotation.publicRotationResult(outcome, true), {
+    scanned: 3,
+    migratable: 1,
+    alreadyOnNext: 1,
+    failed: 1,
+  });
+});
+
+test("5. real migration re-encrypts all old PRIMARY rows specifically onto NEXT", async () => {
   const tokens = {
     [SYNRAPAY]: "IGQV-synrapay-token",
     [VIBEBLING_A]: "IGQV-vibebling-a-token",
     [VIBEBLING_B]: "IGQV-vibebling-b-token",
   };
-  const store = makeStore(Object.entries(tokens).map(([owner, token]) => legacyRow(owner, token)));
+  const store = makeStore(Object.entries(tokens).map(([owner, token]) => primaryRow(owner, token)));
 
-  const outcome = await rotation.rotateInstagramTokens(store, RING);
+  const outcome = await rotation.rotateInstagramTokens(store, STAGED_RING);
 
-  assert.deepEqual(
-    { scanned: outcome.scanned, migrated: outcome.migrated, alreadyCurrent: outcome.alreadyCurrent, failed: outcome.failed },
-    { scanned: 3, migrated: 3, alreadyCurrent: 0, failed: 0 },
-  );
-
-  // Every row now reads under the PRIMARY key alone, and the plaintext survived.
+  assert.deepEqual(outcome, {
+    scanned: 3,
+    migratable: 0,
+    migrated: 3,
+    alreadyOnNext: 0,
+    failed: 0,
+  });
   for (const row of store.state) {
-    assert.equal(row.keyVersion, crypto.CURRENT_KEY_VERSION);
-    assert.match(row.encryptedToken, /^v2:/);
-    assert.equal(crypto.decryptInstagramToken(row, PRIMARY_ONLY), tokens[row.ownerUserId]);
+    assert.equal(row.keyVersion, crypto.STAGED_KEY_VERSION);
+    assert.match(row.encryptedToken, /^v3:[A-Za-z0-9_-]{22}:/);
+    assert.equal(crypto.inspectStoredToken(row, STAGED_RING).keySource, "next");
+    assert.equal(crypto.decryptInstagramToken(row, NEW_ONLY), tokens[row.ownerUserId]);
+    assert.throws(() => crypto.decryptInstagramToken(row, OLD_ONLY));
   }
 });
 
-test("migration is idempotent: a second run changes nothing", async () => {
-  const store = makeStore([legacyRow(SYNRAPAY, "IGQV-a"), legacyRow(VIBEBLING_A, "IGQV-b")]);
+test("6. each planned replacement is round-trip verified with NEXT alone", async () => {
+  const plan = rotation.planRowRotation(primaryRow(SYNRAPAY, "IGQV-verify-next"), STAGED_RING);
+  assert.equal(plan.result, "migratable");
+  assert.equal(plan.next.keyVersion, crypto.STAGED_KEY_VERSION);
+  assert.equal(crypto.decryptInstagramToken(plan.next, NEW_ONLY), "IGQV-verify-next");
+  assert.throws(() => crypto.decryptInstagramToken(plan.next, OLD_ONLY));
 
-  const first = await rotation.rotateInstagramTokens(store, RING);
-  assert.equal(first.migrated, 2);
-  const afterFirst = store.state.map((row) => ({ ...row }));
+  const source = await read("lib/instagram/key-rotation.ts");
+  assert.match(source, /const verified = decryptInstagramToken\([\s\S]*?nextKey,/);
+});
 
-  const second = await rotation.rotateInstagramTokens(store, RING);
-  assert.deepEqual(
-    { migrated: second.migrated, alreadyCurrent: second.alreadyCurrent, failed: second.failed },
-    { migrated: 0, alreadyCurrent: 2, failed: 0 },
+test("7. a migrated row remains readable through normal credentials before cutover", async () => {
+  const store = makeStore([primaryRow(SYNRAPAY, "IGQV-before-cutover")]);
+  await rotation.rotateInstagramTokens(store, STAGED_RING);
+
+  const credentials = await dataApi.getInstagramServerCredentials(
+    credentialsDb(store.state[0]),
+    SYNRAPAY,
+    STAGED_RING,
   );
-  // Byte-for-byte untouched, and no further writes were issued.
+  assert.equal(credentials.accessToken, "IGQV-before-cutover");
+});
+
+test("8. a migrated row remains readable after NEXT becomes PRIMARY and NEXT is absent", async () => {
+  const store = makeStore([primaryRow(SYNRAPAY, "IGQV-after-cutover")]);
+  await rotation.rotateInstagramTokens(store, STAGED_RING);
+
+  const credentials = await dataApi.getInstagramServerCredentials(
+    credentialsDb(store.state[0]),
+    SYNRAPAY,
+    NEW_ONLY,
+  );
+  assert.equal(credentials.accessToken, "IGQV-after-cutover");
+});
+
+test("9. a second migration run is idempotent and byte-for-byte unchanged", async () => {
+  const store = makeStore([
+    primaryRow(SYNRAPAY, "IGQV-a"),
+    primaryRow(VIBEBLING_A, "IGQV-b"),
+  ]);
+
+  const first = await rotation.rotateInstagramTokens(store, STAGED_RING);
+  assert.equal(first.migrated, 2);
+  const afterFirst = structuredClone(store.state);
+
+  const second = await rotation.rotateInstagramTokens(store, STAGED_RING);
+  assert.deepEqual(second, {
+    scanned: 2,
+    migratable: 0,
+    migrated: 0,
+    alreadyOnNext: 2,
+    failed: 0,
+  });
   assert.deepEqual(store.state, afterFirst);
   assert.deepEqual(store.writes, [SYNRAPAY, VIBEBLING_A]);
 });
 
-test("a row that no key can decrypt is reported failed and left intact", async () => {
-  const good = legacyRow(SYNRAPAY, "IGQV-good");
-  const orphan = { ownerUserId: VIBEBLING_A, ...legacyEncrypt("IGQV-orphan", OTHER_KEY) };
+test("10. an undecryptable row is failed and left byte-for-byte untouched", async () => {
+  const good = primaryRow(SYNRAPAY, "IGQV-good");
+  const orphan = { ownerUserId: VIBEBLING_A, ...crypto.encryptInstagramToken("IGQV-orphan", OTHER_KEY) };
   const store = makeStore([good, orphan]);
-  const before = store.state.map((row) => ({ ...row }));
+  const beforeOrphan = structuredClone(store.state[1]);
 
-  const outcome = await rotation.rotateInstagramTokens(store, RING);
+  const outcome = await rotation.rotateInstagramTokens(store, STAGED_RING);
 
-  assert.deepEqual(
-    { scanned: outcome.scanned, migrated: outcome.migrated, alreadyCurrent: outcome.alreadyCurrent, failed: outcome.failed },
-    { scanned: 2, migrated: 1, alreadyCurrent: 0, failed: 1 },
-  );
-  assert.deepEqual(outcome.failedOwnerIds, [VIBEBLING_A]);
-
-  // The undecryptable row is byte-for-byte unchanged — never destroyed.
-  const after = store.state.find((row) => row.ownerUserId === VIBEBLING_A);
-  const originalOrphan = before.find((row) => row.ownerUserId === VIBEBLING_A);
-  assert.deepEqual(after, originalOrphan);
-  // The healthy row still migrated.
-  assert.equal(crypto.decryptInstagramToken(store.state.find((r) => r.ownerUserId === SYNRAPAY), PRIMARY_ONLY), "IGQV-good");
+  assert.equal(outcome.migrated, 1);
+  assert.equal(outcome.failed, 1);
+  assert.deepEqual(store.state[1], beforeOrphan);
+  assert.equal(crypto.decryptInstagramToken(store.state[0], NEW_ONLY), "IGQV-good");
 });
 
-test("a write failure is counted as failed and never loses the original token", async () => {
-  const store = makeStore([legacyRow(SYNRAPAY, "IGQV-a")]);
-  const before = store.state.map((row) => ({ ...row }));
+test("a per-row RPC failure is counted failed and preserves the original row", async () => {
+  const store = makeStore([primaryRow(SYNRAPAY, "IGQV-atomic")]);
+  const before = structuredClone(store.state);
   store.writeRow = async () => { throw new Error("database unavailable"); };
 
-  const outcome = await rotation.rotateInstagramTokens(store, RING);
-  assert.equal(outcome.failed, 1);
+  const outcome = await rotation.rotateInstagramTokens(store, STAGED_RING);
   assert.equal(outcome.migrated, 0);
-  assert.deepEqual(store.state, before, "the original ciphertext must survive a failed write");
+  assert.equal(outcome.failed, 1);
+  assert.deepEqual(store.state, before);
 });
 
-test("rotation reports counts and owner ids only — never secrets", async () => {
-  const token = "IGQV-secret-value-must-not-leak";
-  const store = makeStore([legacyRow(SYNRAPAY, token), { ownerUserId: VIBEBLING_A, ...legacyEncrypt("x", OTHER_KEY) }]);
-  const outcome = await rotation.rotateInstagramTokens(store, RING);
-
-  const serialized = JSON.stringify(outcome);
-  assert.ok(!serialized.includes(token));
-  assert.ok(!serialized.includes(OLD_KEY) && !serialized.includes(NEW_KEY) && !serialized.includes(OTHER_KEY));
-  for (const row of store.state) assert.ok(!serialized.includes(row.encryptedToken));
-  assert.deepEqual(Object.keys(outcome).sort(), ["alreadyCurrent", "failed", "failedOwnerIds", "migrated", "scanned"]);
+test("a v1 PRIMARY row is normalized directly to explicit staged v3", () => {
+  const row = { ownerUserId: SYNRAPAY, ...legacyEncrypt("IGQV-v1-primary", OLD_KEY) };
+  const plan = rotation.planRowRotation(row, STAGED_RING);
+  assert.equal(plan.result, "migratable");
+  assert.equal(plan.next.keyVersion, crypto.STAGED_KEY_VERSION);
+  assert.match(plan.next.encryptedToken, /^v3:[A-Za-z0-9_-]{22}:/);
+  assert.equal(crypto.decryptInstagramToken(plan.next, NEW_ONLY), "IGQV-v1-primary");
 });
 
-test("a v1-prefixed row already on the primary key is still upgraded to v2", () => {
-  // Readable with the primary key but not yet self-describing: must be rewritten
-  // so the stored format becomes unambiguous.
-  const blob = crypto.encryptInstagramToken("IGQV-x", PRIMARY_ONLY);
-  const { payload } = crypto.parseStoredToken(blob.encryptedToken);
-  const plan = rotation.planRowRotation(
-    { ownerUserId: SYNRAPAY, encryptedToken: payload, iv: blob.iv, authTag: blob.authTag },
-    RING,
-  );
-  assert.equal(plan.result, "migrated");
-  assert.match(plan.next.encryptedToken, /^v2:/);
-});
-
-test("planRowRotation verifies the new ciphertext before proposing a write", () => {
-  const row = legacyRow(SYNRAPAY, "IGQV-verify-me");
-  const plan = rotation.planRowRotation(row, RING);
-  assert.equal(plan.result, "migrated");
-  // The proposed value must already be readable under the primary key alone.
-  assert.equal(crypto.decryptInstagramToken(plan.next, PRIMARY_ONLY), "IGQV-verify-me");
-  assert.equal(plan.next.keyVersion, crypto.CURRENT_KEY_VERSION);
+test("a NEXT-encrypted row with an older marker is normalized to explicit staged v3", () => {
+  const nextV2 = crypto.encryptInstagramToken("IGQV-next-v2", NEW_ONLY);
+  const plan = rotation.planRowRotation({ ownerUserId: SYNRAPAY, ...nextV2 }, STAGED_RING);
+  assert.equal(plan.result, "migratable");
+  assert.equal(plan.next.keyVersion, crypto.STAGED_KEY_VERSION);
+  assert.match(plan.next.encryptedToken, /^v3:[A-Za-z0-9_-]{22}:/);
 });
 
 // ---------------------------------------------------------------------------
-// Wiring, config and the protected entry point
+// Refusal and non-disclosure
 // ---------------------------------------------------------------------------
 
-test("every token call site passes the full key ring, not a bare primary key", async () => {
+test("11. NEXT absent (or equal to PRIMARY) refuses before scanning rows", async () => {
+  let scans = 0;
+  const store = {
+    async listRows() { scans += 1; return []; },
+    async writeRow() { assert.fail("must not write"); },
+  };
+
+  for (const ring of [OLD_ONLY, { primary: OLD_KEY, next: OLD_KEY, legacy: [] }]) {
+    await assert.rejects(
+      rotation.rotateInstagramTokens(store, ring),
+      (error) => error instanceof rotation.InstagramStagedRotationConfigurationError,
+    );
+  }
+  assert.equal(scans, 0);
+});
+
+test("12. outcomes, public responses, errors and logs never expose secrets or row bytes", async () => {
+  const plaintext = "IGQV-super-secret-token";
+  const sourceRow = primaryRow(SYNRAPAY, plaintext);
+  const store = makeStore([sourceRow]);
+  const outcome = await rotation.rotateInstagramTokens(store, STAGED_RING, { dryRun: true });
+  // Simulate accidental extra properties on an internal object: the public
+  // allowlist must still discard all of them.
+  outcome.plaintext = plaintext;
+  outcome.encryptedToken = sourceRow.encryptedToken;
+  outcome.primary = OLD_KEY;
+  outcome.next = NEW_KEY;
+  const response = rotation.publicRotationResult(outcome, true);
+  const serialized = JSON.stringify(response);
+
+  assert.deepEqual(Object.keys(response).sort(), ["alreadyOnNext", "failed", "migratable", "scanned"]);
+  for (const secret of [plaintext, sourceRow.encryptedToken, OLD_KEY, NEW_KEY, LEGACY_KEY]) {
+    assert.ok(!serialized.includes(secret));
+  }
+
+  const bogus = { encryptedToken: "v3:AAAAAAAAAAAAAAAAAAAAAA:bm90LXJlYWw=", iv: "AAAAAAAAAAAAAAAA", authTag: "AAAAAAAAAAAAAAAAAAAAAA==" };
+  try {
+    crypto.decryptInstagramToken(bogus, STAGED_RING);
+    assert.fail("should throw");
+  } catch (error) {
+    const text = `${error.message}${error.stack}${JSON.stringify(Object.entries(error))}`;
+    for (const secret of [plaintext, OLD_KEY, NEW_KEY, bogus.encryptedToken]) assert.ok(!text.includes(secret));
+  }
+
+  for (const path of [
+    "lib/instagram/crypto.ts",
+    "lib/instagram/key-rotation.ts",
+    "app/api/admin/instagram/rotate-token-key/route.ts",
+  ]) {
+    assert.doesNotMatch(await read(path), /console\.(?:log|info|warn|error)/);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Configuration, endpoint and existing 0023 database support
+// ---------------------------------------------------------------------------
+
+test("all normal token call sites pass the PRIMARY/NEXT/LEGACY key ring", async () => {
   for (const path of [
     "app/api/integrations/instagram/callback/route.ts",
     "app/api/integrations/instagram/insights/route.ts",
   ]) {
     const source = await read(path);
     assert.match(source, /instagramKeyRing\(config\)/, `${path} must use the key ring`);
-    assert.doesNotMatch(source, /config\.encryptionKey/, `${path} must not use the bare key`);
+    assert.doesNotMatch(source, /config\.encryptionKey/, `${path} must not bypass the key ring`);
   }
 });
 
-test("the legacy key is read from its own env var and never exposed to the browser", async () => {
+test("NEXT is optional, server-only and distinct from LEGACY", async () => {
   const config = await read("lib/instagram/config.ts");
-  assert.match(config, /import "server-only"/);
-  assert.match(config, /INSTAGRAM_TOKEN_ENCRYPTION_KEY_LEGACY/);
-  assert.doesNotMatch(config, /NEXT_PUBLIC_INSTAGRAM_TOKEN_ENCRYPTION_KEY/);
   const example = await read(".env.example");
+
+  assert.match(config, /import "server-only"/);
+  assert.match(config, /INSTAGRAM_TOKEN_ENCRYPTION_KEY_NEXT/);
+  assert.match(config, /INSTAGRAM_TOKEN_ENCRYPTION_KEY_LEGACY/);
+  assert.match(example, /^INSTAGRAM_TOKEN_ENCRYPTION_KEY_NEXT=$/m);
   assert.match(example, /^INSTAGRAM_TOKEN_ENCRYPTION_KEY_LEGACY=$/m);
   assert.match(example, /^INSTAGRAM_KEY_ROTATION_SECRET=$/m);
-  assert.doesNotMatch(example, /NEXT_PUBLIC_INSTAGRAM_TOKEN_ENCRYPTION_KEY/);
+  assert.doesNotMatch(`${config}\n${example}`, /NEXT_PUBLIC_INSTAGRAM_TOKEN_ENCRYPTION/);
 });
 
-test("the rotation endpoint is disabled by default and secret-protected", async () => {
+test("the protected endpoint rejects missing NEXT before creating a store", async () => {
   const route = await read("app/api/admin/instagram/rotate-token-key/route.ts");
   assert.match(route, /INSTAGRAM_KEY_ROTATION_SECRET/);
-  assert.match(route, /status: 503/);
   assert.match(route, /Bearer \$\{secret\}/);
-  assert.match(route, /status: 401/);
+  assert.match(route, /!config\.nextEncryptionKey \|\| config\.nextEncryptionKey === config\.encryptionKey/);
+  assert.ok(
+    route.indexOf("if (!config.nextEncryptionKey") < route.indexOf("createRotationStore(createAdminClient())"),
+    "NEXT must be validated before rows are scanned",
+  );
+  assert.match(route, /publicRotationResult\(outcome, dryRun\)/);
   assert.match(route, /runtime = "nodejs"/);
-  assert.match(route, /dryRun/);
-  // It must never echo secrets back. Check the response payload construction,
-  // not comments: the body spreads the rotation outcome (counts + owner ids)
-  // and a legacy-key COUNT, never key material or ciphertext.
-  const body = route.slice(route.indexOf("return Response.json("));
-  assert.match(body, /\.\.\.outcome/);
-  assert.match(body, /legacyKeysConfigured: keyRing\.legacy\.length/);
-  assert.doesNotMatch(body, /keyRing\.primary|keyRing\.legacy\[|encryptedToken|accessToken/);
+  assert.match(route, /Cache-Control/);
 });
 
-test("rotation reaches secrets only through service-role security-definer RPCs", async () => {
+test("rotation uses only 0023 service-role security-definer RPCs", async () => {
   const source = await read("lib/instagram/key-rotation.ts");
   assert.match(source, /import "server-only"/);
   assert.match(source, /list_instagram_connection_secrets/);
   assert.match(source, /update_instagram_connection_secret/);
-  // 0005 revokes direct table access, so nothing may query the table directly.
   assert.doesNotMatch(source, /from\("instagram_connection_secrets"\)/);
 });
 
-test("migration 0023 adds rotation RPCs without weakening secret protections", async () => {
+test("live migration 0023 already provides atomic row updates and keeps secret protections", async () => {
   const sql = await read("supabase/migrations/0023_instagram_token_key_rotation.sql");
-  assert.match(sql, /PREPARED FOR REVIEW/i);
   assert.match(sql, /begin;[\s\S]*commit;/);
-
   assert.match(sql, /create or replace function public\.list_instagram_connection_secrets/);
   assert.match(sql, /create or replace function public\.update_instagram_connection_secret/);
   assert.match(sql, /p_key_version smallint default 1/);
+  assert.match(sql, /key_version = coalesce\(p_key_version, 1\)/);
 
   for (const fn of [
     "list_instagram_connection_secrets\\(\\)",
@@ -326,29 +459,19 @@ test("migration 0023 adds rotation RPCs without weakening secret protections", a
     assert.match(sql, new RegExp(`grant execute on function public\\.${fn} to service_role`));
   }
   assert.match(sql, /security definer[\s\S]*?set search_path = ''/);
-
-  // The 0005 invariant must survive: no direct table grants are handed out.
   assert.doesNotMatch(sql, /grant[^;]*on table public\.instagram_connection_secrets/i);
   assert.match(sql, /Instagram secret RLS must remain enabled/);
 
-  // Metadata must be untouchable by the secret-update path.
   const updateFn = sql.slice(sql.indexOf("create or replace function public.update_instagram_connection_secret"));
   const body = updateFn.slice(0, updateFn.indexOf("$$;"));
   for (const column of ["username", "scopes", "status", "token_expires_at"]) {
-    assert.ok(!body.includes(column), `update_instagram_connection_secret must not touch ${column}`);
+    assert.ok(!body.includes(column), `secret update must not touch ${column}`);
   }
 });
 
-test("0023 is the only new migration and 0022 is left untouched", async () => {
-  const { readdir } = await import("node:fs/promises");
+test("no 0024 migration is added and live 0023 is not modified", async () => {
   const files = await readdir(new URL("supabase/migrations/", root));
-  assert.deepEqual(
-    files.filter((name) => /^002[3-9]_/.test(name)),
-    ["0023_instagram_token_key_rotation.sql"],
-  );
+  assert.deepEqual(files.filter((name) => /^002[3-9]_/.test(name)), ["0023_instagram_token_key_rotation.sql"]);
   const sql = await read("supabase/migrations/0023_instagram_token_key_rotation.sql");
-  // 0023 must not depend on anything the auto-publishing migration (0022)
-  // introduces. Every 0022 object is named after instagram_publish_*, so
-  // requiring none of that namespace here proves independence from 0022.
   assert.doesNotMatch(sql, /instagram_publish_/);
 });
