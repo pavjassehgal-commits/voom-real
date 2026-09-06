@@ -6,6 +6,7 @@ import { Btn, Card, Chip, Field, Input, Tag, Textarea } from "@/components/voom/
 import { ModalBody, ModalFoot, ModalHead, ModalShell } from "@/components/voom/ui/Modal";
 import { Icon } from "@/components/voom/icons";
 import { formatAspectRatio, POST_FORMATS, type PostFormat } from "@/lib/post/core";
+import { formatIngestionClientError } from "@/lib/media/ingestion-error";
 
 interface PostVisual {
   displayName: string;
@@ -82,8 +83,8 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
     setBusy(action); setError(""); setNotice("");
     try {
       const response = await fetch(url, init);
-      const body = await response.json() as { post?: Post; error?: string; message?: string; disclosure?: string };
-      if (!response.ok) throw new Error(body.error ?? "That didn't work. Please retry.");
+      const body = await response.json() as { post?: Post; error?: string; code?: string; requestId?: string; message?: string; disclosure?: string };
+      if (!response.ok) throw new Error(formatIngestionClientError({ error: body.error, code: body.code }, "That didn't work. Please retry."));
       if (body.post) {
         setPost(body.post);
         setConcept(body.post.concept); setCaption(body.post.caption); setCta(body.post.cta);

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Icon } from "@/components/voom/icons";
 import { Btn, Card, Input, Tag, Textarea } from "@/components/voom/ui/primitives";
 import { REEL_ASSET_ACCEPT, REEL_ASSET_MAX_BYTES, REEL_ASSET_PACK_LIMIT } from "@/lib/media/reel-asset";
+import { formatIngestionClientError } from "@/lib/media/ingestion-error";
 import { ReelCompositionPlayer } from "@/components/voom/operating/ReelCompositionPlayer";
 
 export interface ApprovalItem { id: string; tool_name: string; summary: string; old_value: Record<string, unknown> | null; new_value: Record<string, unknown> | null; status: string; result_summary: string | null; error_summary: string | null; created_at: string; }
@@ -80,13 +81,13 @@ function ReelAssetUpload({ actionId, received, allowedKinds, onReceived }: { act
     const form = new FormData(); form.set("file", file);
     try {
       const response = await uploadFormData(`/api/reels/assets/${actionId}`, form, (percent) => setProgress(percent));
-      const body = await response.json() as { assets?: ReelAssetView[]; error?: string; message?: string };
-      if (!response.ok || !body.assets) { setMessage(body.error ?? "Voom couldn't upload that asset safely."); setMessageError(true); }
+      const body = await response.json() as { assets?: ReelAssetView[]; error?: string; code?: string; requestId?: string; message?: string };
+      if (!response.ok || !body.assets) { setMessage(formatIngestionClientError(body, "Voom couldn't upload that asset safely.")); setMessageError(true); }
       else {
         let next = body.assets;
         if (replaceId) {
           const removal = await fetch(`/api/reels/assets/${actionId}/${replaceId}`, { method: "DELETE" });
-          const removed = await removal.json() as { assets?: ReelAssetView[]; error?: string };
+          const removed = await removal.json() as { assets?: ReelAssetView[]; error?: string; code?: string; requestId?: string };
           if (removal.ok && removed.assets) next = removed.assets;
         }
         setAssets(next); setMessage(body.message ?? "Asset received."); onReceived(); window.dispatchEvent(new Event("voom:data-changed"));
@@ -98,8 +99,8 @@ function ReelAssetUpload({ actionId, received, allowedKinds, onReceived }: { act
     setBusyId(id); setMessage(""); setMessageError(false);
     try {
       const response = await fetch(`/api/reels/assets/${actionId}/${id}`, { method: "DELETE" });
-      const body = await response.json() as { assets?: ReelAssetView[]; error?: string; message?: string };
-      if (!response.ok || !body.assets) { setMessage(body.error ?? "Voom couldn't remove that asset safely."); setMessageError(true); }
+      const body = await response.json() as { assets?: ReelAssetView[]; error?: string; code?: string; requestId?: string; message?: string };
+      if (!response.ok || !body.assets) { setMessage(formatIngestionClientError(body, "Voom couldn't remove that asset safely.")); setMessageError(true); }
       else { setAssets(body.assets); setMessage(body.message ?? "Asset removed."); window.dispatchEvent(new Event("voom:data-changed")); }
     } catch { setMessage("Voom couldn't remove that asset safely."); setMessageError(true); }
     setBusyId(null);

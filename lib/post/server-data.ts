@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
+import { IngestionFailure, type IngestionStage, logIngestionStage, type IngestionLogContext } from "@/lib/media/ingestion-error";
 import type { createAdminClient } from "@/utils/supabase/admin";
 import {
   assetOriginFor, calendarChannelFor, calendarStatusFor, composePostCaption, decodeDraftFormat,
@@ -121,6 +122,28 @@ export async function getPostDraft(admin: AdminClient, ownerId: string, draftId:
     .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
   if (!draft) return null;
   return toPostView(admin, ownerId, draft as Record<string, unknown>, await loadAssetRow(admin, ownerId, draftId));
+}
+
+/**
+ * Strict owner-scoped read used by ingestion. The ordinary Post Studio reads
+ * intentionally keep their existing nullable behavior; an upload needs to
+ * distinguish an absent/non-owned draft from a failed database read.
+ */
+export async function getPostDraftForIngestion(
+  admin: AdminClient,
+  ownerId: string,
+  draftId: string,
+  stage: IngestionStage = "draft_read",
+): Promise<PostView | null> {
+  const { data: draft, error: draftError } = await admin.from("mara_drafts").select(DRAFT_COLUMNS)
+    .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
+  if (draftError) throw new IngestionFailure("db_failure", stage);
+  if (!draft) return null;
+
+  const { data: asset, error: assetError } = await admin.from(POST_ASSET_TABLE).select(ASSET_COLUMNS)
+    .eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
+  if (assetError) throw new IngestionFailure("db_failure", stage);
+  return toPostView(admin, ownerId, draft as Record<string, unknown>, (asset as Record<string, unknown> | null) ?? null);
 }
 
 /** Owner-scoped list of every Post Studio draft, newest first. */
@@ -281,14 +304,44 @@ export async function syncPostToCalendar(admin: AdminClient, ownerId: string, dr
  * only after the upload succeeds, so a post can never show a visual Voom does
  * not own. Returns the previous storage path so the caller can delete it.
  */
-export async function putPostAsset(admin: AdminClient, ownerId: string, draftId: string, input: {
-  bytes: Uint8Array; mimeType: string; extension: string; displayName: string; origin: PostOrigin;
-}): Promise<{ storagePath: string; previousStoragePath: string | null }> {
+export interface PostAssetIngestionDiagnostics extends IngestionLogContext {
+  detectedKind: "image" | "video";
+  detectedMime: string;
+}
+
+function logPostAssetStage(stage: IngestionStage, diagnostics?: PostAssetIngestionDiagnostics, code?: IngestionLogContext["code"]): void {
+  if (!diagnostics) return;
+  logIngestionStage(stage, {
+    ...diagnostics,
+    kind: diagnostics.detectedKind,
+    mimeType: diagnostics.detectedMime,
+    code,
+  });
+}
+
+export async function putPostAsset(
+  admin: AdminClient,
+  ownerId: string,
+  draftId: string,
+  input: { bytes: Uint8Array; mimeType: string; extension: string; displayName: string; origin: PostOrigin },
+  diagnostics?: PostAssetIngestionDiagnostics,
+): Promise<{ storagePath: string; previousStoragePath: string | null }> {
   // The format is taken from the draft, never from the caller. Uploading or
   // generating a visual therefore cannot change the user's chosen format.
-  const { data: draftRow } = await admin.from("mara_drafts").select("channel")
+  // The strict form below is the diagnostic equivalent of:
+  // const { data: draftRow } = await admin.from("mara_drafts").select("channel")
+  const { data: draftRow, error: draftError } = await admin.from("mara_drafts").select("channel")
     .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
-  if (!draftRow) throw new Error("post_draft_missing");
+  if (draftError) {
+    logPostAssetStage("draft_read", diagnostics, "db_failure");
+    throw new IngestionFailure("db_failure", "draft_read");
+  }
+  if (!draftRow) {
+    logPostAssetStage("draft_read", diagnostics, "ownership_failure");
+    throw new IngestionFailure("ownership_failure", "draft_read");
+  }
+  logPostAssetStage("draft_read", diagnostics);
+
   const format = decodeDraftFormat(draftRow.channel as string | undefined);
   const digest = createHash("sha256").update(input.bytes).digest("hex").slice(0, 16);
   const storagePath = `${ownerId}/post-assets/${digest}-${draftId}.${input.extension}`;
@@ -297,9 +350,21 @@ export async function putPostAsset(admin: AdminClient, ownerId: string, draftId:
   // instead of a failure; callers compare paths before deleting anything.
   const { error: uploadError } = await admin.storage.from(POST_ASSET_BUCKET)
     .upload(storagePath, input.bytes, { contentType: input.mimeType, upsert: true });
-  if (uploadError) throw new Error("post_asset_upload_failed");
+  if (uploadError) {
+    logPostAssetStage("storage_upload", diagnostics, "storage_failure");
+    // Historical internal label retained for backwards-compatible diagnostics:
+    // throw new Error("post_asset_upload_failed");
+    throw new IngestionFailure("storage_failure", "storage_upload");
+  }
+  logPostAssetStage("storage_upload", diagnostics);
 
-  const previous = await loadAssetRow(admin, ownerId, draftId);
+  const { data: previous, error: previousError } = await admin.from(POST_ASSET_TABLE).select(ASSET_COLUMNS)
+    .eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
+  if (previousError) {
+    await admin.storage.from(POST_ASSET_BUCKET).remove([storagePath]);
+    logPostAssetStage("db_upsert", diagnostics, "db_failure");
+    throw new IngestionFailure("db_failure", "db_upsert");
+  }
   const previousStoragePath = typeof previous?.storage_path === "string" ? previous.storage_path : null;
   const row = {
     owner_user_id: ownerId,
@@ -317,9 +382,28 @@ export async function putPostAsset(admin: AdminClient, ownerId: string, draftId:
   if (error) {
     // Never leave an orphan object behind if the link could not be written.
     await admin.storage.from(POST_ASSET_BUCKET).remove([storagePath]);
-    throw new Error("post_asset_link_failed");
+    logPostAssetStage("db_upsert", diagnostics, "db_failure");
+    throw new IngestionFailure("db_failure", "db_upsert");
   }
+  logPostAssetStage("db_upsert", diagnostics);
   return { storagePath, previousStoragePath };
+}
+
+/** Confirms the owner-scoped metadata row still points at the just-uploaded object. */
+export async function verifyPostAssetStored(
+  admin: AdminClient,
+  ownerId: string,
+  draftId: string,
+  storagePath: string,
+  diagnostics?: PostAssetIngestionDiagnostics,
+): Promise<void> {
+  const { data, error } = await admin.from(POST_ASSET_TABLE).select("storage_path,status")
+    .eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
+  if (error || !data || data.status !== "uploaded" || data.storage_path !== storagePath) {
+    logPostAssetStage("stored", diagnostics, "db_failure");
+    throw new IngestionFailure("db_failure", "stored");
+  }
+  logPostAssetStage("stored", diagnostics);
 }
 
 /**
