@@ -306,7 +306,7 @@ test("own-asset uploads are private, owner-isolated and preserved unchanged", as
   const route = await read("app/api/posts/[id]/asset/route.ts");
   assert.match(route, /getCurrentUser\(\)/);
   assert.match(route, /getPostDraft\(admin, user\.id, id\)/);
-  assert.match(route, /detectPostAsset\(bytes\)/, "magic bytes, not the browser content type");
+  assert.match(route, /detectPostAsset\(bytes, file\.name\)/, "magic bytes plus the filename, never the browser content type");
   assert.match(route, /POST_ASSET_MAX_BYTES/);
   assert.match(route, /putPostAsset\(admin, user\.id, id/);
   // No provider is imported: an upload never triggers generation.

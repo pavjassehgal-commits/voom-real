@@ -3,6 +3,7 @@ import "server-only";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { defaultIngestionCodeForStatus, type IngestionErrorCode } from "./ingestion-error";
 import { REEL_ASSET_PACK_LIMIT } from "./reel-asset";
 
 export const REEL_ASSET_BUCKET = "mara-media";
@@ -56,4 +57,6 @@ export async function ownedReelAction(params: Promise<{ actionId: string }>, req
   return { userId: user.id, actionId, draftId: data.new_value.draftId as string, allowedAssetKinds: kinds.length ? kinds : ["image", "video"] };
 }
 
-export function invalidJson(error: string, status = 400) { return Response.json({ error }, { status }); }
+export function invalidJson(error: string, status = 400, code: IngestionErrorCode = defaultIngestionCodeForStatus(status)) {
+  return Response.json({ error, code }, { status });
+}

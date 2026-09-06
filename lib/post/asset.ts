@@ -22,10 +22,12 @@ export interface DetectedPostAsset {
 
 /**
  * Magic-byte sniffing, never the browser-supplied content type. Reuses the
- * Reel detector so both studios agree on what a valid file is.
+ * Reel detector so both studios agree on what a valid file is. The filename is
+ * passed through so an Apple-exported `qt`-branded `.mp4` stays MP4 instead of
+ * being rewritten as a QuickTime MOV.
  */
-export function detectPostAsset(bytes: Uint8Array): DetectedPostAsset | null {
-  return detectReelAsset(bytes);
+export function detectPostAsset(bytes: Uint8Array, name?: string): DetectedPostAsset | null {
+  return detectReelAsset(bytes, name ? { name } : undefined);
 }
 
 /** Human wording for the file kinds a given post type accepts. */
