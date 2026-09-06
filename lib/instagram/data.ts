@@ -2,10 +2,10 @@ import "server-only";
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { INSTAGRAM_SCOPES } from "./client";
-import { encryptInstagramToken, type InstagramKeyInput } from "./crypto";
-import { decryptInstagramToken } from "./crypto";
-import type { InstagramConnectionView } from "./types";
+import { INSTAGRAM_SCOPES } from "./scopes.ts";
+import { encryptInstagramToken, type InstagramKeyInput } from "./crypto.ts";
+import { decryptInstagramToken } from "./crypto.ts";
+import type { InstagramConnectionView } from "./types.ts";
 
 const OAUTH_TTL_MS = 10 * 60 * 1000;
 

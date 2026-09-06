@@ -5,38 +5,45 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 const ALGORITHM = "aes-256-gcm";
 
 /**
- * Ciphertext versioning.
+ * Ciphertext and key-generation versioning.
  *
- * The original format (0004) stored a bare base64 ciphertext with NO key-version
- * marker, so a stored row could not say which key encrypted it. The
- * instagram_connection_secrets.key_version column existed but was hard-coded to
- * 1 and never read back.
- *
- * New writes are therefore self-describing: the stored string is prefixed with
- * "v2:". Anything without a recognised prefix is treated as the legacy v1
- * format. This keeps full backward compatibility with the three live
- * connections while making every new row unambiguous — and needs no schema
- * change, because the column is plain text.
+ * v1 is the original bare-base64 format. v2 is the self-describing format
+ * introduced by the first key-rotation change; normal application writes keep
+ * using v2 and always encrypt with PRIMARY. v3 is reserved for staged-rotation
+ * output and includes a non-secret, deterministic key identifier. That makes a
+ * staged row unambiguously attributable to the exact NEXT key without changing
+ * the existing database schema. Existing v1 and v2 values remain readable.
  */
 export const LEGACY_KEY_VERSION = 1;
 export const CURRENT_KEY_VERSION = 2;
+export const STAGED_KEY_VERSION = 3;
 const VERSION_PREFIX = /^v(\d+):/;
+const STAGED_PREFIX = /^v3:([A-Za-z0-9_-]{22}):/;
 
 /**
- * The keys Voom may use. `primary` encrypts everything new; `legacy` keys are
- * accepted for DECRYPTION ONLY while a rotation is in flight.
+ * The keys Voom may use. `primary` encrypts all normal writes. `next` is read
+ * fallback plus the staged rotation target. `legacy` keys are decryption-only.
  */
 export interface InstagramKeyRing {
   primary: string;
+  next?: string;
   legacy: string[];
 }
 
 export type InstagramKeyInput = string | InstagramKeyRing;
 
-/** Accepts a bare key (existing callers) or a full key ring. */
+/** Accepts a bare key (existing callers) or a full, de-duplicated key ring. */
 export function toKeyRing(input: InstagramKeyInput): InstagramKeyRing {
   if (typeof input === "string") return { primary: input, legacy: [] };
-  return { primary: input.primary, legacy: input.legacy.filter((key) => Boolean(key) && key !== input.primary) };
+
+  const next = input.next && input.next !== input.primary ? input.next : undefined;
+  const seen = new Set([input.primary, ...(next ? [next] : [])]);
+  const legacy = input.legacy.filter((key) => {
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return next ? { primary: input.primary, next, legacy } : { primary: input.primary, legacy };
 }
 
 /**
@@ -57,6 +64,20 @@ function deriveKey(secret: string) {
   return createHash("sha256").update(secret, "utf8").digest();
 }
 
+/**
+ * A stable 132-bit identifier for matching a v3 value to a configured key.
+ * This is not key material and is never returned by the rotation endpoint.
+ * Ciphertext plus its GCM tag already permits validation of a guessed key, so
+ * this identifier does not weaken a securely generated encryption key.
+ */
+function keyIdentifier(secret: string) {
+  return createHash("sha256")
+    .update("voom-instagram-key-id\0", "utf8")
+    .update(deriveKey(secret))
+    .digest("base64url")
+    .slice(0, 22);
+}
+
 export interface EncryptedInstagramToken {
   encryptedToken: string;
   iv: string;
@@ -64,19 +85,33 @@ export interface EncryptedInstagramToken {
   keyVersion: number;
 }
 
-/** Encrypts with the PRIMARY key only. Legacy keys never encrypt anything. */
-export function encryptInstagramToken(token: string, key: InstagramKeyInput): EncryptedInstagramToken {
-  const ring = toKeyRing(key);
+function encryptWithVersion(token: string, secret: string, version: typeof CURRENT_KEY_VERSION | typeof STAGED_KEY_VERSION): EncryptedInstagramToken {
   const iv = randomBytes(12);
-  const cipher = createCipheriv(ALGORITHM, deriveKey(ring.primary), iv);
+  const cipher = createCipheriv(ALGORITHM, deriveKey(secret), iv);
   const ciphertext = Buffer.concat([cipher.update(token, "utf8"), cipher.final()]);
+  const payload = ciphertext.toString("base64");
+  const encryptedToken = version === STAGED_KEY_VERSION
+    ? `v${STAGED_KEY_VERSION}:${keyIdentifier(secret)}:${payload}`
+    : `v${CURRENT_KEY_VERSION}:${payload}`;
   return {
-    // Self-describing: "v2:<base64>".
-    encryptedToken: `v${CURRENT_KEY_VERSION}:${ciphertext.toString("base64")}`,
+    encryptedToken,
     iv: iv.toString("base64"),
     authTag: cipher.getAuthTag().toString("base64"),
-    keyVersion: CURRENT_KEY_VERSION,
+    keyVersion: version,
   };
+}
+
+/**
+ * Encrypts a normal OAuth/token write with PRIMARY only. NEXT and legacy keys
+ * never affect normal encryption, including while a staged rotation is active.
+ */
+export function encryptInstagramToken(token: string, key: InstagramKeyInput): EncryptedInstagramToken {
+  return encryptWithVersion(token, toKeyRing(key).primary, CURRENT_KEY_VERSION);
+}
+
+/** Encrypts rotation output with NEXT specifically and marks it as staged v3. */
+export function encryptInstagramTokenForStagedRotation(token: string, nextKey: string): EncryptedInstagramToken {
+  return encryptWithVersion(token, nextKey, STAGED_KEY_VERSION);
 }
 
 export interface StoredInstagramToken {
@@ -85,63 +120,84 @@ export interface StoredInstagramToken {
   authTag: string;
 }
 
-/** Splits a stored value into its declared version and raw base64 payload. */
-export function parseStoredToken(encryptedToken: string): { version: number; payload: string } {
+/** Splits a stored value into its declared version, key id and raw payload. */
+export function parseStoredToken(encryptedToken: string): { version: number; keyId: string | null; payload: string } {
+  const staged = STAGED_PREFIX.exec(encryptedToken);
+  if (staged) {
+    return {
+      version: STAGED_KEY_VERSION,
+      keyId: staged[1],
+      payload: encryptedToken.slice(staged[0].length),
+    };
+  }
   const match = VERSION_PREFIX.exec(encryptedToken);
-  if (!match) return { version: LEGACY_KEY_VERSION, payload: encryptedToken };
-  return { version: Number(match[1]), payload: encryptedToken.slice(match[0].length) };
+  if (!match) return { version: LEGACY_KEY_VERSION, keyId: null, payload: encryptedToken };
+  return { version: Number(match[1]), keyId: null, payload: encryptedToken.slice(match[0].length) };
 }
 
 function decryptWith(input: StoredInstagramToken, secret: string): string {
-  const { payload } = parseStoredToken(input.encryptedToken);
+  const parsed = parseStoredToken(input.encryptedToken);
+  if (parsed.version === STAGED_KEY_VERSION && parsed.keyId !== keyIdentifier(secret)) {
+    throw new Error("key_mismatch");
+  }
   const decipher = createDecipheriv(ALGORITHM, deriveKey(secret), Buffer.from(input.iv, "base64"));
   decipher.setAuthTag(Buffer.from(input.authTag, "base64"));
-  return Buffer.concat([decipher.update(Buffer.from(payload, "base64")), decipher.final()]).toString("utf8");
+  return Buffer.concat([decipher.update(Buffer.from(parsed.payload, "base64")), decipher.final()]).toString("utf8");
+}
+
+function keyCandidates(ring: InstagramKeyRing): Array<{ source: "primary" | "next" | "legacy"; secret: string }> {
+  return [
+    { source: "primary", secret: ring.primary },
+    ...(ring.next ? [{ source: "next" as const, secret: ring.next }] : []),
+    ...ring.legacy.map((secret) => ({ source: "legacy" as const, secret })),
+  ];
 }
 
 /**
- * Decrypts using the primary key first, then each legacy key in turn.
- *
- * Trial decryption is safe here because AES-GCM authenticates: a wrong key
- * cannot yield plausible plaintext, it throws. (Verified empirically against
- * 2000 wrong keys with zero false accepts.)
+ * Decrypts in the safe intermediate-state order: PRIMARY, NEXT, then LEGACY.
+ * AES-GCM authentication makes fallback attempts fail closed under a wrong key.
  */
 export function decryptInstagramToken(input: StoredInstagramToken, key: InstagramKeyInput): string {
   const ring = toKeyRing(key);
-  for (const secret of [ring.primary, ...ring.legacy]) {
+  for (const { secret } of keyCandidates(ring)) {
     try {
       return decryptWith(input, secret);
     } catch {
-      // Never surface the underlying cipher error: it is not actionable and
-      // keeping it out of scope guarantees no key or token detail escapes.
+      // Never surface cipher errors, key identifiers, ciphertext or plaintext.
     }
   }
   throw new InstagramTokenDecryptionError();
 }
 
 /**
- * Which key decrypted this row, without returning the plaintext.
- * Used by the rotation job to decide what actually needs re-encrypting.
+ * Identifies which configured key authenticated a row without returning the
+ * plaintext. Rotation uses this to recognize exact NEXT output idempotently.
  */
 export function inspectStoredToken(
   input: StoredInstagramToken,
   key: InstagramKeyInput,
-): { readable: boolean; usesPrimary: boolean; declaredVersion: number } {
+): {
+  readable: boolean;
+  usesPrimary: boolean;
+  usesNext: boolean;
+  keySource: "primary" | "next" | "legacy" | null;
+  declaredVersion: number;
+} {
   const ring = toKeyRing(key);
   const declaredVersion = parseStoredToken(input.encryptedToken).version;
-  try {
-    decryptWith(input, ring.primary);
-    return { readable: true, usesPrimary: true, declaredVersion };
-  } catch {
-    // fall through to legacy keys
-  }
-  for (const secret of ring.legacy) {
+  for (const candidate of keyCandidates(ring)) {
     try {
-      decryptWith(input, secret);
-      return { readable: true, usesPrimary: false, declaredVersion };
+      decryptWith(input, candidate.secret);
+      return {
+        readable: true,
+        usesPrimary: candidate.source === "primary",
+        usesNext: candidate.source === "next",
+        keySource: candidate.source,
+        declaredVersion,
+      };
     } catch {
-      // keep trying
+      // Keep trying in PRIMARY -> NEXT -> LEGACY order.
     }
   }
-  return { readable: false, usesPrimary: false, declaredVersion };
+  return { readable: false, usesPrimary: false, usesNext: false, keySource: null, declaredVersion };
 }

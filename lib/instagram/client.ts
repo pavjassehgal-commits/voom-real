@@ -1,9 +1,11 @@
 import "server-only";
 
 import type { InstagramConfig } from "./config";
+import { INSTAGRAM_SCOPES } from "./scopes";
+
+export { INSTAGRAM_SCOPES } from "./scopes";
 
 const REQUEST_TIMEOUT_MS = 15_000;
-export const INSTAGRAM_SCOPES = ["instagram_business_basic", "instagram_business_content_publish"] as const;
 
 export class InstagramApiError extends Error {
   constructor(

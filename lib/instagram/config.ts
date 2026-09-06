@@ -11,9 +11,13 @@ const configSchema = z.object({
   redirectUri: z.string().url(),
   encryptionKey: z.string().min(32),
   /**
-   * Old keys accepted for DECRYPTION ONLY during a rotation. Comma-separated
-   * so more than one historical key can be carried if ever needed. Optional:
-   * absent means "no rotation in flight", which is the steady state.
+   * Future primary used only as the staged rotation target. It is also a read
+   * fallback so migrated rows work before cutover. Optional in steady state.
+   */
+  nextEncryptionKey: z.string().min(32).optional(),
+  /**
+   * Historical keys accepted for DECRYPTION ONLY. They are not needed for a
+   * staged PRIMARY -> NEXT rotation because PRIMARY remains available.
    */
   legacyEncryptionKeys: z.array(z.string().min(32)).default([]),
 });
@@ -27,9 +31,14 @@ export function readInstagramConfig(): InstagramConfig | null {
     graphVersion: process.env.META_GRAPH_VERSION,
     redirectUri: process.env.META_INSTAGRAM_REDIRECT_URI,
     encryptionKey: process.env.INSTAGRAM_TOKEN_ENCRYPTION_KEY,
+    nextEncryptionKey: optionalValue(process.env.INSTAGRAM_TOKEN_ENCRYPTION_KEY_NEXT),
     legacyEncryptionKeys: parseLegacyKeys(process.env.INSTAGRAM_TOKEN_ENCRYPTION_KEY_LEGACY),
   });
   return parsed.success ? parsed.data : null;
+}
+
+function optionalValue(value: string | undefined): string | undefined {
+  return value?.trim() || undefined;
 }
 
 /** Splits the comma-separated legacy key list, ignoring blanks. */
@@ -39,14 +48,18 @@ function parseLegacyKeys(value: string | undefined): string[] {
 }
 
 /**
- * The key ring used by every encrypt/decrypt call. The primary key is always
- * the one that encrypts; legacy keys only ever decrypt.
+ * Read order is PRIMARY -> NEXT -> LEGACY. Normal encryption still uses only
+ * `primary`; NEXT is never promoted implicitly.
  */
 export function instagramKeyRing(config: InstagramConfig): InstagramKeyRing {
-  return {
-    primary: config.encryptionKey,
-    legacy: config.legacyEncryptionKeys.filter((key) => key !== config.encryptionKey),
-  };
+  const next = config.nextEncryptionKey && config.nextEncryptionKey !== config.encryptionKey
+    ? config.nextEncryptionKey
+    : undefined;
+  const excluded = new Set([config.encryptionKey, ...(next ? [next] : [])]);
+  const legacy = config.legacyEncryptionKeys.filter((key) => !excluded.has(key));
+  return next
+    ? { primary: config.encryptionKey, next, legacy }
+    : { primary: config.encryptionKey, legacy };
 }
 
 export function requireInstagramConfig() {
