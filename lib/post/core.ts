@@ -15,13 +15,43 @@ export const POST_DRAFT_KIND = "instagram_post";
 export const REEL_DRAFT_KIND = "reel";
 export type PostDraftKind = typeof POST_DRAFT_KIND | typeof REEL_DRAFT_KIND;
 
-/** How the visual for this post came to exist. */
+/** How the visual for this post came to exist (UI / API, not a DB column). */
 export const POST_ORIGINS = ["mara", "own_asset", "existing_content"] as const;
 export type PostOrigin = (typeof POST_ORIGINS)[number];
 
-/** post_draft_assets.origin values, one per Post Studio entry point. */
-export const ASSET_ORIGINS = ["mara_generated", "user_upload", "existing_content"] as const;
+/**
+ * Production 0021 `post_draft_assets.origin` values. The applied check is
+ * exactly `origin in ('uploaded_asset','uploaded_existing')`.
+ */
+export const ASSET_ORIGINS = ["uploaded_asset", "uploaded_existing"] as const;
 export type AssetOrigin = (typeof ASSET_ORIGINS)[number];
+
+/** Columns that exist on production `post_draft_assets`. There is no `format`. */
+export const POST_DRAFT_ASSET_PRODUCTION_COLUMNS = [
+  "id",
+  "owner_user_id",
+  "draft_id",
+  "storage_path",
+  "display_name",
+  "mime_type",
+  "byte_size",
+  "origin",
+  "status",
+  "created_at",
+  "updated_at",
+] as const;
+
+/** Columns the service role writes on insert/upsert. id/timestamps are defaults. */
+export const POST_DRAFT_ASSET_WRITE_COLUMNS = [
+  "owner_user_id",
+  "draft_id",
+  "storage_path",
+  "display_name",
+  "mime_type",
+  "byte_size",
+  "origin",
+  "status",
+] as const;
 
 /**
  * Truthful internal lifecycle states. There is deliberately no "posted" state:
@@ -120,17 +150,73 @@ export function isPostOrigin(value: unknown): value is PostOrigin {
   return typeof value === "string" && (POST_ORIGINS as readonly string[]).includes(value);
 }
 
-/** Maps a Post Studio entry point to the stored asset origin. */
-export function assetOriginFor(origin: PostOrigin): AssetOrigin {
-  if (origin === "mara") return "mara_generated";
-  if (origin === "existing_content") return "existing_content";
-  return "user_upload";
+/**
+ * Maps a Post Studio entry point to the production origin check.
+ *
+ *   - already-made imported image/video → uploaded_existing
+ *   - user's own asset on a MARA Post   → uploaded_asset
+ *   - MARA-generated visual             → uploaded_asset
+ *
+ * Post Studio Reels are imported existing videos, so a reel kind is stored as
+ * uploaded_existing even if the caller sent own_asset (the editor has no
+ * origin on the draft until a visual exists).
+ */
+export function assetOriginFor(origin: PostOrigin, kind?: string): AssetOrigin {
+  if (origin === "existing_content" || kind === REEL_DRAFT_KIND) return "uploaded_existing";
+  return "uploaded_asset";
 }
 
 export function originForAsset(assetOrigin: string | null | undefined): PostOrigin {
+  if (assetOrigin === "uploaded_existing" || assetOrigin === "existing_content") return "existing_content";
   if (assetOrigin === "mara_generated") return "mara";
-  if (assetOrigin === "existing_content") return "existing_content";
   return "own_asset";
+}
+
+export interface PostDraftAssetWrite {
+  owner_user_id: string;
+  draft_id: string;
+  storage_path: string;
+  display_name: string;
+  mime_type: string;
+  byte_size: number;
+  origin: AssetOrigin;
+  status: "uploaded";
+}
+
+/**
+ * The exact row upserted into production `post_draft_assets`. Deliberately
+ * omits `format` — that column does not exist in production 0021.
+ */
+export function buildPostDraftAssetWrite(input: {
+  ownerUserId: string;
+  draftId: string;
+  storagePath: string;
+  displayName: string;
+  mimeType: string;
+  byteSize: number;
+  origin: PostOrigin;
+  kind?: string;
+}): PostDraftAssetWrite {
+  return {
+    owner_user_id: input.ownerUserId,
+    draft_id: input.draftId,
+    storage_path: input.storagePath,
+    display_name: input.displayName.slice(0, 180),
+    mime_type: input.mimeType,
+    byte_size: input.byteSize,
+    origin: assetOriginFor(input.origin, input.kind),
+    status: "uploaded",
+  };
+}
+
+/** True when every key is a production column, `format` is absent, and origin is legal. */
+export function isProductionPostDraftAssetWrite(row: object): row is PostDraftAssetWrite {
+  const record = row as Record<string, unknown>;
+  if ("format" in record) return false;
+  const keys = Object.keys(record);
+  if (keys.length !== POST_DRAFT_ASSET_WRITE_COLUMNS.length) return false;
+  if (!keys.every((key) => (POST_DRAFT_ASSET_WRITE_COLUMNS as readonly string[]).includes(key))) return false;
+  return record.origin === "uploaded_asset" || record.origin === "uploaded_existing";
 }
 
 /**
@@ -139,10 +225,9 @@ export function originForAsset(assetOrigin: string | null | undefined): PostOrig
  * specific truth about where the visual came from.
  */
 export function postTypeLabel(kind: string, assetOrigin: string | null | undefined): string {
-  if (assetOrigin === "existing_content") return POST_TYPE_LABELS.existing_content;
+  if (assetOrigin === "uploaded_existing" || assetOrigin === "existing_content") return POST_TYPE_LABELS.existing_content;
   return kind === REEL_DRAFT_KIND ? POST_TYPE_LABELS.reel : POST_TYPE_LABELS.instagram_post;
 }
-
 /** The existing Content Calendar channel enum value for a post kind. */
 export function calendarChannelFor(kind: string): "Instagram" | "Reel" {
   return kind === REEL_DRAFT_KIND ? "Reel" : "Instagram";

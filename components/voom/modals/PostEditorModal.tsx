@@ -211,7 +211,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                   onChange={(event) => {
                     const file = event.target.files?.[0];
                     event.target.value = "";
-                    if (file) void uploadFile(file, post.origin === "existing_content" ? "existing_content" : "own_asset");
+                    if (file) void uploadFile(file, post.origin === "existing_content" || post.kind === "reel" ? "existing_content" : "own_asset");
                   }}
                 />
                 <Btn variant="outline" size="sm" block disabled={busy === "upload"} onClick={() => fileRef.current?.click()}>

@@ -4,11 +4,12 @@ import { createHash } from "node:crypto";
 import { IngestionFailure, type IngestionStage, logIngestionStage, type IngestionLogContext } from "@/lib/media/ingestion-error";
 import type { createAdminClient } from "@/utils/supabase/admin";
 import {
-  assetOriginFor, calendarChannelFor, calendarStatusFor, composePostCaption, decodeDraftFormat,
+  buildPostDraftAssetWrite, calendarChannelFor, calendarStatusFor, composePostCaption, decodeDraftFormat,
   encodeDraftChannel, internalPostState, isPostDraftKind, originForAsset, postTypeLabel,
   splitPostCaption, type PostDraftKind, type PostFormat, type PostInternalState, type PostOrigin,
   POST_STATE_LABELS,
 } from "./core";
+import { persistUploadedPostAsset, PostAssetPersistError } from "./asset-persist";
 
 export const POST_ASSET_BUCKET = "mara-media";
 /** Short-lived signed previews; storage_path itself never leaves the server. */
@@ -17,7 +18,8 @@ export const POST_STUDIO_CONVERSATION_TITLE = "Instagram Post Studio";
 
 const POST_ASSET_TABLE = "post_draft_assets";
 const DRAFT_COLUMNS = "id,conversation_id,message_id,kind,channel,title,content,proposed_publish_at,status,created_at,updated_at";
-const ASSET_COLUMNS = "id,draft_id,display_name,mime_type,byte_size,format,origin,status,created_at,updated_at,storage_path";
+// Production 0021 has no `format` column. Never select it.
+const ASSET_COLUMNS = "id,draft_id,display_name,mime_type,byte_size,origin,status,created_at,updated_at,storage_path";
 
 export type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -168,9 +170,8 @@ export async function toPostView(
   const scheduledAt = typeof draft.proposed_publish_at === "string" ? draft.proposed_publish_at : null;
   const parts = splitPostCaption(String(draft.content ?? ""));
   const origin = originForAsset(asset?.origin as string | undefined);
-  // The draft is the single source of truth for format. asset.format is a
-  // mirror written from it and is deliberately never read back here, so the
-  // draft and the asset metadata cannot disagree.
+  // The draft is the single source of truth for format. Production
+  // post_draft_assets has no format column, so nothing is read back from one.
   const format = decodeDraftFormat(draft.channel as string | undefined);
   const state = internalPostState({ status: String(draft.status ?? "draft"), scheduledAt, hasVisual });
   const calendarItemId = await findCalendarItemId(admin, ownerId, String(draft.id));
@@ -247,17 +248,7 @@ export async function savePostDraft(admin: AdminClient, ownerId: string, draftId
   const { data, error } = await admin.from("mara_drafts").update(patch)
     .eq("owner_user_id", ownerId).eq("id", draftId).select("id").maybeSingle();
   if (error || !data) throw new Error("post_update_failed");
-  await mirrorAssetFormat(admin, ownerId, draftId, nextFormat);
   return syncPostToCalendar(admin, ownerId, draftId);
-}
-
-/**
- * Keeps the mirrored asset column equal to the draft's format so the two can
- * never drift apart. Never touches the stored bytes.
- */
-async function mirrorAssetFormat(admin: AdminClient, ownerId: string, draftId: string, format: PostFormat) {
-  await admin.from(POST_ASSET_TABLE).update({ format })
-    .eq("owner_user_id", ownerId).eq("draft_id", draftId);
 }
 
 function normalizeFormatInput(value: unknown): PostFormat {
@@ -326,11 +317,9 @@ export async function putPostAsset(
   input: { bytes: Uint8Array; mimeType: string; extension: string; displayName: string; origin: PostOrigin },
   diagnostics?: PostAssetIngestionDiagnostics,
 ): Promise<{ storagePath: string; previousStoragePath: string | null }> {
-  // The format is taken from the draft, never from the caller. Uploading or
-  // generating a visual therefore cannot change the user's chosen format.
-  // The strict form below is the diagnostic equivalent of:
-  // const { data: draftRow } = await admin.from("mara_drafts").select("channel")
-  const { data: draftRow, error: draftError } = await admin.from("mara_drafts").select("channel")
+  // Ownership only. Uploading never depends on a format DB column — production
+  // 0021 has none. mara_drafts.channel remains the source of truth for 1:1 / 4:5.
+  const { data: draftRow, error: draftError } = await admin.from("mara_drafts").select("id,kind")
     .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
   if (draftError) {
     logPostAssetStage("draft_read", diagnostics, "db_failure");
@@ -342,51 +331,58 @@ export async function putPostAsset(
   }
   logPostAssetStage("draft_read", diagnostics);
 
-  const format = decodeDraftFormat(draftRow.channel as string | undefined);
   const digest = createHash("sha256").update(input.bytes).digest("hex").slice(0, 16);
   const storagePath = `${ownerId}/post-assets/${digest}-${draftId}.${input.extension}`;
   // The path is derived from the content digest and the draft, so re-uploading
   // the identical file resolves to the same object. upsert keeps that a no-op
   // instead of a failure; callers compare paths before deleting anything.
-  const { error: uploadError } = await admin.storage.from(POST_ASSET_BUCKET)
-    .upload(storagePath, input.bytes, { contentType: input.mimeType, upsert: true });
-  if (uploadError) {
-    logPostAssetStage("storage_upload", diagnostics, "storage_failure");
-    // Historical internal label retained for backwards-compatible diagnostics:
-    // throw new Error("post_asset_upload_failed");
-    throw new IngestionFailure("storage_failure", "storage_upload");
-  }
-  logPostAssetStage("storage_upload", diagnostics);
+  const row = buildPostDraftAssetWrite({
+    ownerUserId: ownerId,
+    draftId,
+    storagePath,
+    displayName: input.displayName,
+    mimeType: input.mimeType,
+    byteSize: input.bytes.length,
+    origin: input.origin,
+    kind: typeof draftRow.kind === "string" ? draftRow.kind : undefined,
+  });
 
-  const { data: previous, error: previousError } = await admin.from(POST_ASSET_TABLE).select(ASSET_COLUMNS)
-    .eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
-  if (previousError) {
-    await admin.storage.from(POST_ASSET_BUCKET).remove([storagePath]);
+  try {
+    const linked = await persistUploadedPostAsset({
+      upload: async () => {
+        const { error: uploadError } = await admin.storage.from(POST_ASSET_BUCKET)
+          .upload(storagePath, input.bytes, { contentType: input.mimeType, upsert: true });
+        if (uploadError) throw new Error("upload");
+        logPostAssetStage("storage_upload", diagnostics);
+      },
+      loadPreviousPath: async () => {
+        const { data: previous, error: previousError } = await admin.from(POST_ASSET_TABLE).select(ASSET_COLUMNS)
+          .eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
+        if (previousError) throw new Error("previous");
+        return typeof previous?.storage_path === "string" ? previous.storage_path : null;
+      },
+      upsert: async (assetRow) => {
+        const { error } = await admin.from(POST_ASSET_TABLE).upsert(assetRow, { onConflict: "owner_user_id,draft_id" });
+        if (error) throw new Error("upsert");
+        logPostAssetStage("db_upsert", diagnostics);
+      },
+      removeUploaded: async () => {
+        // Never leave an orphan object behind if the link could not be written.
+        await admin.storage.from(POST_ASSET_BUCKET).remove([storagePath]);
+      },
+      row,
+    });
+    return { storagePath, previousStoragePath: linked.previousStoragePath };
+  } catch (reason) {
+    if (reason instanceof PostAssetPersistError && reason.code === "storage_failure") {
+      logPostAssetStage("storage_upload", diagnostics, "storage_failure");
+      // Historical internal label retained for backwards-compatible diagnostics:
+      // throw new Error("post_asset_upload_failed");
+      throw new IngestionFailure("storage_failure", "storage_upload");
+    }
     logPostAssetStage("db_upsert", diagnostics, "db_failure");
     throw new IngestionFailure("db_failure", "db_upsert");
   }
-  const previousStoragePath = typeof previous?.storage_path === "string" ? previous.storage_path : null;
-  const row = {
-    owner_user_id: ownerId,
-    draft_id: draftId,
-    storage_path: storagePath,
-    display_name: input.displayName.slice(0, 180),
-    mime_type: input.mimeType,
-    byte_size: input.bytes.length,
-    // Mirrored from the draft so the two records cannot disagree.
-    format,
-    origin: assetOriginFor(input.origin),
-    status: "uploaded",
-  };
-  const { error } = await admin.from(POST_ASSET_TABLE).upsert(row, { onConflict: "owner_user_id,draft_id" });
-  if (error) {
-    // Never leave an orphan object behind if the link could not be written.
-    await admin.storage.from(POST_ASSET_BUCKET).remove([storagePath]);
-    logPostAssetStage("db_upsert", diagnostics, "db_failure");
-    throw new IngestionFailure("db_failure", "db_upsert");
-  }
-  logPostAssetStage("db_upsert", diagnostics);
-  return { storagePath, previousStoragePath };
 }
 
 /** Confirms the owner-scoped metadata row still points at the just-uploaded object. */

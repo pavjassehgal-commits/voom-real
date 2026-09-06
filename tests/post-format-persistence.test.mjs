@@ -70,34 +70,29 @@ test("re-saving a draft preserves the format when no format is sent", () => {
 // Requirement 5: the draft stays the single source of truth
 // ---------------------------------------------------------------------------
 
-test("the draft's format wins once an asset exists, and the asset mirrors it", async () => {
+test("the draft's format wins once an asset exists, and no asset format column is used", async () => {
   const data = await read("lib/post/server-data.ts");
 
   // toPostView decodes from the draft's channel...
   assert.match(data, /const format = decodeDraftFormat\(draft\.channel as string \| undefined\);/);
-  // ...and never reads the mirrored asset column back.
+  // ...and never reads a post_draft_assets format column.
   assert.doesNotMatch(data, /normalizePostFormat\(asset\?\.format\)/);
   assert.doesNotMatch(data, /asset\?\.format/, "asset.format must not be read as a source of truth");
 
-  // putPostAsset takes its format from the draft, not from its caller.
-  assert.match(data, /The format is taken from the draft, never from the caller/i);
-  assert.match(data, /const \{ data: draftRow \} = await admin\.from\("mara_drafts"\)\.select\("channel"\)/);
-  assert.match(data, /const format = decodeDraftFormat\(draftRow\.channel as string \| undefined\);/);
-  assert.doesNotMatch(
-    data.slice(data.indexOf("export async function putPostAsset"), data.indexOf("export async function deletePostAsset")),
-    /format: PostFormat/,
-    "putPostAsset must not accept a caller-supplied format",
-  );
+  const persist = data.slice(data.indexOf("export async function putPostAsset"), data.indexOf("export async function verifyPostAssetStored"));
+  assert.match(persist, /Uploading never depends on a format DB column/);
+  assert.match(persist, /buildPostDraftAssetWrite/);
+  assert.doesNotMatch(persist, /decodeDraftFormat/);
+  assert.doesNotMatch(persist, /format: PostFormat/, "putPostAsset must not accept a caller-supplied format");
+  assert.doesNotMatch(data, /async function mirrorAssetFormat/);
+  assert.doesNotMatch(data, /mirrorAssetFormat\(/);
+  assert.doesNotMatch(data, /\.update\(\{ format \}\)/);
 
-  // The mirror keeps the asset column equal to the draft, so they cannot drift.
-  assert.match(data, /async function mirrorAssetFormat/);
-  assert.match(data, /await mirrorAssetFormat\(admin, ownerId, draftId, nextFormat\)/);
-
-  // A stale asset row cannot change what the user sees.
+  // A stale object with a format field cannot change what the user sees.
   const draft = draftRow({ channel: "Instagram · 4:5" });
   const staleAsset = { status: "uploaded", storage_path: "owner/post-assets/x.png", format: "1:1" };
   assert.equal(core.decodeDraftFormat(draft.channel), "4:5", "draft says 4:5");
-  assert.notEqual(staleAsset.format, core.decodeDraftFormat(draft.channel), "the mirror is not consulted");
+  assert.notEqual(staleAsset.format, core.decodeDraftFormat(draft.channel), "an asset format field is not consulted");
 });
 
 test("a visual upload does not overwrite the selected format", async () => {
