@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { InstagramApiError, InstagramClient } from "@/lib/instagram/client";
-import { requireInstagramConfig } from "@/lib/instagram/config";
+import { instagramKeyRing, requireInstagramConfig } from "@/lib/instagram/config";
 import { consumeOAuthState, saveInstagramConnection } from "@/lib/instagram/data";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     stage = "profile";
     const profile = await client.getProfile(token.accessToken, token.userId);
     stage = "save";
-    await saveInstagramConnection(admin, { ownerId: user.id, instagramUserId: profile.userId, username: profile.username, name: profile.name, accountType: profile.accountType, profilePictureUrl: profile.profilePictureUrl, accessToken: token.accessToken, expiresIn: token.expiresIn, encryptionKey: config.encryptionKey });
+    await saveInstagramConnection(admin, { ownerId: user.id, instagramUserId: profile.userId, username: profile.username, name: profile.name, accountType: profile.accountType, profilePictureUrl: profile.profilePictureUrl, accessToken: token.accessToken, expiresIn: token.expiresIn, encryptionKey: instagramKeyRing(config) });
     fallback.searchParams.set("instagram", "connected");
     return NextResponse.redirect(fallback);
   } catch (error) {

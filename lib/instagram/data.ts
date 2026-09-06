@@ -3,7 +3,7 @@ import "server-only";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { INSTAGRAM_SCOPES } from "./client";
-import { encryptInstagramToken } from "./crypto";
+import { encryptInstagramToken, type InstagramKeyInput } from "./crypto";
 import { decryptInstagramToken } from "./crypto";
 import type { InstagramConnectionView } from "./types";
 
@@ -49,10 +49,10 @@ export async function consumeOAuthState(db: SupabaseClient, ownerId: string, sta
   return Boolean(data);
 }
 
-export async function saveInstagramConnection(db: SupabaseClient, input: { ownerId: string; instagramUserId: string; username: string; name: string | null; accountType: string | null; profilePictureUrl: string | null; accessToken: string; expiresIn: number; encryptionKey: string }) {
+export async function saveInstagramConnection(db: SupabaseClient, input: { ownerId: string; instagramUserId: string; username: string; name: string | null; accountType: string | null; profilePictureUrl: string | null; accessToken: string; expiresIn: number; encryptionKey: InstagramKeyInput }) {
   const expiresAt = new Date(Date.now() + input.expiresIn * 1000).toISOString();
   const encrypted = encryptInstagramToken(input.accessToken, input.encryptionKey);
-  const { error } = await db.rpc("save_instagram_connection", { p_owner_user_id: input.ownerId, p_instagram_user_id: input.instagramUserId, p_username: input.username, p_display_name: input.name, p_account_type: input.accountType, p_profile_picture_url: input.profilePictureUrl, p_scopes: [...INSTAGRAM_SCOPES], p_token_expires_at: expiresAt, p_encrypted_access_token: encrypted.encryptedToken, p_token_iv: encrypted.iv, p_token_auth_tag: encrypted.authTag });
+  const { error } = await db.rpc("save_instagram_connection", { p_owner_user_id: input.ownerId, p_instagram_user_id: input.instagramUserId, p_username: input.username, p_display_name: input.name, p_account_type: input.accountType, p_profile_picture_url: input.profilePictureUrl, p_scopes: [...INSTAGRAM_SCOPES], p_token_expires_at: expiresAt, p_encrypted_access_token: encrypted.encryptedToken, p_token_iv: encrypted.iv, p_token_auth_tag: encrypted.authTag, p_key_version: encrypted.keyVersion });
   if (error) throw new Error("instagram_connection_save_failed");
 }
 
@@ -64,7 +64,7 @@ export async function disconnectInstagramLocally(db: SupabaseClient, ownerId: st
 
 function hashState(state: string) { return createHash("sha256").update(state, "utf8").digest("hex"); }
 
-export async function getInstagramServerCredentials(db: SupabaseClient, ownerId: string, encryptionKey: string) {
+export async function getInstagramServerCredentials(db: SupabaseClient, ownerId: string, encryptionKey: InstagramKeyInput) {
   const { data, error } = await db.rpc("get_instagram_connection_secret", { p_owner_user_id: ownerId }).maybeSingle();
   if (error || !data) throw new Error("instagram_connection_unavailable");
   const secret = data as Record<string, unknown>;

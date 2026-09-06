@@ -1,5 +1,5 @@
 import { InstagramClient } from "@/lib/instagram/client";
-import { requireInstagramConfig } from "@/lib/instagram/config";
+import { instagramKeyRing, requireInstagramConfig } from "@/lib/instagram/config";
 import { getInstagramServerCredentials } from "@/lib/instagram/data";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
@@ -12,7 +12,7 @@ export async function GET() {
   try {
     const config = requireInstagramConfig();
     const admin = createAdminClient();
-    const credentials = await getInstagramServerCredentials(admin, user.id, config.encryptionKey);
+    const credentials = await getInstagramServerCredentials(admin, user.id, instagramKeyRing(config));
     const client = new InstagramClient(config);
     const [insightResult, mediaResult] = await Promise.allSettled([
       client.getAccountInsights(credentials.accessToken),
