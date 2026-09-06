@@ -88,6 +88,11 @@ export function isDueForPublishing(candidate: DueCandidate, now: number = Date.n
   const at = Date.parse(candidate.scheduledAt);
   if (Number.isNaN(at) || at > now) return false;
   if (candidate.status === "scheduled") return true;
+  // 'waiting_for_media' is a truthful, user-visible status — not a dead end.
+  // It carries a future scheduled_at as its retry time, so it becomes
+  // claimable again the moment that time is due. This mirrors the claim
+  // predicate in claim_due_instagram_publish_jobs (migration 0022).
+  if (candidate.status === "waiting_for_media") return true;
   if (candidate.status === "publishing") {
     // Only a demonstrably stale claim may be retried, and only because no
     // Instagram media id was ever recorded for it.

@@ -589,3 +589,142 @@ test("the exhausted retry budget converts a retryable failure into a truthful fa
   assert.equal(ports.calls.failed[0].status, "failed");
   assert.equal(ports.calls.failed[0].retryAt, null);
 });
+
+// ---------------------------------------------------------------------------
+// Regression: a retried item must actually be reclaimable by a later cron run.
+//
+// A retry writes a status AND a future scheduled_at. If the claim predicate
+// does not cover that status, the item is stranded forever: visible in the UI,
+// never published. This suite proves every retryable status round-trips.
+// ---------------------------------------------------------------------------
+
+test("every retryable failure lands in a status a later cron run can reclaim", () => {
+  // The set of statuses claim_due_instagram_publish_jobs will pick up once
+  // scheduled_at is due. Mirrored by isDueForPublishing.
+  const reclaimable = ["scheduled", "waiting_for_media"];
+  for (const [key, failure] of Object.entries(pub.PUBLISH_FAILURES)) {
+    if (!failure.retryable) continue;
+    assert.ok(
+      reclaimable.includes(failure.status),
+      `retryable failure '${key}' parks the item in '${failure.status}', which no cron run would ever reclaim`,
+    );
+    // And prove it via the real predicate, at its own retry time.
+    const at = pub.retryAt(1, NOW);
+    assert.equal(
+      pub.isDueForPublishing(
+        { status: failure.status, scheduledAt: at, draftStatus: "approved", attempts: 1, instagramMediaId: null },
+        Date.parse(at) + 1000,
+      ),
+      true,
+      `'${failure.status}' must be claimable once its retry time is due`,
+    );
+  }
+});
+
+test("a waiting_for_media item is not claimed early, but is claimed once due", () => {
+  const at = pub.retryAt(1, NOW);
+  const row = { status: "waiting_for_media", scheduledAt: at, draftStatus: "approved", attempts: 1, instagramMediaId: null };
+  assert.equal(pub.isDueForPublishing(row, NOW), false, "not before its retry time");
+  assert.equal(pub.isDueForPublishing(row, Date.parse(at) + 1), true, "claimable once due");
+  // Still never claimed when it must not be.
+  assert.equal(pub.isDueForPublishing({ ...row, draftStatus: "rejected" }, Date.parse(at) + 1), false);
+  assert.equal(pub.isDueForPublishing({ ...row, instagramMediaId: "17999" }, Date.parse(at) + 1), false);
+});
+
+test("the SQL claim predicate and the TypeScript predicate cover the same statuses", async () => {
+  const sql = await read("supabase/migrations/0022_instagram_auto_publishing.sql");
+  // Anchor on the function body, not the header comment, which also mentions
+  // "for update skip locked".
+  const body = sql.slice(sql.indexOf("create or replace function public.claim_due_instagram_publish_jobs"));
+  const claim = body.slice(body.indexOf("with due as"), body.indexOf("for update skip locked"));
+  assert.ok(claim.length > 0, "the claim predicate must be located");
+  for (const status of ["scheduled", "waiting_for_media", "publishing"]) {
+    assert.match(claim, new RegExp(`q\\.status = '${status}'`), `claim must consider '${status}'`);
+  }
+  // The partial index must mirror the predicate or those claims lose the index.
+  assert.match(
+    sql,
+    /instagram_publish_queue_due_idx[\s\S]*?where status in \('scheduled', 'waiting_for_media', 'publishing'\)/,
+  );
+});
+
+test("a Reel that is still processing is retried and published by a later cron run", async () => {
+  // Cron run 1: Meta is still transcoding for the whole poll window.
+  const first = makePorts({
+    async loadAsset() { return { storagePath: "reel.mp4", mimeType: "video/mp4", status: "uploaded" }; },
+    async containerStatus() { return "IN_PROGRESS"; },
+  });
+  const item = reelItem();
+  const run1 = await runPublishFlow(item, first);
+
+  assert.equal(run1.outcome, "retrying");
+  assert.equal(run1.code, "container_timeout");
+  assert.equal(first.calls.publishes.length, 0, "nothing may be published while processing");
+  const parked = first.calls.failed[0];
+  assert.ok(parked.retryAt, "a retry time must be persisted");
+
+  // The row as the database now holds it.
+  const stored = {
+    status: parked.status,
+    scheduledAt: parked.retryAt,
+    draftStatus: "approved",
+    attempts: 2,
+    instagramMediaId: null,
+  };
+
+  // Cron run 2, before the retry time: not yet claimable.
+  assert.equal(pub.isDueForPublishing(stored, NOW), false);
+
+  // Cron run 3, after the retry time: the claim predicate MUST pick it up.
+  const later = Date.parse(parked.retryAt) + 60_000;
+  assert.equal(pub.isDueForPublishing(stored, later), true, "the retried Reel must be reclaimable");
+
+  // And on that run Meta has finished, so it publishes exactly once.
+  const second = makePorts({
+    async loadAsset() { return { storagePath: "reel.mp4", mimeType: "video/mp4", status: "uploaded" }; },
+    async containerStatus() { return "FINISHED"; },
+    now: () => later,
+  });
+  const run2 = await runPublishFlow({ ...item, attempts: 2 }, second);
+  assert.equal(run2.outcome, "published");
+  assert.equal(run2.mediaId, "17999999");
+  assert.equal(second.calls.publishes.length, 1);
+  // Run 1 already persisted the container onto the item, so run 2 creates NO
+  // new container — it resumes the existing one. That is what stops a retry
+  // from producing a second Instagram post.
+  assert.equal(second.calls.containers.length, 0);
+  assert.equal(item.containerId, "container-1");
+});
+
+test("a post whose visual arrives late is parked, then reclaimed, then published", async () => {
+  // Cron run 1: the asset row is not there yet.
+  const first = makePorts({ async loadAsset() { return null; } });
+  const run1 = await runPublishFlow(imageItem(), first);
+
+  assert.equal(run1.outcome, "retrying");
+  const parked = first.calls.failed[0];
+  assert.equal(parked.status, "waiting_for_media", "this is the truthful UI status");
+  assert.ok(parked.retryAt);
+
+  // This is the exact combination the audit flagged: a non-'scheduled' status
+  // carrying a future retry time. It must still be reclaimable.
+  const stored = {
+    status: parked.status,
+    scheduledAt: parked.retryAt,
+    draftStatus: "approved",
+    attempts: 2,
+    instagramMediaId: null,
+  };
+  const later = Date.parse(parked.retryAt) + 60_000;
+  assert.equal(
+    pub.isDueForPublishing(stored, later),
+    true,
+    "a waiting_for_media item must never be stranded once its retry time passes",
+  );
+
+  // Cron run 2: the visual now exists and the post publishes.
+  const second = makePorts({ now: () => later });
+  const run2 = await runPublishFlow({ ...imageItem(), attempts: 2 }, second);
+  assert.equal(run2.outcome, "published");
+  assert.equal(second.calls.publishes.length, 1);
+});

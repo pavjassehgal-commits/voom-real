@@ -22,7 +22,7 @@
 --      service_role / security-definer only.
 --
 -- Rollback:
---   drop function if exists public.claim_due_instagram_publish_jobs(integer, timestamptz);
+--   drop function if exists public.claim_due_instagram_publish_jobs(integer, timestamptz, integer, interval);
 --   drop function if exists public.complete_instagram_publish_job(uuid, uuid, text, text);
 --   drop function if exists public.fail_instagram_publish_job(uuid, uuid, text, text, text, timestamptz);
 --   drop function if exists public.record_instagram_publish_container(uuid, uuid, text);
@@ -83,9 +83,12 @@ create unique index if not exists instagram_publish_queue_media_unique_idx
   on public.instagram_publish_queue (instagram_media_id)
   where instagram_media_id is not null;
 
+-- Mirrors the claim predicate in claim_due_instagram_publish_jobs exactly.
+-- 'waiting_for_media' is included because those rows are retried once their
+-- scheduled_at falls due.
 create index if not exists instagram_publish_queue_due_idx
   on public.instagram_publish_queue (scheduled_at)
-  where status in ('scheduled', 'publishing');
+  where status in ('scheduled', 'waiting_for_media', 'publishing');
 
 create index if not exists instagram_publish_queue_owner_scheduled_idx
   on public.instagram_publish_queue (owner_user_id, scheduled_at desc);
@@ -242,6 +245,11 @@ begin
       and q.scheduled_at <= p_now
       and (
         q.status = 'scheduled'
+        -- 'waiting_for_media' is a truthful UI status, NOT a dead end. It is
+        -- written with a future scheduled_at as its retry time, so once that
+        -- time is due the item must become claimable again — otherwise a post
+        -- whose visual arrived late would be stranded forever.
+        or q.status = 'waiting_for_media'
         or (q.status = 'publishing' and q.claimed_at is not null and q.claimed_at < p_now - p_stale_after)
       )
     order by q.scheduled_at
