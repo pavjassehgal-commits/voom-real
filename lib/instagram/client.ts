@@ -10,7 +10,14 @@ const REQUEST_TIMEOUT_MS = 15_000;
 export class InstagramApiError extends Error {
   constructor(
     public readonly code: "rate_limited" | "unauthorized" | "unavailable" | "invalid_response",
-    public readonly operation: "code_exchange" | "long_token_exchange" | "profile" | null = null,
+    public readonly operation:
+      | "code_exchange"
+      | "long_token_exchange"
+      | "profile"
+      | "media_container"
+      | "media_status"
+      | "media_publish"
+      | null = null,
     public readonly providerReason: "credentials" | "redirect" | "code" | "app_configuration" | "rejected" | null = null,
   ) {
     super(code);
@@ -81,6 +88,81 @@ export class InstagramClient {
     url.searchParams.set("access_token", accessToken);
     const value = await this.fetchJson(url, undefined, "profile");
     return Array.isArray(value.data) ? value.data.filter(isRecord) : [];
+  }
+
+  // -------------------------------------------------------------------------
+  // Content publishing (Instagram Login / graph.instagram.com)
+  //
+  // Requires the instagram_business_content_publish permission on the token.
+  // Meta's flow is: create a media container, wait until it reports FINISHED,
+  // then publish the container. Only media_publish returns a real media id —
+  // that id is the ONLY thing Voom ever treats as "Published".
+  // -------------------------------------------------------------------------
+
+  /** Creates an IMAGE media container from a publicly fetchable image URL. */
+  async createImageContainer(input: { accessToken: string; igUserId: string; imageUrl: string; caption: string }) {
+    const body = new URLSearchParams({
+      image_url: input.imageUrl,
+      caption: input.caption,
+      access_token: input.accessToken,
+    });
+    const value = await this.fetchJson(
+      `https://graph.instagram.com/${this.config.graphVersion}/${input.igUserId}/media`,
+      { method: "POST", body },
+      "media_container",
+    );
+    return stringField(value, "id");
+  }
+
+  /** Creates a REELS media container. Reels are video and transcode async. */
+  async createReelContainer(input: { accessToken: string; igUserId: string; videoUrl: string; caption: string; shareToFeed?: boolean }) {
+    const body = new URLSearchParams({
+      media_type: "REELS",
+      video_url: input.videoUrl,
+      caption: input.caption,
+      share_to_feed: input.shareToFeed === false ? "false" : "true",
+      access_token: input.accessToken,
+    });
+    const value = await this.fetchJson(
+      `https://graph.instagram.com/${this.config.graphVersion}/${input.igUserId}/media`,
+      { method: "POST", body },
+      "media_container",
+    );
+    return stringField(value, "id");
+  }
+
+  /** Reads a container's processing state: IN_PROGRESS / FINISHED / ERROR / EXPIRED. */
+  async getContainerStatus(accessToken: string, containerId: string) {
+    const url = new URL(`https://graph.instagram.com/${this.config.graphVersion}/${containerId}`);
+    url.searchParams.set("fields", "status_code,status");
+    url.searchParams.set("access_token", accessToken);
+    const value = await this.fetchJson(url, undefined, "media_status");
+    return {
+      statusCode: optionalString(value, "status_code") ?? "IN_PROGRESS",
+      detail: optionalString(value, "status"),
+    };
+  }
+
+  /** Publishes a finished container. The returned id is the real media id. */
+  async publishContainer(input: { accessToken: string; igUserId: string; containerId: string }) {
+    const body = new URLSearchParams({ creation_id: input.containerId, access_token: input.accessToken });
+    const value = await this.fetchJson(
+      `https://graph.instagram.com/${this.config.graphVersion}/${input.igUserId}/media_publish`,
+      { method: "POST", body },
+      "media_publish",
+    );
+    return stringField(value, "id");
+  }
+
+  /**
+   * Recovery read for an ambiguous publish response: lists the account's most
+   * recent media so the worker can detect a post that actually succeeded
+   * instead of blindly publishing a second copy.
+   */
+  async findRecentMediaId(accessToken: string, predicate: (media: Record<string, unknown>) => boolean) {
+    const media = await this.getMedia(accessToken, 5);
+    const match = media.find(predicate);
+    return match && typeof match.id !== "undefined" ? String(match.id) : null;
   }
 
   private async fetchJson(input: string | URL, init?: RequestInit, operation: InstagramApiError["operation"] = null) {

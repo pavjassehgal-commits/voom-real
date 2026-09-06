@@ -1,6 +1,7 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { normalizePostFormat, normalizeSchedule, postApprovalBlockers } from "@/lib/post/core";
 import { approvePostDraft, getPostDraft, savePostDraft } from "@/lib/post/server-data";
+import { cancelPublishItem } from "@/lib/instagram/publish-queue";
 import { createAdminClient } from "@/utils/supabase/admin";
 
 export const runtime = "nodejs";
@@ -39,9 +40,25 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (blockers.length) return Response.json({ error: blockers.join(" ") }, { status: 409 });
     try {
       const post = await approvePostDraft(admin, user.id, id);
-      return Response.json({ post, message: "Approved inside Voom. Nothing was published to Instagram." });
+      return Response.json({ post, message: post?.scheduledAt ? "Approved. Voom will automatically publish this to Instagram at the scheduled time." : "Approved inside Voom. Add a schedule so Voom can auto-publish it." });
     } catch {
       return Response.json({ error: "Voom couldn't approve that post. Please retry." }, { status: 503 });
+    }
+  }
+
+  if (action === "reject" || action === "cancel") {
+    // Cancelling an approved item must stop auto-publishing. An item already
+    // published, or already in flight, is never cancelled or republished.
+    try {
+      const { error } = await admin.from("mara_drafts").update({ status: "rejected" })
+        .eq("owner_user_id", user.id).eq("id", id);
+      if (error) throw new Error("post_reject_failed");
+      await cancelPublishItem(admin, user.id, id);
+      await admin.from("content_calendar_items").delete().eq("owner_user_id", user.id).eq("source_draft_id", id);
+      const post = await getPostDraft(admin, user.id, id);
+      return Response.json({ post, message: "Cancelled. Voom will not publish this to Instagram." });
+    } catch {
+      return Response.json({ error: "Voom couldn't cancel that post. Please retry." }, { status: 503 });
     }
   }
 
