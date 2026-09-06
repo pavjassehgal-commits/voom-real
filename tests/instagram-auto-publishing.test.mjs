@@ -728,3 +728,14 @@ test("a post whose visual arrives late is parked, then reclaimed, then published
   assert.equal(run2.outcome, "published");
   assert.equal(second.calls.publishes.length, 1);
 });
+
+test("the publish worker resolves tokens through the current key ring (PR #15/#16 API)", async () => {
+  // The worker runs against the staged key-ring APIs merged via PR #15/#16:
+  // credentials decrypt with the PRIMARY -> NEXT -> LEGACY ring built by
+  // instagramKeyRing(config), never with a bare key.
+  const worker = await read("lib/instagram/publish-worker.ts");
+  assert.match(worker, /getInstagramServerCredentials\(db, ownerId, instagramKeyRing\(config\)\)/);
+  assert.doesNotMatch(worker, /config\.encryptionKey\b/);
+  const data = await read("lib/instagram/data.ts");
+  assert.match(data, /getInstagramServerCredentials\(db: SupabaseClient, ownerId: string, encryptionKey: InstagramKeyInput\)/);
+});

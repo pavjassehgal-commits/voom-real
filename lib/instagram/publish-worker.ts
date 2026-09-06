@@ -2,7 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { InstagramClient } from "./client";
-import { readInstagramConfig, type InstagramConfig } from "./config";
+import { instagramKeyRing, readInstagramConfig, type InstagramConfig } from "./config";
 import { getInstagramServerCredentials } from "./data";
 import { runPublishFlow, type FlowItem, type FlowPorts } from "./publish-flow";
 import {
@@ -122,7 +122,7 @@ export function buildPorts(
       };
     },
     async loadCredentials(ownerId) {
-      const credentials = await getInstagramServerCredentials(db, ownerId, config.encryptionKey);
+      const credentials = await getInstagramServerCredentials(db, ownerId, instagramKeyRing(config));
       return { igUserId: credentials.userId, accessToken: credentials.accessToken };
     },
     async loadAsset(ownerId, draftId) {
