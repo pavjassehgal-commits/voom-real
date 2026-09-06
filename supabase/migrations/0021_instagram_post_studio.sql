@@ -7,6 +7,13 @@
 --   * There is deliberately NO 0022 migration. Post Studio reuses this schema.
 --   * Migrations 0018, 0019 and 0020 are untouched by this file.
 --
+-- AUTHORITATIVE PRODUCTION SHAPE of public.post_draft_assets:
+--   id, owner_user_id, draft_id, storage_path, display_name, mime_type,
+--   byte_size, origin, status, created_at, updated_at
+--   THERE IS NO format COLUMN. Post 1:1 / 4:5 lives on mara_drafts.channel.
+--   origin CHECK: origin in ('uploaded_asset','uploaded_existing')
+--   status CHECK: status = 'uploaded'
+--
 -- What this file contains:
 --   1. public.mara_drafts.kind gains 'instagram_post' (every previous kind,
 --      including 'instagram_caption', stays valid).
@@ -65,6 +72,7 @@ alter table public.mara_drafts
 
 -- 2) One private visual per draft. Post Studio posts and imported Reels each
 --    own at most one asset; replacing it swaps the row and the private object.
+--    Production has no format column on this table.
 create table if not exists public.post_draft_assets (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid not null references auth.users (id) on delete cascade,
@@ -73,9 +81,8 @@ create table if not exists public.post_draft_assets (
   display_name text not null check (char_length(display_name) between 1 and 180),
   mime_type text not null check (mime_type in ('image/jpeg','image/png','image/webp','video/mp4','video/quicktime')),
   byte_size bigint not null check (byte_size between 1 and 20971520),
-  format text not null default '1:1' check (format in ('1:1','4:5')),
-  origin text not null default 'user_upload'
-    check (origin in ('mara_generated','user_upload','existing_content')),
+  origin text not null default 'uploaded_asset'
+    check (origin in ('uploaded_asset','uploaded_existing')),
   status text not null default 'uploaded' check (status = 'uploaded'),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -94,7 +101,7 @@ alter table public.post_draft_assets enable row level security;
 -- 4) Grants. authenticated gets metadata only — storage_path is NOT granted.
 revoke all on table public.post_draft_assets from public, anon, authenticated;
 grant select (
-  id, draft_id, display_name, mime_type, byte_size, format, origin, status,
+  id, draft_id, display_name, mime_type, byte_size, origin, status,
   created_at, updated_at
 ) on table public.post_draft_assets to authenticated;
 grant select, insert, update, delete on table public.post_draft_assets to service_role;

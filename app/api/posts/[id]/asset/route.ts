@@ -70,8 +70,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (file.size > POST_ASSET_MAX_BYTES) return ingestionError("file_too_large", "That file is too large. Choose one file up to 20 MB.", 413, requestId);
 
   const rawOrigin = form.get("origin");
-  const origin: PostOrigin = rawOrigin === "existing_content" ? "existing_content" : "own_asset";
-  if (!isPostOrigin(origin)) return ingestionError("invalid_file", "Choose a valid source for this file.", 400, requestId);
 
   const bytes = new Uint8Array(await file.arrayBuffer());
   // Magic bytes plus the original filename so a `qt`-branded MP4 stays an MP4.
@@ -114,6 +112,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
   logIngestionStage("draft_read", { requestId, fileSize: file.size, kind: detected.kind, mimeType: detected.mimeType, extension: detected.extension });
   if (!isPostDraftKind(post.kind)) return ingestionError("invalid_file", "That content type is not available.", 400, requestId);
+
+  // Imported Reels and explicit existing-content uploads persist as
+  // uploaded_existing; own-asset / MARA Post uploads persist as uploaded_asset.
+  const origin: PostOrigin = rawOrigin === "existing_content" || post.kind === "reel" ? "existing_content" : "own_asset";
+  if (!isPostOrigin(origin)) return ingestionError("invalid_file", "Choose a valid source for this file.", 400, requestId);
 
   const allowed = allowedAssetKindsFor(post.kind);
   const assetKind = postAssetKindForMime(detected.mimeType);

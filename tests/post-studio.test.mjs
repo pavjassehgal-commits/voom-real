@@ -124,12 +124,13 @@ test("schedules normalise to ISO strings and only future slots count as schedule
 
 test("content types distinguish Instagram Post, Reel and Existing content", () => {
   assert.equal(core.postTypeLabel("instagram_post", null), "Instagram Post");
+  assert.equal(core.postTypeLabel("instagram_post", "uploaded_asset"), "Instagram Post");
   assert.equal(core.postTypeLabel("instagram_post", "mara_generated"), "Instagram Post");
-  assert.equal(core.postTypeLabel("instagram_post", "user_upload"), "Instagram Post");
+  assert.equal(core.postTypeLabel("instagram_post", "uploaded_existing"), "Existing content");
   assert.equal(core.postTypeLabel("instagram_post", "existing_content"), "Existing content");
   assert.equal(core.postTypeLabel("reel", null), "Reel");
-  assert.equal(core.postTypeLabel("reel", "user_upload"), "Reel");
-  assert.equal(core.postTypeLabel("reel", "existing_content"), "Existing content");
+  assert.equal(core.postTypeLabel("reel", "uploaded_asset"), "Reel");
+  assert.equal(core.postTypeLabel("reel", "uploaded_existing"), "Existing content");
   assert.equal(core.calendarChannelFor("instagram_post"), "Instagram");
   assert.equal(core.calendarChannelFor("reel"), "Reel");
 });
@@ -143,9 +144,11 @@ test("an Instagram Post takes images only; a Reel takes images or video", () => 
   assert.equal(core.postAssetKindForMime("video/mp4"), "video");
   assert.equal(core.postAssetKindForMime("video/quicktime"), "video");
   assert.equal(core.postAssetKindForMime("application/pdf"), null);
-  assert.deepEqual(core.assetOriginFor("mara"), "mara_generated");
-  assert.deepEqual(core.assetOriginFor("own_asset"), "user_upload");
-  assert.deepEqual(core.assetOriginFor("existing_content"), "existing_content");
+  assert.equal(core.assetOriginFor("mara"), "uploaded_asset");
+  assert.equal(core.assetOriginFor("own_asset"), "uploaded_asset");
+  assert.equal(core.assetOriginFor("existing_content"), "uploaded_existing");
+  assert.equal(core.assetOriginFor("own_asset", "reel"), "uploaded_existing");
+  assert.equal(core.assetOriginFor("mara", "instagram_post"), "uploaded_asset");
 });
 
 // ---------------------------------------------------------------------------
@@ -224,14 +227,16 @@ test("post_draft_assets is owner-scoped, service-written, and hides storage_path
   assert.match(sql, /foreign key \(draft_id, owner_user_id\)\s+references public\.mara_drafts \(id, owner_user_id\) on delete cascade/);
   assert.match(sql, /unique \(owner_user_id, draft_id\)/);
   assert.match(sql, /unique \(owner_user_id, storage_path\)/);
-  assert.match(sql, /check \(format in \('1:1','4:5'\)\)/);
-  assert.match(sql, /check \(origin in \('mara_generated','user_upload','existing_content'\)\)/);
+  assert.doesNotMatch(sql, /format text not null/);
+  assert.doesNotMatch(sql, /check \(format in \('1:1','4:5'\)\)/);
+  assert.match(sql, /check \(origin in \('uploaded_asset','uploaded_existing'\)\)/);
 
   // The authenticated grant is metadata-only and must exclude storage_path.
   const grant = sql.match(/grant select \(([\s\S]+?)\) on table public\.post_draft_assets to authenticated/);
   assert.ok(grant, "authenticated must have an explicit column list");
   assert.doesNotMatch(grant[1], /storage_path/, "storage_path must never be granted to authenticated");
-  for (const column of ["id", "draft_id", "display_name", "mime_type", "byte_size", "format", "origin", "status"]) {
+  assert.doesNotMatch(grant[1], /\bformat\b/, "format is not a production column");
+  for (const column of ["id", "draft_id", "display_name", "mime_type", "byte_size", "origin", "status"]) {
     assert.match(grant[1], new RegExp(column), `${column} should be readable by the owner`);
   }
   assert.doesNotMatch(sql, /grant (insert|update|delete)[^;]+to authenticated/i);
@@ -346,7 +351,7 @@ test("existing image becomes an Instagram Post and existing video becomes a Reel
   const route = await read("app/api/posts/[id]/asset/route.ts");
   assert.match(route, /allowedAssetKindsFor\(post\.kind\)/);
   assert.match(route, /const rawOrigin = form\.get\("origin"\)/);
-  assert.match(route, /origin: PostOrigin = rawOrigin === "existing_content" \? "existing_content" : "own_asset"/);
+  assert.match(route, /origin: PostOrigin = rawOrigin === "existing_content" \|\| post\.kind === "reel" \? "existing_content" : "own_asset"/);
   const list = await read("app/api/posts/route.ts");
   assert.match(list, /kind: z\.enum\(\["instagram_post", "reel"\]\)/);
   assert.match(list, /origin: z\.enum\(POST_ORIGINS\)/);
