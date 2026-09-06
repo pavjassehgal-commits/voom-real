@@ -3,7 +3,12 @@ import "server-only";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
-import { defaultIngestionCodeForStatus, type IngestionErrorCode } from "./ingestion-error";
+import {
+  defaultIngestionCodeForStatus,
+  ingestionError,
+  logIngestionStage,
+  type IngestionErrorCode,
+} from "./ingestion-error";
 import { REEL_ASSET_PACK_LIMIT } from "./reel-asset";
 
 export const REEL_ASSET_BUCKET = "mara-media";
@@ -42,21 +47,29 @@ export async function loadReelAssetPack(admin: Awaited<ReturnType<typeof createA
 }
 
 /** Shared owner/action guard for the Reel asset routes. */
-export async function ownedReelAction(params: Promise<{ actionId: string }>, requireUploadChoice: boolean) {
+export async function ownedReelAction(params: Promise<{ actionId: string }>, requireUploadChoice: boolean, requestId?: string) {
   const user = await getCurrentUser();
-  if (!user) return invalidJson("Please log in again.", 401);
+  if (!user) return invalidJson("Please log in again.", 401, "not_authenticated", requestId);
   const { actionId } = await params;
-  if (!UUID_RE.test(actionId)) return invalidJson("That Reel request is not valid.");
+  if (!UUID_RE.test(actionId)) return invalidJson("That Reel request is not valid.", 400, "not_found", requestId);
   const db = await createClient();
-  const { data } = await db.from("mara_pending_actions").select("id,tool_name,new_value,status").eq("id", actionId).eq("owner_user_id", user.id).eq("tool_name", "choose_reel_production").eq("status", "pending").maybeSingle();
-  if (!data || typeof data.new_value?.draftId !== "string" || !UUID_RE.test(data.new_value.draftId)) return invalidJson("That Reel request was not found.", 404);
+  const { data, error } = await db.from("mara_pending_actions").select("id,tool_name,new_value,status").eq("id", actionId).eq("owner_user_id", user.id).eq("tool_name", "choose_reel_production").eq("status", "pending").maybeSingle();
+  if (error) {
+    if (requestId) logIngestionStage("draft_read", { requestId, code: "db_failure" });
+    return invalidJson("Voom couldn't read that Reel safely. Please retry.", 503, "db_failure", requestId);
+  }
+  if (!data || typeof data.new_value?.draftId !== "string" || !UUID_RE.test(data.new_value.draftId)) {
+    if (requestId) logIngestionStage("draft_read", { requestId, code: "ownership_failure" });
+    return invalidJson("That Reel request was not found.", 404, "ownership_failure", requestId);
+  }
+  if (requestId) logIngestionStage("draft_read", { requestId });
   const selected = data.new_value.selectedProductionMethod;
-  if (requireUploadChoice && selected !== "upload_asset" && selected !== "film_yourself") return invalidJson("Choose Upload asset or Film it myself first.");
-  if (!requireUploadChoice && selected !== "upload_asset" && selected !== "film_yourself" && data.new_value.assetReceived !== true) return invalidJson("That Reel has no private source asset.");
+  if (requireUploadChoice && selected !== "upload_asset" && selected !== "film_yourself") return invalidJson("Choose Upload asset or Film it myself first.", 400, "action_required", requestId);
+  if (!requireUploadChoice && selected !== "upload_asset" && selected !== "film_yourself" && data.new_value.assetReceived !== true) return invalidJson("That Reel has no private source asset.", 400, "action_required", requestId);
   const kinds = Array.isArray(data.new_value.allowedAssetKinds) ? data.new_value.allowedAssetKinds.filter((kind: unknown): kind is "image" | "video" => kind === "image" || kind === "video") : ["image", "video"];
   return { userId: user.id, actionId, draftId: data.new_value.draftId as string, allowedAssetKinds: kinds.length ? kinds : ["image", "video"] };
 }
 
-export function invalidJson(error: string, status = 400, code: IngestionErrorCode = defaultIngestionCodeForStatus(status)) {
-  return Response.json({ error, code }, { status });
+export function invalidJson(error: string, status = 400, code: IngestionErrorCode = defaultIngestionCodeForStatus(status), requestId?: string) {
+  return ingestionError(code, error, status, requestId);
 }
