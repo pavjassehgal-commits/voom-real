@@ -36,7 +36,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (action === "approve") {
     const existing = await getPostDraft(admin, user.id, id);
     if (!existing) return Response.json({ error: "That post was not found." }, { status: 404 });
-    const blockers = postApprovalBlockers({ caption: existing.caption, hasVisual: existing.visualReady });
+    const blockers = postApprovalBlockers({ caption: existing.caption, hasVisual: existing.visualReady, kind: existing.kind });
     if (blockers.length) return Response.json({ error: blockers.join(" ") }, { status: 409 });
     try {
       const post = await approvePostDraft(admin, user.id, id);

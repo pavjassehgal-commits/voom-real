@@ -12,7 +12,7 @@ import type { PostFormat } from "@/lib/post/core";
 
 interface StudioPost {
   id: string;
-  kind: "instagram_post" | "reel";
+  kind: "instagram_post" | "reel" | "story";
   typeLabel: string;
   concept: string;
   format: PostFormat;
@@ -70,7 +70,7 @@ export default function StudioPage() {
     <div>
       <PageHead
         title="Create content"
-        description="Instagram Posts and Reels, built and approved inside Voom. Approved items appear on your Content Calendar."
+        description="Instagram Posts, Reels and Stories, built and approved inside Voom. Approved items appear on your Content Calendar."
         actions={
           <>
             <Btn variant="outline" size="sm" onClick={() => goTo("calendar")}>
@@ -100,6 +100,13 @@ export default function StudioPage() {
         />
         <EntryCard
           icon="spark"
+          title="Instagram Story"
+          body="9:16 full-screen image or video. Upload one, or let MARA create the visual."
+          cta="Start a Story"
+          onClick={() => open(<CreateContentModal onChanged={() => void load()} />)}
+        />
+        <EntryCard
+          icon="spark"
           title="Existing MARA Reel workflow"
           body="Concept, script, asset pack and the playable preview live under Approvals."
           cta="Open Approvals"
@@ -123,7 +130,7 @@ export default function StudioPage() {
         {loading ? <p className="py-8 text-center text-sm text-text-3">Loading your content…</p> : null}
         {!loading && !posts.length ? (
           <p className="py-8 text-center text-sm text-text-3">
-            Nothing here yet. Choose <b>Create content</b> to make your first Instagram Post or Reel.
+            Nothing here yet. Choose <b>Create content</b> to make your first Instagram Post, Reel or Story.
           </p>
         ) : null}
 

@@ -137,6 +137,16 @@ export function buildPorts(
       return data?.signedUrl ?? null;
     },
     async createContainer(input) {
+      if (input.kind === "story") {
+        // Meta's only Story form: a media_type=STORIES container. No caption —
+        // Instagram does not support captions on Stories.
+        return client.createStoryContainer({
+          accessToken: input.accessToken,
+          igUserId: input.igUserId,
+          mediaUrl: input.mediaUrl,
+          video: input.video,
+        });
+      }
       return input.kind === "reel"
         ? client.createReelContainer({ accessToken: input.accessToken, igUserId: input.igUserId, videoUrl: input.mediaUrl, caption: input.caption })
         : client.createImageContainer({ accessToken: input.accessToken, igUserId: input.igUserId, imageUrl: input.mediaUrl, caption: input.caption });

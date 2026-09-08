@@ -18,7 +18,7 @@ interface PostVisual {
 
 interface Post {
   id: string;
-  kind: "instagram_post" | "reel";
+  kind: "instagram_post" | "reel" | "story";
   typeLabel: string;
   concept: string;
   caption: string;
@@ -40,6 +40,12 @@ const STATE_TONE: Record<Post["internalState"], string> = {
   scheduled_internal: "t-green",
   ready_to_publish: "t-green",
 };
+
+/** Meta's Story canvas is 9:16 (1080x1920). Accept a working tolerance around it. */
+const STORY_ASPECT = 9 / 16;
+const STORY_ASPECT_TOLERANCE = 0.34;
+/** Meta's current video Story length limit. */
+const STORY_MAX_VIDEO_SECONDS = 60;
 
 export function PostEditorModal({ postId, onChanged }: { postId: string; onChanged?: () => void }) {
   const { close } = useModal();
@@ -102,17 +108,26 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
   }
 
   const endpoint = `/api/posts/${encodeURIComponent(postId)}`;
+  const isStory = post?.kind === "story";
   const saveBody = () => JSON.stringify({
     action: "save",
     concept,
-    caption,
-    cta,
-    hashtags: hashtags.split(/[\s,]+/).filter(Boolean),
+    // Instagram does not support captions on Stories, so caption copy is
+    // never part of a Story save.
+    ...(isStory ? {} : {
+      caption,
+      cta,
+      hashtags: hashtags.split(/[\s,]+/).filter(Boolean),
+    }),
     format,
     scheduledAt: date ? new Date(`${date}T${time || "09:00"}`).toISOString() : null,
   });
 
   async function uploadFile(file: File, origin: "own_asset" | "existing_content") {
+    if (isStory) {
+      const problem = await checkStoryFile(file);
+      if (problem) { setError(problem); return; }
+    }
     const form = new FormData();
     form.set("file", file);
     form.set("origin", origin);
@@ -136,6 +151,9 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
 
   const isPost = post?.kind === "instagram_post";
   const isReel = post?.kind === "reel";
+  const formatChoices = post?.kind === "story"
+    ? (["9:16"] as PostFormat[])
+    : (POST_FORMATS as readonly PostFormat[]).filter((value) => value !== "9:16");
 
   return (
     <ModalShell wide maxWidth={760}>
@@ -143,7 +161,8 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
         title={
           <>
             <span className="mb-2 flex flex-wrap gap-1.5">
-              <Tag tone="t-brand">{post?.typeLabel ?? "Content"}</Tag>
+              {isStory ? <Tag tone="t-story">Story</Tag> : null}
+              <Tag tone={isStory ? "t-grey" : "t-brand"}>{post?.typeLabel ?? "Content"}</Tag>
               {post ? <Tag tone={STATE_TONE[post.internalState]}>{post.internalStateLabel}</Tag> : null}
               {post ? <Tag tone="t-grey">{post.originLabel}</Tag> : null}
             </span>
@@ -163,7 +182,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
             <div>
               <h3 className="mb-2 text-xs font-semibold text-text-2">Preview</h3>
               <div className="overflow-hidden rounded-2xl border border-line bg-surface-2">
-                <div className="grid w-full place-items-center bg-black/90" style={{ aspectRatio: formatAspectRatio(format) }}>
+                <div className={`grid w-full place-items-center bg-black/90 ${isStory ? "mx-auto max-w-[260px]" : ""}`} style={{ aspectRatio: formatAspectRatio(format) }}>
                   {post.visual?.previewUrl ? (
                     post.visual.mimeType.startsWith("video/") ? (
                       <video src={post.visual.previewUrl} controls playsInline className="h-full w-full object-cover" />
@@ -179,46 +198,54 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                 </div>
               </div>
               <p className="mt-2 text-[11.5px] leading-relaxed text-text-3">
-                {post.visual
-                  ? `${post.visual.displayName} · ${(post.visual.byteSize / 1024).toFixed(0)} KB · private signed preview`
-                  : "Private previews are short-lived signed URLs. The file path is never sent to your browser."}
+                {isStory
+                  ? "Instagram Story · 9:16 full screen · expires 24 hours after publishing"
+                  : post.visual
+                    ? `${post.visual.displayName} · ${(post.visual.byteSize / 1024).toFixed(0)} KB · private signed preview`
+                    : "Private previews are short-lived signed URLs. The file path is never sent to your browser."}
               </p>
 
               <div className="mt-3.5">
                 <h3 className="mb-1.5 text-xs font-semibold text-text-2">Format</h3>
-                <p className="mb-1.5 text-[11px] leading-relaxed text-text-3">
-                  Saved with the draft, so it is still {format} when you come back — even before a visual exists.
-                </p>
+                {isStory ? (
+                  <p className="mb-1.5 text-[11px] leading-relaxed text-text-3">
+                    Instagram Stories are 9:16 full screen. Voom keeps this format locked.
+                  </p>
+                ) : (
+                  <p className="mb-1.5 text-[11px] leading-relaxed text-text-3">
+                    Saved with the draft, so it is still {format} when you come back — even before a visual exists.
+                  </p>
+                )}
                 <div className="flex flex-wrap gap-1.5">
-                  {POST_FORMATS.map((value) => (
+                  {formatChoices.map((value) => (
                     <Chip key={value} active={format === value} onClick={() => void chooseFormat(value)}>{value}</Chip>
                   ))}
                 </div>
               </div>
 
               <div className="mt-3.5 space-y-2">
-                {isPost && !post.visualReady ? (
-                  <Btn variant="primary" size="sm" block disabled={busy === "mara"} onClick={() => void send(`${endpoint}/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }, "mara", "MARA created this post.")}>
-                    <Icon name="spark" size={14} /> {busy === "mara" ? "MARA is working…" : "Create with MARA"}
+                {(isPost || isStory) && !post.visualReady ? (
+                  <Btn variant="primary" size="sm" block disabled={busy === "mara"} onClick={() => void send(`${endpoint}/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }, "mara", "MARA created this visual.")}>
+                    <Icon name="spark" size={14} /> {busy === "mara" ? "MARA is working…" : isStory ? "Create Story visual with MARA" : "Create with MARA"}
                   </Btn>
                 ) : null}
 
                 <input
                   ref={fileRef}
                   type="file"
-                  accept={isReel ? ".jpg,.jpeg,.png,.webp,.mp4,.mov" : ".jpg,.jpeg,.png,.webp"}
+                  accept={isReel || isStory ? ".jpg,.jpeg,.png,.webp,.mp4,.mov" : ".jpg,.jpeg,.png,.webp"}
                   className="hidden"
                   onChange={(event) => {
                     const file = event.target.files?.[0];
                     event.target.value = "";
-                    if (file) void uploadFile(file, post.origin === "existing_content" || post.kind === "reel" ? "existing_content" : "own_asset");
+                    if (file) void uploadFile(file, post.origin === "existing_content" || post.kind === "reel" || post.kind === "story" ? "existing_content" : "own_asset");
                   }}
                 />
                 <Btn variant="outline" size="sm" block disabled={busy === "upload"} onClick={() => fileRef.current?.click()}>
-                  <Icon name="img" size={14} /> {busy === "upload" ? "Storing…" : post.visualReady ? "Replace visual" : isReel ? "Import an existing video or image" : "Use my own asset"}
+                  <Icon name="img" size={14} /> {busy === "upload" ? "Storing…" : post.visualReady ? "Replace visual" : isStory ? "Upload image or video" : isReel ? "Import an existing video or image" : "Use my own asset"}
                 </Btn>
 
-                {post.origin === "existing_content" ? (
+                {post.origin === "existing_content" && !isStory ? (
                   <Btn variant="outline" size="sm" block disabled={busy === "suggest"} onClick={async () => {
                     setBusy("suggest"); setError(""); setNotice("");
                     try {
@@ -250,10 +277,17 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                 ) : null}
               </div>
 
-              {post.origin === "existing_content" ? (
+              {post.origin === "existing_content" && !isStory ? (
                 <p className="mt-3 rounded-xl bg-surface-2 px-3 py-2.5 text-[11.5px] leading-relaxed text-text-3">
                   MARA has not seen this file. Suggestions come from the file name, file type and your brand and plan
                   context only.
+                </p>
+              ) : null}
+
+              {isStory ? (
+                <p className="mt-3 rounded-xl bg-surface-2 px-3 py-2.5 text-[11.5px] leading-relaxed text-text-3">
+                  Instagram does not support captions on Stories, so no caption is written or sent — the image or video
+                  is published exactly as stored.
                 </p>
               ) : null}
             </div>
@@ -262,15 +296,27 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
               <Field label="Title / concept">
                 <Input value={concept} maxLength={160} onChange={(event) => setConcept(event.target.value)} />
               </Field>
-              <Field label="Caption">
-                <Textarea rows={7} maxLength={2200} value={caption} onChange={(event) => setCaption(event.target.value)} />
-              </Field>
-              <Field label="Call to action" hint="One short action for the reader.">
-                <Input value={cta} maxLength={160} onChange={(event) => setCta(event.target.value)} placeholder="Book a fitting this week" />
-              </Field>
-              <Field label="Hashtags" hint="Space separated, without the # symbol. Optional.">
-                <Input value={hashtags} onChange={(event) => setHashtags(event.target.value)} placeholder="summerfit familyoutfit" />
-              </Field>
+              {isStory ? (
+                <Card className="border-line bg-surface-2 p-3">
+                  <p className="text-[11.5px] leading-relaxed text-text-3">
+                    <b className="text-text-2">Instagram Story:</b> a 9:16 image (JPEG or PNG) or video (MP4, up to 60
+                    seconds). Voom checks the file before storing it, schedules it once approved, and publishes it
+                    automatically at the scheduled time.
+                  </p>
+                </Card>
+              ) : (
+                <>
+                  <Field label="Caption">
+                    <Textarea rows={7} maxLength={2200} value={caption} onChange={(event) => setCaption(event.target.value)} />
+                  </Field>
+                  <Field label="Call to action" hint="One short action for the reader.">
+                    <Input value={cta} maxLength={160} onChange={(event) => setCta(event.target.value)} placeholder="Book a fitting this week" />
+                  </Field>
+                  <Field label="Hashtags" hint="Space separated, without the # symbol. Optional.">
+                    <Input value={hashtags} onChange={(event) => setHashtags(event.target.value)} placeholder="summerfit familyoutfit" />
+                  </Field>
+                </>
+              )}
               <div className="grid gap-2.5 sm:grid-cols-2">
                 <Field label="Schedule date">
                   <Input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
@@ -305,6 +351,64 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
       </ModalFoot>
     </ModalShell>
   );
+}
+
+/**
+ * Client-side Story checks against Meta's current requirements: 9:16 aspect
+ * (within a working tolerance — Instagram centre-crops anything far off it)
+ * and, for videos, a 60-second maximum. The server still re-checks file type
+ * and size on upload.
+ */
+async function checkStoryFile(file: File): Promise<string | null> {
+  const isVideo = file.type.startsWith("video/");
+  try {
+    if (isVideo) {
+      const meta = await new Promise<{ width: number; height: number; duration: number }>((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const video = document.createElement("video");
+        video.preload = "metadata";
+        const done = (value: { width: number; height: number; duration: number }) => { URL.revokeObjectURL(url); resolve(value); };
+        video.onloadedmetadata = () => done({ width: video.videoWidth, height: video.videoHeight, duration: video.duration });
+        video.onerror = () => { URL.revokeObjectURL(url); reject(new Error("metadata")); };
+        video.src = url;
+      });
+      if (meta.duration > STORY_MAX_VIDEO_SECONDS) {
+        return `Instagram Stories support videos up to ${STORY_MAX_VIDEO_SECONDS} seconds. This one is ${Math.round(meta.duration)} seconds — trim it and try again.`;
+      }
+      if (!aspectLooksLikeStory(meta.width, meta.height)) {
+        return `Instagram Stories are 9:16 full screen. This video is ${meta.width}×${meta.height} (${ratioLabel(meta.width, meta.height)}) — export it in 9:16 (1080×1920) and try again.`;
+      }
+      return null;
+    }
+    const meta = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const image = new Image();
+      const done = (value: { width: number; height: number }) => { URL.revokeObjectURL(url); resolve(value); };
+      image.onload = () => done({ width: image.naturalWidth, height: image.naturalHeight });
+      image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("metadata")); };
+      image.src = url;
+    });
+    if (!aspectLooksLikeStory(meta.width, meta.height)) {
+      return `Instagram Stories are 9:16 full screen. This image is ${meta.width}×${meta.height} (${ratioLabel(meta.width, meta.height)}) — use a 9:16 (1080×1920) image.`;
+    }
+    return null;
+  } catch {
+    // Metadata could not be read in this browser; the server-side type/size
+    // checks still apply, so let the upload through rather than block it.
+    return null;
+  }
+}
+
+function aspectLooksLikeStory(width: number, height: number): boolean {
+  if (!width || !height) return false;
+  const ratio = width / height;
+  return Math.abs(ratio - STORY_ASPECT) <= STORY_ASPECT * STORY_ASPECT_TOLERANCE;
+}
+
+function ratioLabel(width: number, height: number): string {
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+  const divisor = gcd(width, height) || 1;
+  return `${Math.round(width / divisor)}:${Math.round(height / divisor)}`;
 }
 
 function localDate(value: Date) {

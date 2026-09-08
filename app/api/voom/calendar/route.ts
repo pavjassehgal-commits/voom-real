@@ -7,7 +7,7 @@ import { z } from "zod";
 
 const createItem = z.object({
   title: z.string().trim().min(1).max(160),
-  channel: z.enum(["Instagram", "Reel", "Feed", "Email", "SMS"]),
+  channel: z.enum(["Instagram", "Reel", "Story", "Feed", "Email", "SMS"]),
   content: z.string().trim().max(12000).default(""),
   topic: z.string().trim().max(500).default(""),
   publishAt: z.string().datetime({ offset: true }),

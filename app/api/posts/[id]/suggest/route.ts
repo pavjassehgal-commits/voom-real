@@ -24,6 +24,11 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   const admin = createAdminClient();
   const post = await getPostDraft(admin, user.id, id);
   if (!post) return Response.json({ error: "That post was not found." }, { status: 404 });
+  if (post.kind === "story") {
+    // Instagram does not support captions on Stories, so there is no caption
+    // copy for MARA to suggest for one.
+    return Response.json({ error: "Instagram Stories don't support captions, so there is nothing for MARA to suggest." }, { status: 400 });
+  }
   if (!post.visual) return Response.json({ error: "Import an image or video before asking MARA for suggestions." }, { status: 409 });
 
   const assetKind = postAssetKindForMime(post.visual.mimeType);

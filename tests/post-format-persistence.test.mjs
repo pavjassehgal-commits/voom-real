@@ -113,7 +113,9 @@ test("a visual upload does not overwrite the selected format", async () => {
 
 test("image generation does not overwrite the selected format", async () => {
   const route = await read("app/api/posts/[id]/generate/route.ts");
-  assert.match(route, /const format = post\.format;/);
+  // Posts and Reels generate at the draft's own format; a Story is locked to
+  // its single legal 9:16 format, which is still never a user overwrite.
+  assert.match(route, /const format = post\.kind === "story" \? "9:16" : post\.format;/);
   assert.match(route, /so generating cannot change the user's choice/);
   assert.doesNotMatch(route, /async function setFormat/);
   assert.doesNotMatch(route, /from\("post_draft_assets"\)\.update\(\{ format \}\)/);
@@ -172,13 +174,14 @@ test("base channel labels stay clean for calendar and legacy consumers", () => {
   }
 });
 
-test("Post format needed no schema change; 0022 is Instagram auto-publishing and 0023 is the key rotation", async () => {
+test("Post format needed no schema change; 0022 is Instagram auto-publishing, 0023 is the key rotation, 0024 is Story publishing", async () => {
   const files = await readdir(new URL("supabase/migrations/", root));
   assert.ok(files.includes("0021_instagram_post_studio.sql"), "0021 must be checked in");
   assert.deepEqual(files.filter((name) => /^0022_/.test(name)), ["0022_instagram_auto_publishing.sql"], "the only 0022 is Instagram auto-publishing");
   assert.ok(files.includes("0023_instagram_token_key_rotation.sql"), "0023 (Instagram key rotation) must be checked in");
+  assert.deepEqual(files.filter((name) => /^0024_/.test(name)), ["0024_instagram_story_publishing.sql"], "the only 0024 is Instagram Story publishing");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 23), "no migration beyond 0023 may exist");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 24), "no migration beyond 0024 may exist");
 
   // 0021 is unchanged by this fix: it still carries no format column on
   // mara_drafts, and the format is stored in the pre-existing channel column.

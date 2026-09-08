@@ -32,6 +32,18 @@ export const postSuggestionSchema = z.object({
 
 export type MaraPostSuggestion = z.infer<typeof postSuggestionSchema>;
 
+/**
+ * The plan MARA returns for an Instagram Story visual. Deliberately caption-
+ * free: Instagram does not support captions on Stories, so MARA only names the
+ * concept and describes the 9:16 visual.
+ */
+export const storyVisualSchema = z.object({
+  concept: z.string().min(1).max(160),
+  visualPrompt: z.string().min(1).max(1200),
+}).strict();
+
+export type MaraStoryVisualPlan = z.infer<typeof storyVisualSchema>;
+
 export const POST_COPY_SYSTEM_PROMPT = `You are MARA, Voom's practical AI marketing manager, creating ONE Instagram feed post for the authenticated user's own business.
 
 Return JSON only, with exactly these keys:
@@ -68,6 +80,18 @@ export interface PostBrandContext {
   contentFrequency: string;
 }
 
+export const STORY_VISUAL_SYSTEM_PROMPT = `You are MARA, Voom's practical AI marketing manager, creating ONE Instagram Story image for the authenticated user's own business.
+
+Return JSON only, with exactly these keys:
+{"concept":"string","visualPrompt":"string"}
+
+Rules:
+- concept: a short internal name for the Story (max 12 words).
+- visualPrompt: a precise text-to-image prompt for a 9:16 full-screen vertical Story image, 20-80 words. Describe a clean, brandable image that could honestly be produced for this business. Keep the important content away from the extreme top and bottom edges. Do not name real people, real customers, or the business's real premises unless the context describes them. Do not ask for readable text, logos, or watermarks inside the image.
+- Instagram Stories do not support captions, so no caption is written or requested.
+- Never claim the Story was published, scheduled, or sent. This is a draft for the user to review.
+- Plain text only. No markdown.`;
+
 export interface PostPlanContext {
   businessGoal: string;
   weeklyStrategy: string;
@@ -80,7 +104,7 @@ export function buildPostContextPayload(input: {
   brand: PostBrandContext;
   plan: PostPlanContext | null;
   format: string;
-  kind: "instagram_post" | "reel";
+  kind: "instagram_post" | "reel" | "story";
   brief?: string;
 }) {
   return {
@@ -102,7 +126,7 @@ export function buildPostContextPayload(input: {
         }
       : null,
     requestedFormat: input.format,
-    contentType: input.kind === "reel" ? "reel" : "instagram_feed_post",
+    contentType: input.kind === "reel" ? "reel" : input.kind === "story" ? "instagram_story" : "instagram_feed_post",
     userBrief: (input.brief ?? "").slice(0, 800),
   };
 }

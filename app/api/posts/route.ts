@@ -7,13 +7,13 @@ import { z } from "zod";
 export const runtime = "nodejs";
 
 const createPost = z.object({
-  kind: z.enum(["instagram_post", "reel"]),
+  kind: z.enum(["instagram_post", "reel", "story"]),
   origin: z.enum(POST_ORIGINS),
   concept: z.string().trim().min(1).max(160),
   caption: z.string().trim().max(2200).optional(),
   cta: z.string().trim().max(160).optional(),
   hashtags: z.array(z.string().trim().max(40)).max(20).optional(),
-  format: z.enum(["1:1", "4:5"]).optional(),
+  format: z.enum(["1:1", "4:5", "9:16"]).optional(),
   scheduledAt: z.string().datetime({ offset: true }).nullable().optional(),
 }).strict();
 

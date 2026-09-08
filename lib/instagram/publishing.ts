@@ -39,8 +39,19 @@ export const PUBLISH_STATE_LABELS: Record<PublishState, string> = {
 /** The one Meta permission Instagram content publishing requires. */
 export const INSTAGRAM_PUBLISH_PERMISSION = "instagram_business_content_publish";
 
-/** Media kinds Voom can auto-publish in V1. */
-export type PublishMediaKind = "image" | "reel";
+/**
+ * Media kinds Voom can auto-publish. `story` maps to Meta's
+ * media_type=STORIES container (image or video Story) — the only Story form
+ * Meta's current publishing API supports.
+ */
+export type PublishMediaKind = "image" | "reel" | "story";
+
+/** Human labels the publishing queue shows per media kind. */
+export const PUBLISH_MEDIA_KIND_LABELS: Record<PublishMediaKind, string> = {
+  image: "Instagram Post",
+  reel: "Reel",
+  story: "Story",
+};
 
 export const MAX_PUBLISH_ATTEMPTS = 5;
 /** How long a claimed row may sit in `publishing` before it may be reclaimed. */
@@ -53,12 +64,33 @@ export const REEL_POLL_INTERVAL_MS = 6_000;
 export const IMAGE_POLL_ATTEMPTS = 5;
 export const IMAGE_POLL_INTERVAL_MS = 3_000;
 
-/** Which media kind a stored mime type publishes as. */
+/**
+ * Which media kind a stored mime type publishes as.
+ *
+ * Stories: Meta's current API publishes an image Story (image_url) or a video
+ * Story (video_url) through a media_type=STORIES container, so a Story draft's
+ * stored asset routes to `story` whether it is an image or an MP4. WebP is
+ * still not ingestible by Instagram.
+ */
 export function publishMediaKindForMime(mime: string, draftKind?: string): PublishMediaKind | null {
+  if (draftKind === "story") {
+    if (mime === "image/jpeg" || mime === "image/png") return "story";
+    if (mime === "video/mp4" || mime === "video/quicktime") return "story";
+    return null;
+  }
   if (mime === "video/mp4" || mime === "video/quicktime") return "reel";
   if (mime === "image/jpeg" || mime === "image/png") return draftKind === "reel" ? null : "image";
   // Instagram will not ingest webp. Treated as missing media, not a hard fail.
   return null;
+}
+
+/**
+ * True when Meta transcodes the asset asynchronously (video containers must be
+ * polled longer before they report FINISHED). Video Stories transcode like
+ * Reels; image Stories settle like feed images.
+ */
+export function isVideoPublishMime(mime: string): boolean {
+  return mime === "video/mp4" || mime === "video/quicktime";
 }
 
 /** Meta rejects webp and quicktime source files for publishing. */

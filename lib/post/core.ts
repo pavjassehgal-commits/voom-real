@@ -6,14 +6,15 @@
  * Instagram, and no state in this module is ever labelled "Posted".
  */
 
-/** Instagram Post V1 formats. */
-export const POST_FORMATS = ["1:1", "4:5"] as const;
+/** Instagram Post V1 formats, plus the 9:16 Story format. */
+export const POST_FORMATS = ["1:1", "4:5", "9:16"] as const;
 export type PostFormat = (typeof POST_FORMATS)[number];
 
 /** The mara_drafts.kind values Post Studio writes. */
 export const POST_DRAFT_KIND = "instagram_post";
 export const REEL_DRAFT_KIND = "reel";
-export type PostDraftKind = typeof POST_DRAFT_KIND | typeof REEL_DRAFT_KIND;
+export const STORY_DRAFT_KIND = "story";
+export type PostDraftKind = typeof POST_DRAFT_KIND | typeof REEL_DRAFT_KIND | typeof STORY_DRAFT_KIND;
 
 /** How the visual for this post came to exist (UI / API, not a DB column). */
 export const POST_ORIGINS = ["mara", "own_asset", "existing_content"] as const;
@@ -70,11 +71,12 @@ export const POST_STATE_LABELS: Record<PostInternalState, string> = {
 export const POST_TYPE_LABELS = {
   instagram_post: "Instagram Post",
   reel: "Reel",
+  story: "Instagram Story",
   existing_content: "Existing content",
 } as const;
 
 export function isPostFormat(value: unknown): value is PostFormat {
-  return value === "1:1" || value === "4:5";
+  return value === "1:1" || value === "4:5" || value === "9:16";
 }
 
 export function normalizePostFormat(value: unknown, fallback: PostFormat = "1:1"): PostFormat {
@@ -83,7 +85,7 @@ export function normalizePostFormat(value: unknown, fallback: PostFormat = "1:1"
 
 /** CSS aspect-ratio value used by the editor preview. */
 export function formatAspectRatio(format: PostFormat): string {
-  return format === "4:5" ? "4 / 5" : "1 / 1";
+  return format === "4:5" ? "4 / 5" : format === "9:16" ? "9 / 16" : "1 / 1";
 }
 
 export type PostAssetKind = "image" | "video";
@@ -96,7 +98,7 @@ export function postAssetKindForMime(mime: string): PostAssetKind | null {
 }
 
 export function isPostDraftKind(value: unknown): value is PostDraftKind {
-  return value === POST_DRAFT_KIND || value === REEL_DRAFT_KIND;
+  return value === POST_DRAFT_KIND || value === REEL_DRAFT_KIND || value === STORY_DRAFT_KIND;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,8 +118,8 @@ export function isPostDraftKind(value: unknown): value is PostDraftKind {
 export const POST_CHANNEL_SEPARATOR = " · ";
 
 /** The clean channel label, matching what the rest of Voom writes. */
-export function baseChannelFor(kind: string): "Instagram" | "Reel" {
-  return kind === REEL_DRAFT_KIND ? "Reel" : "Instagram";
+export function baseChannelFor(kind: string): "Instagram" | "Reel" | "Story" {
+  return kind === REEL_DRAFT_KIND ? "Reel" : kind === STORY_DRAFT_KIND ? "Story" : "Instagram";
 }
 
 /** Encodes the selected format into the free-form mara_drafts.channel label. */
@@ -222,20 +224,31 @@ export function isProductionPostDraftAssetWrite(row: object): row is PostDraftAs
 /**
  * The one label the calendar and post list use to distinguish content types.
  * Imported existing content is called out first because that is the more
- * specific truth about where the visual came from.
+ * specific truth about where the visual came from — except Stories, which are
+ * always labelled as Stories so the calendar can badge them unambiguously.
  */
 export function postTypeLabel(kind: string, assetOrigin: string | null | undefined): string {
+  if (kind === STORY_DRAFT_KIND) return POST_TYPE_LABELS.story;
   if (assetOrigin === "uploaded_existing" || assetOrigin === "existing_content") return POST_TYPE_LABELS.existing_content;
   return kind === REEL_DRAFT_KIND ? POST_TYPE_LABELS.reel : POST_TYPE_LABELS.instagram_post;
 }
 /** The existing Content Calendar channel enum value for a post kind. */
-export function calendarChannelFor(kind: string): "Instagram" | "Reel" {
-  return kind === REEL_DRAFT_KIND ? "Reel" : "Instagram";
+export function calendarChannelFor(kind: string): "Instagram" | "Reel" | "Story" {
+  return kind === REEL_DRAFT_KIND ? "Reel" : kind === STORY_DRAFT_KIND ? "Story" : "Instagram";
 }
 
-/** Which asset kinds each post type accepts. */
+/** Which asset kinds each post type accepts. A Story is an image or a video. */
 export function allowedAssetKindsFor(kind: string): ("image" | "video")[] {
-  return kind === REEL_DRAFT_KIND ? ["image", "video"] : ["image"];
+  return kind === REEL_DRAFT_KIND || kind === STORY_DRAFT_KIND ? ["image", "video"] : ["image"];
+}
+
+/**
+ * The legal format for a content kind. Stories are always 9:16 (Meta's Story
+ * canvas); 9:16 is not a feed post format, so it never sticks to a Post.
+ */
+export function formatForKind(kind: string, format: PostFormat): PostFormat {
+  if (kind === STORY_DRAFT_KIND) return "9:16";
+  return format === "9:16" ? "1:1" : format;
 }
 
 export const MAX_HASHTAGS = 20;
@@ -340,10 +353,20 @@ export function calendarStatusFor(state: PostInternalState): "approved" | "sched
 }
 
 /** Reasons a post may not be approved yet. Empty means it may be approved. */
-export function postApprovalBlockers(input: { caption: string; hasVisual: boolean }): string[] {
+/**
+ * Reasons content may not be approved yet. Empty means it may be approved.
+ * Stories have no caption requirement — Instagram does not support captions on
+ * Stories — but they still require a stored visual before approval.
+ */
+export function postApprovalBlockers(input: { caption: string; hasVisual: boolean; kind?: string }): string[] {
   const blockers: string[] = [];
-  if (!input.caption.trim()) blockers.push("Add a caption before approving.");
-  if (!input.hasVisual) blockers.push("Add a visual before approving. Instagram posts and Reels need one.");
+  const isStory = input.kind === STORY_DRAFT_KIND;
+  if (!isStory && !input.caption.trim()) blockers.push("Add a caption before approving.");
+  if (!input.hasVisual) {
+    blockers.push(isStory
+      ? "Add an image or video before approving. Instagram Stories need one."
+      : "Add a visual before approving. Instagram posts and Reels need one.");
+  }
   return blockers;
 }
 

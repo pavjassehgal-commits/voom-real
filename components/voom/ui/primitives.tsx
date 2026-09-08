@@ -111,6 +111,8 @@ const TAG_CLASSES: Record<string, string> = {
   "t-blue": "bg-blue/15 text-blue",
   "t-pink": "bg-pink/15 text-pink",
   "t-brand": "bg-[var(--brand-soft)] text-brand",
+  // The Story badge: deep-teal support colour from the Voom identity.
+  "t-story": "bg-[var(--brand-2)]/15 text-[var(--brand-2)]",
   "t-grey": "bg-surface-2 text-text-3",
 };
 

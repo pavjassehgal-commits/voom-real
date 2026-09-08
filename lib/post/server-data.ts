@@ -5,7 +5,7 @@ import { IngestionFailure, type IngestionStage, logIngestionStage, type Ingestio
 import type { createAdminClient } from "@/utils/supabase/admin";
 import {
   buildPostDraftAssetWrite, calendarChannelFor, calendarStatusFor, composePostCaption, decodeDraftFormat,
-  encodeDraftChannel, internalPostState, isPostDraftKind, originForAsset, postTypeLabel,
+  encodeDraftChannel, formatForKind, internalPostState, isPostDraftKind, originForAsset, postTypeLabel,
   splitPostCaption, type PostDraftKind, type PostFormat, type PostInternalState, type PostOrigin,
   POST_STATE_LABELS,
 } from "./core";
@@ -93,7 +93,8 @@ export async function createPostDraft(admin: AdminClient, ownerId: string, input
   if (!isPostDraftKind(input.kind)) throw new Error("post_kind_invalid");
   const conversationId = await ensureStudioConversation(admin, ownerId);
   const caption = composePostCaption({ caption: input.caption ?? "", cta: input.cta, hashtags: input.hashtags });
-  const format = normalizeFormatInput(input.format);
+  // Stories are always 9:16; 9:16 never sticks to a feed post.
+  const format = formatForKind(input.kind, normalizeFormatInput(input.format));
   const { data, error } = await admin.from("mara_drafts").insert({
     conversation_id: conversationId,
     owner_user_id: ownerId,
@@ -153,7 +154,7 @@ export async function getPostDraftForIngestion(
 /** Owner-scoped list of every Post Studio draft, newest first. */
 export async function listPostDrafts(admin: AdminClient, ownerId: string): Promise<PostView[]> {
   const { data: drafts } = await admin.from("mara_drafts").select(DRAFT_COLUMNS)
-    .eq("owner_user_id", ownerId).in("kind", ["instagram_post", "reel"]).order("created_at", { ascending: false }).limit(50);
+    .eq("owner_user_id", ownerId).in("kind", ["instagram_post", "reel", "story"]).order("created_at", { ascending: false }).limit(50);
   const rows = (drafts ?? []) as Record<string, unknown>[];
   return Promise.all(rows.map(async (row) => toPostView(admin, ownerId, row, await loadAssetRow(admin, ownerId, String(row.id)))));
 }
@@ -238,7 +239,8 @@ export async function savePostDraft(admin: AdminClient, ownerId: string, draftId
   const hashtags = input.hashtags !== undefined ? input.hashtags : existing.hashtags;
   const composed = composePostCaption({ caption, cta, hashtags });
   const scheduledAt = input.scheduledAt !== undefined ? input.scheduledAt : existing.scheduledAt;
-  const nextFormat = input.format !== undefined ? normalizeFormatInput(input.format) : existing.format;
+  // Stories stay 9:16; a feed post can never pick up the Story-only format.
+  const nextFormat = formatForKind(existing.kind, input.format !== undefined ? normalizeFormatInput(input.format) : existing.format);
   const patch: Record<string, unknown> = {
     title: concept,
     content: (composed || concept).slice(0, 12000),
@@ -254,7 +256,7 @@ export async function savePostDraft(admin: AdminClient, ownerId: string, draftId
 }
 
 function normalizeFormatInput(value: unknown): PostFormat {
-  return value === "4:5" ? "4:5" : "1:1";
+  return value === "4:5" || value === "9:16" ? value : "1:1";
 }
 
 /** Approves a post. Approval saves state only; nothing is published. */
@@ -322,7 +324,9 @@ export async function syncPostToPublishQueue(
     draftId,
     calendarItemId,
     mediaKind,
-    caption: truncateCaption(view.composedCaption),
+    // Stories are enqueued without caption text: Meta's Story container has no
+    // caption parameter, so Voom never promises or sends one.
+    caption: mediaKind === "story" ? "" : truncateCaption(view.composedCaption),
     scheduledAt: view.scheduledAt ?? publishAt,
   }).catch(() => null);
 }

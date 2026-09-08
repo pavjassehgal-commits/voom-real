@@ -469,9 +469,22 @@ test("live migration 0023 already provides atomic row updates and keeps secret p
   }
 });
 
-test("no 0024 migration is added and live 0023 is not modified", async () => {
+test("live 0023 is not modified; 0024 is Instagram Story publishing only", async () => {
   const files = await readdir(new URL("supabase/migrations/", root));
-  assert.deepEqual(files.filter((name) => /^002[3-9]_/.test(name)), ["0023_instagram_token_key_rotation.sql"]);
-  const sql = await read("supabase/migrations/0023_instagram_token_key_rotation.sql");
-  assert.doesNotMatch(sql, /instagram_publish_/);
+  assert.deepEqual(files.filter((name) => /^002[3-9]/.test(name)).sort(), [
+    "0023_instagram_token_key_rotation.sql",
+    "0024_instagram_story_publishing.sql",
+  ]);
+  const keyRotation = await read("supabase/migrations/0023_instagram_token_key_rotation.sql");
+  assert.doesNotMatch(keyRotation, /instagram_publish_/);
+  // 0024 never touches the key-rotation surface either.
+  const stories = await read("supabase/migrations/0024_instagram_story_publishing.sql");
+  for (const guarded of [
+    "save_instagram_connection",
+    "list_instagram_connection_secrets",
+    "update_instagram_connection_secret",
+    "instagram_connection_secrets",
+  ]) {
+    assert.doesNotMatch(stories, new RegExp(guarded), `0024 must not touch ${guarded}`);
+  }
 });

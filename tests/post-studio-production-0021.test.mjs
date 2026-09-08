@@ -235,13 +235,14 @@ test("migration 0021 source matches the production shape", async () => {
   assert.doesNotMatch(grant, /storage_path/);
 });
 
-test("0021 matches production, 0022 is Instagram auto-publishing, 0023 is key rotation; nothing beyond 0023 exists", async () => {
+test("0021 matches production, 0022 is Instagram auto-publishing, 0023 is key rotation, 0024 is Story publishing; nothing beyond 0024 exists", async () => {
   const files = await readdir(new URL("supabase/migrations/", root));
   assert.ok(files.includes("0021_instagram_post_studio.sql"));
   assert.deepEqual(files.filter((name) => /^0022_/.test(name)), ["0022_instagram_auto_publishing.sql"], "the only 0022 is Instagram auto-publishing");
   assert.ok(files.includes("0023_instagram_token_key_rotation.sql"), "0023 (Instagram key rotation) must be checked in");
+  assert.deepEqual(files.filter((name) => /^0024_/.test(name)), ["0024_instagram_story_publishing.sql"], "the only 0024 is Instagram Story publishing");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 23), "no migration beyond 0023 may exist");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 24), "no migration beyond 0024 may exist");
 });
 
 test("no code writes or selects post_draft_assets.format", async () => {
