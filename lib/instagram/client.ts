@@ -131,6 +131,27 @@ export class InstagramClient {
     return stringField(value, "id");
   }
 
+  /**
+   * Creates a STORIES media container — Meta's only Story publishing form.
+   * An image Story takes image_url; a video Story takes video_url (and, like
+   * Reels, transcodes asynchronously). Meta's Story container request has NO
+   * caption parameter: Instagram does not support captions on Stories, so
+   * Voom never sends one.
+   */
+  async createStoryContainer(input: { accessToken: string; igUserId: string; mediaUrl: string; video: boolean }) {
+    const body = new URLSearchParams({
+      media_type: "STORIES",
+      [input.video ? "video_url" : "image_url"]: input.mediaUrl,
+      access_token: input.accessToken,
+    });
+    const value = await this.fetchJson(
+      `https://graph.instagram.com/${this.config.graphVersion}/${input.igUserId}/media`,
+      { method: "POST", body },
+      "media_container",
+    );
+    return stringField(value, "id");
+  }
+
   /** Reads a container's processing state: IN_PROGRESS / FINISHED / ERROR / EXPIRED. */
   async getContainerStatus(accessToken: string, containerId: string) {
     const url = new URL(`https://graph.instagram.com/${this.config.graphVersion}/${containerId}`);

@@ -16,7 +16,7 @@ const MONTHS = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
 ];
-const CHANS = ["All", "Reel", "Feed", "Email", "SMS"];
+const CHANS = ["All", "Reel", "Story", "Feed", "Email", "SMS"];
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function CalendarPage() {
@@ -58,7 +58,7 @@ export default function CalendarPage() {
     const saved = savedItems.filter((item) => { const date = new Date(item.publish_at); const filter = calFilter === "All" || item.channel === calFilter || (calFilter === "Feed" && item.channel === "Instagram"); return date.getFullYear() === calYear && date.getMonth() === calMonth && date.getDate() === d && filter; });
     return [
       ...demo.map((item) => ({ source: "demo" as const, key: `demo-${posts.indexOf(item)}`, label: item.t.includes("· ") ? item.t.split("· ")[1] : item.t, color: item.c, index: posts.indexOf(item) })),
-      ...saved.map((item) => ({ source: "saved" as const, key: item.id, label: item.contentType ? `${item.contentType} · ${item.title}` : item.title, color: item.contentType === "Reel" ? "#7c3aed" : item.contentType === "Existing content" ? "#0f766e" : "#e8481f", index: -1 })),
+      ...saved.map((item) => ({ source: "saved" as const, key: item.id, label: item.contentType ? `${item.contentType} · ${item.title}` : item.title, color: item.contentType === "Reel" ? "#7c3aed" : item.contentType === "Instagram Story" ? "#3fb3a6" : item.contentType === "Existing content" ? "#0f766e" : "#e8481f", index: -1 })),
     ];
   }
 

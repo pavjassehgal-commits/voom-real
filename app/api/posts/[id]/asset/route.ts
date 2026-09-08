@@ -122,8 +122,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const allowed = allowedAssetKindsFor(post.kind);
   const assetKind = postAssetKindForMime(detected.mimeType);
   if (!assetKind || !allowed.includes(assetKind)) {
-    const wanted = post.kind === "reel" ? "video" : "image";
-    return ingestionError("action_required", `This ${wanted === "video" ? "Reel" : "Instagram Post"} needs ${describeAllowedKinds(allowed)}.`, 400, requestId);
+    const label = post.kind === "reel" ? "Reel" : post.kind === "story" ? "Instagram Story" : "Instagram Post";
+    return ingestionError("action_required", `This ${label} needs ${describeAllowedKinds(allowed)}.`, 400, requestId);
   }
 
   // The format is deliberately NOT read from the upload: the draft's persisted

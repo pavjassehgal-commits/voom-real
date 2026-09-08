@@ -7,12 +7,13 @@ import { ModalBody, ModalFoot, ModalHead, ModalShell } from "@/components/voom/u
 import { Icon } from "@/components/voom/icons";
 import { PostEditorModal } from "./PostEditorModal";
 
-type Step = "choose" | "instagram_post" | "reel";
+type Step = "choose" | "instagram_post" | "reel" | "story";
+type Kind = "instagram_post" | "reel" | "story";
 
 /**
  * The single "Create content" entry point.
  *
- *   Create content → Instagram Post → Reel
+ *   Create content → Instagram Post / Reel / Instagram Story
  *
  * Everything it creates stays internal: a draft, an approval, an internal
  * schedule, and a Content Calendar entry. It never calls Instagram.
@@ -23,11 +24,11 @@ export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function create(kind: "instagram_post" | "reel", origin: "mara" | "own_asset" | "existing_content") {
+  async function create(kind: Kind, origin: "mara" | "own_asset" | "existing_content") {
     setBusy(true);
     setError("");
     try {
-      const concept = kind === "reel" ? "New Reel" : "New Instagram Post";
+      const concept = kind === "reel" ? "New Reel" : kind === "story" ? "New Instagram Story" : "New Instagram Post";
       const response = await fetch("/api/posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -43,10 +44,15 @@ export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
     }
   }
 
+  const title = step === "choose" ? "Create content"
+    : step === "instagram_post" ? "Instagram Post"
+    : step === "reel" ? "Reel"
+    : "Instagram Story";
+
   return (
     <ModalShell wide maxWidth={620}>
       <ModalHead
-        title={step === "choose" ? "Create content" : step === "instagram_post" ? "Instagram Post" : "Reel"}
+        title={title}
         sub="Drafts, approvals and scheduling stay inside Voom. Nothing is published to Instagram."
         onClose={close}
       />
@@ -66,6 +72,12 @@ export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
               title="Reel"
               body="Import a video you already have, or use Voom's existing MARA Reel workflow."
               onClick={() => setStep("reel")}
+            />
+            <Choice
+              icon="spark"
+              title="Instagram Story"
+              body="A 9:16 full-screen image or video. Upload one you already have, or let MARA create the visual."
+              onClick={() => setStep("story")}
             />
           </div>
         ) : null}
@@ -109,6 +121,29 @@ export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
               onClick={() => { close(); }}
               href="/app/approvals"
             />
+          </div>
+        ) : null}
+
+        {step === "story" ? (
+          <div className="space-y-3">
+            <Choice
+              icon="img"
+              title="Upload an image or video"
+              body="Use a 9:16 image (JPEG or PNG) or video (MP4) you already have. It is stored privately and kept exactly as uploaded. Stories don't support captions."
+              onClick={() => void create("story", "existing_content")}
+              busy={busy}
+            />
+            <Choice
+              icon="spark"
+              title="Create with MARA"
+              body="MARA plans a full-screen 9:16 visual from your brand profile and active marketing plan, generates it, and stores it privately in Voom."
+              onClick={() => void create("story", "mara")}
+              busy={busy}
+            />
+            <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-text-3">
+              Instagram Stories are 9:16 full screen and expire after 24 hours. Instagram does not support captions on
+              Stories, so Voom publishes the image or video exactly as stored.
+            </p>
           </div>
         ) : null}
       </ModalBody>

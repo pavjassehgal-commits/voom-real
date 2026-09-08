@@ -84,7 +84,7 @@ export function PublishingQueue() {
           <p className="text-xs text-text-3">
             {upcoming > 0
               ? `${upcoming} item${upcoming === 1 ? "" : "s"} will be published to Instagram automatically by Voom — you don't need to post them yourself.`
-              : "Approve an Instagram Post or Reel and give it a date to have Voom publish it automatically."}
+              : "Approve an Instagram Post, Reel or Story and give it a date to have Voom publish it automatically."}
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -114,16 +114,16 @@ export function PublishingQueue() {
         <ul className="divide-y divide-line">
           {items.map((item) => (
             <li key={item.id} className="flex items-center gap-3 py-2.5">
-              <div className="h-11 w-11 flex-none overflow-hidden rounded-lg bg-surface-2">
+              <div className={`h-11 w-11 flex-none overflow-hidden rounded-lg bg-surface-2 ${item.type === "Story" ? "ring-1 ring-brand/40" : ""}`}>
                 {item.thumbnailUrl ? (
                   <Image src={item.thumbnailUrl} alt="" width={44} height={44} unoptimized className="h-11 w-11 object-cover" />
                 ) : (
-                  <span className="grid h-11 w-11 place-items-center text-[10px] text-text-3">{item.type === "Reel" ? "Reel" : "Post"}</span>
+                  <span className="grid h-11 w-11 place-items-center text-[10px] text-text-3">{item.type === "Reel" ? "Reel" : item.type === "Story" ? "Story" : "Post"}</span>
                 )}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <Tag tone="t-brand">{item.type}</Tag>
+                  <Tag tone={item.type === "Story" ? "t-story" : "t-brand"}>{item.type === "Story" ? "Story" : item.type}</Tag>
                   <span className="truncate text-sm font-semibold">{item.title}</span>
                 </div>
                 <p className="text-xs text-text-3">

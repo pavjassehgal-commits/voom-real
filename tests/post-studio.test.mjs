@@ -15,18 +15,21 @@ const prompt = await import("../lib/post/prompt.ts");
 // instagram_post kind, formats, and the draft-kind contract
 // ---------------------------------------------------------------------------
 
-test("Post Studio writes the instagram_post draft kind and accepts both V1 formats", () => {
+test("Post Studio writes the instagram_post draft kind and accepts both V1 formats plus the Story format", () => {
   assert.equal(core.POST_DRAFT_KIND, "instagram_post");
   assert.equal(core.REEL_DRAFT_KIND, "reel");
-  assert.deepEqual([...core.POST_FORMATS], ["1:1", "4:5"]);
+  assert.equal(core.STORY_DRAFT_KIND, "story");
+  assert.deepEqual([...core.POST_FORMATS], ["1:1", "4:5", "9:16"]);
   assert.equal(core.isPostFormat("1:1"), true);
   assert.equal(core.isPostFormat("4:5"), true);
-  assert.equal(core.isPostFormat("9:16"), false, "9:16 is a Reel format, not a post format");
+  assert.equal(core.isPostFormat("9:16"), true, "9:16 is the Instagram Story format");
   assert.equal(core.normalizePostFormat("4:5"), "4:5");
   assert.equal(core.normalizePostFormat("16:9"), "1:1", "unknown formats fall back safely");
   assert.equal(core.formatAspectRatio("1:1"), "1 / 1");
   assert.equal(core.formatAspectRatio("4:5"), "4 / 5");
+  assert.equal(core.formatAspectRatio("9:16"), "9 / 16");
   assert.equal(core.isPostDraftKind("instagram_post"), true);
+  assert.equal(core.isPostDraftKind("story"), true);
   assert.equal(core.isPostDraftKind("instagram_caption"), false);
 });
 
@@ -261,8 +264,9 @@ test("0021 is marked already-applied; the only 0022 is Instagram auto-publishing
   assert.ok(files.includes("0021_instagram_post_studio.sql"), "0021 must be checked in");
   assert.deepEqual(files.filter((name) => /^0022_/.test(name)), ["0022_instagram_auto_publishing.sql"], "the only 0022 is Instagram auto-publishing");
   assert.ok(files.includes("0023_instagram_token_key_rotation.sql"), "0023 (Instagram key rotation) must be checked in");
+  assert.deepEqual(files.filter((name) => /^0024_/.test(name)), ["0024_instagram_story_publishing.sql"], "the only 0024 is Instagram Story publishing");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 23), "no migration beyond 0023 may exist");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 24), "no migration beyond 0024 may exist");
 });
 
 // ---------------------------------------------------------------------------
@@ -354,7 +358,7 @@ test("existing image becomes an Instagram Post and existing video becomes a Reel
   assert.match(route, /const rawOrigin = form\.get\("origin"\)/);
   assert.match(route, /origin: PostOrigin = rawOrigin === "existing_content" \|\| post\.kind === "reel" \? "existing_content" : "own_asset"/);
   const list = await read("app/api/posts/route.ts");
-  assert.match(list, /kind: z\.enum\(\["instagram_post", "reel"\]\)/);
+  assert.match(list, /kind: z\.enum\(\["instagram_post", "reel", "story"\]\)/);
   assert.match(list, /origin: z\.enum\(POST_ORIGINS\)/);
   const modal = await read("components/voom/modals/CreateContentModal.tsx");
   assert.match(modal, /Import an existing video/);
@@ -382,7 +386,7 @@ test("posts can be saved as a draft, scheduled, and approved without publishing"
   const route = await read("app/api/posts/[id]/route.ts");
   assert.match(route, /action === "approve"/);
   assert.match(route, /approvePostDraft\(admin, user\.id, id\)/);
-  assert.match(route, /postApprovalBlockers\(\{ caption: existing\.caption, hasVisual: existing\.visualReady \}\)/);
+  assert.match(route, /postApprovalBlockers\(\{ caption: existing\.caption, hasVisual: existing\.visualReady, kind: existing\.kind \}\)/);
   assert.match(route, /Choose a date in the future to schedule this\./);
   assert.match(route, /Voom will automatically publish this to Instagram at the scheduled time\./);
   const data = await read("lib/post/server-data.ts");

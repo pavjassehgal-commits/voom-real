@@ -17,6 +17,7 @@ import {
   isContainerFatal,
   isContainerReady,
   isPublishableMime,
+  isVideoPublishMime,
   REEL_POLL_ATTEMPTS,
   REEL_POLL_INTERVAL_MS,
   resolveFailure,
@@ -48,7 +49,7 @@ export interface FlowPorts {
   loadAsset(ownerId: string, draftId: string): Promise<{ storagePath: string; mimeType: string; status: string } | null>;
   /** Short-lived signed URL scoped to exactly that object. */
   signMediaUrl(storagePath: string): Promise<string | null>;
-  createContainer(input: { kind: PublishMediaKind; accessToken: string; igUserId: string; mediaUrl: string; caption: string }): Promise<string>;
+  createContainer(input: { kind: PublishMediaKind; accessToken: string; igUserId: string; mediaUrl: string; caption: string; video: boolean }): Promise<string>;
   containerStatus(accessToken: string, containerId: string): Promise<string>;
   publishContainer(input: { accessToken: string; igUserId: string; containerId: string }): Promise<string>;
   /** Read-only recovery for an ambiguous response. */
@@ -96,14 +97,20 @@ export async function runPublishFlow(item: FlowItem, ports: FlowPorts): Promise<
   const mediaUrl = await ports.signMediaUrl(asset.storagePath);
   if (!mediaUrl) return fail(item, ports, "media_url_failed", now);
 
-  const caption = truncateCaption(item.caption || draft.content || "");
+  // Meta's Story containers have no caption parameter — Instagram does not
+  // support captions on Stories — so a Story never carries caption text into a
+  // container or into the caption-based recovery read below.
+  const caption = item.mediaKind === "story" ? "" : truncateCaption(item.caption || draft.content || "");
+  // Video Stories transcode asynchronously exactly like Reels; image Stories
+  // settle like feed images.
+  const video = isVideoPublishMime(asset.mimeType);
 
   // 4) Container. Reused across attempts, never re-created.
   let containerId = item.containerId;
   if (!containerId) {
     try {
       containerId = await ports.createContainer({
-        kind: item.mediaKind, accessToken: credentials.accessToken, igUserId: credentials.igUserId, mediaUrl, caption,
+        kind: item.mediaKind, accessToken: credentials.accessToken, igUserId: credentials.igUserId, mediaUrl, caption, video,
       });
     } catch {
       return fail(item, ports, "container_failed", now);
@@ -112,9 +119,9 @@ export async function runPublishFlow(item: FlowItem, ports: FlowPorts): Promise<
     await ports.persistContainerId(item, containerId);
   }
 
-  // 5) Readiness. Reels transcode asynchronously and must reach FINISHED.
-  const attempts = item.mediaKind === "reel" ? REEL_POLL_ATTEMPTS : IMAGE_POLL_ATTEMPTS;
-  const interval = item.mediaKind === "reel" ? REEL_POLL_INTERVAL_MS : IMAGE_POLL_INTERVAL_MS;
+  // 5) Readiness. Video (Reels and video Stories) must reach FINISHED.
+  const attempts = video ? REEL_POLL_ATTEMPTS : IMAGE_POLL_ATTEMPTS;
+  const interval = video ? REEL_POLL_INTERVAL_MS : IMAGE_POLL_INTERVAL_MS;
   let ready = false;
   for (let attempt = 0; attempt < attempts; attempt++) {
     let status: string;

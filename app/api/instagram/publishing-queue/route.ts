@@ -4,6 +4,7 @@ import { listPublishQueue } from "@/lib/instagram/publish-queue";
 import {
   hasPublishPermission,
   INSTAGRAM_PUBLISH_PERMISSION,
+  PUBLISH_MEDIA_KIND_LABELS,
   PUBLISH_STATE_LABELS,
   publishStatusTone,
   willAutoPublish,
@@ -58,7 +59,9 @@ export async function GET() {
         id: row.id,
         draftId: row.draft_id,
         title: titleById.get(row.draft_id) ?? "Instagram content",
-        type: row.media_kind === "reel" ? "Reel" : "Instagram Post",
+        // Story items are badged "Story" so the queue tells the three
+        // Instagram content kinds apart at a glance.
+        type: PUBLISH_MEDIA_KIND_LABELS[row.media_kind] ?? "Instagram Post",
         account: connection?.username ? `@${connection.username}` : "Instagram not connected",
         scheduledAt: row.scheduled_at,
         status: row.status,
