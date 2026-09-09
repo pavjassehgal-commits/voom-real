@@ -174,14 +174,15 @@ test("base channel labels stay clean for calendar and legacy consumers", () => {
   }
 });
 
-test("Post format needed no schema change; 0022 is Instagram auto-publishing, 0023 is the key rotation, 0024 is Story publishing", async () => {
+test("Post format needed no schema change; 0022 is Instagram auto-publishing, 0023 is the key rotation, 0024 is Story publishing, 0025 is MARA media video generation", async () => {
   const files = await readdir(new URL("supabase/migrations/", root));
   assert.ok(files.includes("0021_instagram_post_studio.sql"), "0021 must be checked in");
   assert.deepEqual(files.filter((name) => /^0022_/.test(name)), ["0022_instagram_auto_publishing.sql"], "the only 0022 is Instagram auto-publishing");
   assert.ok(files.includes("0023_instagram_token_key_rotation.sql"), "0023 (Instagram key rotation) must be checked in");
   assert.deepEqual(files.filter((name) => /^0024_/.test(name)), ["0024_instagram_story_publishing.sql"], "the only 0024 is Instagram Story publishing");
+  assert.deepEqual(files.filter((name) => /^0025_/.test(name)), ["0025_mara_media_video_generation.sql"], "the only 0025 is MARA media video generation");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 24), "no migration beyond 0024 may exist");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 25), "no migration beyond 0025 may exist");
 
   // 0021 is unchanged by this fix: it still carries no format column on
   // mara_drafts, and the format is stored in the pre-existing channel column.

@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- private signed URLs expire and must bypass the public image optimizer */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/voom/icons";
 import { Btn, Card, Input, Tag, Textarea } from "@/components/voom/ui/primitives";
@@ -31,31 +31,90 @@ export function ApprovalsBoard({ initial }: { initial: ApprovalItem[] }) {
     else setError(body.error ?? "Voom couldn't produce that Reel safely.");
     setBusy(null);
   }
+  /** New video job with a fresh idempotency key (regenerate / retry). */
+  async function produceVideo(id: string) {
+    setBusy(id); setError("");
+    const response = await fetch(`/api/reels/produce/${id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idempotencyKey: crypto.randomUUID() }) });
+    const body = await response.json() as { action?: ApprovalItem; error?: string };
+    if (response.ok && body.action) { setItems((current) => current.map((item) => item.id === id ? body.action! : item)); window.dispatchEvent(new Event("voom:data-changed")); }
+    else setError(body.error ?? "Voom couldn't start that Reel video safely.");
+    setBusy(null);
+  }
+  // Stable identity (the reel card polls with it in an effect) and no
+  // re-render churn when the server returns an unchanged action.
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  const refreshItem = useCallback((id: string, action: ApprovalItem) => {
+    const prev = itemsRef.current.find((item) => item.id === id);
+    if (prev && JSON.stringify(prev) === JSON.stringify(action)) return;
+    itemsRef.current = itemsRef.current.map((item) => item.id === id ? action : item);
+    setItems(itemsRef.current);
+    window.dispatchEvent(new Event("voom:data-changed"));
+  }, []);
   const open = items.filter((item) => item.status === "pending" || item.status === "failed");
   const completed = items.filter((item) => item.status !== "pending" && item.status !== "failed");
   return <div>
     {error && <div role="alert" className="mb-4 rounded-xl border border-red/35 bg-red/10 px-4 py-3 text-sm text-red">{error}</div>}
-    {open.length ? <div className="space-y-4">{open.map((item) => item.tool_name === "choose_reel_production" ? <ReelProductionCard key={item.id} item={item} busy={busy === item.id} onDecision={decide} onProduce={produce} /> : <ApprovalCard key={item.id} item={item} busy={busy === item.id} onDecision={decide} />)}</div> : <Card className="p-8 text-center"><span className="mx-auto grid h-12 w-12 place-items-center rounded-full border border-line text-green"><Icon name="check" size={22} /></span><h2 className="mt-3 font-display text-lg font-semibold">Nothing needs your approval</h2><p className="mx-auto mt-1 max-w-md text-sm text-text-3">When Voom recommends a calendar change, approval, deletion, or another protected action, it will appear here first.</p><p className="mx-auto mt-2 max-w-lg text-[12.5px] leading-relaxed text-text-3"><b className="text-text-2">Reel production choices live here too.</b> Generate or refresh your Marketing Plan; if MARA recommends a Reel, a “Reel production choice” card appears on this screen with <b className="text-text-2">Create with MARA</b>, film-it-yourself, and asset-upload options.</p></Card>}
+    {open.length ? <div className="space-y-4">{open.map((item) => item.tool_name === "choose_reel_production" ? <ReelProductionCard key={item.id} item={item} busy={busy === item.id} onDecision={decide} onProduce={produce} onProduceVideo={produceVideo} onRefresh={refreshItem} /> : <ApprovalCard key={item.id} item={item} busy={busy === item.id} onDecision={decide} />)}</div> : <Card className="p-8 text-center"><span className="mx-auto grid h-12 w-12 place-items-center rounded-full border border-line text-green"><Icon name="check" size={22} /></span><h2 className="mt-3 font-display text-lg font-semibold">Nothing needs your approval</h2><p className="mx-auto mt-1 max-w-md text-sm text-text-3">When Voom recommends a calendar change, approval, deletion, or another protected action, it will appear here first.</p><p className="mx-auto mt-2 max-w-lg text-[12.5px] leading-relaxed text-text-3"><b className="text-text-2">Reel production choices live here too.</b> Generate or refresh your Marketing Plan; if MARA recommends a Reel, a “Reel production choice” card appears on this screen with <b className="text-text-2">Create with MARA</b>, film-it-yourself, and asset-upload options.</p></Card>}
     {completed.length > 0 && <section className="mt-7"><h2 className="mb-3 font-display text-base font-semibold">Recent decisions</h2><Card className="overflow-hidden">{completed.slice(0, 12).map((item) => <div key={item.id} className="flex items-start justify-between gap-4 border-t border-line px-4 py-3 first:border-0"><div><b className="text-sm">{item.summary}</b><p className="mt-1 text-xs text-text-3">{item.result_summary ?? item.error_summary ?? "No database change was made."}</p></div><Tag tone={item.status === "confirmed" ? "t-green" : "t-grey"}>{item.status === "confirmed" && item.result_summary?.startsWith("Auto-approved by Autopilot") ? "Autopilot approved" : item.status}</Tag></div>)}</Card></section>}
   </div>;
 }
 
 type Decision = (id: string, decision: "confirm" | "cancel" | "edit" | "production", changes?: Record<string, unknown>) => Promise<boolean>;
 
-function ReelProductionCard({ item, busy, onDecision, onProduce }: { item: ApprovalItem; busy: boolean; onDecision: Decision; onProduce: (id: string) => Promise<void> }) {
+function ReelProductionCard({ item, busy, onDecision, onProduce, onProduceVideo, onRefresh }: { item: ApprovalItem; busy: boolean; onDecision: Decision; onProduce: (id: string) => Promise<void>; onProduceVideo: (id: string) => Promise<void>; onRefresh: (id: string, action: ApprovalItem) => void }) {
   const value = item.new_value ?? {}; const methods = Array.isArray(value.availableMethods) ? value.availableMethods.filter((method): method is string => typeof method === "string") : [];
   const selected = typeof value.selectedProductionMethod === "string" ? value.selectedProductionMethod : null;
   const shots = Array.isArray(value.shotInstructions) ? value.shotInstructions.filter((shot): shot is string => typeof shot === "string") : [];
   const [assetReady, setAssetReady] = useState(value.assetReceived === true); const produced = value.productionStatus === "produced";
+  const productionStatus = String(value.productionStatus ?? "");
+  const videoActive = productionStatus === "video_preparing" || productionStatus === "video_generating" || productionStatus === "video_processing";
+  const videoProduced = produced && typeof value.generationId === "string";
+  const videoFailed = productionStatus === "video_failed";
+  const [video, setVideo] = useState<{ id: string; status: string; durationSeconds: number | null; previewUrl: string | null } | null>(null);
   const shownMethods = assetReady && !methods.includes("create_with_mara") ? [...methods, "create_with_mara"] : methods;
+
+  // Real job polling: each GET lazily advances the server-side video job and
+  // returns a fresh signed preview URL when the video is validated and stored.
+  useEffect(() => {
+    if (!videoActive && !videoProduced) return;
+    let cancelled = false;
+    async function tick() {
+      try {
+        const response = await fetch(`/api/reels/produce/${item.id}`, { cache: "no-store" });
+        const body = await response.json() as { action?: ApprovalItem; generation?: { id: string; status: string; durationSeconds: number | null; previewUrl: string | null } | null };
+        if (cancelled) return;
+        if (response.ok && body.action) onRefresh(item.id, body.action);
+        if (body.generation) setVideo(body.generation);
+      } catch { /* transient — keep polling */ }
+    }
+    void tick();
+    if (!videoActive) return () => { cancelled = true; };
+    const timer = window.setInterval(() => void tick(), 8000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [videoActive, videoProduced, item.id, onRefresh]);
   return <Card className="overflow-hidden border-brand/30"><div className="border-l-[3px] border-brand p-4 sm:p-5">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><span className="text-[10px] font-bold uppercase tracking-[.09em] text-brand">Reel production choice</span><h2 className="mt-1 font-display text-lg font-semibold">{String(value.concept ?? "Reel concept")}</h2></div><Tag tone={produced ? "t-green" : selected ? "t-blue" : "t-amber"}>{busy ? "Producing…" : selected ? statusLabel(String(value.productionStatus ?? "")) : "Voom needs your choice"}</Tag></div>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><span className="text-[10px] font-bold uppercase tracking-[.09em] text-brand">Reel production choice</span><h2 className="mt-1 font-display text-lg font-semibold">{String(value.concept ?? "Reel concept")}</h2></div><Tag tone={produced ? "t-green" : videoFailed ? "t-red" : videoActive ? "t-blue" : selected ? "t-blue" : "t-amber"}>{busy ? "Producing…" : selected ? statusLabel(String(value.productionStatus ?? "")) : "Voom needs your choice"}</Tag></div>
     <div className="mt-4 grid gap-4 sm:grid-cols-2"><section><h3 className="text-xs font-semibold uppercase tracking-wide text-text-3">Short script</h3><p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-text-2">{String(value.script ?? "")}</p></section><section><h3 className="text-xs font-semibold uppercase tracking-wide text-text-3">What Voom needs</h3><p className="mt-1.5 text-sm leading-relaxed text-text-2">{typeof value.missingAssetRequest === "string" ? value.missingAssetRequest : "No authentic real-world footage is required for this concept."}</p></section></div>
     {shots.length > 0 && <section className="mt-4 rounded-xl border border-line bg-surface-2 p-3.5"><h3 className="text-xs font-semibold uppercase tracking-wide text-text-3">Simple shot instructions</h3><ul className="mt-2 space-y-1 text-sm text-text-2">{shots.map((shot) => <li key={shot}>• {shot}</li>)}</ul></section>}
-    <div className="mt-4 flex flex-wrap gap-2">{shownMethods.map((method) => <Btn key={method} size="sm" variant={method === "create_with_mara" || selected === method || (!selected && value.recommendedMethod === method) ? "primary" : "outline"} disabled={busy || (produced && method === "create_with_mara")} onClick={() => method === "create_with_mara" ? void onProduce(item.id) : void onDecision(item.id, "production", { method })}>{method === "create_with_mara" && produced ? "Produced" : methodLabel(method)}{!selected && value.recommendedMethod === method ? " · Recommended" : ""}</Btn>)}</div>
+    <div className="mt-4 flex flex-wrap gap-2">{shownMethods.map((method) => <Btn key={method} size="sm" variant={method === "create_with_mara" || selected === method || (!selected && value.recommendedMethod === method) ? "primary" : "outline"} disabled={busy || videoActive || (produced && method === "create_with_mara")} onClick={() => method === "create_with_mara" ? (videoProduced || videoFailed ? void onProduceVideo(item.id) : void onProduce(item.id)) : void onDecision(item.id, "production", { method })}>{method === "create_with_mara" && produced ? "Produced" : videoFailed && method === "create_with_mara" ? "Try again" : methodLabel(method)}{!selected && value.recommendedMethod === method ? " · Recommended" : ""}</Btn>)}</div>
     {selected && <p className="mt-3 text-sm font-medium text-text-2">{item.result_summary}</p>}
+    {videoActive && <div className="mt-3 rounded-xl border border-brand/35 bg-[var(--brand-soft)] p-3.5"><p className="text-sm font-medium text-brand">{productionStatus === "video_processing" ? "MARA is processing the generated video." : "MARA is generating this Reel video."}</p><p className="mt-1 text-[12.5px] leading-relaxed text-text-2">This can take a few minutes. The card updates on its own — your previous asset is unchanged until the new video is validated and stored.</p></div>}
+    {videoFailed && <div role="alert" className="mt-3 rounded-xl border border-red/35 bg-red/10 p-3.5"><p className="text-sm font-medium text-red">Reel video production stopped safely.</p><p className="mt-1 text-[12.5px] leading-relaxed text-text-2">{item.error_summary ?? "Generation couldn't finish. Your previous asset is unchanged — try again when you're ready."}</p></div>}
+    {videoProduced && (
+      <div className="mt-3 rounded-xl border border-line bg-surface-2 p-3.5">
+        <div className="mx-auto w-full max-w-[210px] overflow-hidden rounded-[18px] border border-line bg-black">
+          {video?.previewUrl ? <video src={video.previewUrl} controls playsInline preload="metadata" className="aspect-[9/16] h-auto w-full object-cover" /> : <div className="grid aspect-[9/16] place-items-center text-xs text-text-3">Loading preview…</div>}
+        </div>
+        <p className="mt-2 text-center text-[11px] text-text-3">{video?.durationSeconds ? `${video.durationSeconds}s · ` : ""}MARA-generated video · stored privately in Voom · nothing published</p>
+        <div className="mt-2.5 flex flex-wrap justify-center gap-2">
+          <Link href="/app/studio" className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-text-2 hover:bg-surface-2"><Icon name="plus" size={13} /> Open in Studio</Link>
+          <Btn size="sm" variant="outline" disabled={busy} onClick={() => void onProduceVideo(item.id)}><Icon name="spark" size={13} /> Regenerate video</Btn>
+        </div>
+      </div>
+    )}
     {(selected === "upload_asset" || selected === "film_yourself") && <ReelAssetUpload actionId={item.id} received={assetReady} onReceived={() => setAssetReady(true)} allowedKinds={Array.isArray(value.allowedAssetKinds) ? value.allowedAssetKinds.filter((kind): kind is string => typeof kind === "string") : ["image", "video"]} />}
-    {produced && <ReelCompositionPlayer actionId={item.id} value={value} />}
+    {produced && !videoProduced && <ReelCompositionPlayer actionId={item.id} value={value} />}
     <p className="mt-2 text-[11px] text-text-3">Nothing has been published externally.</p>
   </div></Card>;
 }
@@ -181,4 +240,4 @@ function isEditableCalendarContent(item: ApprovalItem) { return item.tool_name =
 function toDubaiLocal(value: unknown) { if (typeof value !== "string" || Number.isNaN(Date.parse(value))) return ""; const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dubai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(value)); const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? ""; return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`; }
 function fromDubaiLocal(value: string) { return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}:00+04:00`)) ? `${value}:00+04:00` : null; }
 function methodLabel(method: string) { return method === "create_with_mara" ? "Create with MARA" : method === "film_yourself" ? "Film it myself" : "Use existing asset"; }
-function statusLabel(status: string) { return status === "produced" ? "Ready for review" : status === "producing" ? "Producing" : status === "preparing" ? "Preparing" : status === "production_failed" ? "Production needs retry" : status === "ready_for_mara_production" ? "Ready for MARA" : status === "waiting_for_filming" ? "Waiting for filming" : status === "waiting_for_asset_upload" ? "Waiting for upload" : "Choice saved"; }
+function statusLabel(status: string) { return status === "produced" ? "Ready for review" : status === "video_generating" ? "Generating video" : status === "video_processing" ? "Processing video" : status === "video_preparing" ? "Preparing video" : status === "video_failed" ? "Video needs retry" : status === "producing" ? "Producing" : status === "preparing" ? "Preparing" : status === "production_failed" ? "Production needs retry" : status === "ready_for_mara_production" ? "Ready for MARA" : status === "waiting_for_filming" ? "Waiting for filming" : status === "waiting_for_asset_upload" ? "Waiting for upload" : "Choice saved"; }

@@ -102,8 +102,11 @@ test("produce route generates text-only viewer copy with AI fallback and persist
   assert.match(route, /productionStatus: "produced"/);
   assert.match(route, /eq\("owner_user_id", user\.id\)/);
   assert.match(route, /reel_draft_assets/);
-  // The AI receives textual context only — never private asset bytes or URLs.
-  assert.doesNotMatch(route, /previewUrl|signedUrl|base64|Uint8Array|asset\.bytes/);
+  // The AI copywriter receives textual context only — never private asset bytes.
+  assert.doesNotMatch(route, /base64|Uint8Array|asset\.bytes/);
+  // A signed URL may appear only as the short-TTL owner-scoped preview of a
+  // generated video in the status GET — never in the AI prompt or action row.
+  assert.match(route, /createSignedUrl\(generation\.storage_path, 600\)/);
   // The composition builder must not accept the internal script at all.
   assert.doesNotMatch(composition, /script: String|script\s*:\s*input/);
   assert.match(composition, /viewerCopy/);
