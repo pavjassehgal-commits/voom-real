@@ -7,6 +7,7 @@ import { ModalBody, ModalFoot, ModalHead, ModalShell } from "@/components/voom/u
 import { Icon } from "@/components/voom/icons";
 import { formatAspectRatio, POST_FORMATS, type PostFormat } from "@/lib/post/core";
 import { formatIngestionClientError } from "@/lib/media/ingestion-error";
+import { GenerationPanel, type ClientGeneration } from "./GenerationPanel";
 
 interface PostVisual {
   displayName: string;
@@ -61,29 +62,74 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
   const [format, setFormat] = useState<PostFormat>("1:1");
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
+  const [videoJob, setVideoJob] = useState<{ preparing: boolean; generation: ClientGeneration | null } | null>(null);
+
+  const applyPost = useCallback((view: Post) => {
+    setPost(view);
+    setConcept(view.concept);
+    setCaption(view.caption);
+    setCta(view.cta);
+    setHashtags(view.hashtags.join(" "));
+    setFormat(view.format);
+    const when = view.scheduledAt ? new Date(view.scheduledAt) : null;
+    setDate(when ? localDate(when) : "");
+    setTime(when ? localTime(when) : "");
+  }, []);
 
   const load = useCallback(async () => {
     try {
       const response = await fetch(`/api/posts/${encodeURIComponent(postId)}`, { cache: "no-store" });
       const body = await response.json() as { post?: Post; error?: string };
       if (!response.ok || !body.post) throw new Error(body.error ?? "That post couldn't load.");
-      setPost(body.post);
-      setConcept(body.post.concept);
-      setCaption(body.post.caption);
-      setCta(body.post.cta);
-      setHashtags(body.post.hashtags.join(" "));
-      setFormat(body.post.format);
-      const when = body.post.scheduledAt ? new Date(body.post.scheduledAt) : null;
-      setDate(when ? localDate(when) : "");
-      setTime(when ? localTime(when) : "");
+      applyPost(body.post);
       setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "That post couldn't load.");
     }
-  }, [postId]);
+  }, [postId, applyPost]);
 
   // Deferred so the fetch callback is not a synchronous setState in the effect.
   useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
+
+  // Restore an in-flight or finished MARA video job when the editor opens.
+  useEffect(() => {
+    if (!post || (post.kind !== "reel" && post.kind !== "story")) return;
+    let active = true;
+    void fetch(`/api/posts/${encodeURIComponent(postId)}/generation`, { cache: "no-store" }).then((response) => response.json()).then((body: { generation?: ClientGeneration | null }) => {
+      if (active && body.generation) setVideoJob((current) => current ?? { preparing: false, generation: body.generation! });
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [post, postId]);
+
+  /**
+   * "Create/Regenerate video with MARA": starts the durable asynchronous
+   * video job (MARA plan -> base frame or uploaded image -> provider job).
+   * The job's real states then drive the panel; no fake progress.
+   */
+  async function startVideoJob() {
+    if (!post) return;
+    setVideoJob({ preparing: true, generation: null });
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`${endpoint}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ media: "video", idempotencyKey: crypto.randomUUID() }),
+      });
+      const body = await response.json() as { generation?: ClientGeneration | null; post?: Post; error?: string; message?: string };
+      if (!response.ok || !body.generation) throw new Error(body.error ?? "Voom couldn't start that video safely.");
+      if (body.post) applyPost(body.post);
+      setVideoJob({ preparing: false, generation: body.generation });
+      setNotice(body.message ?? "MARA started generating this video. This can take a few minutes.");
+      onChanged?.();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Voom couldn't start that video safely.");
+      setVideoJob(null);
+    }
+  }
+
+  const videoJobActive = Boolean(videoJob && (videoJob.preparing || videoJob.generation?.phase === "generating" || videoJob.generation?.phase === "processing" || videoJob.generation?.phase === "preparing"));
 
   async function send(url: string, init: RequestInit | undefined, action: string, okMessage: string) {
     setBusy(action); setError(""); setNotice("");
@@ -151,6 +197,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
 
   const isPost = post?.kind === "instagram_post";
   const isReel = post?.kind === "reel";
+  const videoKind: "reel" | "story" | null = isReel ? "reel" : isStory ? "story" : null;
   const formatChoices = post?.kind === "story"
     ? (["9:16"] as PostFormat[])
     : (POST_FORMATS as readonly PostFormat[]).filter((value) => value !== "9:16");
@@ -225,8 +272,14 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
 
               <div className="mt-3.5 space-y-2">
                 {(isPost || isStory) && !post.visualReady ? (
-                  <Btn variant="primary" size="sm" block disabled={busy === "mara"} onClick={() => void send(`${endpoint}/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }, "mara", "MARA created this visual.")}>
+                  <Btn variant="primary" size="sm" block disabled={busy === "mara" || videoJobActive} onClick={() => void send(`${endpoint}/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }, "mara", "MARA created this visual.")}>
                     <Icon name="spark" size={14} /> {busy === "mara" ? "MARA is working…" : isStory ? "Create Story visual with MARA" : "Create with MARA"}
+                  </Btn>
+                ) : null}
+
+                {(isReel || isStory) && !videoJobActive ? (
+                  <Btn variant="primary" size="sm" block disabled={busy !== null} onClick={() => void startVideoJob()}>
+                    <Icon name="spark" size={14} /> {post.visual?.mimeType.startsWith("video/") ? "Regenerate video with MARA" : isReel ? "Create Reel video with MARA" : "Create Story video with MARA"}
                   </Btn>
                 ) : null}
 
@@ -276,6 +329,18 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                   </Btn>
                 ) : null}
               </div>
+
+              {videoJob && videoKind ? (
+                <div className="mt-3.5">
+                  <GenerationPanel
+                    postId={postId}
+                    kind={videoKind}
+                    initial={videoJob.generation}
+                    preparing={videoJob.preparing}
+                    onSettled={() => { void load(); onChanged?.(); }}
+                  />
+                </div>
+              ) : null}
 
               {post.origin === "existing_content" && !isStory ? (
                 <p className="mt-3 rounded-xl bg-surface-2 px-3 py-2.5 text-[11.5px] leading-relaxed text-text-3">

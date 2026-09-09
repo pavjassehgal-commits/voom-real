@@ -115,7 +115,13 @@ test("produce route assembles the pack into visuals without sending media to AI"
   assert.match(route, /assetKindForMime/);
   assert.match(route, /assetCount: assetPack\.length/);
   assert.match(route, /reelComposition: composition/);
-  assert.doesNotMatch(route, /previewUrl|signedUrl|base64|Uint8Array|asset\.bytes/);
+  // The route never handles raw media bytes and never sends uploaded asset
+  // bytes to the AI copywriter — only text (concept, caption, script) reaches it.
+  assert.doesNotMatch(route, /base64|Uint8Array|asset\.bytes/);
+  // The only new media surface is a short-TTL signed preview for a generated
+  // video: owner-scoped and returned only from the status GET.
+  assert.match(route, /createSignedUrl\(generation\.storage_path, 600\)/);
+  assert.match(route, /\.eq\("owner_user_id", user\.id\)/);
   assert.match(board, /of \{REEL_ASSET_PACK_LIMIT\} assets added/);
   assert.match(board, /Add another asset/);
   assert.match(board, /Replace asset/);

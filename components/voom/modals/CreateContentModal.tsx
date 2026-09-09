@@ -70,7 +70,7 @@ export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
             <Choice
               icon="film"
               title="Reel"
-              body="Import a video you already have, or use Voom's existing MARA Reel workflow."
+              body="Let MARA generate a real 9:16 Reel video, import one you already have, or use the MARA Reel workflow."
               onClick={() => setStep("reel")}
             />
             <Choice
@@ -107,6 +107,13 @@ export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
 
         {step === "reel" ? (
           <div className="space-y-3">
+            <Choice
+              icon="spark"
+              title="Create with MARA"
+              body="MARA plans the Reel from your brand profile and marketing plan, generates a real 9:16 video (with your branding on top), and stores it privately in Voom. You can use an uploaded image as the starting frame, regenerate, or switch to your own file any time."
+              onClick={() => void create("reel", "mara")}
+              busy={busy}
+            />
             <Choice
               icon="img"
               title="Import an existing video"

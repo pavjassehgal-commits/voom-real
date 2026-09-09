@@ -5,6 +5,9 @@ import { getCurrentUser } from "@/lib/voom/server-data";
 import { composePostCaption } from "@/lib/post/core";
 import { buildPostContextPayload, POST_COPY_SYSTEM_PROMPT, postDraftSchema, STORY_VISUAL_SYSTEM_PROMPT, storyVisualSchema } from "@/lib/post/prompt";
 import { getPostDraft, loadPostBrandContext, loadPostPlanContext, putPostAsset, removePostAssetObject, syncPostToCalendar } from "@/lib/post/server-data";
+import { startPostStudioVideo } from "@/lib/mara/video-service";
+import { aspectMatches, inspectImageBytes } from "@/lib/media/media-inspect";
+import { applyPostOverlay } from "@/lib/media/image-overlay";
 import { createAdminClient } from "@/utils/supabase/admin";
 
 export const runtime = "nodejs";
@@ -13,15 +16,20 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const GENERATED_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 
 /**
- * "Create with MARA" for an Instagram Post or an Instagram Story.
+ * "Create with MARA" for an Instagram Post, Reel or Story.
  *
- * For a Post, MARA writes the concept, caption, CTA and hashtags from the brand
- * profile and the active marketing plan, then the visual is produced through
- * the existing media provider abstraction. For a Story, MARA writes only the
- * concept and the 9:16 visual prompt — Instagram does not support captions on
- * Stories. In both cases the visual is stored privately in Voom storage and the
- * draft is only ever marked ready AFTER the upload succeeds — content can never
- * claim a visual Voom does not own. Nothing here is published anywhere.
+ * Images (Post 1:1/4:5, Story 9:16): MARA writes the concept, caption, CTA and
+ * hashtags from the brand profile and the active marketing plan, then the
+ * visual is produced through the existing media provider abstraction, and the
+ * bytes are stored privately in Voom storage BEFORE the draft may show a
+ * visual — content can never claim a visual Voom does not own.
+ *
+ * Video (Reel 9:16, Story 9:16, body { "media": "video" }): MARA plans the
+ * video (concept, visual prompt, motion direction, overlay copy), generates a
+ * clean 9:16 base frame when the user has no image, and hands it to the video
+ * provider as an asynchronous job. The job is durable (provider job id
+ * persisted), polled from /generation, and its output is only attached to the
+ * draft after byte-level validation. Nothing here is published anywhere.
  */
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
@@ -30,14 +38,39 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!UUID_RE.test(id)) return Response.json({ error: "That post was not found." }, { status: 404 });
 
   let brief = "";
+  let wantsVideo = false;
+  let idempotencyToken: string = randomUUID();
   try {
-    const body = await request.json() as { brief?: unknown };
+    const body = await request.json() as { brief?: unknown; media?: unknown; idempotencyKey?: unknown };
     if (typeof body.brief === "string") brief = body.brief.trim().slice(0, 800);
+    wantsVideo = body.media === "video";
+    if (typeof body.idempotencyKey === "string" && body.idempotencyKey.trim()) idempotencyToken = body.idempotencyKey.trim();
   } catch { /* an empty body is fine */ }
 
   const admin = createAdminClient();
   const post = await getPostDraft(admin, user.id, id);
   if (!post) return Response.json({ error: "That post was not found." }, { status: 404 });
+
+  if (wantsVideo) {
+    if (post.kind !== "reel" && post.kind !== "story") {
+      return Response.json({ error: "MARA generates video for Reels and Stories. Use the Post flow for feed images." }, { status: 400 });
+    }
+    const result = await startPostStudioVideo({
+      admin,
+      ownerId: user.id,
+      post: { id, kind: post.kind, conversationId: post.conversationId, concept: post.concept },
+      brief,
+      idempotencyToken,
+    });
+    if ("error" in result) {
+      return Response.json({ generation: result.generation, error: result.error }, { status: result.status });
+    }
+    return Response.json(
+      { generation: result.generation, post: await getPostDraft(admin, user.id, id), message: result.message },
+      { status: result.status },
+    );
+  }
+
   if (post.kind !== "instagram_post" && post.kind !== "story") {
     return Response.json({ error: "MARA generates visuals for Instagram Posts and Stories. Use the Reel workflow for Reels." }, { status: 400 });
   }
@@ -56,6 +89,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   //    Instagram does not support captions on Stories.
   let concept: string;
   let visualPrompt: string;
+  // The CTA for the deterministic Voom overlay (feed posts only — Stories
+  // stay full-bleed, and Reel copy lives in the composition preview).
+  let overlayCta = "";
   if (post.kind === "story") {
     let storyPlan;
     try {
@@ -112,6 +148,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (copyError) return Response.json({ error: "MARA wrote the copy but Voom couldn't save it. Please retry." }, { status: 503 });
     concept = copy.concept.trim().slice(0, 160);
     visualPrompt = copy.visualPrompt;
+    overlayCta = copy.cta;
   }
 
   // 2) Then the visual, through the existing provider abstraction. The format
@@ -137,8 +174,26 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const result = await createMediaProvider(config).generateImage({ prompt: visualPrompt, aspectRatio: format });
     if (!result.bytes.length || result.bytes.length > GENERATED_IMAGE_MAX_BYTES) throw new MediaError("malformed_response");
 
+    // Byte-level validation — the provider's declared metadata is never
+    // trusted: sniff the signature and measure the real dimensions.
+    const inspected = inspectImageBytes(result.bytes);
+    if (!inspected || !aspectMatches(inspected.width, inspected.height, format)) throw new MediaError("malformed_response");
+    result.mimeType = inspected.mimeType;
+
+    // Deterministic Voom overlay (feed posts only): the business name and CTA
+    // are composited by Voom, never rendered by the model. Best-effort: if the
+    // overlay cannot be applied, the valid base media is kept and the CTA
+    // stays true in the caption that is published.
+    if (post.kind === "instagram_post" && overlayCta.trim()) {
+      try {
+        const overlaid = await applyPostOverlay({ bytes: result.bytes, mimeType: result.mimeType }, { brandName: brand.brandName, cta: overlayCta });
+        result.bytes = overlaid.bytes;
+        result.mimeType = overlaid.mimeType;
+      } catch { /* keep the valid base media */ }
+    }
+
     // The bytes are stored BEFORE the post is allowed to show a visual.
-    const extension = result.mimeType === "video/mp4" ? "mp4" : result.mimeType.split("/")[1] ?? "png";
+    const extension = result.mimeType === "image/png" ? "png" : result.mimeType === "image/webp" ? "webp" : "jpg";
     const { storagePath, previousStoragePath } = await putPostAsset(admin, user.id, id, {
       bytes: result.bytes,
       mimeType: result.mimeType,

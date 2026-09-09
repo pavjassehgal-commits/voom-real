@@ -38,11 +38,26 @@ export interface MediaProvider {
   pollVideo(providerJobId: string): Promise<GeneratedMedia | PendingMedia>;
 }
 
-export type MediaErrorCode = "not_configured" | "rate_limited" | "unavailable" | "malformed_response" | "rejected";
+export type MediaErrorCode =
+  | "not_configured"
+  | "rate_limited"
+  | "unavailable"
+  | "malformed_response"
+  | "rejected"
+  /** The provider cannot perform the requested mode (e.g. no image-to-video). */
+  | "unsupported_input"
+  /** The provider returned bytes that failed Voom's byte-level validation. */
+  | "invalid_output"
+  /** The provider job outlived Voom's job timeout and was abandoned safely. */
+  | "provider_timeout"
+  /** The provider account is out of credits (HTTP 402). */
+  | "insufficient_credits";
 
 export class MediaError extends Error {
-  constructor(public readonly code: MediaErrorCode) {
+  readonly code: MediaErrorCode;
+  constructor(code: MediaErrorCode) {
     super(code);
     this.name = "MediaError";
+    this.code = code;
   }
 }
