@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getCurrentUser } from "@/lib/voom/server-data";
-import { getPostDraft } from "@/lib/post/server-data";
+import { getPostDraft, normalizeMediaBrief } from "@/lib/post/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { advanceVideoJob, buildVideoService, latestVideoGeneration, startPostStudioVideo } from "@/lib/mara/video-service";
 import { isActiveVideoState } from "@/lib/mara/video-job";
@@ -25,6 +25,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
  *
  * Nothing here publishes anywhere; the stored asset feeds the existing
  * draft -> approval -> schedule -> publish pipeline unchanged.
+ *
+ * The `brief` ("What should MARA create?") is persisted on the draft so it
+ * survives reloads and regenerations.
  */
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
@@ -111,6 +114,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   if (action !== "regenerate") return Response.json({ error: "Unknown generation action." }, { status: 400 });
 
+  // Resolve brief: explicit body brief wins, otherwise persisted draft brief.
+  let effectiveBrief = post.mediaBrief ?? "";
+  if ("brief" in body) {
+    const raw = (body as { brief?: unknown }).brief;
+    if (raw === null || raw === "") {
+      effectiveBrief = "";
+      await admin.from("mara_drafts").update({ media_brief: null }).eq("owner_user_id", user.id).eq("id", id);
+    } else if (typeof raw === "string") {
+      effectiveBrief = raw.trim().slice(0, 800);
+      const normalized = normalizeMediaBrief(raw);
+      await admin.from("mara_drafts").update({ media_brief: normalized }).eq("owner_user_id", user.id).eq("id", id);
+    }
+  }
+
   // Idempotency: the client sends one token per user click; repeated clicks
   // with the same token resolve to the same job instead of a new paid run.
   const token = typeof body.idempotencyKey === "string" ? body.idempotencyKey.trim() : randomUUID();
@@ -118,7 +135,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     admin,
     ownerId: user.id,
     post: { id, kind: post.kind, conversationId: post.conversationId, concept: post.concept },
-    brief: "",
+    brief: effectiveBrief,
     idempotencyToken: token,
   });
   if ("error" in result) {

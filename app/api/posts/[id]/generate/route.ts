@@ -4,7 +4,7 @@ import { createMediaProvider, getMediaConfig, MediaError } from "@/lib/media";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { composePostCaption } from "@/lib/post/core";
 import { buildPostContextPayload, POST_COPY_SYSTEM_PROMPT, postDraftSchema, STORY_VISUAL_SYSTEM_PROMPT, storyVisualSchema } from "@/lib/post/prompt";
-import { getPostDraft, loadPostBrandContext, loadPostPlanContext, putPostAsset, removePostAssetObject, syncPostToCalendar } from "@/lib/post/server-data";
+import { getPostDraft, loadPostBrandContext, loadPostPlanContext, normalizeMediaBrief, putPostAsset, removePostAssetObject, syncPostToCalendar } from "@/lib/post/server-data";
 import { startPostStudioVideo } from "@/lib/mara/video-service";
 import { aspectMatches, inspectImageBytes } from "@/lib/media/media-inspect";
 import { applyPostOverlay } from "@/lib/media/image-overlay";
@@ -30,6 +30,9 @@ const GENERATED_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
  * provider as an asynchronous job. The job is durable (provider job id
  * persisted), polled from /generation, and its output is only attached to the
  * draft after byte-level validation. Nothing here is published anywhere.
+ *
+ * The user's free-form `brief` ("What should MARA create?") is persisted on
+ * the draft as `media_brief` so it survives reloads and regenerations.
  */
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
@@ -37,12 +40,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const { id } = await params;
   if (!UUID_RE.test(id)) return Response.json({ error: "That post was not found." }, { status: 404 });
 
-  let brief = "";
+  let briefInput: string | null | undefined;
   let wantsVideo = false;
   let idempotencyToken: string = randomUUID();
   try {
     const body = await request.json() as { brief?: unknown; media?: unknown; idempotencyKey?: unknown };
-    if (typeof body.brief === "string") brief = body.brief.trim().slice(0, 800);
+    if (typeof body.brief === "string") {
+      const trimmed = body.brief.trim();
+      briefInput = trimmed ? trimmed.slice(0, 800) : null;
+    }
     wantsVideo = body.media === "video";
     if (typeof body.idempotencyKey === "string" && body.idempotencyKey.trim()) idempotencyToken = body.idempotencyKey.trim();
   } catch { /* an empty body is fine */ }
@@ -50,6 +56,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const admin = createAdminClient();
   const post = await getPostDraft(admin, user.id, id);
   if (!post) return Response.json({ error: "That post was not found." }, { status: 404 });
+
+  // Resolve the effective brief: explicit input wins, otherwise the persisted
+  // draft brief is reused, so "Create with MARA" keeps the user's direction.
+  let effectiveBrief = "";
+  if (briefInput !== undefined) {
+    effectiveBrief = briefInput ?? "";
+    // Persist the brief (null clears it) before any generation starts.
+    const normalized = normalizeMediaBrief(briefInput);
+    await admin.from("mara_drafts").update({ media_brief: normalized }).eq("owner_user_id", user.id).eq("id", id);
+  } else {
+    effectiveBrief = post.mediaBrief ?? "";
+  }
 
   if (wantsVideo) {
     if (post.kind !== "reel" && post.kind !== "story") {
@@ -59,7 +77,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       admin,
       ownerId: user.id,
       post: { id, kind: post.kind, conversationId: post.conversationId, concept: post.concept },
-      brief,
+      brief: effectiveBrief,
       idempotencyToken,
     });
     if ("error" in result) {
@@ -98,7 +116,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       storyPlan = await createAiProvider().structured({
         messages: [
           { role: "system", content: STORY_VISUAL_SYSTEM_PROMPT },
-          { role: "user", content: JSON.stringify(buildPostContextPayload({ brand, plan: planContext, format: "9:16", kind: "story", brief })) },
+          { role: "user", content: JSON.stringify(buildPostContextPayload({ brand, plan: planContext, format: "9:16", kind: "story", brief: effectiveBrief })) },
         ],
         temperature: 0.6,
         maxTokens: 600,
@@ -125,7 +143,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       copy = await createAiProvider().structured({
         messages: [
           { role: "system", content: POST_COPY_SYSTEM_PROMPT },
-          { role: "user", content: JSON.stringify(buildPostContextPayload({ brand, plan: planContext, format: post.format, kind: "instagram_post", brief })) },
+          { role: "user", content: JSON.stringify(buildPostContextPayload({ brand, plan: planContext, format: post.format, kind: "instagram_post", brief: effectiveBrief })) },
         ],
         temperature: 0.6,
         maxTokens: 1200,
@@ -238,5 +256,4 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }, { status: 503 });
   }
 }
-
 

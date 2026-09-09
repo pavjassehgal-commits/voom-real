@@ -1,6 +1,6 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { normalizePostFormat, normalizeSchedule, postApprovalBlockers } from "@/lib/post/core";
-import { approvePostDraft, getPostDraft, savePostDraft } from "@/lib/post/server-data";
+import { approvePostDraft, getPostDraft, normalizeMediaBrief, savePostDraft } from "@/lib/post/server-data";
 import { cancelPublishItem } from "@/lib/instagram/publish-queue";
 import { createAdminClient } from "@/utils/supabase/admin";
 
@@ -81,12 +81,20 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
   }
 
-  if ([concept, caption, cta, hashtags, format, scheduledAt].every((value) => value === undefined)) {
+  let mediaBrief: string | null | undefined;
+  if ("brief" in body || "mediaBrief" in body) {
+    const raw = (body as { brief?: unknown; mediaBrief?: unknown }).brief ?? (body as { mediaBrief?: unknown }).mediaBrief;
+    if (raw === null || raw === "") mediaBrief = null;
+    else if (typeof raw === "string") mediaBrief = normalizeMediaBrief(raw) ?? (raw.trim() ? raw.trim().slice(0, 800) : null);
+    else mediaBrief = undefined;
+  }
+
+  if ([concept, caption, cta, hashtags, format, scheduledAt, mediaBrief].every((value) => value === undefined)) {
     return Response.json({ error: "There was nothing to save." }, { status: 400 });
   }
 
   try {
-    const post = await savePostDraft(admin, user.id, id, { concept, caption, cta, hashtags, format, scheduledAt });
+    const post = await savePostDraft(admin, user.id, id, { concept, caption, cta, hashtags, format, scheduledAt, mediaBrief });
     if (!post) return Response.json({ error: "That post was not found." }, { status: 404 });
     return Response.json({ post, message: "Saved as a draft inside Voom. Nothing was published." });
   } catch (reason) {

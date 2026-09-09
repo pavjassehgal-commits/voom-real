@@ -33,6 +33,7 @@ interface Post {
   scheduledAt: string | null;
   visual: PostVisual | null;
   visualReady: boolean;
+  mediaBrief: string;
 }
 
 const STATE_TONE: Record<Post["internalState"], string> = {
@@ -62,6 +63,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
   const [format, setFormat] = useState<PostFormat>("1:1");
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
+  const [mediaBrief, setMediaBrief] = useState("");
   const [videoJob, setVideoJob] = useState<{ preparing: boolean; generation: ClientGeneration | null } | null>(null);
 
   const applyPost = useCallback((view: Post) => {
@@ -71,6 +73,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
     setCta(view.cta);
     setHashtags(view.hashtags.join(" "));
     setFormat(view.format);
+    setMediaBrief(view.mediaBrief ?? "");
     const when = view.scheduledAt ? new Date(view.scheduledAt) : null;
     setDate(when ? localDate(when) : "");
     setTime(when ? localTime(when) : "");
@@ -115,7 +118,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
       const response = await fetch(`${endpoint}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ media: "video", idempotencyKey: crypto.randomUUID() }),
+        body: JSON.stringify({ media: "video", brief: mediaBrief, idempotencyKey: crypto.randomUUID() }),
       });
       const body = await response.json() as { generation?: ClientGeneration | null; post?: Post; error?: string; message?: string };
       if (!response.ok || !body.generation) throw new Error(body.error ?? "Voom couldn't start that video safely.");
@@ -141,6 +144,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
         setPost(body.post);
         setConcept(body.post.concept); setCaption(body.post.caption); setCta(body.post.cta);
         setHashtags(body.post.hashtags.join(" ")); setFormat(body.post.format);
+        setMediaBrief(body.post.mediaBrief ?? "");
         const when = body.post.scheduledAt ? new Date(body.post.scheduledAt) : null;
         setDate(when ? localDate(when) : ""); setTime(when ? localTime(when) : "");
       }
@@ -167,6 +171,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
     }),
     format,
     scheduledAt: date ? new Date(`${date}T${time || "09:00"}`).toISOString() : null,
+    brief: mediaBrief,
   });
 
   async function uploadFile(file: File, origin: "own_asset" | "existing_content") {
@@ -272,7 +277,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
 
               <div className="mt-3.5 space-y-2">
                 {(isPost || isStory) && !post.visualReady ? (
-                  <Btn variant="primary" size="sm" block disabled={busy === "mara" || videoJobActive} onClick={() => void send(`${endpoint}/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }, "mara", "MARA created this visual.")}>
+                  <Btn variant="primary" size="sm" block disabled={busy === "mara" || videoJobActive} onClick={() => void send(`${endpoint}/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ brief: mediaBrief }) }, "mara", "MARA created this visual.")}>
                     <Icon name="spark" size={14} /> {busy === "mara" ? "MARA is working…" : isStory ? "Create Story visual with MARA" : "Create with MARA"}
                   </Btn>
                 ) : null}
@@ -358,6 +363,9 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
             </div>
 
             <div>
+              <Field label="What should MARA create?" hint="Your direction for MARA. Saved with the draft so it survives reloads and regenerations. Max 800 characters.">
+                <Textarea rows={3} maxLength={800} value={mediaBrief} onChange={(event) => setMediaBrief(event.target.value)} placeholder="e.g. Summer swimwear flat lay on sand, bright and family-friendly" />
+              </Field>
               <Field label="Title / concept">
                 <Input value={concept} maxLength={160} onChange={(event) => setConcept(event.target.value)} />
               </Field>
