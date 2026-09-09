@@ -469,12 +469,13 @@ test("live migration 0023 already provides atomic row updates and keeps secret p
   }
 });
 
-test("live 0023 is not modified; 0024 is Instagram Story publishing only; 0025 is MARA media video generation", async () => {
+test("live 0023 is not modified; 0024 is Instagram Story publishing only; 0025 is MARA media video generation; 0026 is media brief", async () => {
   const files = await readdir(new URL("supabase/migrations/", root));
   assert.deepEqual(files.filter((name) => /^002[3-9]/.test(name)).sort(), [
     "0023_instagram_token_key_rotation.sql",
     "0024_instagram_story_publishing.sql",
     "0025_mara_media_video_generation.sql",
+    "0026_mara_media_brief.sql",
   ]);
   const keyRotation = await read("supabase/migrations/0023_instagram_token_key_rotation.sql");
   assert.doesNotMatch(keyRotation, /instagram_publish_/);

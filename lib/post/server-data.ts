@@ -19,7 +19,7 @@ export const POST_ASSET_SIGNED_TTL_SECONDS = 600;
 export const POST_STUDIO_CONVERSATION_TITLE = "Instagram Post Studio";
 
 const POST_ASSET_TABLE = "post_draft_assets";
-const DRAFT_COLUMNS = "id,conversation_id,message_id,kind,channel,title,content,proposed_publish_at,status,created_at,updated_at";
+const DRAFT_COLUMNS = "id,conversation_id,message_id,kind,channel,title,content,proposed_publish_at,status,created_at,updated_at,media_brief";
 // Production 0021 has no `format` column. Never select it.
 const ASSET_COLUMNS = "id,draft_id,display_name,mime_type,byte_size,origin,status,created_at,updated_at,storage_path";
 
@@ -59,6 +59,8 @@ export interface PostView {
   calendarItemId: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Persisted `What should MARA create?` brief for media generation (Post/Reel/Story). */
+  mediaBrief: string;
 }
 
 export const ORIGIN_LABELS: Record<PostOrigin, string> = {
@@ -159,6 +161,13 @@ export async function listPostDrafts(admin: AdminClient, ownerId: string): Promi
   return Promise.all(rows.map(async (row) => toPostView(admin, ownerId, row, await loadAssetRow(admin, ownerId, String(row.id)))));
 }
 
+export function normalizeMediaBrief(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().slice(0, 800);
+  if (!trimmed) return null;
+  return trimmed;
+}
+
 export async function toPostView(
   admin: AdminClient, ownerId: string, draft: Record<string, unknown>, asset: Record<string, unknown> | null,
 ): Promise<PostView> {
@@ -178,6 +187,7 @@ export async function toPostView(
   const format = decodeDraftFormat(draft.channel as string | undefined);
   const state = internalPostState({ status: String(draft.status ?? "draft"), scheduledAt, hasVisual });
   const calendarItemId = await findCalendarItemId(admin, ownerId, String(draft.id));
+  const mediaBriefRaw = typeof draft.media_brief === "string" ? draft.media_brief : "";
   return {
     id: String(draft.id),
     conversationId: String(draft.conversation_id ?? ""),
@@ -210,6 +220,7 @@ export async function toPostView(
     calendarItemId,
     createdAt: String(draft.created_at ?? ""),
     updatedAt: String(draft.updated_at ?? ""),
+    mediaBrief: mediaBriefRaw.slice(0, 800),
   };
 }
 
@@ -226,6 +237,7 @@ export interface SavePostInput {
   hashtags?: string[];
   format?: PostFormat;
   scheduledAt?: string | null;
+  mediaBrief?: string | null;
 }
 
 /** Persists an edit and re-syncs the calendar row for approved posts. */
@@ -249,6 +261,10 @@ export async function savePostDraft(admin: AdminClient, ownerId: string, draftId
     // has no visual. See encodeDraftChannel.
     channel: encodeDraftChannel(existing.kind, nextFormat),
   };
+  if (input.mediaBrief !== undefined) {
+    const normalized = normalizeMediaBrief(input.mediaBrief);
+    patch.media_brief = normalized;
+  }
   const { data, error } = await admin.from("mara_drafts").update(patch)
     .eq("owner_user_id", ownerId).eq("id", draftId).select("id").maybeSingle();
   if (error || !data) throw new Error("post_update_failed");
