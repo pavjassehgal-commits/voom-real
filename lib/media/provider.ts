@@ -1,5 +1,6 @@
 import "server-only";
 import type { MediaConfig } from "./config";
+import { parseProviderDiagnostic } from "./diagnostic";
 import { MediaError, type GeneratedMedia, type MediaAspectRatio, type MediaProvider } from "./types";
 
 export function createMediaProvider(config: MediaConfig): MediaProvider {
@@ -79,20 +80,6 @@ async function jsonRequest(url: string, init: RequestInit) {
   }
   try { return await response.json() as Record<string, unknown>; }
   catch { throw new MediaError("malformed_response"); }
-}
-
-const DIAGNOSTIC_MESSAGE_MAX = 500;
-const SECRET_RE = /(api[-_ ]?key|authorization|bearer|cookie|signed[_ -]?url|https?:\/\/[^ ]+)/gi;
-
-async function parseProviderDiagnostic(response: Response) {
-  let value: unknown = null;
-  try { value = JSON.parse((await response.text()).slice(0, 16_000)); } catch { /* non-JSON is intentionally not retained */ }
-  const root = value && typeof value === "object" ? value as Record<string, unknown> : {};
-  const error = root.error && typeof root.error === "object" ? root.error as Record<string, unknown> : root;
-  const clean = (candidate: unknown) => typeof candidate === "string" ? candidate.replace(SECRET_RE, "[redacted]").replace(/[\\r\\n]+/g, " ").trim().slice(0, DIAGNOSTIC_MESSAGE_MAX) || null : null;
-  const code = typeof error.code === "string" && /^[A-Z][A-Z0-9_]{1,63}$/.test(error.code) ? error.code : null;
-  const status = typeof error.status === "string" && /^[A-Z][A-Z0-9_]{1,63}$/.test(error.status) ? error.status : null;
-  return { http_status: response.status, provider_code: code, provider_status: status, provider_message: clean(error.message) };
 }
 
 async function downloadMedia(url: string, headers: Record<string, string>, fallbackMime: GeneratedMedia["mimeType"]): Promise<GeneratedMedia> {

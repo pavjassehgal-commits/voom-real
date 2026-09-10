@@ -55,9 +55,12 @@ export type MediaErrorCode =
 
 export interface MediaDiagnostic {
   http_status: number;
+  content_type: string | null;
   provider_code: string | null;
   provider_status: string | null;
   provider_message: string | null;
+  provider_details: Record<string, string> | null;
+  body_excerpt: string | null;
 }
 
 export class MediaError extends Error {

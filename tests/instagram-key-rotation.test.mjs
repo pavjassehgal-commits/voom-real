@@ -476,6 +476,7 @@ test("live 0023 is not modified; 0024 is Instagram Story publishing only; 0025 i
     "0024_instagram_story_publishing.sql",
     "0025_mara_media_video_generation.sql",
     "0026_mara_media_brief.sql",
+    "0027_mara_media_provider_diagnostics.sql",
   ]);
   const keyRotation = await read("supabase/migrations/0023_instagram_token_key_rotation.sql");
   assert.doesNotMatch(keyRotation, /instagram_publish_/);

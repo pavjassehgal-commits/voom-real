@@ -167,7 +167,7 @@ test("0025 adds 'generating' + duplicate-job guard but grants nothing new to cli
 test("the authenticated select grant (0008) excludes the new job internals", async () => {
   const sql = await read("supabase/migrations/0008_mara_media_generation.sql");
   const grant = sql.match(/grant select \(([\s\S]+?)\) on table public\.mara_media_generations to authenticated/)?.[1] ?? "";
-  for (const column of ["generation_mode", "source_asset_id", "overlay", "started_at", "attempt_count", "provider", "provider_job_id", "storage_path", "error_code", "idempotency_key"]) {
+  for (const column of ["generation_mode", "source_asset_id", "overlay", "started_at", "attempt_count", "provider", "provider_job_id", "storage_path", "error_code", "idempotency_key", "provider_diagnostic"]) {
     assert.doesNotMatch(grant, new RegExp(`\\b${column}\\b`), `${column} must not be readable by clients`);
   }
   assert.match(sql, /create policy "mara_media_select_own"[\s\S]+auth\.uid\(\)[\s\S]+owner_user_id/);
