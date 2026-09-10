@@ -241,7 +241,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     });
   } catch (reason) {
     const code = reason instanceof MediaError ? reason.code : "unavailable";
-    await admin.from("mara_media_generations").update({ status: "failed", error_code: code })
+    await admin.from("mara_media_generations").update({ status: "failed", error_code: code, provider_diagnostic: reason instanceof MediaError ? reason.diagnostic : null })
       .eq("id", generationId).eq("owner_user_id", user.id);
     if (code === "not_configured") {
       return Response.json({
