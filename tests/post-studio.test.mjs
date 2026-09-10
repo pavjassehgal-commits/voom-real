@@ -267,8 +267,9 @@ test("0021 is marked already-applied; the only 0022 is Instagram auto-publishing
   assert.deepEqual(files.filter((name) => /^0024_/.test(name)), ["0024_instagram_story_publishing.sql"], "the only 0024 is Instagram Story publishing");
   assert.deepEqual(files.filter((name) => /^0025_/.test(name)), ["0025_mara_media_video_generation.sql"], "the only 0025 is MARA media video generation");
   assert.deepEqual(files.filter((name) => /^0026_/.test(name)), ["0026_mara_media_brief.sql"], "the only 0026 is MARA media brief");
+  assert.deepEqual(files.filter((name) => /^0027_/.test(name)), ["0027_mara_media_provider_diagnostics.sql"], "the only 0027 is provider diagnostics");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 26), "no migration beyond 0026 may exist");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 27), "no migration beyond 0027 may exist");
 });
 
 // ---------------------------------------------------------------------------
