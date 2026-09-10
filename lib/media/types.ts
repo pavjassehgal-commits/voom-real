@@ -53,11 +53,20 @@ export type MediaErrorCode =
   /** The provider account is out of credits (HTTP 402). */
   | "insufficient_credits";
 
+export interface MediaDiagnostic {
+  http_status: number;
+  provider_code: string | null;
+  provider_status: string | null;
+  provider_message: string | null;
+}
+
 export class MediaError extends Error {
   readonly code: MediaErrorCode;
-  constructor(code: MediaErrorCode) {
+  readonly diagnostic: MediaDiagnostic | null;
+  constructor(code: MediaErrorCode, diagnostic: MediaDiagnostic | null = null) {
     super(code);
     this.name = "MediaError";
     this.code = code;
+    this.diagnostic = diagnostic;
   }
 }

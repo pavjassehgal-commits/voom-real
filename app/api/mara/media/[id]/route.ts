@@ -86,7 +86,7 @@ async function runGeneration(admin: ReturnType<typeof createAdminClient>, row: R
     return completeGeneration(admin, processing, ownerId, config.provider, result);
   } catch (reason) {
     const code = reason instanceof MediaError ? reason.code : "unavailable";
-    const { data } = await admin.from("mara_media_generations").update({ status: "failed", error_code: code }).eq("id", processing.id).eq("owner_user_id", ownerId).select(MEDIA_SELECT).single();
+    const { data } = await admin.from("mara_media_generations").update({ status: "failed", error_code: code, provider_diagnostic: reason instanceof MediaError ? reason.diagnostic : null }).eq("id", processing.id).eq("owner_user_id", ownerId).select(MEDIA_SELECT).single();
     if (!data) return mediaDatabaseError();
     return Response.json({ media: await toMediaView(admin, data), error: friendlyMediaError(code) }, { status: code === "rate_limited" ? 429 : 503 });
   }
