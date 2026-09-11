@@ -1,6 +1,7 @@
 import "server-only";
 import type { VideoConfig } from "./video-config";
-import { MediaError, type GeneratedMedia, type MediaAspectRatio, type MediaErrorCode } from "./types";
+import { parseProviderDiagnostic } from "./diagnostic";
+import { MediaError, type GeneratedMedia, type MediaAspectRatio, type MediaDiagnostic, type MediaErrorCode } from "./types";
 
 /**
  * The video generation provider abstraction. Voom's app code only ever talks
@@ -24,6 +25,16 @@ export interface ReferenceImage {
   extension: "jpg" | "png" | "webp";
   /** Original filename hint, used only for the upload request. */
   name: string;
+  /** A short-lived private-bucket URL that OpenRouter can fetch server-side. */
+  url?: string | null;
+}
+
+export interface CreatedVideoJob {
+  providerJobId: string;
+  /** Provider polling URL persisted so later polls never need to resubmit. */
+  pollingUrl?: string;
+  /** Provider-native status at submission time. */
+  providerStatus?: string;
 }
 
 export interface CreateVideoJobInput {
@@ -38,19 +49,21 @@ export interface CreateVideoJobInput {
 }
 
 export type VideoJobPoll =
-  | { kind: "pending" }
-  | { kind: "complete"; media: GeneratedMedia }
-  | { kind: "failed"; code: MediaErrorCode };
+  | { kind: "pending"; providerStatus?: string; pollingUrl?: string }
+  | { kind: "complete"; media: GeneratedMedia; providerStatus?: string; pollingUrl?: string }
+  | { kind: "failed"; code: MediaErrorCode; diagnostic?: MediaDiagnostic | null; providerStatus?: string; pollingUrl?: string };
 
 export interface VideoGenerationProvider {
-  readonly name: "magic-hour" | "gemini" | "openai";
+  readonly name: "magic-hour" | "gemini" | "openai" | "openrouter";
   readonly supportsImageToVideo: boolean;
-  createVideoJob(input: CreateVideoJobInput): Promise<{ providerJobId: string }>;
-  pollVideoJob(providerJobId: string): Promise<VideoJobPoll>;
+  readonly supportsTextToVideo: boolean;
+  createVideoJob(input: CreateVideoJobInput): Promise<CreatedVideoJob>;
+  pollVideoJob(providerJobId: string, pollingUrl?: string | null): Promise<VideoJobPoll>;
 }
 
 export function createVideoProvider(config: VideoConfig): VideoGenerationProvider {
   if (config.provider === "magic-hour") return new MagicHourVideoProvider(config);
+  if (config.provider === "openrouter") return new OpenRouterVideoProvider(config);
   if (config.provider === "openai") return new OpenAiVideoProviderAdapter(config);
   return new GeminiVideoProviderAdapter(config);
 }
@@ -62,6 +75,7 @@ export function createVideoProvider(config: VideoConfig): VideoGenerationProvide
 class MagicHourVideoProvider implements VideoGenerationProvider {
   readonly name = "magic-hour" as const;
   readonly supportsImageToVideo = true;
+  readonly supportsTextToVideo = true;
   private readonly config: VideoConfig;
 
   constructor(config: VideoConfig) { this.config = config; }
@@ -167,12 +181,213 @@ class MagicHourVideoProvider implements VideoGenerationProvider {
 }
 
 // ---------------------------------------------------------------------------
+// OpenRouter Seedance (async text-to-video and first-frame-to-video)
+// ---------------------------------------------------------------------------
+
+interface OpenRouterVideoModel {
+  id?: unknown;
+  supported_durations?: unknown;
+  supported_resolutions?: unknown;
+  supported_aspect_ratios?: unknown;
+  supported_frame_images?: unknown;
+}
+
+class OpenRouterVideoProvider implements VideoGenerationProvider {
+  readonly name = "openrouter" as const;
+  readonly supportsImageToVideo = true;
+  readonly supportsTextToVideo = true;
+  private readonly config: VideoConfig;
+
+  constructor(config: VideoConfig) { this.config = config; }
+
+  /**
+   * OpenRouter's video endpoint is billable and asynchronous. The model list
+   * call is deliberately made before POST /videos so unsupported duration,
+   * resolution, aspect-ratio, or first-frame combinations fail without
+   * spending credits.
+   */
+  async createVideoJob(input: CreateVideoJobInput): Promise<CreatedVideoJob> {
+    const capabilities = await this.findModelCapabilities();
+    const model = this.config.model;
+    if (!model) throw new MediaError("not_configured");
+
+    const duration = this.config.durationSeconds ?? input.durationSeconds;
+    requireSupported(capabilities, "supported_durations", duration, `Model ${model} does not support a ${duration}-second video.`);
+    requireSupported(capabilities, "supported_resolutions", this.config.resolution, `Model ${model} does not support ${this.config.resolution} output.`);
+    requireSupported(capabilities, "supported_aspect_ratios", input.aspectRatio, `Model ${model} does not support ${input.aspectRatio} output.`);
+
+    const body: Record<string, unknown> = {
+      model,
+      prompt: input.prompt,
+      duration,
+      resolution: this.config.resolution,
+      aspect_ratio: input.aspectRatio,
+      // Voom has no safe audio attachment/mixing workflow in V1.
+      generate_audio: false,
+    };
+
+    if (input.referenceImage) {
+      const frameSupport = capabilities.supported_frame_images;
+      if (!Array.isArray(frameSupport) || !frameSupport.some((value) => value === "first_frame")) {
+        throw capabilityError(`Model ${model} does not support first-frame image-to-video input.`);
+      }
+      if (!input.referenceImage.url) {
+        // OpenRouter fetches an HTTPS image URL. The bytes remain server-side;
+        // Voom's ports create a short-lived signed URL for this request.
+        throw new MediaError("unsupported_input", capabilityDiagnostic("Voom could not create a safe reference-image URL."));
+      }
+      body.frame_images = [{
+        type: "image_url",
+        image_url: { url: input.referenceImage.url },
+        frame_type: "first_frame",
+      }];
+    }
+
+    const response = await this.json(`${this.config.baseUrl}/videos`, {
+      method: "POST",
+      headers: this.headers(true),
+      body: JSON.stringify(body),
+    });
+    const providerJobId = stringAt(response, "id");
+    const rawPollingUrl = stringAt(response, "polling_url");
+    return {
+      providerJobId,
+      pollingUrl: resolveProviderUrl(rawPollingUrl, this.config.baseUrl),
+      providerStatus: typeof response.status === "string" ? response.status : "pending",
+    };
+  }
+
+  async pollVideoJob(providerJobId: string, pollingUrl?: string | null): Promise<VideoJobPoll> {
+    // Reuse the URL persisted from submission. Falling back to the canonical
+    // endpoint supports older rows created before polling_url was added.
+    const url = pollingUrl
+      ? resolveProviderUrl(pollingUrl, this.config.baseUrl)
+      : `${this.config.baseUrl}/videos/${encodeURIComponent(providerJobId)}`;
+    const body = await this.json(url, { method: "GET", headers: this.headers(false) });
+    const status = typeof body.status === "string" ? body.status : "";
+    const returnedPollingUrl = typeof body.polling_url === "string"
+      ? resolveProviderUrl(body.polling_url, this.config.baseUrl)
+      : pollingUrl ?? undefined;
+
+    if (status === "completed") {
+      // The content endpoint is authenticated even though the response also
+      // contains an unsigned_urls array. This keeps the download server-side
+      // and deterministic, and always selects the first MP4 output.
+      const media = await this.downloadVideo(`${this.config.baseUrl}/videos/${encodeURIComponent(providerJobId)}/content?index=0`);
+      return { kind: "complete", media, providerStatus: status, pollingUrl: returnedPollingUrl };
+    }
+    if (status === "failed" || status === "cancelled" || status === "expired") {
+      const diagnostic = await diagnosticFromProviderJob(body, status);
+      return {
+        kind: "failed",
+        code: status === "expired" ? "provider_timeout" : status === "cancelled" ? "unavailable" : "rejected",
+        diagnostic,
+        providerStatus: status,
+        pollingUrl: returnedPollingUrl,
+      };
+    }
+    if (status === "pending" || status === "in_progress") {
+      return { kind: "pending", providerStatus: status, pollingUrl: returnedPollingUrl };
+    }
+    return {
+      kind: "failed",
+      code: "malformed_response",
+      diagnostic: await diagnosticFromProviderJob(body, status || "unknown"),
+      providerStatus: status || undefined,
+      pollingUrl: returnedPollingUrl,
+    };
+  }
+
+  private headers(contentType: boolean): Record<string, string> {
+    return {
+      Authorization: `Bearer ${this.config.apiKey}`,
+      Accept: "application/json",
+      ...(contentType ? { "Content-Type": "application/json" } : {}),
+    };
+  }
+
+  private async findModelCapabilities(): Promise<OpenRouterVideoModel> {
+    const body = await this.json(`${this.config.baseUrl}/videos/models`, {
+      method: "GET",
+      headers: this.headers(false),
+    });
+    const data = body.data;
+    if (!Array.isArray(data)) throw new MediaError("malformed_response");
+    const found = data.find((value): value is OpenRouterVideoModel => {
+      return Boolean(value && typeof value === "object" && !Array.isArray(value) && (value as Record<string, unknown>).id === this.config.model);
+    });
+    if (!found) throw capabilityError(`OpenRouter video model ${this.config.model ?? ""} is not available.`);
+    return found;
+  }
+
+  private async json(url: string, init: RequestInit): Promise<Record<string, unknown>> {
+    let response: Response;
+    try {
+      response = await fetch(url, { ...init, cache: "no-store", signal: AbortSignal.timeout(120_000) });
+    } catch {
+      throw new MediaError("unavailable");
+    }
+    if (!response.ok) {
+      const diagnostic = await parseProviderDiagnostic(response);
+      const code: MediaErrorCode = response.status === 429
+        ? "rate_limited"
+        : response.status === 402
+          ? "insufficient_credits"
+          : response.status >= 500
+            ? "unavailable"
+            : response.status === 401 || response.status === 403
+              ? "rejected"
+              : "rejected";
+      throw new MediaError(code, diagnostic, { retryAfterMs: retryAfterMilliseconds(response.headers.get("retry-after")) });
+    }
+    try {
+      return await response.json() as Record<string, unknown>;
+    } catch {
+      throw new MediaError("malformed_response");
+    }
+  }
+
+  private async downloadVideo(url: string): Promise<GeneratedMedia> {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: { Authorization: `Bearer ${this.config.apiKey}`, Accept: "video/mp4" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch {
+      throw new MediaError("unavailable");
+    }
+    if (!response.ok) {
+      const diagnostic = await parseProviderDiagnostic(response);
+      throw new MediaError(
+        response.status === 429
+          ? "rate_limited"
+          : response.status === 402
+            ? "insufficient_credits"
+            : response.status >= 500
+              ? "unavailable"
+              : "rejected",
+        diagnostic,
+        { retryAfterMs: retryAfterMilliseconds(response.headers.get("retry-after")) },
+      );
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (!bytes.length || bytes.length > GENERATED_VIDEO_MAX_BYTES) throw new MediaError("invalid_output");
+    // The state machine re-sniffs these bytes and rejects anything that is not
+    // a real MP4 before private storage. Do not trust content-type metadata.
+    return { kind: "complete", bytes, mimeType: "video/mp4" };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Gemini / OpenAI adapters (text-to-video only; reference images unsupported)
 // ---------------------------------------------------------------------------
 
 class GeminiVideoProviderAdapter implements VideoGenerationProvider {
   readonly name = "gemini" as const;
   readonly supportsImageToVideo = false;
+  readonly supportsTextToVideo = true;
   private readonly config: VideoConfig;
 
   constructor(config: VideoConfig) { this.config = config; }
@@ -222,6 +437,7 @@ class GeminiVideoProviderAdapter implements VideoGenerationProvider {
 class OpenAiVideoProviderAdapter implements VideoGenerationProvider {
   readonly name = "openai" as const;
   readonly supportsImageToVideo = false;
+  readonly supportsTextToVideo = true;
   private readonly config: VideoConfig;
 
   constructor(config: VideoConfig) { this.config = config; }
@@ -285,6 +501,68 @@ class OpenAiVideoProviderAdapter implements VideoGenerationProvider {
 // ---------------------------------------------------------------------------
 
 export const GENERATED_VIDEO_MAX_BYTES = 500 * 1024 * 1024;
+
+function requireSupported(
+  model: OpenRouterVideoModel,
+  key: "supported_durations" | "supported_resolutions" | "supported_aspect_ratios",
+  expected: string | number,
+  message: string,
+) {
+  const values = model[key];
+  // A missing field is treated as an incomplete catalog response and left to
+  // OpenRouter; a present list is authoritative and must contain the value.
+  if (values !== undefined && (!Array.isArray(values) || !values.some((value) => value === expected))) {
+    throw capabilityError(message);
+  }
+}
+
+function capabilityError(message: string): MediaError {
+  return new MediaError("rejected", capabilityDiagnostic(message));
+}
+
+function stringAt(body: Record<string, unknown>, key: string): string {
+  const value = body[key];
+  if (typeof value !== "string" || !value) throw new MediaError("malformed_response");
+  return value;
+}
+
+function capabilityDiagnostic(message: string): MediaDiagnostic {
+  return {
+    http_status: 400,
+    content_type: "application/json",
+    provider_code: "400",
+    provider_status: "INVALID_REQUEST",
+    provider_message: message.slice(0, 240),
+    provider_details: null,
+    body_excerpt: null,
+  };
+}
+
+async function diagnosticFromProviderJob(body: Record<string, unknown>, status: string): Promise<MediaDiagnostic> {
+  const diagnostic = await parseProviderDiagnostic(new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  }));
+  diagnostic.provider_status = status;
+  return diagnostic;
+}
+
+function resolveProviderUrl(value: string, baseUrl: string): string {
+  try {
+    return new URL(value, `${baseUrl}/`).toString();
+  } catch {
+    throw new MediaError("malformed_response");
+  }
+}
+
+function retryAfterMilliseconds(value: string | null): number | null {
+  if (!value) return null;
+  const seconds = Number(value.trim());
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+  return Math.max(0, timestamp - Date.now());
+}
 
 export async function downloadMedia(url: string, headers: Record<string, string> = {}, fallbackMime: GeneratedMedia["mimeType"]): Promise<GeneratedMedia> {
   let response: Response;

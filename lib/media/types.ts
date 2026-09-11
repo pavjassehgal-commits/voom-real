@@ -66,10 +66,17 @@ export interface MediaDiagnostic {
 export class MediaError extends Error {
   readonly code: MediaErrorCode;
   readonly diagnostic: MediaDiagnostic | null;
-  constructor(code: MediaErrorCode, diagnostic: MediaDiagnostic | null = null) {
+  /** Parsed Retry-After delay for a retryable provider response, if present. */
+  readonly retryAfterMs: number | null;
+  constructor(
+    code: MediaErrorCode,
+    diagnostic: MediaDiagnostic | null = null,
+    options: { retryAfterMs?: number | null } = {},
+  ) {
     super(code);
     this.name = "MediaError";
     this.code = code;
     this.diagnostic = diagnostic;
+    this.retryAfterMs = options.retryAfterMs ?? null;
   }
 }

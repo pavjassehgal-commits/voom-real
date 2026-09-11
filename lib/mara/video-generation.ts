@@ -2,10 +2,10 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { detectReelAsset } from "@/lib/media/reel-asset";
 import { aspectMatches, durationMatches, inspectImageBytes, inspectVideoBytes } from "@/lib/media/media-inspect";
-import type { GeneratedMedia } from "@/lib/media/types";
+import { MediaError, type GeneratedMedia } from "@/lib/media/types";
 import type { MediaAspectRatio } from "@/lib/media/types";
 import { GENERATED_VIDEO_MAX_BYTES } from "@/lib/media/video-provider";
-import type { ReferenceImage, VideoJobPoll } from "@/lib/media/video-provider";
+import type { CreatedVideoJob, ReferenceImage, VideoJobPoll } from "@/lib/media/video-provider";
 import { VIDEO_JOB_TIMEOUT_MINUTES, isActiveVideoState, staleDecision, videoJobSafeError } from "./video-job";
 
 /**
@@ -27,7 +27,7 @@ import { VIDEO_JOB_TIMEOUT_MINUTES, isActiveVideoState, staleDecision, videoJobS
  */
 
 export const VIDEO_JOB_SELECT =
-  "id,owner_user_id,draft_id,conversation_id,media_type,generation_mode,prompt,aspect_ratio,status,provider,provider_job_id,storage_path,mime_type,byte_size,duration_seconds,estimated_cost_usd,error_code,idempotency_key,source_asset_id,overlay,started_at,attempt_count,created_at,updated_at,completed_at";
+  "id,owner_user_id,draft_id,conversation_id,media_type,generation_mode,prompt,aspect_ratio,status,provider,provider_job_id,provider_polling_url,provider_status,provider_retry_after_at,provider_diagnostic,storage_path,mime_type,byte_size,duration_seconds,estimated_cost_usd,error_code,idempotency_key,source_asset_id,overlay,started_at,attempt_count,created_at,updated_at,completed_at";
 
 export interface VideoJobRow extends Record<string, unknown> {
   id: string;
@@ -41,6 +41,10 @@ export interface VideoJobRow extends Record<string, unknown> {
   status: string;
   provider: string | null;
   provider_job_id: string | null;
+  provider_polling_url: string | null;
+  provider_status: string | null;
+  provider_retry_after_at: string | null;
+  provider_diagnostic: Record<string, unknown> | null;
   storage_path: string | null;
   mime_type: string | null;
   byte_size: number | null;
@@ -63,6 +67,8 @@ export interface StoredReferenceImage {
   extension: "jpg" | "png" | "webp";
   name: string;
   assetId: string | null;
+  /** Short-lived signed URL for providers that fetch a first frame by URL. */
+  url: string | null;
 }
 
 export interface VideoPlanResult {
@@ -88,10 +94,11 @@ export interface VideoGenerationPorts {
   // -- MARA planning + providers --
   planMedia(input: { concept: string; script: string; brief: string; contentType: "reel" | "instagram_story"; hasSourceImage: boolean }): Promise<VideoPlanResult>;
   generateBaseImage(input: { prompt: string; aspectRatio: MediaAspectRatio }): Promise<GeneratedMedia>;
-  createVideoJob(input: { prompt: string; durationSeconds: number; referenceImage: ReferenceImage | null; name: string }): Promise<{ providerJobId: string }>;
-  pollVideoJob(providerJobId: string): Promise<VideoJobPoll>;
+  createVideoJob(input: { prompt: string; durationSeconds: number; referenceImage: ReferenceImage | null; name: string }): Promise<CreatedVideoJob>;
+  pollVideoJob(providerJobId: string, pollingUrl?: string | null): Promise<VideoJobPoll>;
   // -- private storage (mara-media bucket) --
   uploadBaseImage(ownerId: string, draftId: string, bytes: Uint8Array, mimeType: string, extension: string): Promise<string>;
+  signReferenceImage?(ownerId: string, storagePath: string): Promise<string | null>;
   loadReferenceImage(ownerId: string, storagePath: string, assetId: string | null): Promise<StoredReferenceImage | null>;
   storeFinalAsset(ownerId: string, draftId: string, input: { bytes: Uint8Array; mimeType: string; extension: string; displayName: string }): Promise<{ storagePath: string; previousStoragePath: string | null }>;
   removeAbandonedObject(ownerId: string, storagePath: string): Promise<void>;
@@ -191,36 +198,57 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
     if (!stored) {
       return { ok: false, status: 503, code: "db_failure", errorCode: "db_failure", message: "The uploaded image could not be read safely. Nothing was generated." };
     }
-    referenceImage = { bytes: stored.bytes, mimeType: stored.mimeType, extension: stored.extension, name: stored.name };
+    referenceImage = { bytes: stored.bytes, mimeType: stored.mimeType, extension: stored.extension, name: stored.name, url: stored.url ?? null };
     mode = "image_to_video";
   } else if (input.supportsImageToVideo) {
     const basePrompt = `${plan.visualPrompt.trim().replace(/\s+/g, " ")} Vertical 9:16 composition, clean commercial look, no text, no logos, no watermarks.`.slice(0, 1500);
-    let base: GeneratedMedia;
+    let base: GeneratedMedia | null = null;
     try {
       base = await ports.generateBaseImage({ prompt: basePrompt, aspectRatio: "9:16" });
-    } catch {
-      return { ok: false, status: 503, code: "provider_failed", errorCode: "unavailable", message: "MARA couldn't create the base visual for the video. Nothing was generated." };
+    } catch (reason) {
+      // A video-only OpenRouter deployment can still use text-to-video. Keep
+      // the existing MARA base-frame path whenever the image provider exists,
+      // but do not block a text-only job merely because that optional image
+      // provider is not configured.
+      if (input.providerName !== "openrouter" || !(reason instanceof Error) || reason.message !== "image_provider_not_configured") {
+        return { ok: false, status: 503, code: "provider_failed", errorCode: "unavailable", message: "MARA couldn't create the base visual for the video. Nothing was generated." };
+      }
     }
-    const inspected = inspectImageBytes(base.bytes);
-    if (!inspected || !aspectMatches(inspected.width, inspected.height, "9:16")) {
-      return { ok: false, status: 503, code: "provider_failed", errorCode: "invalid_output", message: "The base visual didn't pass Voom's checks, so no video was generated. Nothing changed." };
+
+    if (!base) {
+      mode = "text_to_video";
+    } else {
+      const inspected = inspectImageBytes(base.bytes);
+      if (!inspected || !aspectMatches(inspected.width, inspected.height, "9:16")) {
+        return { ok: false, status: 503, code: "provider_failed", errorCode: "invalid_output", message: "The base visual didn't pass Voom's checks, so no video was generated. Nothing changed." };
+      }
+      // The storage filename, the upload content type and the provider's
+      // filename hint all follow the container the bytes actually are — JPEG for
+      // a Gemini base frame, PNG for an OpenAI one — never a hard-coded suffix.
+      const baseExtension = inspected.mimeType === "image/png" ? "png" as const : inspected.mimeType === "image/webp" ? "webp" as const : "jpg" as const;
+      try {
+        baseImagePath = await ports.uploadBaseImage(input.ownerId, input.draftId, base.bytes, inspected.mimeType, baseExtension);
+      } catch {
+        return { ok: false, status: 503, code: "provider_failed", errorCode: "storage_failure", message: "Voom couldn't store the base visual safely. Nothing was generated." };
+      }
+      let referenceUrl: string | null = null;
+      if (ports.signReferenceImage) {
+        try {
+          referenceUrl = await ports.signReferenceImage(input.ownerId, baseImagePath);
+        } catch {
+          await ports.removeAbandonedObject(input.ownerId, baseImagePath).catch(() => undefined);
+          return { ok: false, status: 503, code: "provider_failed", errorCode: "storage_failure", message: "Voom couldn't prepare the base visual safely. Nothing was generated." };
+        }
+      }
+      referenceImage = {
+        bytes: base.bytes,
+        mimeType: inspected.mimeType,
+        extension: baseExtension,
+        name: `mara-base-${input.draftId}.${baseExtension}`,
+        url: referenceUrl,
+      };
+      mode = "generated_image_to_video";
     }
-    // The storage filename, the upload content type and the provider's
-    // filename hint all follow the container the bytes actually are — JPEG for
-    // a Gemini base frame, PNG for an OpenAI one — never a hard-coded suffix.
-    const baseExtension = inspected.mimeType === "image/png" ? "png" as const : inspected.mimeType === "image/webp" ? "webp" as const : "jpg" as const;
-    try {
-      baseImagePath = await ports.uploadBaseImage(input.ownerId, input.draftId, base.bytes, inspected.mimeType, baseExtension);
-    } catch {
-      return { ok: false, status: 503, code: "provider_failed", errorCode: "storage_failure", message: "Voom couldn't store the base visual safely. Nothing was generated." };
-    }
-    referenceImage = {
-      bytes: base.bytes,
-      mimeType: inspected.mimeType,
-      extension: baseExtension,
-      name: `mara-base-${input.draftId}.${baseExtension}`,
-    };
-    mode = "generated_image_to_video";
   } else {
     mode = "text_to_video";
   }
@@ -243,6 +271,10 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
     overlay: plan.overlayJson,
     duration_seconds: plan.durationSeconds,
     estimated_cost_usd: input.estimatedCostUsd,
+    provider_polling_url: null,
+    provider_status: null,
+    provider_retry_after_at: null,
+    provider_diagnostic: null,
     attempt_count: 0,
   };
   const inserted = await ports.insertGeneration(row);
@@ -268,18 +300,21 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
 
   // 7) The provider job. If this request dies after the job exists, the row
   // keeps its idempotency record and the stale-queued rule fails it safely.
-  let providerJobId: string;
+  let createdJob: CreatedVideoJob;
   try {
-    const created = await ports.createVideoJob({
+    createdJob = await ports.createVideoJob({
       prompt: providerPrompt,
       durationSeconds: plan.durationSeconds,
       referenceImage,
       name: `Voom ${input.kind} · ${plan.concept.slice(0, 60)}`.slice(0, 120),
     });
-    providerJobId = created.providerJobId;
   } catch (reason) {
     const code = reason instanceof Error ? (reason as Error & { code?: string }).code ?? "unavailable" : "unavailable";
-    await ports.updateGeneration(input.ownerId, generationId, { status: "failed", error_code: code }).catch(() => undefined);
+    await ports.updateGeneration(input.ownerId, generationId, {
+      status: "failed",
+      error_code: code,
+      provider_diagnostic: reason instanceof MediaError ? reason.diagnostic : null,
+    }).catch(() => undefined);
     if (baseImagePath) await ports.removeAbandonedObject(input.ownerId, baseImagePath).catch(() => undefined);
     return {
       ok: false,
@@ -293,7 +328,17 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
   const started = await ports.updateGeneration(
     input.ownerId,
     generationId,
-    { status: "generating", provider: input.providerName, provider_job_id: providerJobId, started_at: new Date(now).toISOString(), attempt_count: 1 },
+    {
+      status: "generating",
+      provider: input.providerName,
+      provider_job_id: createdJob.providerJobId,
+      provider_polling_url: createdJob.pollingUrl ?? null,
+      provider_status: createdJob.providerStatus ?? "pending",
+      provider_retry_after_at: null,
+      provider_diagnostic: null,
+      started_at: new Date(now).toISOString(),
+      attempt_count: 1,
+    },
     ["queued"],
   );
   if (!started) {
@@ -335,6 +380,16 @@ export async function advanceVideoGeneration(ports: VideoGenerationPorts, ownerI
     return { ok: true, generation: row, previewUrl, attached: row.status === "completed", safeError: row.status === "failed" ? videoJobSafeError(row.error_code) : null };
   }
 
+  // A retryable provider response can leave the durable job waiting until its
+  // Retry-After deadline. It keeps the provider job id and never submits a
+  // replacement job.
+  if (row.status === "generating" && row.provider_retry_after_at) {
+    const retryAt = Date.parse(row.provider_retry_after_at);
+    if (Number.isFinite(retryAt) && retryAt > now) {
+      return { ok: true, generation: row, previewUrl: null, attached: false, safeError: null };
+    }
+  }
+
   if (row.status === "queued") {
     // A queued row only becomes generating inside startVideoGeneration; if it
     // shows up here the start request died before creating the job.
@@ -343,8 +398,12 @@ export async function advanceVideoGeneration(ports: VideoGenerationPorts, ownerI
     return { ok: true, generation: finalRow, previewUrl: null, attached: false, safeError: videoJobSafeError("provider_timeout") };
   }
 
-  // Claim generating -> processing atomically.
-  const claimed = await ports.updateGeneration(ownerId, generationId, { status: "processing" }, ["generating"]);
+  // Claim generating -> processing atomically. A processing row is already
+  // owned by this durable poll attempt; polling it again is safe and avoids
+  // waiting ten minutes after a normal provider "pending" response.
+  const claimed: VideoJobRow | null = row.status === "processing"
+    ? row
+    : await ports.updateGeneration(ownerId, generationId, { status: "processing" }, ["generating"]);
   if (!claimed) {
     const current = await ports.findGeneration(ownerId, generationId);
     if (!current) return { ok: false, notFound: true };
@@ -360,18 +419,43 @@ export async function advanceVideoGeneration(ports: VideoGenerationPorts, ownerI
 
   let poll: VideoJobPoll;
   try {
-    poll = await ports.pollVideoJob(providerJobId);
+    poll = await ports.pollVideoJob(providerJobId, claimed.provider_polling_url);
   } catch (reason) {
     const code = reason instanceof Error ? (reason as Error & { code?: string }).code ?? "unavailable" : "unavailable";
-    const failed = await ports.updateGeneration(ownerId, generationId, { status: "failed", error_code: String(code) }, ["processing"]).catch(() => null);
+    if (reason instanceof MediaError && isRetryableProviderError(reason) && reason.retryAfterMs !== null) {
+      const retrying = await ports.updateGeneration(ownerId, generationId, {
+        status: "generating",
+        provider_status: "retry_wait",
+        provider_retry_after_at: new Date(now + reason.retryAfterMs).toISOString(),
+        provider_diagnostic: reason.diagnostic,
+      }, ["processing"]).catch(() => null);
+      return { ok: true, generation: retrying ?? claimed, previewUrl: null, attached: false, safeError: null };
+    }
+    const failed = await ports.updateGeneration(ownerId, generationId, {
+      status: "failed",
+      error_code: String(code),
+      provider_diagnostic: reason instanceof MediaError ? reason.diagnostic : null,
+    }, ["processing"]).catch(() => null);
     return { ok: true, generation: failed ?? claimed, previewUrl: null, attached: false, safeError: videoJobSafeError(String(code)) };
   }
 
   if (poll.kind === "pending") {
-    return { ok: true, generation: claimed, previewUrl: null, attached: false, safeError: null };
+    const pending = await ports.updateGeneration(ownerId, generationId, {
+      provider_status: poll.providerStatus ?? claimed.provider_status ?? null,
+      provider_polling_url: poll.pollingUrl ?? claimed.provider_polling_url ?? null,
+      provider_retry_after_at: null,
+    }, ["processing"]).catch(() => null);
+    return { ok: true, generation: pending ?? claimed, previewUrl: null, attached: false, safeError: null };
   }
   if (poll.kind === "failed") {
-    const failed = await ports.updateGeneration(ownerId, generationId, { status: "failed", error_code: poll.code }, ["processing"]);
+    const failed = await ports.updateGeneration(ownerId, generationId, {
+      status: "failed",
+      error_code: poll.code,
+      provider_status: poll.providerStatus ?? claimed.provider_status ?? null,
+      provider_polling_url: poll.pollingUrl ?? claimed.provider_polling_url ?? null,
+      provider_retry_after_at: null,
+      provider_diagnostic: poll.diagnostic ?? null,
+    }, ["processing"]);
     return { ok: true, generation: failed ?? claimed, previewUrl: null, attached: false, safeError: videoJobSafeError(poll.code) };
   }
 
@@ -411,6 +495,10 @@ export async function advanceVideoGeneration(ports: VideoGenerationPorts, ownerI
       duration_seconds: Math.round(inspection.durationSeconds),
       completed_at: new Date(now).toISOString(),
       error_code: null,
+      provider_status: poll.providerStatus ?? claimed.provider_status ?? "completed",
+      provider_polling_url: poll.pollingUrl ?? claimed.provider_polling_url ?? null,
+      provider_retry_after_at: null,
+      provider_diagnostic: null,
     },
     ["processing"],
   );
@@ -430,6 +518,10 @@ export async function advanceVideoGeneration(ports: VideoGenerationPorts, ownerI
 
   const previewUrl = await ports.signPreview(stored.storagePath);
   return { ok: true, generation: completed, previewUrl, attached: true, safeError: null };
+}
+
+function isRetryableProviderError(error: MediaError): boolean {
+  return error.code === "rate_limited" || error.code === "unavailable";
 }
 
 /** Reel: 4-15s. Story video: 3-30s (Meta allows up to 60s; V1 stays short). */

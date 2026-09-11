@@ -22,11 +22,12 @@ import type {
   VideoPlanResult,
 } from "./video-generation";
 import { VIDEO_JOB_SELECT } from "./video-generation";
-import type { ReferenceImage, VideoJobPoll, VideoGenerationProvider } from "@/lib/media/video-provider";
+import type { CreatedVideoJob, ReferenceImage, VideoJobPoll, VideoGenerationProvider } from "@/lib/media/video-provider";
 
 export const MEDIA_GENERATIONS_TABLE = "mara_media_generations";
 const POST_ASSET_BUCKET = "mara-media";
 const PREVIEW_TTL_SECONDS = 600;
+const PROVIDER_REFERENCE_TTL_SECONDS = 3_600;
 
 export interface VideoPortDependencies {
   admin: SupabaseClient;
@@ -182,7 +183,7 @@ export function buildVideoGenerationPorts(deps: VideoPortDependencies): VideoGen
       return imageProvider.generateImage(input);
     },
 
-    async createVideoJob(input: { prompt: string; durationSeconds: number; referenceImage: ReferenceImage | null; name: string }) {
+    async createVideoJob(input: { prompt: string; durationSeconds: number; referenceImage: ReferenceImage | null; name: string }): Promise<CreatedVideoJob> {
       return provider.createVideoJob({
         prompt: input.prompt,
         aspectRatio: "9:16",
@@ -192,8 +193,8 @@ export function buildVideoGenerationPorts(deps: VideoPortDependencies): VideoGen
       });
     },
 
-    async pollVideoJob(providerJobId): Promise<VideoJobPoll> {
-      return provider.pollVideoJob(providerJobId);
+    async pollVideoJob(providerJobId, pollingUrl): Promise<VideoJobPoll> {
+      return provider.pollVideoJob(providerJobId, pollingUrl);
     },
 
     async uploadBaseImage(ownerId, draftId, bytes, mimeType, extension) {
@@ -201,6 +202,12 @@ export function buildVideoGenerationPorts(deps: VideoPortDependencies): VideoGen
       const { error } = await admin.storage.from(POST_ASSET_BUCKET).upload(path, bytes, { contentType: mimeType, upsert: false });
       if (error) throw new Error("base_image_upload_failed");
       return path;
+    },
+
+    async signReferenceImage(ownerId, storagePath) {
+      if (provider.name !== "openrouter" || !storagePath.startsWith(`${ownerId}/`)) return null;
+      const { data } = await admin.storage.from(POST_ASSET_BUCKET).createSignedUrl(storagePath, PROVIDER_REFERENCE_TTL_SECONDS);
+      return data?.signedUrl ?? null;
     },
 
     async loadReferenceImage(ownerId, storagePath, assetId): Promise<StoredReferenceImage | null> {
@@ -212,7 +219,10 @@ export function buildVideoGenerationPorts(deps: VideoPortDependencies): VideoGen
       if (!detected || detected.kind !== "image") return null;
       const mimeType = detected.mimeType === "image/jpeg" ? "image/jpeg" : detected.mimeType === "image/png" ? "image/png" : "image/webp";
       const extension = detected.mimeType === "image/jpeg" ? "jpg" : detected.mimeType === "image/png" ? "png" : "webp";
-      return { bytes, mimeType, extension, name: assetId ?? "source-image", assetId };
+      const signed = provider.name === "openrouter"
+        ? (await admin.storage.from(POST_ASSET_BUCKET).createSignedUrl(storagePath, PROVIDER_REFERENCE_TTL_SECONDS)).data
+        : null;
+      return { bytes, mimeType, extension, name: assetId ?? "source-image", assetId, url: signed?.signedUrl ?? null };
     },
 
     async storeFinalAsset(ownerId, draftId, input) {
