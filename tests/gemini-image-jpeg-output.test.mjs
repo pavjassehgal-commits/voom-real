@@ -42,7 +42,10 @@ const mediaRoute = await read("app/api/mara/media/[id]/route.ts");
 
 /** The Gemini adapter only — the OpenAI adapter is deliberately untouched. */
 const geminiSource = provider.slice(provider.indexOf("class GeminiMediaProvider"), provider.indexOf("class OpenAiMediaProvider"));
-const openAiSource = provider.slice(provider.indexOf("class OpenAiMediaProvider"));
+const openAiEnd = provider.indexOf("class OpenRouterMediaProvider");
+const openAiSource = openAiEnd === -1
+  ? provider.slice(provider.indexOf("class OpenAiMediaProvider"))
+  : provider.slice(provider.indexOf("class OpenAiMediaProvider"), openAiEnd);
 
 // ---------------------------------------------------------------------------
 // Fixtures: real container bytes + the provider's own base64 round-trip

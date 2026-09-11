@@ -4,11 +4,14 @@ import { parseProviderDiagnostic } from "./diagnostic";
 import { MediaError, type GeneratedMedia, type MediaAspectRatio, type MediaProvider } from "./types";
 
 export function createMediaProvider(config: MediaConfig): MediaProvider {
-  return config.provider === "gemini" ? new GeminiMediaProvider(config) : new OpenAiMediaProvider(config);
+  if (config.provider === "gemini") return new GeminiMediaProvider(config);
+  if (config.provider === "openrouter") return new OpenRouterMediaProvider(config);
+  return new OpenAiMediaProvider(config);
 }
 
 class GeminiMediaProvider implements MediaProvider {
-  constructor(private readonly config: MediaConfig) {}
+  private readonly config: MediaConfig;
+  constructor(config: MediaConfig) { this.config = config; }
 
   /**
    * Gemini Interactions image generation.
@@ -50,7 +53,8 @@ class GeminiMediaProvider implements MediaProvider {
 }
 
 class OpenAiMediaProvider implements MediaProvider {
-  constructor(private readonly config: MediaConfig) {}
+  private readonly config: MediaConfig;
+  constructor(config: MediaConfig) { this.config = config; }
 
   async generateImage(input: { prompt: string; aspectRatio: MediaAspectRatio }) {
     const size = input.aspectRatio === "1:1" ? "1024x1024" : input.aspectRatio === "16:9" ? "1536x1024" : "1024x1536";
@@ -78,6 +82,49 @@ class OpenAiMediaProvider implements MediaProvider {
   }
 
   private headers() { return { Authorization: `Bearer ${this.config.apiKey}`, "Content-Type": "application/json" }; }
+}
+
+/**
+ * OpenRouter Unified Image API (Seedream 4.5 and other image models).
+ *
+ * Image-only: video generation stays on Magic Hour / VIDEO_* configuration.
+ * Auth is OPENROUTER_API_KEY via Bearer. Response bytes come from
+ * data[0].b64_json; media_type is respected when present, but Voom always
+ * re-derives MIME/extension from byte inspection before storage.
+ *
+ * No silent retries — a single request per call so paid generations cannot
+ * double-bill from provider-level retry loops.
+ */
+class OpenRouterMediaProvider implements MediaProvider {
+  private readonly config: MediaConfig;
+  constructor(config: MediaConfig) { this.config = config; }
+
+  async generateImage(input: { prompt: string; aspectRatio: MediaAspectRatio }) {
+    const body = await jsonRequest(`${this.config.baseUrl}/images`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: this.config.imageModel,
+        prompt: input.prompt,
+        n: 1,
+        resolution: "1K",
+        aspect_ratio: input.aspectRatio,
+      }),
+    });
+    const image = findOpenRouterOutputImage(body);
+    return decodeMedia(image.data, image.mimeType);
+  }
+
+  async generateVideo(): Promise<GeneratedMedia> {
+    throw new MediaError("unsupported_input");
+  }
+
+  async pollVideo(): Promise<GeneratedMedia> {
+    throw new MediaError("unsupported_input");
+  }
 }
 
 async function jsonRequest(url: string, init: RequestInit) {
@@ -114,6 +161,22 @@ function findGeminiOutputImage(body: Record<string, unknown>) {
     if (data) return { data, mimeType: typeof record.mime_type === "string" ? record.mime_type as GeneratedMedia["mimeType"] : null };
   }
   throw new MediaError("malformed_response");
+}
+
+function findOpenRouterOutputImage(body: Record<string, unknown>) {
+  const dataArr = body.data;
+  if (!Array.isArray(dataArr) || dataArr.length < 1) throw new MediaError("malformed_response");
+  const first = dataArr[0];
+  if (!first || typeof first !== "object" || Array.isArray(first)) throw new MediaError("malformed_response");
+  const record = first as Record<string, unknown>;
+  const data = typeof record.b64_json === "string" ? record.b64_json : null;
+  if (!data) throw new MediaError("malformed_response");
+  const declared = typeof record.media_type === "string" ? record.media_type.trim().toLowerCase() : null;
+  const mimeType =
+    declared === "image/jpeg" || declared === "image/png" || declared === "image/webp"
+      ? declared as GeneratedMedia["mimeType"]
+      : "image/png" as GeneratedMedia["mimeType"];
+  return { data, mimeType };
 }
 
 function stringAt(body: Record<string, unknown>, key: string) { const value = body[key]; if (typeof value !== "string" || !value) throw new MediaError("malformed_response"); return value; }

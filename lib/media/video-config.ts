@@ -14,7 +14,8 @@ import { MediaError } from "./types";
  *      work without extra keys.
  *   2. VIDEO_PROVIDER unset -> fall back to MEDIA_PROVIDER (gemini/openai)
  *      when it is configured, so a deployment that already has a media key
- *      gets text-to-video without new configuration.
+ *      gets text-to-video without new configuration. OpenRouter is image-only
+ *      and is never inherited as a video provider.
  *   3. Neither configured  -> MediaError("not_configured"); the UI degrades
  *      to the truthful "Create with MARA is temporarily unavailable" state
  *      while image generation and all publishing keep working.
@@ -38,6 +39,8 @@ export interface VideoConfig {
 }
 
 const MAGIC_HOUR_DEFAULT_URL = "https://api.magichour.ai";
+const GEMINI_DEFAULT_URL = "https://generativelanguage.googleapis.com/v1beta";
+const OPENAI_DEFAULT_URL = "https://api.openai.com/v1";
 
 export function getVideoConfig(env: NodeJS.ProcessEnv = process.env): VideoConfig {
   const raw = env.VIDEO_PROVIDER?.trim().toLowerCase();
@@ -58,13 +61,35 @@ export function getVideoConfig(env: NodeJS.ProcessEnv = process.env): VideoConfi
     };
   }
 
-  // gemini/openai (explicit or inherited from the media configuration).
+  // Explicit gemini/openai video path — independent of the image provider so
+  // MEDIA_PROVIDER=openrouter does not block VIDEO_PROVIDER=gemini|openai.
+  if (raw === "gemini" || raw === "openai") {
+    const key = env.VIDEO_API_KEY?.trim() || env.MEDIA_API_KEY?.trim();
+    if (!key) throw new MediaError("not_configured");
+    const defaults = { gemini: GEMINI_DEFAULT_URL, openai: OPENAI_DEFAULT_URL } as const;
+    const baseUrl = (env.VIDEO_BASE_URL?.trim() || env.MEDIA_BASE_URL?.trim() || defaults[raw]).replace(/\/$/, "");
+    return {
+      provider: raw,
+      apiKey: key,
+      baseUrl,
+      model: env.VIDEO_MODEL?.trim() || env.MEDIA_VIDEO_MODEL?.trim() || null,
+      resolution: "720p",
+      supportsImageToVideo: false,
+      supportsTextToVideo: true,
+    };
+  }
+
+  // Inherit from MEDIA_PROVIDER only when it is gemini/openai. OpenRouter is
+  // image-only and must not become a video provider.
+  const mediaHint = env.MEDIA_PROVIDER?.trim().toLowerCase();
+  if (mediaHint !== "gemini" && mediaHint !== "openai") throw new MediaError("not_configured");
+
   const media = getMediaConfig(env);
-  const provider: VideoConfig["provider"] = raw === "gemini" || raw === "openai" ? raw : media.provider;
-  const key = (env.VIDEO_API_KEY?.trim() || media.apiKey);
+  if (media.provider !== "gemini" && media.provider !== "openai") throw new MediaError("not_configured");
+  const key = env.VIDEO_API_KEY?.trim() || media.apiKey;
   if (!key) throw new MediaError("not_configured");
   return {
-    provider,
+    provider: media.provider,
     apiKey: key,
     baseUrl: media.baseUrl,
     model: media.videoModel,

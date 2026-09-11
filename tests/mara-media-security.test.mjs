@@ -6,7 +6,7 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 test("MARA media credentials remain server-only", async () => {
   const env = await read(".env.example");
-  for (const name of ["MEDIA_PROVIDER", "MEDIA_API_KEY", "MEDIA_BASE_URL", "MEDIA_IMAGE_MODEL", "MEDIA_VIDEO_MODEL"]) {
+  for (const name of ["MEDIA_PROVIDER", "MEDIA_API_KEY", "MEDIA_BASE_URL", "MEDIA_IMAGE_MODEL", "MEDIA_VIDEO_MODEL", "OPENROUTER_API_KEY"]) {
     assert.match(env, new RegExp(`^${name}=`, "m"));
     assert.doesNotMatch(env, new RegExp(`NEXT_PUBLIC_${name}`));
   }
