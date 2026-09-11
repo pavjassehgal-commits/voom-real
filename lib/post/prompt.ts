@@ -44,6 +44,83 @@ export const storyVisualSchema = z.object({
 
 export type MaraStoryVisualPlan = z.infer<typeof storyVisualSchema>;
 
+/* ---------------------------------------------------------------------------
+ * Provider-side structured output contracts (Groq `json_schema`).
+ *
+ * These are Groq-compatible strict JSON Schemas mirroring the zod schemas
+ * above EXACTLY (min(1) -> minLength 1, max(n) -> maxLength n, .max(20) ->
+ * maxItems 20, .strict() -> additionalProperties false). Strict mode requires
+ * every property in `required`; the only optional value, `suggestedPublishAt`,
+ * is a ["string","null"] union rather than an omitted key — so the provider
+ * must always return the complete, typed object.
+ *
+ * The zod schemas remain the second safety layer: whatever the provider
+ * returns is still parsed and validated server-side before it is persisted or
+ * handed to media generation, so a schema disagreement can never turn into a
+ * stored draft or an image request.
+ * ------------------------------------------------------------------------- */
+
+/** Groq strict structured output for `postDraftSchema` (Create-with-MARA copy). */
+export const postDraftJsonSchema = {
+  name: "mara_post_draft",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["concept", "caption", "cta", "hashtags", "visualPrompt"],
+    properties: {
+      concept: { type: "string", minLength: 1, maxLength: 160, description: "Short internal name for the post (max 12 words)." },
+      caption: { type: "string", minLength: 1, maxLength: 2200, description: "The complete Instagram caption (30-150 words), truthful to the supplied context." },
+      cta: { type: "string", minLength: 1, maxLength: 160, description: "One short call to action, max 8 words." },
+      hashtags: {
+        type: "array",
+        maxItems: 20,
+        description: "3-12 relevant hashtags WITHOUT the leading # character.",
+        items: { type: "string", minLength: 1, maxLength: 30 },
+      },
+      visualPrompt: { type: "string", minLength: 1, maxLength: 1200, description: "Precise text-to-image prompt for the post visual (20-80 words), no readable text, logos or watermarks." },
+    },
+  },
+} as const;
+
+/** Groq strict structured output for `storyVisualSchema` (Story visual plan). */
+export const storyVisualJsonSchema = {
+  name: "mara_story_visual",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["concept", "visualPrompt"],
+    properties: {
+      concept: { type: "string", minLength: 1, maxLength: 160, description: "Short internal name for the Story (max 12 words)." },
+      visualPrompt: { type: "string", minLength: 1, maxLength: 1200, description: "Precise text-to-image prompt for a 9:16 full-screen Story image (20-80 words), no readable text, logos or watermarks." },
+    },
+  },
+} as const;
+
+/** Groq strict structured output for `postSuggestionSchema` (copy-only suggestions). */
+export const postSuggestionJsonSchema = {
+  name: "mara_post_suggestion",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["caption", "cta", "hashtags", "suggestedPublishAt", "timingReason"],
+    properties: {
+      caption: { type: "string", minLength: 1, maxLength: 2200, description: "Suggested caption. Generic enough to be true for the imported file — MARA has not seen it." },
+      cta: { type: "string", minLength: 1, maxLength: 160, description: "One short call to action, max 8 words." },
+      hashtags: {
+        type: "array",
+        maxItems: 20,
+        description: "Relevant hashtags WITHOUT the leading # character.",
+        items: { type: "string", minLength: 1, maxLength: 30 },
+      },
+      suggestedPublishAt: { type: ["string", "null"], description: "A real future ISO-8601 timestamp with explicit offset, or null when no slot can be justified." },
+      timingReason: { type: "string", maxLength: 500, description: "One short sentence justifying the suggested slot from the supplied context only." },
+    },
+  },
+} as const;
+
 export const POST_COPY_SYSTEM_PROMPT = `You are MARA, Voom's practical AI marketing manager, creating ONE Instagram feed post for the authenticated user's own business.
 
 Return JSON only, with exactly these keys:

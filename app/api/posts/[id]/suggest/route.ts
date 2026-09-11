@@ -1,7 +1,7 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { AiError, createAiProvider } from "@/lib/ai";
 import { postAssetKindForMime } from "@/lib/post/core";
-import { buildExistingContentPayload, EXISTING_CONTENT_DISCLOSURE, POST_SUGGESTION_SYSTEM_PROMPT, postSuggestionSchema } from "@/lib/post/prompt";
+import { buildExistingContentPayload, EXISTING_CONTENT_DISCLOSURE, POST_SUGGESTION_SYSTEM_PROMPT, postSuggestionJsonSchema, postSuggestionSchema } from "@/lib/post/prompt";
 import { getPostDraft, loadPostBrandContext, loadPostPlanContext } from "@/lib/post/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 
@@ -56,6 +56,9 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
       ],
       temperature: 0.5,
       maxTokens: 900,
+      // Groq json_schema structured output (strict where supported); the zod
+      // parse stays the second safety layer before any suggestion is returned.
+      jsonSchema: postSuggestionJsonSchema,
       parse: (value) => postSuggestionSchema.parse(value),
     });
 

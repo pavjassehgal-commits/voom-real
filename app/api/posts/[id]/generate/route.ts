@@ -3,7 +3,7 @@ import { createAiProvider, AiError } from "@/lib/ai";
 import { createMediaProvider, getMediaConfig, MediaError } from "@/lib/media";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { composePostCaption } from "@/lib/post/core";
-import { buildPostContextPayload, POST_COPY_SYSTEM_PROMPT, postDraftSchema, STORY_VISUAL_SYSTEM_PROMPT, storyVisualSchema } from "@/lib/post/prompt";
+import { buildPostContextPayload, POST_COPY_SYSTEM_PROMPT, postDraftJsonSchema, postDraftSchema, STORY_VISUAL_SYSTEM_PROMPT, storyVisualJsonSchema, storyVisualSchema } from "@/lib/post/prompt";
 import { getPostDraft, loadPostBrandContext, loadPostPlanContext, normalizeMediaBrief, putPostAsset, removePostAssetObject, syncPostToCalendar } from "@/lib/post/server-data";
 import { startPostStudioVideo } from "@/lib/mara/video-service";
 import { aspectMatches, inspectImageBytes } from "@/lib/media/media-inspect";
@@ -120,6 +120,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         ],
         temperature: 0.6,
         maxTokens: 600,
+        // Groq json_schema structured output (strict where supported); the zod
+        // parse below stays the second safety layer and any failure still
+        // returns truthfully BEFORE any media generation row or request.
+        jsonSchema: storyVisualJsonSchema,
         parse: (value) => storyVisualSchema.parse(value),
       });
     } catch (reason) {
@@ -147,6 +151,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         ],
         temperature: 0.6,
         maxTokens: 1200,
+        // Groq json_schema structured output (strict where supported); the zod
+        // parse below stays the second safety layer and any failure still
+        // returns truthfully BEFORE any media generation row or request.
+        jsonSchema: postDraftJsonSchema,
         parse: (value) => postDraftSchema.parse(value),
       });
     } catch (reason) {
