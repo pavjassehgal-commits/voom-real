@@ -12,4 +12,4 @@ export function createAiProvider(): AiProvider {
 }
 
 export { AiError } from "./types";
-export type { AiMessage, AiProvider, AiRequest, AiStructuredRequest, AiToolMessage, AiToolDefinition, AiToolDecision } from "./types";
+export type { AiJsonSchemaSpec, AiMessage, AiProvider, AiRequest, AiStructuredRequest, AiToolMessage, AiToolDefinition, AiToolDecision } from "./types";
