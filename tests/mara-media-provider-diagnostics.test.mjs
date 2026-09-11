@@ -153,13 +153,16 @@ test("client SELECT surfaces exclude provider diagnostics", async () => {
   }
 });
 
-test("error classification and Gemini image request contract are unchanged", async () => {
+test("error classification is unchanged and the Gemini image request asks for JPEG", async () => {
   const provider = await read("lib/media/provider.ts");
   assert.match(provider, /response\.status === 429 \? "rate_limited" : response\.status >= 500 \? "unavailable" : "rejected"/);
   assert.match(provider, /parseProviderDiagnostic\(response\)/);
   assert.doesNotMatch(provider, /for \(let .*retry|attempt < |retryAfter|setTimeout/);
   assert.match(provider, /\$\{this\.config\.baseUrl\}\/interactions/);
-  assert.match(provider, /response_format: \{ type: "image", mime_type: "image\/png", aspect_ratio: input\.aspectRatio \}/);
+  // image/jpeg is the only response_format.mime_type the Interactions image
+  // endpoint supports; image/png is an HTTP 400 and generates nothing.
+  assert.match(provider, /response_format: \{ type: "image", mime_type: "image\/jpeg", aspect_ratio: input\.aspectRatio \}/);
+  assert.doesNotMatch(provider, /mime_type: "image\/png"/, "the Gemini image request never asks for PNG");
   assert.match(provider, /model: this\.config\.imageModel, input: \[\{ type: "text", text: input\.prompt \}\]/);
   assert.doesNotMatch(provider, /console\.log|console\.error/);
 });
