@@ -389,7 +389,11 @@ test("provider secrets and payloads stay server-side only", async () => {
 
 test("Gemini image generation, video, publishing and migrations are untouched by the fix", async () => {
   const mediaProvider = await read("lib/media/provider.ts");
-  assert.match(mediaProvider, /response_format: \{ type: "image", mime_type: "image\/png", aspect_ratio: input\.aspectRatio \}/, "the Gemini image contract is unchanged");
+  // The one functional change: the Interactions image request asks for the only
+  // mime_type the endpoint supports. Everything else (model, endpoint, key
+  // handling, video, publishing, migrations) stays exactly as it was.
+  assert.match(mediaProvider, /response_format: \{ type: "image", mime_type: "image\/jpeg", aspect_ratio: input\.aspectRatio \}/, "the Gemini image request asks for JPEG");
+  assert.doesNotMatch(mediaProvider, /mime_type: "image\/png"/, "PNG is never requested from Gemini Interactions");
 
   const routes = await read("app/api/posts/[id]/generate/route.ts");
   assert.match(routes, /getMediaConfig|createMediaProvider/, "the image stage still runs after copy success");

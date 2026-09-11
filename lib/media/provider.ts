@@ -10,14 +10,24 @@ export function createMediaProvider(config: MediaConfig): MediaProvider {
 class GeminiMediaProvider implements MediaProvider {
   constructor(private readonly config: MediaConfig) {}
 
+  /**
+   * Gemini Interactions image generation.
+   *
+   * `response_format.mime_type` must be `image/jpeg`: it is the only image
+   * format the endpoint accepts, so a PNG request is a hard HTTP 400 and no
+   * visual is ever produced. The bytes therefore arrive as JPEG, and JPEG is
+   * also the fallback declaration when a response omits its own mime_type, so
+   * nothing downstream mislabels them. Voom still sniffs the real container from
+   * the bytes before any of it is stored.
+   */
   async generateImage(input: { prompt: string; aspectRatio: MediaAspectRatio }) {
     const body = await jsonRequest(`${this.config.baseUrl}/interactions`, {
       method: "POST",
       headers: { "x-goog-api-key": this.config.apiKey, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: this.config.imageModel, input: [{ type: "text", text: input.prompt }], response_format: { type: "image", mime_type: "image/png", aspect_ratio: input.aspectRatio } }),
+      body: JSON.stringify({ model: this.config.imageModel, input: [{ type: "text", text: input.prompt }], response_format: { type: "image", mime_type: "image/jpeg", aspect_ratio: input.aspectRatio } }),
     });
     const image = findGeminiOutputImage(body);
-    return decodeMedia(image.data, image.mimeType ?? "image/png");
+    return decodeMedia(image.data, image.mimeType ?? "image/jpeg");
   }
 
   async generateVideo(input: { prompt: string; aspectRatio: MediaAspectRatio; durationSeconds: number }) {

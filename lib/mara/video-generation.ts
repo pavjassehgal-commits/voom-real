@@ -205,16 +205,20 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
     if (!inspected || !aspectMatches(inspected.width, inspected.height, "9:16")) {
       return { ok: false, status: 503, code: "provider_failed", errorCode: "invalid_output", message: "The base visual didn't pass Voom's checks, so no video was generated. Nothing changed." };
     }
+    // The storage filename, the upload content type and the provider's
+    // filename hint all follow the container the bytes actually are — JPEG for
+    // a Gemini base frame, PNG for an OpenAI one — never a hard-coded suffix.
+    const baseExtension = inspected.mimeType === "image/png" ? "png" as const : inspected.mimeType === "image/webp" ? "webp" as const : "jpg" as const;
     try {
-      baseImagePath = await ports.uploadBaseImage(input.ownerId, input.draftId, base.bytes, inspected.mimeType, inspected.mimeType === "image/png" ? "png" : inspected.mimeType === "image/webp" ? "webp" : "jpg");
+      baseImagePath = await ports.uploadBaseImage(input.ownerId, input.draftId, base.bytes, inspected.mimeType, baseExtension);
     } catch {
       return { ok: false, status: 503, code: "provider_failed", errorCode: "storage_failure", message: "Voom couldn't store the base visual safely. Nothing was generated." };
     }
     referenceImage = {
       bytes: base.bytes,
       mimeType: inspected.mimeType,
-      extension: inspected.mimeType === "image/png" ? "png" : inspected.mimeType === "image/webp" ? "webp" : "jpg",
-      name: `mara-base-${input.draftId}.png`,
+      extension: baseExtension,
+      name: `mara-base-${input.draftId}.${baseExtension}`,
     };
     mode = "generated_image_to_video";
   } else {
