@@ -130,12 +130,14 @@ test("container processing statuses are interpreted correctly", () => {
   assert.equal(timeout.retryable, true);
 });
 
-test("retry backoff grows and is bounded", () => {
-  const first = Date.parse(pub.retryAt(1, NOW));
-  const later = Date.parse(pub.retryAt(4, NOW));
-  assert.ok(first > NOW);
-  assert.ok(later > first);
-  assert.ok(Date.parse(pub.retryAt(100, NOW)) - NOW <= 60 * 60_000);
+test("a retry is parked on the worker's next cron boundary, one cadence ahead at most", () => {
+  // Not `now + N minutes`: that used to land AFTER the next cron tick had
+  // already run, turning a two-second miss into a five-minute delay.
+  const at = Date.parse(pub.retryAt(NOW + 17_000));
+  assert.equal(at, Date.parse("2026-09-06T12:04:59.000Z"), "the 12:05 boundary, minus the claim-skew margin");
+  const delay = at - (NOW + 17_000);
+  assert.ok(delay > 0, "a retry is never in the past");
+  assert.ok(delay <= pub.PUBLISH_WORKER_PERIOD_MS, "never more than one cadence away");
 });
 
 test("failure messages are safe and never leak provider internals", () => {
@@ -609,7 +611,7 @@ test("every retryable failure lands in a status a later cron run can reclaim", (
       `retryable failure '${key}' parks the item in '${failure.status}', which no cron run would ever reclaim`,
     );
     // And prove it via the real predicate, at its own retry time.
-    const at = pub.retryAt(1, NOW);
+    const at = pub.retryAt(NOW);
     assert.equal(
       pub.isDueForPublishing(
         { status: failure.status, scheduledAt: at, draftStatus: "approved", attempts: 1, instagramMediaId: null },
@@ -622,7 +624,7 @@ test("every retryable failure lands in a status a later cron run can reclaim", (
 });
 
 test("a waiting_for_media item is not claimed early, but is claimed once due", () => {
-  const at = pub.retryAt(1, NOW);
+  const at = pub.retryAt(NOW);
   const row = { status: "waiting_for_media", scheduledAt: at, draftStatus: "approved", attempts: 1, instagramMediaId: null };
   assert.equal(pub.isDueForPublishing(row, NOW), false, "not before its retry time");
   assert.equal(pub.isDueForPublishing(row, Date.parse(at) + 1), true, "claimable once due");

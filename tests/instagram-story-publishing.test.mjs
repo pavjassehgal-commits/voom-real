@@ -90,7 +90,7 @@ test("a Story that exhausts its attempts is not claimed again", () => {
 });
 
 test("a Story parked as waiting_for_media is reclaimed once its retry time is due", () => {
-  const at = pub.retryAt(1, NOW);
+  const at = pub.retryAt(NOW);
   const row = storyRow({ status: "waiting_for_media", scheduledAt: at, attempts: 1 });
   assert.equal(pub.isDueForPublishing(row, NOW), false);
   assert.equal(pub.isDueForPublishing(row, Date.parse(at) + 1), true);

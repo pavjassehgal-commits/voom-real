@@ -9,6 +9,11 @@
  * ever reachable with a real Instagram media id returned by Meta's
  * media_publish call. Container creation (provider acceptance) is NOT
  * published.
+ *
+ * Timing rule: every retry timestamp this module produces is aligned to the
+ * worker's own cron cadence, so the next cron run can actually claim it. A
+ * retry derived from the attempt clock instead (`now + 5 minutes`) lands after
+ * the tick that was supposed to pick it up and silently costs a whole cadence.
  */
 
 /** Durable publishing states persisted on public.instagram_publish_queue. */
@@ -58,11 +63,113 @@ export const MAX_PUBLISH_ATTEMPTS = 5;
 export const STALE_CLAIM_MINUTES = 15;
 /** Signed media URL lifetime. Long enough for Meta to ingest and transcode. */
 export const PUBLISH_SIGNED_URL_TTL_SECONDS = 3600;
-/** Reel container polling. Meta transcodes asynchronously. */
-export const REEL_POLL_ATTEMPTS = 20;
+
+// ---------------------------------------------------------------------------
+// Worker cadence and the serverless execution ceiling
+//
+// These constants are the whole timing contract of the publish worker.
+// Everything retry- and polling-related is derived from them, in this module,
+// so no call site does its own date math.
+// ---------------------------------------------------------------------------
+
+/**
+ * The publish worker's cron cadence: the Supabase cron job
+ * `voom-instagram-publish-5m` fires `* /5 * * * *`.
+ *
+ * Modelled as an absolute millisecond period on purpose. A five-minute cadence
+ * is defined against UTC/epoch boundaries, not against any business timezone,
+ * so the same instants are boundaries in Asia/Dubai (+04:00), UTC or anywhere
+ * else — Dubai's offset is a whole number of minutes and therefore never
+ * shifts a five-minute boundary. Nothing here reads a timezone.
+ */
+export const PUBLISH_WORKER_PERIOD_MS = 5 * 60_000;
+
+/**
+ * Serverless execution ceiling for ONE worker invocation. This MUST equal
+ * `maxDuration` in app/api/cron/instagram-publish/route.ts (300 seconds, which
+ * is also the hard Vercel Hobby / Fluid Compute maximum — it cannot be raised
+ * on that plan). A test asserts the two values stay in sync.
+ */
+export const PUBLISH_WORKER_MAX_DURATION_MS = 300_000;
+
+/**
+ * Reserved headroom below `maxDuration` that polling may never consume.
+ *
+ * After the last poll the invocation still has to run `media_publish` (up to
+ * PUBLISH_POLL_CALL_ALLOWANCE_MS), the complete/fail RPC, the Content Calendar
+ * status update and the JSON response. Being killed in the middle of
+ * `media_publish` is the single worst outcome here — it leaves the row stuck in
+ * `publishing` until the 15-minute stale-claim window — so the buffer is
+ * deliberately generous.
+ */
+export const PUBLISH_WORKER_SAFETY_BUFFER_MS = 60_000;
+
+/**
+ * Wall-clock readiness-polling budget SHARED by every item claimed in one
+ * invocation, not a per-item allowance. This is what makes the per-attempt
+ * budgets below safe to raise: a batch of ten videos due at once cannot add up
+ * past the function's own runtime limit.
+ */
+export const PUBLISH_POLLING_BUDGET_MS =
+  PUBLISH_WORKER_MAX_DURATION_MS - PUBLISH_WORKER_SAFETY_BUFFER_MS;
+
+/**
+ * Upper bound on a single Instagram call. `InstagramClient` aborts every
+ * request after 15s, so polling refuses to start a call that cannot finish
+ * inside the remaining budget.
+ */
+export const PUBLISH_POLL_CALL_ALLOWANCE_MS = 15_000;
+
+/**
+ * Subtracted from a cron boundary when parking a retry.
+ *
+ * The claim predicate is `scheduled_at <= p_now`, and `p_now` is read from a
+ * DIFFERENT invocation's clock, so a retry parked exactly on the boundary can
+ * lose the tick to a few hundred milliseconds of skew. One second removes that
+ * risk. It is only ever subtracted, never added, and it cannot produce a retry
+ * loop: claims happen only at cron ticks and attempts stay capped at
+ * MAX_PUBLISH_ATTEMPTS.
+ */
+export const PUBLISH_RETRY_SAFETY_MARGIN_MS = 1_000;
+
+/**
+ * Readiness polling. Meta transcodes video containers asynchronously, so Reels
+ * and video Stories need a much longer window than feed images.
+ *
+ * Budget audit (why these numbers are safe to raise): the cron route runs at
+ * `maxDuration = 300`, the hard Hobby/Fluid-Compute ceiling; a single Instagram
+ * call aborts at 15s; and readiness polling across a whole invocation is
+ * additionally capped by PUBLISH_POLLING_BUDGET_MS. So the worst case is
+ * `min(per-attempt budget, shared invocation budget)`, never the sum of the
+ * claimed batch. See PUBLISH_POLLING_BUDGET_MS.
+ */
+export const REEL_POLL_ATTEMPTS = 28;
 export const REEL_POLL_INTERVAL_MS = 6_000;
-export const IMAGE_POLL_ATTEMPTS = 5;
+export const IMAGE_POLL_ATTEMPTS = 10;
 export const IMAGE_POLL_INTERVAL_MS = 3_000;
+
+/** The readiness polling plan for one attempt, chosen by the asset's nature. */
+export interface PollingPlan {
+  attempts: number;
+  intervalMs: number;
+  /** True when Meta transcodes the container asynchronously. */
+  video: boolean;
+}
+
+/** One polling plan per media shape, so the flow never picks numbers itself. */
+export function pollingPlanFor(video: boolean): PollingPlan {
+  return video
+    ? { attempts: REEL_POLL_ATTEMPTS, intervalMs: REEL_POLL_INTERVAL_MS, video: true }
+    : { attempts: IMAGE_POLL_ATTEMPTS, intervalMs: IMAGE_POLL_INTERVAL_MS, video: false };
+}
+
+/**
+ * Upper bound on the time one attempt's readiness polling spends SLEEPING.
+ * The final poll is never followed by a sleep — it would only delay the retry.
+ */
+export function pollingSleepBudgetMs(plan: PollingPlan): number {
+  return Math.max(plan.attempts - 1, 0) * plan.intervalMs;
+}
 
 /**
  * Which media kind a stored mime type publishes as.
@@ -233,10 +340,58 @@ export function resolveFailure(key: PublishFailureKey, attempts: number): Publis
   return { ...failure };
 }
 
-/** Backoff for a retryable failure, as an ISO timestamp. */
-export function retryAt(attempts: number, now: number = Date.now()): string {
-  const minutes = Math.min(60, 5 * Math.max(attempts, 1));
-  return new Date(now + minutes * 60_000).toISOString();
+// ---------------------------------------------------------------------------
+// Retry scheduling, aligned to the worker's own cron
+// ---------------------------------------------------------------------------
+
+function positivePeriod(periodMs: number): number {
+  return Number.isFinite(periodMs) && periodMs > 0 ? Math.floor(periodMs) : PUBLISH_WORKER_PERIOD_MS;
+}
+
+/**
+ * The cron boundary at or before `at`, in absolute (UTC/epoch) milliseconds.
+ *
+ * Pure arithmetic on the epoch: a `* /5 * * * *` cadence has fired at every
+ * epoch multiple of 300 000 ms since 1970-01-01T00:00:00Z, so this is correct
+ * in every timezone without ever consulting one.
+ */
+export function cronBoundaryAt(at: number, periodMs: number = PUBLISH_WORKER_PERIOD_MS): number {
+  const period = positivePeriod(periodMs);
+  return Math.floor(at / period) * period;
+}
+
+/** The strictly-next cron boundary after `at`. An exact boundary yields the one after it. */
+export function nextCronBoundaryAfter(at: number, periodMs: number = PUBLISH_WORKER_PERIOD_MS): number {
+  return cronBoundaryAt(at, periodMs) + positivePeriod(periodMs);
+}
+
+/** The margin actually applied for a given cadence; it can never eat the whole period. */
+export function retrySafetyMarginMs(periodMs: number = PUBLISH_WORKER_PERIOD_MS): number {
+  return Math.min(PUBLISH_RETRY_SAFETY_MARGIN_MS, Math.floor(positivePeriod(periodMs) / 2));
+}
+
+/**
+ * When a retry becomes eligible, as an ISO timestamp.
+ *
+ * THE PRODUCTION BUG THIS REPLACES. This used to be `now + 5 * attempts
+ * minutes`. An item claimed at 22:15:02.413 was therefore parked until
+ * 22:20:02.413 — 2.242 seconds AFTER the 22:20:00.171 cron had already run and
+ * found it not yet due. A two-second miss became a five-minute delay.
+ *
+ * Retries now land on the worker's own cron boundary, so the very next cron
+ * run can claim them. The attempt count no longer scales the delay: cadence,
+ * not exponential backoff, decides when the worker looks again, and
+ * MAX_PUBLISH_ATTEMPTS is what stops a poison item.
+ */
+export function retryAt(now: number = Date.now(), periodMs: number = PUBLISH_WORKER_PERIOD_MS): string {
+  const period = positivePeriod(periodMs);
+  const boundary = nextCronBoundaryAfter(now, period);
+  const withMargin = boundary - retrySafetyMarginMs(period);
+  // The margin is insurance, never a licence to park a retry in the past: an
+  // attempt that finishes within the margin of a boundary takes the boundary
+  // itself, which the tick at that boundary still claims (`scheduled_at <=
+  // p_now`). Invariant: now < retryAt <= nextCronBoundaryAfter(now).
+  return new Date(withMargin > now ? withMargin : boundary).toISOString();
 }
 
 /** Meta container status_code values. */
