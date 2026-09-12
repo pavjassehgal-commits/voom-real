@@ -29,12 +29,11 @@ test("campaign screens never claim a send and clearly separate Draft / Approved 
 });
 
 test("campaign drafts are persisted, owner-scoped, and only move to approved or rejected internally", async () => {
-  const [data, listRoute, itemRoute, migration, workflow] = await Promise.all([
+  const [data, listRoute, itemRoute, migration] = await Promise.all([
     read("lib/mara/internal-data.ts"),
     read("app/api/voom/campaigns/route.ts"),
     read("app/api/voom/campaigns/[id]/route.ts"),
     read("supabase/migrations/0003_mara_internal_tools.sql"),
-    read("lib/mara/plan-workflow.ts"),
   ]);
   assert.match(data, /insert\(\{ \.\.\.input, owner_user_id: ownerId, status: "draft" \}\)/);
   assert.match(data, /update\(\{ \.\.\.input, status: "draft" \}\)/);
@@ -56,24 +55,19 @@ test("campaign drafts are persisted, owner-scoped, and only move to approved or 
   assert.doesNotMatch(migration, /\b'sent'\b/);
   assert.match(migration, /grant select, insert, update on table public\.voom_campaigns to authenticated/);
   assert.doesNotMatch(migration, /grant[^;]*delete[^;]*voom_campaigns/);
-  assert.match(workflow, /create_campaign_draft/);
-  assert.match(workflow, /marketing-plan:\$\{planId\}:campaign:\$\{index\}/);
-  assert.match(workflow, /Campaigns are never sent/);
 });
 
-test("MARA plan workflow persists email/SMS campaign drafts without sending them", async () => {
+test("email/SMS campaign drafts stay a separate, send-free surface", async () => {
   const [workflow, page, workspace] = await Promise.all([
-    read("lib/mara/plan-workflow.ts"),
+    read("lib/voom/workflow/service.ts"),
     read("app/app/(shell)/campaigns/page.tsx"),
     read("components/voom/operating/PlanWorkspace.tsx"),
   ]);
-  assert.match(workflow, /campaignIds/);
-  assert.match(workflow, /const kind = campaign\.channel/);
-  assert.match(workflow, /"email" : null/);
+  // The content workflow never sends or schedules an email/SMS campaign, and
+  // the Marketing Plan only renders executable content items.
   assert.doesNotMatch(workflow, /send_campaign|send_email|send_sms|spend/);
+  assert.doesNotMatch(workspace, /send|Send/);
   assert.match(page, /generate a marketing plan so Voom can prepare campaign drafts/);
-  assert.match(workspace, /email\/SMS campaign draft/);
-  assert.match(workspace, /nothing has been sent/);
 });
 
 test("new calendar posts are persisted instead of only mutating demo state", async () => {
@@ -89,7 +83,10 @@ test("new calendar posts are persisted instead of only mutating demo state", asy
   assert.match(modal, /voom:data-changed/);
   assert.match(modal, /nothing published externally/);
   assert.doesNotMatch(modal, /addPost/);
-  assert.match(page, /New posts and MARA-approved items are saved in Voom/);
+  // The calendar now renders only real workflow items — there is no sample
+  // dataset left to disclaim.
+  assert.match(page, /\/api\/voom\/workflow/);
+  assert.doesNotMatch(page, /Sample|illustration-only|isAug/);
 });
 
 test("legacy sample workspaces and notifications never claim external actions happened", async () => {

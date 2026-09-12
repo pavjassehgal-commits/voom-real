@@ -1,6 +1,8 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { executeConfirmedAction } from "@/lib/mara/tools";
 import { createClient } from "@/utils/supabase/server";
+import { createAdminClient } from "@/utils/supabase/admin";
+import { resyncWorkflowItem } from "@/lib/voom/workflow/service";
 import { z } from "zod";
 import { productionStatusFor, reelProductionMethods } from "@/lib/mara/reel-production";
 
@@ -77,6 +79,13 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (!claimed) return currentAction(db, user.id, id);
   try {
     const result = await executeConfirmedAction({ db, ownerId: user.id, conversationId: claimed.conversation_id }, claimed);
+    // Approval advances the SAME workflow item: the approved draft is mirrored
+    // onto the Content Calendar and, when its media is ready, into the
+    // existing Instagram publishing queue. No second copy is created.
+    const sourceDraftId = claimed.sanitized_arguments?.sourceDraftId;
+    if (claimed.tool_name === "propose_calendar_item" && typeof sourceDraftId === "string") {
+      await resyncWorkflowItem(createAdminClient(), user.id, sourceDraftId).catch(() => null);
+    }
     await db.from("mara_tool_runs").update({ status: "succeeded", result_summary: result.summary.slice(0, 1000), completed_at: new Date().toISOString() }).eq("pending_action_id", id).eq("owner_user_id", user.id);
     const { data } = await db.from("mara_pending_actions").select("id,conversation_id,message_id,tool_name,summary,old_value,new_value,status,result_summary,error_summary,created_at,updated_at,executed_at").eq("id", id).eq("owner_user_id", user.id).single();
     return Response.json({ action: data, message: result.summary });

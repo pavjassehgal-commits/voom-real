@@ -7,6 +7,7 @@ import { Icon } from "../icons";
 import { ModalBody, ModalFoot, ModalHead, ModalShell } from "../ui/Modal";
 import { Btn, Field, Input, Textarea } from "../ui/primitives";
 import type { Channel } from "@/lib/voom/types";
+import { DEFAULT_TIMEZONE, localDate } from "@/lib/voom/timezone";
 
 const CHANNELS: [string, Channel][] = [
   ["🎬", "Reel"],
@@ -20,12 +21,16 @@ export function ComposeModal({ day }: { day?: number }) {
   const { toast } = useVoomActions();
   const pack = useCurrentPack();
   const { brand } = useVoomState();
-  const d = day || 24;
 
   const [channel, setChannel] = useState<Channel>("Reel");
   const [topic, setTopic] = useState(pack.p[0]);
   const [caption, setCaption] = useState("");
-  const [date, setDate] = useState(`2026-08-${String(d).padStart(2, "0")}`);
+  // Composing always starts from the real current date in the account
+  // timezone — optionally on the calendar day the user clicked.
+  const [date, setDate] = useState(() => {
+    const today = localDate(new Date(), DEFAULT_TIMEZONE);
+    return day ? `${today.slice(0, 8)}${String(day).padStart(2, "0")}` : today;
+  });
   const [time, setTime] = useState("19:10");
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);

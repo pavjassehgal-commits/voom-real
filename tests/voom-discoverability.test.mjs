@@ -10,11 +10,12 @@ test("Marketing Plan clearly labels Reel recommendations and links to the real A
     read("components/voom/operating/ApprovalsBoard.tsx"),
     read("app/app/(shell)/reels/page.tsx"),
   ]);
-  assert.match(workspace, /MARA only recommends a/);
-  assert.match(workspace, /Reel<\/Tag>/);
-  assert.match(workspace, /Production choice needed/);
-  assert.match(workspace, /No Reel recommendation in this plan/);
-  assert.match(workspace, /Refresh the plan to get a new mix/);
+  // The Marketing Plan renders the real rolling horizon, with each item's own
+  // content type, and links into the same Approvals / Calendar workflow.
+  assert.match(workspace, /contentTypeLabel/);
+  assert.match(workspace, /Posting frequency/);
+  assert.match(workspace, /\/app\/approvals/);
+  assert.match(workspace, /\/app\/calendar/);
   assert.match(board, /Reel production choices live here too/);
   assert.match(board, /Create with MARA/);
   assert.match(board, /Generate or refresh your Marketing Plan/);
@@ -27,13 +28,13 @@ test("Marketing Plan clearly labels Reel recommendations and links to the real A
 
 test("Reel production choices remain plan-driven and never fake production", async () => {
   const [workflow, planning, tools, produce] = await Promise.all([
-    read("lib/mara/plan-workflow.ts"),
-    read("lib/mara/planning.ts"),
+    read("lib/voom/workflow/service.ts"),
+    read("lib/voom/cadence.ts"),
     read("lib/mara/tools.ts"),
     read("app/api/reels/produce/[actionId]/route.ts"),
   ]);
-  assert.match(workflow, /post\.contentType === "reel"/);
-  assert.match(planning, /contentType: z\.enum\(\["feed", "reel"\]\)/);
+  assert.match(workflow, /draftKindForContentType/);
+  assert.match(planning, /CONTENT_TYPES = \["post", "reel", "story"\]/);
   assert.match(tools, /classifyReelProduction/);
   assert.match(produce, /productionStatus: "produced"/);
   assert.match(produce, /Nothing was published/);

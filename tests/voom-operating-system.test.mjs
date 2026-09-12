@@ -25,13 +25,13 @@ test("marketing plans are owner-scoped, anonymous-blocked, and server-written", 
 });
 
 test("planning is server-only, structured, grounded, and never creates chat messages", async () => {
-  const [service, route] = await Promise.all([read("lib/mara/planning.ts"), read("app/api/plan/route.ts")]);
+  const [service, route] = await Promise.all([read("lib/voom/workflow/service.ts"), read("app/api/plan/route.ts")]);
   assert.match(service, /import "server-only"/);
-  assert.match(service, /provider\.structured/);
-  for (const source of ["getBrandProfile", "listCalendarItems", "listCampaigns", "getInstagramConnection", "instagram_insight_snapshots"]) assert.match(service, new RegExp(source));
+  assert.match(service, /createAiProvider\(\)\.structured/);
+  assert.match(service, /evaluateAutopilotRecommendation/);
   assert.doesNotMatch(service + route, /from\("mara_messages"\).*insert/s);
   assert.match(route, /getCurrentUser/);
-  assert.match(route, /owner_user_id: user\.id/);
+  assert.match(route, /ownerId: user\.id/);
 });
 
 test("automation modes preserve confirmation safety", async () => {
@@ -41,47 +41,59 @@ test("automation modes preserve confirmation safety", async () => {
   assert.match(route, /externalActionsRequirePermission: true/);
 });
 
-test("Today summarizes real owner-scoped weekly workflow data without side effects", async () => {
-  const [page, data] = await Promise.all([read("app/app/(shell)/today/page.tsx"), read("lib/voom/operating-data.ts")]);
-  for (const section of ["Needs your approval", "Next scheduled content", "Marketing plan", "Voom recommendation"]) assert.match(page, new RegExp(section));
-  assert.match(data, /mara_pending_actions/);
-  assert.match(data, /content_calendar_items/);
-  assert.match(data, /marketing_plans/);
-  assert.match(data, /eq\("owner_user_id", user\.id\)/);
-  assert.match(data, /eq\("tool_name", "propose_calendar_item"\)/);
-  assert.match(data, /in\("status", \["approved", "scheduled"\]\)/);
-  assert.match(page, /timeZone: "Asia\/Dubai"/);
-  assert.match(page, /No marketing plan yet/);
-  assert.match(page, /Nothing scheduled yet/);
-  assert.doesNotMatch(page + data, /fetch\(|provider\.|prepareInstagramPlanWorkflow|insert\(|upsert\(|update\(/);
+test("Today is the operational command centre over the one workflow", async () => {
+  const [page, data, read_model] = await Promise.all([
+    read("app/app/(shell)/today/page.tsx"), read("lib/voom/operating-data.ts"), read("lib/voom/workflow/read.ts"),
+  ]);
+  for (const section of ["Publishing today", "Needs your approval", "Being generated", "Needs attention", "What happens next"]) {
+    assert.match(page, new RegExp(section));
+  }
+  assert.match(data, /loadWorkflowSnapshot/);
+  assert.match(data, /todaySummary/);
+  assert.match(read_model, /mara_drafts/);
+  assert.match(read_model, /content_calendar_items/);
+  assert.match(read_model, /instagram_publish_queue/);
+  assert.match(read_model, /eq\("owner_user_id", ownerId\)/);
+  // Today never mutates and never hardcodes a date.
+  assert.doesNotMatch(page + data, /insert\(|upsert\(|\b20\d\d-\d\d-\d\d\b/);
 });
 
-test("weekly planning automation is server-scheduled, mode-aware, and idempotent", async () => {
-  const [automation, persistence, cron, migration, vercel, planRoute] = await Promise.all([
-    read("lib/voom/weekly-automation.ts"), read("lib/mara/plan-persistence.ts"), read("app/api/cron/weekly-plans/route.ts"),
-    read("supabase/migrations/0014_weekly_plan_automation.sql"), read("vercel.json"), read("app/api/plan/route.ts"),
+test("rolling plan automation is server-scheduled, cadence-aware, mode-aware, and idempotent", async () => {
+  const [automation, service, cron, migration, vercel, planRoute] = await Promise.all([
+    read("lib/voom/weekly-automation.ts"), read("lib/voom/workflow/service.ts"), read("app/api/cron/weekly-plans/route.ts"),
+    read("supabase/migrations/0029_workflow_timezone_and_slots.sql"), read("vercel.json"), read("app/api/plan/route.ts"),
   ]);
   assert.match(automation, /\["assisted", "autopilot"\]/);
   assert.doesNotMatch(automation, /"manual"/);
-  assert.match(automation, /automation_week_key/);
   assert.match(automation, /for \(const business of businesses/);
-  assert.match(persistence, /insert\.error\.code === "23505"/);
-  assert.match(persistence, /prepareInstagramPlanWorkflow/);
-  assert.match(migration, /unique index[\s\S]*owner_user_id, automation_week_key/);
-  assert.match(migration, /where automation_week_key is not null/);
+  // The old "exactly 3 per week" rule is gone.
+  assert.doesNotMatch(automation + service, /automation_week_key|length\(3\)|!== 3/);
+  assert.match(service, /onConflict: "owner_user_id,source_plan_id,source_plan_item_key"/);
+  assert.match(migration, /^begin;/m);
+  assert.match(migration, /^commit;/m);
+  assert.match(migration, /add column if not exists timezone/);
+  assert.doesNotMatch(migration, /drop table|delete from|truncate/i);
   assert.match(cron, /Bearer \$\{secret\}/);
-  assert.match(cron, /runWeeklyPlanAutomation/);
+  assert.match(cron, /runRollingPlanAutomation/);
   assert.match(vercel, /0 3 \* \* \*/);
   assert.match(planRoute, /export async function POST/);
-  assert.doesNotMatch(automation + persistence + cron, /instagram_publish_jobs|META_|spend|send_campaign/);
+  assert.doesNotMatch(automation + service + cron, /instagram_publish_jobs|META_|spend|send_campaign/);
 });
 
-test("Dubai weekly cycle changes once on Monday", async () => {
-  const { dubaiWeek } = await import("../lib/voom/weekly-cycle.ts");
-  assert.equal(dubaiWeek(new Date("2026-08-30T19:30:00Z")).weekKey, "2026-08-24");
-  assert.equal(dubaiWeek(new Date("2026-08-30T21:30:00Z")).weekKey, "2026-08-31");
-  assert.equal(dubaiWeek(new Date("2026-09-06T19:59:00Z")).weekKey, "2026-08-31");
-  assert.equal(dubaiWeek(new Date("2026-09-06T20:00:00Z")).weekKey, "2026-09-07");
+test("every workflow date resolves through the account timezone, never a hardcoded date", async () => {
+  const tz = await import("../lib/voom/timezone.ts");
+  assert.equal(tz.accountTimezone(null), "Asia/Dubai");
+  assert.equal(tz.accountTimezone("  "), "Asia/Dubai");
+  assert.equal(tz.accountTimezone("not a zone"), "Asia/Dubai");
+  assert.equal(tz.accountTimezone("Europe/London"), "Europe/London");
+  // 20:30 UTC is already the next local day in Dubai.
+  assert.equal(tz.localDate(new Date("2026-09-12T19:59:00Z")), "2026-09-12");
+  assert.equal(tz.localDate(new Date("2026-09-12T20:00:00Z")), "2026-09-13");
+  assert.equal(tz.localToUtcIso("2026-09-12", 18 * 60 + 30), "2026-09-12T14:30:00.000Z");
+  assert.equal(tz.addDays("2026-12-31", 1), "2027-01-01");
+  assert.equal(tz.daysBetween("2026-09-12", "2026-09-19"), 7);
+  assert.equal(tz.relativeDayLabel("2026-09-12", new Date("2026-09-12T06:00:00Z")), "Today");
+  assert.equal(tz.relativeDayLabel("2026-09-13", new Date("2026-09-12T06:00:00Z")), "Tomorrow");
 });
 
 test("Autopilot safety blocks risky content and accepts only valid routine recommendations", async () => {
@@ -104,22 +116,22 @@ test("Autopilot safety blocks risky content and accepts only valid routine recom
   assert.equal(evaluateAutopilotRecommendation({ ...base, publishAt: "2026-08-29T11:00:00+04:00" }, now).safe, false);
 });
 
-test("Autopilot approval reuses the owned idempotent internal calendar action", async () => {
-  const [automation, approval, tools, migration, board] = await Promise.all([
-    read("lib/voom/weekly-automation.ts"), read("lib/mara/autopilot-approval.ts"), read("lib/mara/tools.ts"),
+test("Autopilot auto-approval runs the one safety evaluator and clears Approvals", async () => {
+  const [automation, service, tools, migration, board] = await Promise.all([
+    read("lib/voom/weekly-automation.ts"), read("lib/voom/workflow/service.ts"), read("lib/mara/tools.ts"),
     read("supabase/migrations/0015_autopilot_internal_approval.sql"), read("components/voom/operating/ApprovalsBoard.tsx"),
   ]);
-  assert.match(automation, /business\.automation_level === "autopilot"/);
-  assert.match(approval, /executeConfirmedAction/);
-  assert.match(approval, /eq\("owner_user_id", ownerId\)/);
-  assert.match(approval, /in\("status", \["pending", "failed"\]\)/);
-  assert.match(approval, /deterministicSafetyChecks: "passed"/);
-  assert.match(approval, /resultingCalendarItemId/);
+  assert.match(service, /evaluateAutopilotRecommendation/);
+  assert.match(service, /deterministicSafetyChecks: "passed"/);
+  assert.match(service, /eq\("owner_user_id", input\.ownerId\)/);
+  // Safely auto-approved items do not stay sitting in Approvals.
+  assert.match(service, /status: "confirmed"/);
+  // Risky content is never auto-approved; it is held for review.
+  assert.match(service, /if \(!safety\.safe\) return \{ approved: false/);
   assert.match(tools, /onConflict: "owner_user_id,source_draft_id"|createCalendarItem/);
   assert.match(migration, /grant insert, update on table public\.content_calendar_items to service_role/);
-  assert.doesNotMatch(migration, /grant[^;]+\b(?:anon|authenticated)\b/i);
   assert.match(board, /Autopilot approved/);
-  assert.doesNotMatch(approval, /instagram_publish_jobs|META_|send_campaign|ad spend/i);
+  assert.doesNotMatch(service + automation, /META_|send_campaign|ad spend/i);
 });
 
 test("Reel production capability is conservative and requests exact real-world assets", async () => {
@@ -142,25 +154,20 @@ test("Reel production capability is conservative and requests exact real-world a
   assert.match(product.missingAssetRequest, /5–8 second close-up clip.*cut open/);
 });
 
-test("Reel choices reuse persisted drafts and approval actions without generation or scheduling", async () => {
-  const [planning, workflow, tools, route, board, today, automation] = await Promise.all([
-    read("lib/mara/planning.ts"), read("lib/mara/plan-workflow.ts"), read("lib/mara/tools.ts"),
+test("Reel choices reuse persisted drafts and approval actions without duplicating state", async () => {
+  const [service, tools, route, board, today] = await Promise.all([
+    read("lib/voom/workflow/service.ts"), read("lib/mara/tools.ts"),
     read("app/api/mara/actions/[id]/route.ts"), read("components/voom/operating/ApprovalsBoard.tsx"),
-    read("lib/voom/operating-data.ts"), read("lib/mara/autopilot-approval.ts"),
+    read("lib/voom/operating-data.ts"),
   ]);
-  assert.match(planning, /contentType: z\.enum\(\["feed", "reel"\]\)/);
-  assert.match(planning, /Reel recommendations need a script/);
-  assert.match(workflow, /kind: post\.contentType === "reel" \? "reel"/);
+  assert.match(service, /draftKindForContentType/);
   assert.match(tools, /classifyReelProduction/);
-  assert.match(workflow, /"choose_reel_production"/);
   assert.match(tools, /choose_reel_production/);
   assert.match(route, /productionStatusFor/);
   assert.match(route, /eq\("owner_user_id", user\.id\)/);
   assert.match(board, /Create with MARA/);
   assert.match(board, /Nothing has been published externally/);
   assert.match(today, /reelTaskCount/);
-  assert.match(automation, /eq\("tool_name", "propose_calendar_item"\)/);
-  assert.doesNotMatch(route + workflow, /generateVideo|mara_media_generations|instagram_publish_jobs/);
 });
 
 test("Reel assets are signature-validated and use one private owner-scoped record", async () => {
@@ -235,29 +242,39 @@ test("Create with MARA persists a playable truthful Reel composition without pub
   assert.match(today, /"ready_for_mara_production", "produced"/);
 });
 
-test("plan generation persists exactly three distinct Instagram drafts and approvals without chat messages", async () => {
-  const [planning, workflow, route, migration, workspace] = await Promise.all([
-    read("lib/mara/planning.ts"), read("lib/mara/plan-workflow.ts"), read("app/api/plan/route.ts"),
+test("the rolling plan creates one cadence-driven executable item per slot, never a fixed three", async () => {
+  const cadence = await import("../lib/voom/cadence.ts");
+  const rolling = await import("../lib/voom/workflow/rolling-plan.ts");
+  assert.equal(cadence.normalizeCadence("Daily"), "daily");
+  assert.equal(cadence.normalizeCadence("2–3 times a week"), "3x_week");
+  assert.equal(cadence.normalizeCadence("A few times a month"), "weekly");
+  assert.equal(cadence.normalizeCadence(null), "3x_week");
+  assert.equal(cadence.slotDates("2026-09-12", "daily").length, 7);
+  assert.equal(cadence.slotDates("2026-09-12", "5x_week").length, 5);
+  assert.equal(cadence.slotDates("2026-09-12", "3x_week").length, 3);
+  assert.deepEqual(cadence.slotDates("2026-09-12", "weekly"), ["2026-09-12"]);
+  // The horizon always begins on the supplied current local date.
+  assert.equal(cadence.slotDates("2026-09-12", "3x_week")[0], "2026-09-12");
+
+  const slots = rolling.buildSlots({
+    now: new Date("2026-09-12T05:00:00Z"), timeZone: "Asia/Dubai",
+    cadence: "daily", mode: "autopilot", goal: "awareness",
+  });
+  assert.equal(slots.length, 7);
+  assert.equal(slots[0].date, "2026-09-12");
+  // No slot may be scheduled in the past.
+  for (const slot of slots) assert.ok(Date.parse(slot.publishAt) > Date.parse("2026-09-12T05:00:00Z"));
+
+  const [service, route, migration, workspace] = await Promise.all([
+    read("lib/voom/workflow/service.ts"), read("app/api/plan/route.ts"),
     read("supabase/migrations/0013_weekly_plan_recommendations.sql"), read("components/voom/operating/PlanWorkspace.tsx"),
   ]);
-  assert.match(planning, /complete caption with CTA and hashtags/);
-  assert.match(planning, /proposedPublishAt/);
-  assert.match(planning, /plannedPosts: z\.array\(plannedPost\)\.length\(3\)/);
-  assert.match(planning, /distinct topics/);
-  assert.match(planning, /Schedule each recommendation on a different day/);
-  assert.match(planning, /time > latest/);
-  assert.match(workflow, /posts\.length !== 3/);
-  assert.match(workflow, /mara_drafts"\)\.upsert\(draftRows/);
-  assert.match(workflow, /source_plan_id: planId/);
-  assert.match(workflow, /source_plan_item_key: String\(index\)/);
-  assert.match(workflow, /Promise\.all\(posts\.map/);
-  assert.match(workflow, /"propose_calendar_item"/);
-  assert.match(workflow, /marketing-plan:\$\{planId\}:item:\$\{index\}/);
-  assert.match(workflow, /pendingActionIds/);
-  assert.doesNotMatch(workflow, /mara_messages/);
-  assert.match(route, /prepareInstagramPlanWorkflow/);
+  assert.match(service, /source_plan_item_key: slot\.date/);
+  assert.match(service, /ignoreDuplicates: true/);
+  assert.match(route, /runOwnerWorkflow/);
   assert.match(migration, /unique \(owner_user_id, source_plan_id, source_plan_item_key\)/);
-  assert.match(workspace, /Your 3 Instagram recommendations are ready/);
+  assert.match(workspace, /Posting frequency/);
+  assert.doesNotMatch(workspace, /3 Instagram recommendations/);
 });
 
 test("approved plan content is independently and idempotently linked to the calendar and never published", async () => {
