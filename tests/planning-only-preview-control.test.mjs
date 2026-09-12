@@ -321,15 +321,23 @@ test("the Marketing Plan button is the preview action only, never the full reple
   assert.match(control, /\{busy \? "Previewing…" : PLANNING_ONLY_PREVIEW_LABEL\}/);
 
   // The button's handler is the preview action — it can never call `build`,
-  // the existing full replenish/cadence handler in PlanWorkspace.
+  // the existing full replenish/cadence handler in PlanWorkspace. The request
+  // goes through the in-flight gate, and a gate-rejected click sends nothing.
   assert.match(control, /onClick=\{\(\) => void previewPlan\(\)\}/);
   const handler = control.slice(control.indexOf("async function previewPlan()"));
   const body = handler.slice(0, handler.indexOf("\n  }\n"));
-  assert.match(body, /requestPlanningOnlyPreview\(\)/);
+  assert.match(body, /beginPlanningOnlyPreview\(\)/);
+  assert.match(body, /if \(!request\) return;/);
   assert.doesNotMatch(body, /\bbuild\(/);
   assert.doesNotMatch(body, /cadence/);
   assert.doesNotMatch(control, /\bbuild\(/);
   assert.doesNotMatch(control, /CADENCE|normalizeCadence/);
+  // One click cannot fire twice: the gated entry is the only request path in
+  // the control, the button is a plain (non-submit) button, and it renders
+  // disabled for the whole in-flight window.
+  assert.doesNotMatch(control, /requestPlanningOnlyPreview/);
+  assert.match(control, /type="button"/);
+  assert.match(control, /disabled=\{busy\}/);
 
   // Nothing in the temporary control reaches media, approval, calendar,
   // queueing or publishing — and no owner identity is ever sent.
@@ -346,4 +354,115 @@ test("the Marketing Plan button is the preview action only, never the full reple
   assert.match(helper, /body: PLANNING_ONLY_BODY/);
   assert.match(helper, /PLANNING_ONLY_BODY = JSON\.stringify\(\{ stage: "planning_only" \}\)/);
   assert.doesNotMatch(helper, /stage:\s*"(full|scheduled|publishing)"/);
+});
+
+// ---------------------------------------------------------------------------
+// 4. One click can never issue a second planning request (regression: two
+//    POST /api/plan planning-only runs 40s apart from one click).
+// ---------------------------------------------------------------------------
+
+/** A fetch that records the call and holds the first one open until resolved. */
+function deferredFetch() {
+  const calls = [];
+  let settle;
+  const pending = new Promise((resolve) => { settle = resolve; });
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, init });
+    return pending;
+  };
+  return { calls, fetchImpl, resolve: settle };
+}
+
+test("one click cannot start a second planning request while the first is in flight", async () => {
+  const first = deferredFetch();
+
+  const started = preview.beginPlanningOnlyPreview(first.fetchImpl);
+  assert.ok(started, "the first click starts exactly one request");
+  assert.equal(first.calls.length, 1, "one POST is on the wire");
+  assert.equal(first.calls[0].url, "/api/plan");
+  assert.equal(first.calls[0].init.method, "POST");
+  assert.equal(first.calls[0].init.body, '{"stage":"planning_only"}');
+  assert.equal(preview.planningOnlyPreviewInFlight(), true);
+
+  // Every duplicate path — a second click before React commits `busy`, a
+  // double-tap, or a click from a remounted card — is refused by the gate and
+  // sends nothing while the first request is still running.
+  assert.equal(preview.beginPlanningOnlyPreview(first.fetchImpl), null, "in-flight clicks send nothing");
+  assert.equal(first.calls.length, 1, "still exactly one POST while in flight");
+
+  first.resolve({ ok: true, json: async () => ({ run: planningRun() }) });
+  assert.equal((await started).created, planningRun().created);
+  assert.equal(preview.planningOnlyPreviewInFlight(), false, "the gate reopens once the run settles");
+
+  // And the next click afterwards starts a fresh single request again.
+  const later = recordingFetch(async () => ({ ok: true, json: async () => ({ run: planningRun() }) }));
+  await preview.beginPlanningOnlyPreview(later.fetchImpl);
+  assert.equal(later.calls.length, 1);
+});
+
+test("a failed preview clears the gate so the next click can retry cleanly", async () => {
+  const failing = recordingFetch(async () => ({ ok: false, json: async () => ({ error: "Voom is already building your content." }) }));
+  const attempt = preview.beginPlanningOnlyPreview(failing.fetchImpl);
+  assert.equal(preview.beginPlanningOnlyPreview(failing.fetchImpl), null, "still guarded while the failure is in flight");
+  assert.equal(failing.calls.length, 1, "no retry storm");
+  await assert.rejects(() => attempt, /already building/);
+  assert.equal(preview.planningOnlyPreviewInFlight(), false, "a rejection also reopens the gate");
+
+  const retry = recordingFetch(async () => ({ ok: true, json: async () => ({ run: planningRun() }) }));
+  await preview.beginPlanningOnlyPreview(retry.fetchImpl);
+  assert.equal(retry.calls.length, 1, "the next click works again");
+});
+
+test("the preview button is a plain, disabled-while-busy button rendered by a real <button>", async () => {
+  const [control, primitives] = await Promise.all([
+    read("components/voom/operating/PlanningOnlyPreview.tsx"),
+    read("components/voom/ui/primitives.tsx"),
+  ]);
+  // The control renders disabled for the whole in-flight window…
+  assert.match(control, /disabled=\{busy\}/);
+  assert.match(control, /setBusy\(true\)/);
+  assert.match(control, /finally\s*\{\s*setBusy\(false\);/);
+  // …and can never act as an implicit form submit.
+  assert.match(control, /<Btn type="button"/);
+  // Btn passes `disabled` straight onto a native <button>, which the browser
+  // refuses to click while disabled.
+  assert.match(primitives, /<button\s*\n?\s*className=/);
+  assert.match(primitives, /\{\.\.\.props\}/);
+  assert.match(primitives, /disabled:pointer-events-none/);
+});
+
+test("backend planning-only idempotency is unchanged: a second run reuses every slot", async () => {
+  // Two consecutive planning-only runs of the REAL engine against one store:
+  // the second reuses all 7 slots and creates nothing, and the run still stops
+  // before media, approval, calendar, queue and publishing.
+  const store = createStore();
+  const first = await rolling.ensureRollingPlan(createPorts(store), {
+    now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "g", stage: "planning_only",
+  });
+  assert.equal(first.stage, "planning_only");
+  assert.equal(first.created, 7);
+  assert.equal(first.reused, 0);
+  assert.equal(store.drafts.size, 7);
+
+  const second = await rolling.ensureRollingPlan(createPorts(store), {
+    now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "g", stage: "planning_only",
+  });
+  assert.equal(second.stage, "planning_only");
+  assert.equal(second.created, 0);
+  assert.equal(second.reused, 7, "the duplicate click's run reuses every existing slot");
+  assert.equal(store.drafts.size, 7, "still exactly 7 drafts — no duplicates");
+  assert.equal(store.media, 0, "no media jobs");
+  assert.equal(store.approvals, 0, "no approval records");
+  assert.equal(store.autoApproved, 0);
+  assert.equal(store.calendar, 0);
+  assert.equal(store.queue, 0);
+
+  // The route still scopes the run to the authenticated owner, still maps only
+  // the explicit planning-only stage, and the service still upserts
+  // idempotently on (owner, plan, slot date).
+  const [route, service] = await Promise.all([read("app/api/plan/route.ts"), read("lib/voom/workflow/service.ts")]);
+  assert.match(route, /body\.stage === "planning_only"/);
+  assert.match(route, /runOwnerWorkflow\(admin, \{ ownerId: user\.id, cadence, mode, stage \}\)/);
+  assert.match(service, /onConflict: "owner_user_id,source_plan_id,source_plan_item_key"/);
+  assert.match(service, /ignoreDuplicates: true/);
 });

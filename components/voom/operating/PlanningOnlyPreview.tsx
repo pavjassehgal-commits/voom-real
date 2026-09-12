@@ -18,10 +18,10 @@ import { useState } from "react";
 import { Icon } from "@/components/voom/icons";
 import { Btn, Card, StatMini, Tag } from "@/components/voom/ui/primitives";
 import {
+  beginPlanningOnlyPreview,
   planningPreviewSummary,
   PLANNING_ONLY_BODY,
   PLANNING_ONLY_ENDPOINT,
-  requestPlanningOnlyPreview,
   type PlanningPreviewRun,
   type PlanningPreviewSummary,
 } from "@/lib/voom/planning-only-preview";
@@ -34,11 +34,16 @@ export function PlanningOnlyPreviewCard({ className }: { className?: string }) {
   const [run, setRun] = useState<PlanningPreviewRun | null>(null);
 
   // The preview action: one request, the planning-only stage, nothing else.
+  // beginPlanningOnlyPreview is a synchronous in-flight gate: if a request is
+  // already running (double click before React commits `busy`, or a click from
+  // a remounted card), it returns null and nothing is sent.
   async function previewPlan() {
+    const request = beginPlanningOnlyPreview();
+    if (!request) return;
     setBusy(true);
     setError("");
     try {
-      setRun(await requestPlanningOnlyPreview());
+      setRun(await request);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Voom couldn't preview your plan right now.");
     } finally {
@@ -57,7 +62,7 @@ export function PlanningOnlyPreviewCard({ className }: { className?: string }) {
             calendar scheduling, no Instagram queue, no publishing.
           </p>
         </div>
-        <Btn variant="outline" size="sm" disabled={busy} onClick={() => void previewPlan()}>
+        <Btn type="button" variant="outline" size="sm" disabled={busy} onClick={() => void previewPlan()}>
           <Icon name="eye" size={14} />{busy ? "Previewing…" : PLANNING_ONLY_PREVIEW_LABEL}
         </Btn>
       </div>
