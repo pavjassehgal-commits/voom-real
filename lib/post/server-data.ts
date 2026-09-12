@@ -11,7 +11,7 @@ import {
 } from "./core";
 import { persistUploadedPostAsset, PostAssetPersistError } from "./asset-persist";
 import { cancelPublishItem, enqueuePublishItem } from "@/lib/instagram/publish-queue";
-import { isPublishableMime, publishMediaKindForMime, truncateCaption } from "@/lib/instagram/publishing";
+import { isPublishableMime, publishMediaKindForMime, truncateCaption, type PublishMediaKind } from "@/lib/instagram/publishing";
 
 export const POST_ASSET_BUCKET = "mara-media";
 /** Short-lived signed previews; storage_path itself never leaves the server. */
@@ -275,6 +275,18 @@ function normalizeFormatInput(value: unknown): PostFormat {
   return value === "4:5" || value === "9:16" ? value : "1:1";
 }
 
+/**
+ * Cancels an approved item's schedule mirror: removes the calendar row and
+ * cancels the queue row. Published or in-flight items are never cancelled by
+ * the queue function. The draft row itself is untouched.
+ */
+export async function cancelPostSchedule(admin: AdminClient, ownerId: string, draftId: string): Promise<void> {
+  const { data: existing } = await admin.from("content_calendar_items").select("id")
+    .eq("owner_user_id", ownerId).eq("source_draft_id", draftId).maybeSingle();
+  if (existing?.id) await admin.from("content_calendar_items").delete().eq("owner_user_id", ownerId).eq("id", existing.id);
+  await cancelPublishItem(admin, ownerId, draftId).catch(() => false);
+}
+
 /** Approves a post. Approval saves state only; nothing is published. */
 export async function approvePostDraft(admin: AdminClient, ownerId: string, draftId: string): Promise<PostView | null> {
   const { data, error } = await admin.from("mara_drafts").update({ status: "approved" })
@@ -320,20 +332,60 @@ export async function syncPostToCalendar(admin: AdminClient, ownerId: string, dr
  * repeated saves/approvals never create a second publish identity, and a
  * published item is never re-queued.
  *
- * A post with no schedule, no stored visual, or an unpublishable file type is
- * NOT queued — Voom would rather show nothing than promise a publish it cannot
- * perform.
+ * A post with no schedule, or an unpublishable file type is NOT queued — Voom
+ * would rather show nothing than promise a publish it cannot perform.
+ *
+ * A post whose visual is STILL GENERATING is held truthfully in
+ * 'waiting_for_media': the schedule stays real, and when the visual is stored
+ * the next sync flips the row to 'scheduled' and the worker publishes it. It
+ * is never silently cancelled — that was the root cause of the production
+ * 6:30 PM incident where an item stayed "Scheduled" in the UI while no queue
+ * row existed or the row had been withdrawn.
  */
 export async function syncPostToPublishQueue(
   admin: AdminClient, ownerId: string, draftId: string, view: PostView, publishAt: string,
 ): Promise<void> {
-  if (!view.scheduledAt || !view.visualReady || !view.visual) {
+  if (!view.scheduledAt) {
     await cancelPublishItem(admin, ownerId, draftId).catch(() => false);
+    return;
+  }
+  // No stored visual yet: hold the schedule truthfully instead of dropping it.
+  if (!view.visualReady || !view.visual) {
+    // The schedule is already dead (well past its time with no media): never
+    // re-arm it — the item derives Missed and the user decides.
+    if (isLateSchedule(view.scheduledAt)) {
+      await cancelPublishItem(admin, ownerId, draftId).catch(() => false);
+      return;
+    }
+    const mediaKind = queueMediaKindForDraft(view);
+    if (!mediaKind) {
+      // No publishable route for this draft kind at all — cancelling is the
+      // truthful state here (nothing could ever publish it).
+      await cancelPublishItem(admin, ownerId, draftId).catch(() => false);
+      return;
+    }
+    await enqueuePublishItem(admin, {
+      ownerId,
+      draftId,
+      calendarItemId: await findCalendarItemId(admin, ownerId, draftId),
+      mediaKind,
+      caption: mediaKind === "story" ? "" : truncateCaption(view.composedCaption),
+      scheduledAt: view.scheduledAt ?? publishAt,
+      waitingForMedia: true,
+    }).catch(() => null);
     return;
   }
   if (!isPublishableMime(view.visual.mimeType)) return;
   const mediaKind = publishMediaKindForMime(view.visual.mimeType, view.kind);
   if (!mediaKind) return;
+  // Bounded late-media grace: a visual finishing minutes after its scheduled
+  // time still publishes (the existing late-arriving-visual policy); a visual
+  // arriving HOURS late never auto-publishes — the queue row is withdrawn and
+  // the item derives Missed so the user explicitly chooses Post now.
+  if (isLateSchedule(view.scheduledAt)) {
+    await cancelPublishItem(admin, ownerId, draftId).catch(() => false);
+    return;
+  }
   const calendarItemId = await findCalendarItemId(admin, ownerId, draftId);
   await enqueuePublishItem(admin, {
     ownerId,
@@ -345,6 +397,25 @@ export async function syncPostToPublishQueue(
     caption: mediaKind === "story" ? "" : truncateCaption(view.composedCaption),
     scheduledAt: view.scheduledAt ?? publishAt,
   }).catch(() => null);
+}
+
+/**
+ * True when a schedule is so far past its time that publishing it would be an
+ * hours-late silent publish. The grace matches the missed-derivation window.
+ */
+function isLateSchedule(scheduledAt: string | null): boolean {
+  if (!scheduledAt) return false;
+  const value = Date.parse(scheduledAt);
+  return Number.isFinite(value) && value < Date.now() - 20 * 60_000;
+}
+
+/** The publish media kind a draft will use once its visual exists. */
+function queueMediaKindForDraft(view: PostView): PublishMediaKind | null {
+  if (view.kind === "story") return "story";
+  if (view.kind === "reel") return "reel";
+  // Feed posts depend on the mime type; image-only. The visual will decide —
+  // until then a feed post has no reserved kind, so nothing is queued.
+  return null;
 }
 
 /**

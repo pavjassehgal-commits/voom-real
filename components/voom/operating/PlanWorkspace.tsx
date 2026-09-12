@@ -1,12 +1,12 @@
 "use client";
 
-import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Icon } from "@/components/voom/icons";
-import { Btn, Card, Tag } from "@/components/voom/ui/primitives";
+import { Btn, Card } from "@/components/voom/ui/primitives";
 import { CADENCES, CADENCE_LABELS, type Cadence } from "@/lib/voom/cadence";
 import type { WorkflowSnapshot, WorkflowView } from "@/lib/voom/workflow/read";
 import { formatLocalDate } from "@/lib/voom/timezone";
+import { PlanItemCard } from "@/components/voom/operating/PlanItemCard";
 // TEMPORARY: planning-only preview control, dev-flag gated. Remove with
 // lib/voom/planning-only-preview.ts when the experiment ends.
 import { PlanningOnlyPreviewCard } from "@/components/voom/operating/PlanningOnlyPreview";
@@ -21,7 +21,9 @@ const SHOW_PLANNING_PREVIEW = process.env.NEXT_PUBLIC_ENABLE_PLANNING_PREVIEW ==
 /**
  * The Marketing Plan renders the real rolling horizon of executable workflow
  * items — the same items Today, Approvals, the Content Calendar and the
- * publishing queue act on. Changing the posting frequency rebuilds the
+ * publishing queue act on. Each item is ONE complete in-place workflow:
+ * produce -> review -> approve -> schedule -> publish (or missed/failed with
+ * truthful recovery actions). Changing the posting frequency rebuilds the
  * distribution. Dates come from the account timezone and always begin today.
  */
 export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
@@ -29,6 +31,8 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
   const [cadence, setCadence] = useState<Cadence>(initial.cadence);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  const refresh = useCallback((next: WorkflowSnapshot) => setSnapshot(next), []);
 
   async function build(next: Cadence) {
     setBusy(true); setError("");
@@ -45,6 +49,7 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
   }
 
   const byDay = groupByDay(snapshot.items);
+  const mix = mixLine(snapshot.items);
 
   return <div>
     <Card className="mb-4 p-4 sm:p-5">
@@ -52,6 +57,7 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
         <div>
           <span className="text-xs text-text-3">Rolling 7-day plan · {snapshot.timeZone.replace("_", " ")} · starts {formatLocalDate(snapshot.today)}</span>
           <p className="mt-0.5 text-sm font-semibold">{snapshot.planGoal ?? "No goal set yet"}</p>
+          {mix && <p className="mt-0.5 text-[12px] text-text-3">{mix}</p>}
         </div>
         <Btn variant="outline" size="sm" disabled={busy} onClick={() => void build(cadence)}>
           <Icon name="spark" size={14} />{busy ? "Building…" : snapshot.items.length ? "Replenish plan" : "Build plan"}
@@ -84,19 +90,14 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
           <b className="text-sm">{items[0].dayLabel}</b>
           <span className="text-xs text-text-3">{day}</span>
         </div>
-        {items.map((item) => <div key={item.draftId} className="grid gap-2 border-t border-line px-4 py-3.5 first:border-0 md:grid-cols-[110px_130px_1fr_140px]">
-          <span className="text-sm font-semibold">{item.localTime}</span>
-          <Tag tone="t-blue" className="self-start justify-self-start">{item.contentTypeLabel}</Tag>
-          <div className="min-w-0">
-            <b className="text-sm">{item.concept}</b>
-            <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-text-2">{item.caption}</p>
-          </div>
-          <Tag tone={tone(item.status)} className="self-start justify-self-start">{item.statusLabel}</Tag>
-        </div>)}
+        <div className="divide-y divide-line">
+          {items.map((item) => <div key={item.draftId} className="p-3 sm:p-4">
+            <PlanItemCard item={item} mode={snapshot.mode} timeZone={snapshot.timeZone} onChanged={refresh} />
+          </div>)}
+        </div>
       </Card>)}
       <p className="text-[12.5px] text-text-3">
-        These are the actual items Voom will execute. Approve them in <Link href="/app/approvals" className="font-semibold text-brand hover:underline">Approvals</Link> or
-        watch them in the <Link href="/app/calendar" className="font-semibold text-brand hover:underline">Content Calendar</Link>.
+        Every card above is the real item Voom will execute — produce, review, approve, schedule and publish it right here. It appears identically in <a href="/app/today" className="font-semibold text-brand hover:underline">Today</a>, <a href="/app/approvals" className="font-semibold text-brand hover:underline">Approvals</a> and the <a href="/app/calendar" className="font-semibold text-brand hover:underline">Content Calendar</a>.
       </p>
     </div> : <Card className="p-7 text-center sm:p-10">
       <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[var(--brand-soft)] text-brand"><Icon name="spark" size={24} /></span>
@@ -120,10 +121,14 @@ function groupByDay(items: WorkflowView[]): [string, WorkflowView[]][] {
   return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
 
-function tone(status: string) {
-  if (status === "published") return "t-green";
-  if (status === "failed") return "t-red";
-  if (status === "needs_approval") return "t-amber";
-  if (status === "generating" || status === "publishing") return "t-blue";
-  return "t-grey";
+/** Compact strategic-mix line: what the horizon actually contains. */
+function mixLine(items: WorkflowView[]): string | null {
+  if (!items.length) return null;
+  const counts = { post: 0, reel: 0, story: 0 } as Record<string, number>;
+  for (const item of items) counts[item.contentType] += 1;
+  const parts: string[] = [];
+  if (counts.post) parts.push(`${counts.post} post${counts.post === 1 ? "" : "s"}`);
+  if (counts.reel) parts.push(`${counts.reel} reel${counts.reel === 1 ? "" : "s"}`);
+  if (counts.story) parts.push(`${counts.story} stor${counts.story === 1 ? "y" : "ies"}`);
+  return `This week's mix: ${parts.join(" · ")}`;
 }

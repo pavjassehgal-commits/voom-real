@@ -41,6 +41,7 @@ export default async function TodayPage() {
         <Stat label="Generating" value={summary.generating.length} />
         <Stat label="Scheduled" value={summary.scheduled.length} />
         <Stat label="Published" value={summary.published.length} />
+        <Stat label="Missed" value={summary.missed.length} />
         <Stat label="Needs attention" value={summary.failed.length} />
       </div>
     </Card>
@@ -51,6 +52,8 @@ export default async function TodayPage() {
       empty="Nothing needs your decision right now." />
     <Section title="Being generated" icon="spark" href="/app/calendar" action="View schedule" items={summary.generating}
       empty="No media is generating." />
+    <Section title="Missed scheduled time" icon="clock" href="/app/calendar" action="Review missed items" items={summary.missed}
+      empty="Nothing missed its schedule." />
     <Section title="Needs attention" icon="warn" href="/app/calendar" action="Review failures" items={summary.failed}
       empty="Nothing has failed." />
 
@@ -62,7 +65,8 @@ export default async function TodayPage() {
   </div>;
 }
 
-function nextStep(mode: string, summary: { needsApproval: WorkflowView[]; failed: WorkflowView[]; next: WorkflowView | null; generating: WorkflowView[] }) {
+function nextStep(mode: string, summary: { needsApproval: WorkflowView[]; failed: WorkflowView[]; missed: WorkflowView[]; next: WorkflowView | null; generating: WorkflowView[] }) {
+  if (summary.missed.length) return `${summary.missed.length} item${summary.missed.length === 1 ? "" : "s"} missed its scheduled time. Voom never publishes hours late on its own — post it now or reschedule from the Marketing Plan.`;
   if (summary.failed.length) return `${summary.failed.length} item${summary.failed.length === 1 ? "" : "s"} stopped safely and can be retried. Nothing was published twice.`;
   if (summary.needsApproval.length) return `Approve ${summary.needsApproval.length} item${summary.needsApproval.length === 1 ? "" : "s"} and Voom will schedule ${summary.needsApproval.length === 1 ? "it" : "them"} automatically.`;
   if (summary.generating.length) return "MARA is generating the visuals. Items move to Scheduled on their own once the media is stored.";
@@ -113,7 +117,7 @@ export function WorkflowRow({ item }: { item: WorkflowView }) {
 export function statusTone(status: string) {
   if (status === "published") return "t-green";
   if (status === "failed") return "t-red";
-  if (status === "needs_approval") return "t-amber";
-  if (status === "generating" || status === "publishing") return "t-blue";
+  if (status === "missed" || status === "needs_approval" || status === "ready_for_review") return "t-amber";
+  if (status === "generating" || status === "publishing" || status === "scheduled") return "t-blue";
   return "t-grey";
 }

@@ -102,6 +102,15 @@ export function formatLocalTime(iso: string, timeZone = DEFAULT_TIMEZONE): strin
   return new Intl.DateTimeFormat("en-AE", { timeZone, hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 }
 
+/** Local wall-clock time as a 24h HH:MM value for <input type="time">. */
+export function formatLocalTimeInput(iso: string, timeZone = DEFAULT_TIMEZONE): string {
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hour12: false })
+    .formatToParts(new Date(iso));
+  const hour = parts.find((part) => part.type === "hour")?.value ?? "00";
+  const minute = parts.find((part) => part.type === "minute")?.value ?? "00";
+  return `${hour === "24" ? "00" : hour}:${minute}`;
+}
+
 /** Readable local date label, e.g. "12 September 2026", from a YYYY-MM-DD or ISO instant. */
 export function formatLocalDate(date: string, timeZone = DEFAULT_TIMEZONE): string {
   const value = date.length === 10 ? new Date(`${date}T12:00:00Z`) : new Date(date);

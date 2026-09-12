@@ -4,7 +4,7 @@ import { getVideoConfig } from "@/lib/media/video-config";
 import { createVideoProvider } from "@/lib/media/video-provider";
 import type { VideoConfig } from "@/lib/media/video-config";
 import type { VideoGenerationProvider } from "@/lib/media/video-provider";
-import { loadPostBrandContext, loadPostPlanContext, type AdminClient } from "@/lib/post/server-data";
+import { loadPostBrandContext, loadPostPlanContext, syncPostToCalendar, type AdminClient } from "@/lib/post/server-data";
 import { advanceVideoGeneration, startVideoGeneration, type StartInput, type StartResult, type AdvanceResult, type VideoGenerationPorts, type VideoJobRow } from "./video-generation";
 import { buildVideoGenerationPorts } from "./video-ports";
 import { VIDEO_JOB_SELECT } from "./video-generation";
@@ -134,6 +134,10 @@ export async function startVideoJob(service: VideoService, input: StartJobInput 
 export async function advanceVideoJob(service: VideoService, draftId: string, generationId: string, kind: "reel" | "story"): Promise<AdvanceResult & { view: ClientGenerationView | null }> {
   const result = await advanceVideoGeneration(service.ports, service.ownerId, generationId, kind);
   if (!result.ok) return { ...result, view: null };
+  // The validated video arriving late must re-sync an approved item's
+  // schedule: its queue row moves from 'waiting_for_media' to 'scheduled' so
+  // the item publishes instead of silently dying with a dead schedule.
+  if (result.attached) await syncPostToCalendar(service.admin, service.ownerId, draftId).catch(() => null);
   return { ...result, view: toClientGenerationView(result.generation, result.previewUrl) };
 }
 

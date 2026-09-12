@@ -249,12 +249,63 @@ async function ensureApprovalAction(
   input: { ownerId: string; conversationId: string; item: WorkflowItem; timeZone: string },
 ): Promise<void> {
   const { item } = input;
-  const { data: open } = await admin.from("mara_pending_actions").select("id")
-    .eq("owner_user_id", input.ownerId).eq("tool_name", "propose_calendar_item")
-    .in("status", ["pending", "failed"]).contains("sanitized_arguments", { sourceDraftId: item.draftId })
+  await ensureWorkflowApprovalCard(admin, input.ownerId, {
+    draftId: item.draftId,
+    conversationId: input.conversationId,
+    concept: item.concept,
+    caption: item.caption,
+    publishAt: item.publishAt,
+    contentType: item.contentType,
+    timeZone: input.timeZone,
+    approved: item.status === "approved",
+  });
+}
+
+/**
+ * Opens the approval card for one workflow item, if one is not already open.
+ * Shared by the rolling workflow and the in-place Marketing Plan actions, so
+ * "open a card" has exactly one implementation and re-running anything never
+ * creates a second card (stable per-draft idempotency key).
+ */
+export async function ensureWorkflowApprovalCard(
+  admin: AdminClient,
+  ownerId: string,
+  input: {
+    draftId: string;
+    conversationId: string;
+    concept: string;
+    caption: string;
+    publishAt: string;
+    contentType: "post" | "reel" | "story";
+    timeZone: string;
+    approved?: boolean;
+    productionStatus?: string;
+    statusNote?: string;
+  },
+): Promise<void> {
+  const { data: open } = await admin.from("mara_pending_actions").select("id,new_value")
+    .eq("owner_user_id", ownerId).eq("tool_name", "propose_calendar_item")
+    .in("status", ["pending", "failed"]).contains("sanitized_arguments", { sourceDraftId: input.draftId })
     .limit(1).maybeSingle();
-  if (open?.id) return;
-  if (item.status === "approved") return;
+  if (open?.id) {
+    // Record a production choice on the EXISTING card instead of a new one.
+    if (input.productionStatus) {
+      const value = (open.new_value ?? {}) as Record<string, unknown>;
+      await admin.from("mara_pending_actions").update({
+        new_value: { ...value, productionStatus: input.productionStatus },
+        result_summary: input.statusNote ?? "Production choice recorded.",
+      }).eq("id", String(open.id)).eq("owner_user_id", ownerId);
+    }
+    return;
+  }
+  if (input.approved) return;
+  const item = {
+    draftId: input.draftId,
+    concept: input.concept,
+    caption: input.caption,
+    publishAt: input.publishAt,
+    contentType: input.contentType,
+  };
 
   const args = {
     title: item.concept,
@@ -266,12 +317,12 @@ async function ensureApprovalAction(
     reason: "Part of your rolling Voom content plan.",
   };
   await admin.from("mara_pending_actions").insert({
-    owner_user_id: input.ownerId,
+    owner_user_id: ownerId,
     conversation_id: input.conversationId,
     tool_name: "propose_calendar_item",
     sanitized_arguments: args,
     summary: `Approve “${item.concept}” for ${formatLocalTime(item.publishAt, input.timeZone)} on ${localDate(new Date(item.publishAt), input.timeZone)}.`,
-    new_value: args,
+    new_value: input.productionStatus ? { ...args, productionStatus: input.productionStatus } : args,
     // Stable per-draft key: re-running the plan never creates a second card.
     idempotency_key: `workflow-approval:${item.draftId}`,
   });

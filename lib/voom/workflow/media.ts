@@ -3,7 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { createMediaProvider, getMediaConfig, MediaError } from "@/lib/media";
 import { aspectMatches, inspectImageBytes } from "@/lib/media/media-inspect";
-import { putPostAsset, removePostAssetObject, type AdminClient } from "@/lib/post/server-data";
+import { putPostAsset, removePostAssetObject, syncPostToCalendar, type AdminClient } from "@/lib/post/server-data";
 import { startPostStudioVideo } from "@/lib/mara/video-service";
 import type { ContentType } from "@/lib/voom/cadence";
 
@@ -49,23 +49,47 @@ export async function mediaAlreadyHandled(admin: AdminClient, ownerId: string, d
 
 export async function ensureWorkflowMedia(admin: AdminClient, request: MediaRequest): Promise<MediaOutcome> {
   if (await mediaAlreadyHandled(admin, request.ownerId, request.draftId)) return { ok: true, state: "exists" };
+  return produceWorkflowMedia(admin, request);
+}
 
+/**
+ * Produces media for one workflow item WITHOUT the "already handled" guard.
+ *
+ * Used by the in-place Marketing Plan actions ("Create with MARA" /
+ * "Regenerate") so a user can (re)generate the visual of the SAME workflow
+ * item on demand. Duplicate-charge protection stays intact:
+ *   - images get a fresh generation identity per attempt (an attempt either
+ *     completes and stores bytes, or records a failed generation),
+ *   - videos reuse `idempotencyToken` (the caller passes a fresh token only
+ *     for an explicit regenerate, exactly like Post Studio).
+ */
+export async function produceWorkflowMedia(
+  admin: AdminClient,
+  request: MediaRequest,
+  options: { idempotencyToken?: string } = {},
+): Promise<MediaOutcome> {
   if (request.contentType === "reel") {
     const result = await startPostStudioVideo({
       admin,
       ownerId: request.ownerId,
       post: { id: request.draftId, kind: "reel", conversationId: request.conversationId, concept: request.concept },
       brief: request.visualBrief,
-      // Stable per-draft token: a retry reuses the same job identity instead of
-      // paying for a second generation.
-      idempotencyToken: `workflow-${request.draftId}`,
+      // Stable per-draft token by default: a retry reuses the same job
+      // identity instead of paying for a second generation.
+      idempotencyToken: options.idempotencyToken ?? `workflow-${request.draftId}`,
     });
     if ("error" in result) return { ok: false, code: "video_start_failed" };
     return { ok: true, state: "queued" };
   }
 
-  return generateWorkflowImage(admin, request);
+  const outcome = await generateWorkflowImage(admin, request);
+  // The visual arriving late must re-sync an approved item's schedule: the
+  // queue row moves from 'waiting_for_media' to 'scheduled' and the worker
+  // publishes it — the item never silently dies waiting for media.
+  if (outcome.ok) await syncPostToCalendar(admin, request.ownerId, request.draftId).catch(() => null);
+  return outcome;
 }
+
 
 /** Image generation through the existing provider abstraction. */
 async function generateWorkflowImage(admin: AdminClient, request: MediaRequest): Promise<MediaOutcome> {

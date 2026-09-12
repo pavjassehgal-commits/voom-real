@@ -5,15 +5,17 @@ import test from "node:test";
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 test("Marketing Plan clearly labels Reel recommendations and links to the real Approvals workflow", async () => {
-  const [workspace, board, create, reelsRoute] = await Promise.all([
+  const [workspace, itemCard, board, create, reelsRoute] = await Promise.all([
     read("components/voom/operating/PlanWorkspace.tsx"),
+    read("components/voom/operating/PlanItemCard.tsx"),
     read("components/voom/operating/ApprovalsBoard.tsx"),
     read("components/voom/modals/CreateContentModal.tsx"),
     read("app/app/(shell)/reels/page.tsx"),
   ]);
   // The Marketing Plan renders the real rolling horizon, with each item's own
   // content type, and links into the same Approvals / Calendar workflow.
-  assert.match(workspace, /contentTypeLabel/);
+  // The per-item card derives its content-type label from the shared view.
+  assert.match(workspace + itemCard, /contentTypeLabel/);
   assert.match(workspace, /Posting frequency/);
   assert.match(workspace, /\/app\/approvals/);
   assert.match(workspace, /\/app\/calendar/);

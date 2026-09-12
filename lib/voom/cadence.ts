@@ -79,16 +79,124 @@ export const CONTENT_TYPES = ["post", "reel", "story"] as const;
 export type ContentType = (typeof CONTENT_TYPES)[number];
 
 /**
- * Deterministic content-type rotation across the horizon: mostly feed posts,
- * a Reel roughly every third item, a Story roughly every fifth. The same slot
- * index always produces the same type, so re-running planning never flips a
- * planned Reel into a Post.
+ * Legacy per-slot rotation, kept for callers that need a single slot's type
+ * without horizon context. The rolling planner now balances the WHOLE horizon
+ * (see `contentMixFor` + `assignContentTypes`), so a plan can never collapse
+ * into one repeated format the way a fixed modulo rotation could.
  */
 export function contentTypeForSlot(slotDate: string, index: number): ContentType {
   const seed = index + weekdayIndex(slotDate);
   if (seed % 5 === 4) return "story";
   if (seed % 3 === 1) return "reel";
   return "post";
+}
+
+export type ContentMix = Record<ContentType, number>;
+
+/**
+ * The strategic goal behind the plan, derived from the business's free-text
+ * main goal. Reels reach new audiences, feed posts convert existing ones, and
+ * Stories keep today's followers close — so the goal, not a fixed ratio,
+ * tilts the mix (requirement: the distribution may depend on marketing goal,
+ * business type and cadence).
+ */
+export type ContentGoalBias = "reach" | "conversion" | "community" | "balanced";
+
+export function contentGoalBias(goal: string | null | undefined): ContentGoalBias {
+  const raw = String(goal ?? "").toLowerCase();
+  if (/\b(awareness|reach|growth|grow|followers?|visibility|exposure|audience|brand awareness|new customer|discover)\b/.test(raw)) return "reach";
+  if (/\b(sales?|sell|conversion|conversions|bookings?|orders?|leads?|enquir\w*|inquir\w*|revenue|sign[- ]?ups?|promote|launch|offer)\b/.test(raw)) return "conversion";
+  if (/\b(engagement|community|loyalty|retention|relationship|trust|interaction|connection)\b/.test(raw)) return "community";
+  return "balanced";
+}
+
+/** Weights per content type for each goal bias. */
+const GOAL_WEIGHTS: Record<ContentGoalBias, Record<ContentType, number>> = {
+  reach: { post: 1, reel: 2, story: 0.5 },
+  conversion: { post: 2, reel: 1, story: 0.5 },
+  community: { post: 1, reel: 1, story: 1.5 },
+  balanced: { post: 1.5, reel: 1, story: 0.5 },
+};
+
+/**
+ * Deterministic, cadence- and goal-aware content mix for a horizon of `count`
+ * items.
+ *
+ * Guarantees:
+ *   - the counts always sum to exactly `count`,
+ *   - a multi-item plan never collapses into a single content type (a 7-item
+ *     daily plan always mixes at least two, normally three types),
+ *   - Reels cannot dominate: their weight share caps at half the slots,
+ *   - Stories and feed Posts appear meaningfully in a full 7-day plan,
+ *   - the same (cadence, count, goal) always yields the same mix, so a
+ *     re-run never reshuffles existing slots' types.
+ */
+export function contentMixFor(cadence: Cadence, count: number, goal: string | null | undefined): ContentMix {
+  if (count <= 0) return { post: 0, reel: 0, story: 0 };
+  if (count === 1) return { post: 1, reel: 0, story: 0 };
+  const weights = GOAL_WEIGHTS[contentGoalBias(goal)];
+  const raw: Record<ContentType, number> = {
+    post: (weights.post / (weights.post + weights.reel + weights.story)) * count,
+    reel: (weights.reel / (weights.post + weights.reel + weights.story)) * count,
+    story: (weights.story / (weights.post + weights.reel + weights.story)) * count,
+  };
+  // Reels never dominate a plan without a strategic reason.
+  const reelCap = Math.floor(count / 2);
+  raw.reel = Math.min(raw.reel, reelCap);
+
+  const mix: ContentMix = { post: 0, reel: 0, story: 0 };
+  let assigned = 0;
+  // Largest-remainder apportionment, then hand the residual slots to the type
+  // with the largest lost fraction so the totals are exact.
+  const order: ContentType[] = ["post", "reel", "story"];
+  const remainders: { type: ContentType; fraction: number }[] = [];
+  for (const type of order) {
+    const floor = Math.floor(raw[type]);
+    mix[type] = floor;
+    assigned += floor;
+    remainders.push({ type, fraction: raw[type] - floor });
+  }
+  remainders.sort((a, b) => b.fraction - a.fraction || order.indexOf(a.type) - order.indexOf(b.type));
+  let next = 0;
+  while (assigned < count) {
+    mix[remainders[next % remainders.length].type] += 1;
+    assigned += 1;
+    next += 1;
+  }
+  return mix;
+}
+
+/**
+ * Spreads a mix across `count` slots deterministically, keeping formats
+ * interleaved so the same type rarely repeats back to back. Works like a
+ * round-robin over queues ordered by scarcity: the scarcest remaining type is
+ * always preferred unless it just appeared (then the next scarcest is used).
+ * A single-type mix (1 item, or a forced cap) still fills straightforwardly.
+ */
+export function assignContentTypes(count: number, mix: ContentMix): ContentType[] {
+  const queues: Record<ContentType, number> = { post: mix.post ?? 0, reel: mix.reel ?? 0, story: mix.story ?? 0 };
+  const result: ContentType[] = [];
+  let previous: ContentType | null = null;
+  for (let index = 0; index < count; index += 1) {
+    const remaining = (Object.entries(queues) as [ContentType, number][]).sort(
+      ([typeA, a], [typeB, b]) => b - a || typeA.localeCompare(typeB),
+    );
+    const choice = remaining.find(([type, left]) => left > 0 && type !== previous)
+      ?? remaining.find(([, left]) => left > 0);
+    if (!choice) break;
+    queues[choice[0]] -= 1;
+    previous = choice[0];
+    result.push(choice[0]);
+  }
+  return result;
+}
+
+/**
+ * The full horizon's content types: balanced by cadence and goal, then spread
+ * without back-to-back repetition wherever the mix allows it.
+ */
+export function planContentTypes(input: { cadence: Cadence; count: number; goal: string | null | undefined }): ContentType[] {
+  return assignContentTypes(input.count, contentMixFor(input.cadence, input.count, input.goal));
 }
 
 /**
