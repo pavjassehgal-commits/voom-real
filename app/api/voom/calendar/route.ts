@@ -1,6 +1,7 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createCalendarItem, listCalendarItems } from "@/lib/mara/internal-data";
 import { resolveCalendarContentTypes } from "@/lib/post/server-data";
+import { checkScheduleInstant } from "@/lib/voom/schedule-guard";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
 import { z } from "zod";
@@ -50,8 +51,11 @@ export async function POST(request: Request) {
   if (!parsed.success) return Response.json({ error: "Check the title, caption, channel and date before saving." }, { status: 400 });
 
   const publishAt = new Date(parsed.data.publishAt).toISOString();
-  if (parsed.data.status === "scheduled" && new Date(publishAt).getTime() < Date.now() - 5 * 60_000) {
-    return Response.json({ error: "Choose a date in the future to schedule this post." }, { status: 400 });
+  if (parsed.data.status === "scheduled") {
+    // Same shared guard the client runs: no past dates, no same-day past
+    // times, evaluated in the business timezone.
+    const check = checkScheduleInstant(publishAt);
+    if (!check.ok) return Response.json({ error: check.error }, { status: 400 });
   }
 
   try {

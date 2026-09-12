@@ -2,37 +2,33 @@
 
 import { useState } from "react";
 import { useVoomState } from "@/lib/voom/store";
-import { useModal } from "@/lib/voom/modal";
 import { nfc, PLANS } from "@/lib/voom/demoData";
 import { Icon } from "@/components/voom/icons";
-import { UpgradeModal } from "@/components/voom/modals/UpgradeModal";
-import { DowngradeModal } from "@/components/voom/modals/DowngradeModal";
 import { Btn, Card, Tag } from "@/components/voom/ui/primitives";
 import { AD_SEPARATION, AdSepNote } from "@/components/voom/ui/Notes";
 
 const FAQS: [string, string][] = [
   [
     "Can Voom spend my ad budget without asking?",
-    "Voom can never start a new campaign, increase the total budget or exceed an approved limit without your permission. After approval, Voom may optimise and pause campaigns within that fixed limit.",
+    "No. Voom can never start a campaign, increase a total budget or exceed an approved limit without your explicit permission — and paid advertising isn't connected yet, so nothing can spend today.",
   ],
   [
-    "What happens to my content if I downgrade?",
-    "Nothing is deleted. Scheduled posts beyond your new plan limit pause as drafts until you upgrade again.",
+    "Is billing active?",
+    "No. Stripe isn't connected and no card is charged. Every account is on the Free plan while billing is offline; when billing activates you'll be able to choose a plan explicitly before any payment.",
   ],
   [
-    "Do you charge per connected channel?",
-    "No. Channels are included; plans differ by brands, seats and whether Voom can manage paid spend.",
-  ],
-  [
-    "Is billing live in this prototype?",
-    "No. Stripe is not connected and no payment is taken. Upgrading here simulates a checkout so you can see the full flow — a prototype demonstration only.",
+    "What happens to my content if plans change?",
+    "Nothing is deleted. Your drafts, schedules and history stay in Voom regardless of plan.",
   ],
   ["Does my subscription pay for my advertising?", "No. " + AD_SEPARATION],
 ];
 
+/**
+ * Plans & billing. Billing is not active: this page is honest information
+ * only. Buttons never pretend to upgrade — there is no pretend checkout.
+ */
 export default function PricingPage() {
   const { plan } = useVoomState();
-  const { open } = useModal();
   const [openFaq, setOpenFaq] = useState<number | null>(null);
 
   return (
@@ -41,12 +37,12 @@ export default function PricingPage() {
         <Tag tone="t-brand">
           <Icon name="crown" size={12} /> Plans
         </Tag>
-        <h1 className="my-3 font-display text-[26px] font-bold sm:text-[32px]">Give Voom more room to work</h1>
-        <p className="text-[15px] text-text-2">Start free. Upgrade when she&apos;s earning more than she costs.</p>
+        <h1 className="my-3 font-display text-[26px] font-bold sm:text-[32px]">Plans & billing</h1>
+        <p className="text-[15px] text-text-2">Where Voom is heading — and what you pay today.</p>
         <div className="mt-4 flex flex-wrap justify-center gap-2">
-          <Tag>Billed monthly · prototype pricing</Tag>
+          <Tag>Billed monthly once billing is active</Tag>
           <Tag>
-            <Icon name="info" size={12} /> No payment is taken
+            <Icon name="info" size={12} /> No payment is taken today
           </Tag>
         </div>
         <div className="mx-auto mt-4 max-w-[600px]">
@@ -54,22 +50,26 @@ export default function PricingPage() {
         </div>
       </div>
 
+      <Card className="mx-auto mb-4 flex max-w-[760px] flex-wrap items-center justify-between gap-3 border-brand bg-[var(--brand-soft)] p-4">
+        <div className="flex items-center gap-2.5">
+          <Icon name="info" className="text-brand" />
+          <span className="text-[13.5px]">
+            Billing isn’t active yet. Your account is on the <b>Free</b> plan and every feature you can see today works without a card.
+          </span>
+        </div>
+      </Card>
+
       <div className="grid items-start gap-4 sm:grid-cols-3">
         {PLANS.map((p) => {
           const cur = plan === p.id;
           return (
             <div
               key={p.id}
-              className={`relative rounded-[22px] border-[1.5px] bg-surface p-6.5 transition hover:-translate-y-1 hover:shadow-[var(--shadow-lg)] ${p.hot ? "border-brand shadow-[0_20px_50px_-24px_var(--brand)]" : "border-line"} ${p.hot ? "order-first sm:order-none" : ""}`}
+              className={`relative rounded-[22px] border-[1.5px] bg-surface p-6.5 ${p.hot ? "border-brand shadow-[0_20px_50px_-24px_var(--brand)] sm:order-first" : "border-line"}`}
             >
-              {p.hot && (
-                <div className="voom-grad absolute -top-2.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full px-3.5 py-1 text-[10px] font-extrabold tracking-[.1em] text-white">
-                  MOST POPULAR
-                </div>
-              )}
               <div className="flex items-center justify-between">
                 <h3 className="font-display text-[19px] font-bold">{p.name}</h3>
-                {cur && <Tag tone="t-green">Current</Tag>}
+                {cur && <Tag tone="t-green">Your plan</Tag>}
               </div>
               <p className="my-1.5 text-[13.3px] text-text-2">{p.blurb}</p>
               <div className="flex items-baseline gap-1.5">
@@ -77,17 +77,8 @@ export default function PricingPage() {
                 <span className="text-[13.5px] text-text-3">/month</span>
               </div>
               <div className="mt-1 text-xs text-text-3">{p.m ? "Software subscription only — ad budget is separate" : "No card required"}</div>
-              <Btn
-                variant={p.hot ? "primary" : "outline"}
-                block
-                className="mt-4"
-                disabled={cur}
-                onClick={() => {
-                  if (p.id === "free") open(<DowngradeModal />);
-                  else open(<UpgradeModal planId={p.id} />);
-                }}
-              >
-                {cur ? "Your current plan" : p.id === "free" ? "Downgrade to Free" : `Upgrade to ${p.name}`}
+              <Btn variant={p.hot ? "primary" : "outline"} block className="mt-4" disabled>
+                {cur ? "Your current plan" : "Available when billing activates"}
               </Btn>
               <ul className="mt-4.5 flex flex-col gap-2.5">
                 {p.f.map((f) => (
@@ -115,10 +106,11 @@ export default function PricingPage() {
             <button
               className="flex w-full items-center justify-between py-3.5 text-left text-sm font-semibold"
               onClick={() => setOpenFaq(openFaq === i ? null : i)}
+              aria-expanded={openFaq === i}
             >
               {q}
               <span className="text-text-3">
-                <Icon name="plus" size={16} />
+                <Icon name={openFaq === i ? "up" : "down"} size={16} />
               </span>
             </button>
             {openFaq === i && <p className="pb-3.5 text-[13.3px] leading-[1.6] text-text-2">{a}</p>}

@@ -7,10 +7,9 @@ import { Orb } from "../ui/primitives";
 
 const ITEMS = [
   "Reading your description",
-  "Learning your brand voice",
-  "Reviewing sample competitor posts",
-  "Choosing your best posting times",
-  "Drafting your first 14 days",
+  "Setting up your brand profile",
+  "Preparing your workspace",
+  "Opening your marketing plan",
 ];
 
 export function AnalyzingScreen({ onDone }: { onDone: () => void }) {
@@ -24,7 +23,7 @@ export function AnalyzingScreen({ onDone }: { onDone: () => void }) {
     const finish = setTimeout(
       () => {
         onDone();
-        toast("Your workspace is ready — 14 days of content drafted", "ok", true);
+        toast("Your workspace is ready");
       },
       500 + ITEMS.length * 750 + 600,
     );

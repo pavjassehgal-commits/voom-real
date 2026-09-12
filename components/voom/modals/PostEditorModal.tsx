@@ -7,6 +7,8 @@ import { ModalBody, ModalFoot, ModalHead, ModalShell } from "@/components/voom/u
 import { Icon } from "@/components/voom/icons";
 import { formatAspectRatio, POST_FORMATS, type PostFormat } from "@/lib/post/core";
 import { formatIngestionClientError } from "@/lib/media/ingestion-error";
+import { checkSchedule, minScheduleDate, minScheduleTime } from "@/lib/voom/schedule-guard";
+import { DEFAULT_TIMEZONE, formatLocalTime, isoToLocalDate } from "@/lib/voom/timezone";
 import { GenerationPanel, type ClientGeneration } from "./GenerationPanel";
 
 interface PostVisual {
@@ -64,6 +66,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [mediaBrief, setMediaBrief] = useState("");
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const [videoJob, setVideoJob] = useState<{ preparing: boolean; generation: ClientGeneration | null } | null>(null);
 
   const applyPost = useCallback((view: Post) => {
@@ -74,9 +77,11 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
     setHashtags(view.hashtags.join(" "));
     setFormat(view.format);
     setMediaBrief(view.mediaBrief ?? "");
+    // Dates are always read and written in the business timezone, never the
+    // viewer's device timezone, so the stored instant cannot drift.
     const when = view.scheduledAt ? new Date(view.scheduledAt) : null;
-    setDate(when ? localDate(when) : "");
-    setTime(when ? localTime(when) : "");
+    setDate(when ? isoToLocalDate(view.scheduledAt!, DEFAULT_TIMEZONE) : "");
+    setTime(when ? toTimeInput(view.scheduledAt!) : "");
   }, []);
 
   const load = useCallback(async () => {
@@ -146,7 +151,8 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
         setHashtags(body.post.hashtags.join(" ")); setFormat(body.post.format);
         setMediaBrief(body.post.mediaBrief ?? "");
         const when = body.post.scheduledAt ? new Date(body.post.scheduledAt) : null;
-        setDate(when ? localDate(when) : ""); setTime(when ? localTime(when) : "");
+        setDate(when ? isoToLocalDate(body.post.scheduledAt!, DEFAULT_TIMEZONE) : "");
+        setTime(when ? toTimeInput(body.post.scheduledAt!) : "");
       }
       setNotice(`${body.message ?? okMessage}${body.disclosure ? ` ${body.disclosure}` : ""}`);
       onChanged?.();
@@ -159,20 +165,44 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
 
   const endpoint = `/api/posts/${encodeURIComponent(postId)}`;
   const isStory = post?.kind === "story";
-  const saveBody = () => JSON.stringify({
-    action: "save",
-    concept,
-    // Instagram does not support captions on Stories, so caption copy is
-    // never part of a Story save.
-    ...(isStory ? {} : {
-      caption,
-      cta,
-      hashtags: hashtags.split(/[\s,]+/).filter(Boolean),
-    }),
-    format,
-    scheduledAt: date ? new Date(`${date}T${time || "09:00"}`).toISOString() : null,
-    brief: mediaBrief,
-  });
+  /**
+   * Schedule validation happens here, before anything is sent: past dates,
+   * same-day past times and malformed values are rejected with an actionable
+   * message. The server re-runs the same shared guard.
+   */
+  function validatedSchedule(): { body: string; ok: true } | { body: null; ok: false } {
+    if (!date) return { ok: true, body: JSON.stringify(savePayload(null)) };
+    const check = checkSchedule({ date, time });
+    if (!check.ok) {
+      setError(check.error);
+      return { ok: false, body: null };
+    }
+    return { ok: true, body: JSON.stringify(savePayload(check.publishAt)) };
+  }
+
+  function savePayload(scheduledAt: string | null): string {
+    return JSON.stringify({
+      action: "save",
+      concept,
+      // Instagram does not support captions on Stories, so caption copy is
+      // never part of a Story save.
+      ...(isStory ? {} : {
+        caption,
+        cta,
+        hashtags: hashtags.split(/[\s,]+/).filter(Boolean),
+      }),
+      format,
+      scheduledAt,
+      brief: mediaBrief,
+    });
+  }
+
+  function submitSave() {
+    setError(""); setNotice("");
+    const attempt = validatedSchedule();
+    if (!attempt.ok) return;
+    void send(endpoint, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: attempt.body }, "save", "Saved as a draft.");
+  }
 
   async function uploadFile(file: File, origin: "own_asset" | "existing_content") {
     if (isStory) {
@@ -314,8 +344,9 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                       setCta(body.suggestion.cta);
                       setHashtags(body.suggestion.hashtags.join(" "));
                       if (body.suggestion.suggestedPublishAt) {
-                        const when = new Date(body.suggestion.suggestedPublishAt);
-                        setDate(localDate(when)); setTime(localTime(when));
+                        const when = body.suggestion.suggestedPublishAt;
+                        setDate(isoToLocalDate(when, DEFAULT_TIMEZONE));
+                        setTime(toTimeInput(when));
                       }
                       setNotice(body.disclosure ?? "MARA suggested copy. Review it before saving.");
                     } catch (reason) {
@@ -329,9 +360,21 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                 ) : null}
 
                 {post.visualReady ? (
-                  <Btn variant="ghost" size="sm" block disabled={busy === "remove"} onClick={() => void send(`${endpoint}/asset`, { method: "DELETE" }, "remove", "Visual removed.")}>
-                    <Icon name="trash" size={14} /> Remove visual
-                  </Btn>
+                  confirmRemove ? (
+                    <div className="rounded-xl border border-red/35 bg-red/10 p-2.5">
+                      <p className="text-[11.5px] leading-relaxed text-text-2">Remove this visual from the draft? The stored file is discarded and nothing is published.</p>
+                      <div className="mt-2 flex gap-2">
+                        <Btn variant="danger" size="sm" disabled={busy === "remove"} onClick={() => void send(`${endpoint}/asset`, { method: "DELETE" }, "remove", "Visual removed.")}>
+                          {busy === "remove" ? "Removing…" : "Yes, remove it"}
+                        </Btn>
+                        <Btn variant="ghost" size="sm" onClick={() => setConfirmRemove(false)}>Keep it</Btn>
+                      </div>
+                    </div>
+                  ) : (
+                    <Btn variant="ghost" size="sm" block onClick={() => setConfirmRemove(true)}>
+                      <Icon name="trash" size={14} /> Remove visual
+                    </Btn>
+                  )
                 ) : null}
               </div>
 
@@ -391,18 +434,29 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                 </>
               )}
               <div className="grid gap-2.5 sm:grid-cols-2">
-                <Field label="Schedule date">
-                  <Input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+                <Field label="Schedule date" hint={date === minScheduleDate() ? "Today — pick a time later than now." : undefined}>
+                  <Input
+                    type="date"
+                    value={date}
+                    min={minScheduleDate()}
+                    onChange={(event) => { setDate(event.target.value); setError(""); }}
+                  />
                 </Field>
                 <Field label="Time">
-                  <Input type="time" value={time} onChange={(event) => setTime(event.target.value)} />
+                  <Input
+                    type="time"
+                    value={time}
+                    min={date ? minScheduleTime(date) ?? undefined : undefined}
+                    onChange={(event) => { setTime(event.target.value); setError(""); }}
+                  />
                 </Field>
               </div>
 
               <Card className="border-line bg-surface-2 p-3">
                 <p className="text-[11.5px] leading-relaxed text-text-3">
-                  <b className="text-text-2">How Voom labels this:</b> Draft → Approved → Scheduled internally →
-                  Ready to publish. Voom never shows “Posted”, because publishing to Instagram is not connected.
+                  <b className="text-text-2">How Voom labels this:</b> Draft → Approved → Scheduled → Publishing →
+                  Published. With a schedule set and a visual stored, approving lets Voom publish to your connected
+                  Instagram account automatically at that time — never before you approve.
                 </p>
               </Card>
             </div>
@@ -413,7 +467,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
         <Btn variant="ghost" onClick={close}>Close</Btn>
         {post ? (
           <>
-            <Btn variant="outline" disabled={busy !== null} onClick={() => void send(endpoint, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: saveBody() }, "save", "Saved as a draft.")}>
+            <Btn variant="outline" disabled={busy !== null} onClick={submitSave}>
               {busy === "save" ? "Saving…" : "Save Draft"}
             </Btn>
             <Btn variant="primary" disabled={busy !== null} onClick={() => void send(endpoint, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "approve" }) }, "approve", "Approved inside Voom.")}>
@@ -484,10 +538,15 @@ function ratioLabel(width: number, height: number): string {
   return `${Math.round(width / divisor)}:${Math.round(height / divisor)}`;
 }
 
-function localDate(value: Date) {
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
-}
-
-function localTime(value: Date) {
-  return `${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
+/** HH:MM in the business timezone for an absolute instant (for <input type="time">). */
+function toTimeInput(iso: string): string {
+  const label = formatLocalTime(iso, DEFAULT_TIMEZONE);
+  const match = label.match(/^(\d{1,2}):(\d{2})\s?(AM|PM)?$/i);
+  if (!match) return "";
+  let hour = Number(match[1]);
+  const minute = match[2];
+  const suffix = match[3]?.toUpperCase();
+  if (suffix === "PM" && hour < 12) hour += 12;
+  if (suffix === "AM" && hour === 12) hour = 0;
+  return `${String(hour).padStart(2, "0")}:${minute}`;
 }

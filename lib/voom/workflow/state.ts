@@ -57,7 +57,7 @@ export function deriveWorkflowStatus(facts: WorkflowFacts): WorkflowStatus {
   if (facts.mediaStatus === "failed" && !facts.hasMedia) return "failed";
   if (facts.mediaStatus === "queued" || facts.mediaStatus === "processing") return "generating";
   if (facts.draftStatus === "rejected") return "failed";
-  if (facts.draftStatus === "approved") return facts.publishStatus === "scheduled" || facts.publishStatus === "waiting_for_media" ? "scheduled" : "scheduled";
+  if (facts.draftStatus === "approved") return "scheduled";
   if (facts.awaitingApproval) return "needs_approval";
   return "planned";
 }

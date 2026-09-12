@@ -1,5 +1,13 @@
 "use client";
 
+/**
+ * The client store holds only real, user-owned state: the signed-in profile,
+ * the business/brand record, the Instagram connection flag, UI state (theme,
+ * sidebar, toasts) and the onboarding wizard. It seeds nothing from sample
+ * data — every screen that shows content reads it from the server APIs, so
+ * the UI can only ever show work that actually exists.
+ */
+
 import {
   createContext,
   useCallback,
@@ -12,57 +20,12 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import type {
-  AdAllocation,
-  ApprovedPlan,
   BusinessProfileInput,
   BusinessRecord,
-  ChatMessage,
-  EmailOrSms,
   OnboardingAnswers,
-  Plan,
-  Post,
-  ReelQueueItem,
   Toast,
 } from "./types";
-import {
-  CHANNEL_SHARE,
-  KPIS,
-  PACKS,
-  SERIES,
-  TMPLS,
-  buildAdAlloc,
-  buildAdHistory,
-  buildCampaignsTable,
-  buildEmails,
-  buildInsights,
-  buildPosts,
-  buildReelQueue,
-  buildSms,
-  fmtTime,
-} from "./demoData";
-import { DEFAULT_TIMEZONE, addDays, localDate } from "./timezone";
 import { saveOnboarding as saveOnboardingAction, saveBrandSettings as saveBrandSettingsAction, restartOnboarding as restartOnboardingAction } from "./mutations";
-
-/**
- * Calendar defaults follow the real current date in the account timezone.
- * Nothing in the UI may pin itself to a fixed month, or production would keep
- * showing a stale window (the old default opened on August 2026).
- */
-function currentLocalMonth(): number {
-  return Number(localDate(new Date(), DEFAULT_TIMEZONE).slice(5, 7)) - 1;
-}
-
-function currentLocalYear(): number {
-  return Number(localDate(new Date(), DEFAULT_TIMEZONE).slice(0, 4));
-}
-
-const PLAN_DAY_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** "2026-09-12" -> "12 Sep 2026". */
-function formatPlanDay(date: string): string {
-  const [year, month, day] = date.split("-");
-  return `${Number(day)} ${PLAN_DAY_MONTHS[Number(month) - 1]} ${year}`;
-}
 
 const NAV_PATHS: Record<string, string> = {
   dash: "/app/today",
@@ -71,7 +34,6 @@ const NAV_PATHS: Record<string, string> = {
   plan: "/app/plan",
   studio: "/app/studio",
   calendar: "/app/calendar",
-  reels: "/app/reels",
   campaigns: "/app/campaigns",
   ads: "/app/ads",
   automations: "/app/automations",
@@ -82,8 +44,6 @@ const NAV_PATHS: Record<string, string> = {
   pricing: "/app/pricing",
   settings: "/app/settings",
 };
-
-const FALLBACK_INDUSTRY = "Other";
 
 function emptyOnboard(): OnboardingAnswers {
   return {
@@ -160,38 +120,23 @@ function brandFromBusiness(business: BusinessRecord | null): Brand {
   };
 }
 
+export function getInitials(name: string, email: string | null | undefined): string {
+  const source = name.trim() || (email ?? "").split("@")[0] || "V";
+  const parts = source.split(/[\s._-]+/).filter(Boolean);
+  return (parts.length >= 2 ? parts[0][0] + parts[1][0] : source.slice(0, 2)).toUpperCase();
+}
+
 interface VoomState {
-  hydrated: boolean;
   displayName: string;
   email: string;
   theme: "light" | "dark";
   sideOpen: boolean;
   menuOpen: boolean;
-  notif: number;
-  calMonth: number;
-  calYear: number;
-  calFilter: string;
   campTab: "email" | "sms";
-  reelTmpl: number;
-  reelTime: string;
-  reelCaption: string;
   igConnected: boolean;
-  plan: Plan["id"];
+  /** Billing is offline; every account is on the Free plan until Stripe exists. */
+  plan: "free";
   brand: Brand;
-  posts: Post[];
-  reelQueue: ReelQueueItem[];
-  campaignsTable: ReturnType<typeof buildCampaignsTable>;
-  emails: EmailOrSms[];
-  sms: EmailOrSms[];
-  adAlloc: AdAllocation[];
-  adTotal: number;
-  adHistory: ReturnType<typeof buildAdHistory>;
-  approvedPlan: ApprovedPlan | null;
-  changeMode: boolean;
-  insights: ReturnType<typeof buildInsights>;
-  defaultCap: string;
-  chat: ChatMessage[];
-  typing: boolean;
   onboard: OnboardingAnswers;
   onboardStep: number;
   onboardSaving: boolean;
@@ -201,65 +146,18 @@ interface VoomState {
   toasts: Toast[];
 }
 
-function seedChatFor(firstName: string, brandName: string, slot: string, slotWhy: string, cold: string): ChatMessage[] {
-  const greetName = firstName ? ` ${firstName}` : "";
-  const brandLabel = brandName || "your business";
-  return [
-    {
-      r: "mara",
-      h: `Hi${greetName} 👋 I'm <b>MARA</b>, your marketing manager.
-      I've studied <b>${brandLabel}</b> and drafted your next 14 days.<br><br>
-      Three things I'd tackle first:
-      <ul><li>Move your Reels to the <b>${slot}</b> slot — ${slotWhy}</li>
-      <li>Re-engage <b>1,284</b> ${cold}</li>
-      <li>Review <b>AED 1,200</b> in optional ad budget I've drafted</li></ul>
-      <span class="tag t-grey" style="margin-top:8px">Demo data</span>`,
-      acts: [
-        ["Show me the calendar", "calendar"],
-        ["Review the budget", "ads"],
-      ],
-    },
-  ];
-}
-
 function initialState(init: { displayName: string | null; email: string | null; business: BusinessRecord | null }): VoomState {
-  const brand = brandFromBusiness(init.business);
-  const pack = PACKS[brand.industry] ?? PACKS[FALLBACK_INDUSTRY];
-  const displayName = init.displayName?.trim() ?? "";
-  const firstName = displayName.split(" ")[0] ?? "";
   return {
-    hydrated: false,
-    displayName,
+    displayName: init.displayName?.trim() ?? "",
     email: init.email ?? "",
     theme: "dark",
     sideOpen: false,
     menuOpen: false,
-    notif: 3,
-    calMonth: currentLocalMonth(),
-    calYear: currentLocalYear(),
-    calFilter: "All",
     campTab: "email",
-    reelTmpl: 0,
-    reelTime: "19:10",
-    reelCaption: "",
     igConnected: false,
     plan: "free",
-    brand,
-    posts: buildPosts(pack),
-    reelQueue: buildReelQueue(pack),
-    campaignsTable: buildCampaignsTable(pack),
-    emails: buildEmails(pack),
-    sms: buildSms(),
-    adAlloc: buildAdAlloc(pack),
-    adTotal: 1200,
-    adHistory: buildAdHistory(pack),
-    approvedPlan: null,
-    changeMode: false,
-    insights: buildInsights(pack),
-    defaultCap: pack.cap,
-    chat: seedChatFor(firstName, brand.name, pack.slot, pack.slotWhy, pack.cold),
-    typing: false,
-    onboard: { ...emptyOnboard(), displayName },
+    brand: brandFromBusiness(init.business),
+    onboard: { ...emptyOnboard(), displayName: init.displayName?.trim() ?? "" },
     onboardStep: 0,
     onboardSaving: false,
     onboardError: null,
@@ -271,58 +169,20 @@ function initialState(init: { displayName: string | null; email: string | null; 
 
 let toastId = 0;
 
+export type CampaignTab = "email" | "sms";
+
 interface VoomActions {
   goTo: (id: string) => void;
   toggleSidebar: (open?: boolean) => void;
   toggleMenu: () => void;
   closeMenu: () => void;
   setTheme: (t: "light" | "dark") => void;
-  openNotifs: () => void;
   toast: (msg: string, kind?: Toast["kind"], proto?: boolean) => void;
   dismissToast: (id: number) => void;
-  logout: () => void;
 
-  calMove: (n: number) => void;
-  calToday: () => void;
-  setCalFilter: (f: string) => void;
-
-  askMara: (q: string, gotoChat: () => void) => void;
-  sendMsg: (text: string) => void;
-  approveAllDrafts: () => void;
-  clearChat: () => void;
-
-  addPost: (post: Post) => void;
-  deletePost: (index: number) => void;
-  schedulePost: (index: number) => void;
-
-  setCampTab: (t: "email" | "sms") => void;
-
-  setReelTmpl: (i: number) => void;
-  setReelTime: (t: string) => void;
-  setReelCaption: (c: string) => void;
-  maraRewriteCaption: () => void;
-  scheduleReel: () => boolean;
-  saveReelDraft: () => void;
-  reelDelete: (i: number) => void;
-  reelSchedule: (i: number) => void;
-  reelChangeTime: (i: number) => void;
-  bestTimeAll: () => void;
+  setCampTab: (t: CampaignTab) => void;
 
   igDisconnect: () => void;
-
-  setAdTotal: (v: number) => boolean;
-  setAdAlloc: (i: number, v: number) => boolean;
-  resetAlloc: () => boolean;
-  normalizeAlloc: () => boolean;
-  declineAds: () => void;
-  requestChange: () => void;
-  cancelChange: () => void;
-  confirmAds: (isChange: boolean) => void;
-  pauseAds: () => void;
-  resumeAds: () => void;
-
-  setPlan: (id: Plan["id"]) => void;
-  upgrade: (id: Plan["id"]) => void;
 
   toggleTone: (t: string) => void;
   saveBrandSettings: (input: BusinessProfileInput) => Promise<boolean>;
@@ -373,10 +233,10 @@ export function VoomProvider({
     timers.current.push(id);
   }, []);
 
-  const toast = useCallback<VoomActions["toast"]>((msg, kind = "ok", proto = false) => {
+  const toast = useCallback<VoomActions["toast"]>((msg, kind = "ok") => {
     const id = ++toastId;
-    setState((s) => ({ ...s, toasts: [...s.toasts, { id, msg, kind, proto }] }));
-    after(proto ? 4600 : 3000, () => {
+    setState((s) => ({ ...s, toasts: [...s.toasts, { id, msg, kind }] }));
+    after(3000, () => {
       setState((s) => ({ ...s, toasts: s.toasts.filter((t) => t.id !== id) }));
     });
   }, [after]);
@@ -413,481 +273,13 @@ export function VoomProvider({
     }
   }, []);
 
-  const openNotifs = useCallback<VoomActions["openNotifs"]>(() => {
-    setState((s) => ({ ...s, notif: 0 }));
-  }, []);
-
-  const logout = useCallback<VoomActions["logout"]>(() => {
-    toast("Signed out", "info");
-  }, [toast]);
-
-  const calMove = useCallback<VoomActions["calMove"]>((n) => {
-    setState((s) => {
-      let m = s.calMonth + n;
-      let y = s.calYear;
-      if (m < 0) {
-        m = 11;
-        y--;
-      }
-      if (m > 11) {
-        m = 0;
-        y++;
-      }
-      return { ...s, calMonth: m, calYear: y };
-    });
-  }, []);
-
-  const calToday = useCallback<VoomActions["calToday"]>(() => {
-    setState((s) => ({ ...s, calMonth: currentLocalMonth(), calYear: currentLocalYear() }));
-  }, []);
-
-  const setCalFilter = useCallback<VoomActions["setCalFilter"]>((f) => {
-    setState((s) => ({ ...s, calFilter: f }));
-  }, []);
-
-  const maraReply = useCallback((q: string, s: VoomState): ChatMessage => {
-    const t = q.toLowerCase();
-    const pack = PACKS[s.brand.industry] ?? PACKS[FALLBACK_INDUSTRY];
-    const A = (h: string, acts?: [string, string][]): ChatMessage => ({ r: "mara", h, acts });
-    if (/budget|ad|spend|paid|roas/.test(t))
-      return A(
-        `I've drafted <b>AED 1,200</b> across four campaigns for the next 14 days:
-         <ul>${s.adAlloc.map((a) => `<li>${a.pct}% — ${a.n}</li>`).join("")}</ul>
-         That's an <b>example projection</b> on demo data, not a promise. Nothing spends until you approve it —
-         and ad money is charged by your own ad account, never by your Voom subscription.`,
-        [
-          ["Review & approve", "ads"],
-          ["Lower to AED 800", "ads"],
-        ],
-      );
-    if (/reel|hook|video|tiktok/.test(t))
-      return A(
-        `Here are three hooks in your voice — warm, a little cheeky, expert underneath:
-         <ul>${pack.hooks.map((h) => `<li>${h}</li>`).join("")}</ul>
-         Hook #1 lines up with ${pack.trend}, up 62% in this demo dataset.
-         Want me to build the Reel and queue it for ${pack.slot}?`,
-        [
-          ["Build Reel #1", "reels"],
-          ["See the calendar", "calendar"],
-        ],
-      );
-    if (/week|plan|calendar|schedule/.test(t))
-      return A(
-        `Next week is drafted — <b>7 pieces</b>, weighted toward Reels since that's where your growth is:
-         <ul><li><b>Mon</b> — Reel: ${pack.r[0]} · ${pack.slot}</li><li><b>Tue</b> — Email: ${pack.emailN} · 9:00 AM</li>
-         <li><b>Wed</b> — Feed: ${pack.p[2]}</li><li><b>Thu</b> — Reel: ${pack.r[1]}</li>
-         <li><b>Fri</b> — SMS: reminder message · 11:00 AM</li><li><b>Sat</b> — Reel: ${pack.r[2]}</li>
-         <li><b>Sun</b> — Rest day (quietest day in this demo dataset)</li></ul>`,
-        [
-          ["Open calendar", "calendar"],
-          ["Approve all drafts", "__approveAllDrafts"],
-        ],
-      );
-    if (/email|win-?back|newsletter|flow/.test(t))
-      return A(
-        `<b>1,284</b> ${pack.cold}. I drafted a two-step win-back:<br><br>
-         <b>Email 1</b> — "Did we lose you?" · soft re-intro, no discount<br>
-         <b>Email 2</b> (4 days later) — "15% to come back" · expires in 48h<br><br>
-         On this demo list that models out to roughly <b>AED 3,100</b> recovered — an example result, not a forecast.`,
-        [
-          ["Open campaigns", "campaigns"],
-          ["Draft email 1 now", "campaigns"],
-        ],
-      );
-    if (/sms|text|message/.test(t))
-      return A(
-        `In this demo dataset SMS is your strongest channel — <b>98.1% open</b>, 11.4% click.
-         I'd send one broadcast on a genuinely useful day only. Over-texting is the fastest way to lose that list.`,
-        [["Open SMS", "campaigns"]],
-      );
-    if (/time|when.*post|best time/.test(t))
-      return A(
-        `In this demo dataset your audience peaks <b>Tue–Thu evening, Gulf time</b> — ${pack.slotWhy}.
-         Reels in that window averaged <b>41K views</b> against 12K outside it (example result).
-         I've pinned <b>${pack.slot}</b> as your default slot.`,
-        [["See Reel queue", "reels"]],
-      );
-    if (/reach|drop|down|why/.test(t))
-      return A(
-        `In this demo dataset reach is <b>up 18.4%</b> — revenue is what dipped 3.2%. Two causes:
-         <ul><li>Paid retargeting paused on Aug 9 (biggest factor)</li>
-         <li>Two Reels posted in the morning instead of the evening slot</li></ul>
-         Approving the ad budget addresses the first; I've already moved the queue for the second.`,
-        [
-          ["Approve budget", "ads"],
-          ["Check the queue", "reels"],
-        ],
-      );
-    if (/instagram|connect/.test(t))
-      return A(
-        s.igConnected
-          ? `Instagram is securely connected as <b>${s.brand.handle || "your account"}</b>. Publishing remains unavailable until Voom's explicit approval and publishing flow is enabled.`
-          : `Instagram isn't connected. Open the Instagram page to start Voom's secure authorization flow when Meta configuration is available.`,
-        [[s.igConnected ? "View connection" : "Connect Instagram", "instagram"]],
-      );
-    if (/price|plan|upgrade|cost/.test(t)) {
-      const planObj = { free: { name: "Free", m: 0 }, pro: { name: "Pro", m: 199 }, max: { name: "Max", m: 549 } }[s.plan];
-      return A(
-        `You're on <b>${planObj.name}</b> — AED ${planObj.m}/month.
-         Paid ad management and unlimited scheduling live on <b>Max</b>. Remember the subscription only pays for the
-         software; any advertising budget is paid through your own ad account.`,
-        [["Compare plans", "pricing"]],
-      );
-    }
-    return A(
-      `Got it. Based on this demo dataset for <b>${s.brand.name || "your business"}</b>, the highest-leverage move
-       is your <b>${pack.slot}</b> Reel slot — it outperforms every other time in the sample.
-       Want me to build next week around it?`,
-      [
-        ["Yes, plan the week", "__ask:Plan next week"],
-        ["Show performance", "dash"],
-      ],
-    );
-  }, []);
-
-  const sendMsg = useCallback<VoomActions["sendMsg"]>(
-    (text) => {
-      const v = text.trim();
-      if (!v) return;
-      setState((s) => ({ ...s, chat: [...s.chat, { r: "me", h: escapeHtml(v) }], typing: true }));
-      after(900 + Math.random() * 700, () => {
-        setState((s) => ({ ...s, typing: false, chat: [...s.chat, maraReply(v, s)] }));
-      });
-    },
-    [after, maraReply],
-  );
-
-  const askMara = useCallback<VoomActions["askMara"]>(
-    (q, gotoChat) => {
-      gotoChat();
-      after(60, () => sendMsg(q));
-    },
-    [after, sendMsg],
-  );
-
-  const approveAllDrafts = useCallback<VoomActions["approveAllDrafts"]>(() => {
-    setState((s) => ({
-      ...s,
-      posts: s.posts.map((p) => (p.st !== "Scheduled" ? { ...p, st: "Scheduled" } : p)),
-      reelQueue: s.reelQueue.map((r) => (r.st === "Draft" ? { ...r, st: "Scheduled", t2: "t-green" } : r)),
-      chat: [
-        ...s.chat,
-        { r: "mara" as const, h: "Done — the drafts are approved and scheduled in Voom. Nothing has been published externally." },
-      ],
-    }));
-    toast("All drafts approved and scheduled", "ok", true);
-  }, [toast]);
-
-  const clearChat = useCallback<VoomActions["clearChat"]>(() => {
-    setState((s) => {
-      const pack = PACKS[s.brand.industry] ?? PACKS[FALLBACK_INDUSTRY];
-      const firstName = s.displayName.split(" ")[0] ?? "";
-      return { ...s, chat: seedChatFor(firstName, s.brand.name, pack.slot, pack.slotWhy, pack.cold) };
-    });
-    toast("Conversation cleared", "info");
-  }, [toast]);
-
-  const addPost = useCallback<VoomActions["addPost"]>((post) => {
-    setState((s) => ({ ...s, posts: [...s.posts, post] }));
-  }, []);
-
-  const deletePost = useCallback<VoomActions["deletePost"]>((index) => {
-    setState((s) => ({ ...s, posts: s.posts.filter((_, i) => i !== index) }));
-    toast("Post deleted", "info");
-  }, [toast]);
-
-  const schedulePost = useCallback<VoomActions["schedulePost"]>((index) => {
-    setState((s) => ({
-      ...s,
-      posts: s.posts.map((p, i) => (i === index ? { ...p, st: "Scheduled" } : p)),
-    }));
-  }, []);
-
   const setCampTab = useCallback<VoomActions["setCampTab"]>((t) => {
     setState((s) => ({ ...s, campTab: t }));
   }, []);
 
-  const setReelTmpl = useCallback<VoomActions["setReelTmpl"]>((i) => {
-    setState((s) => ({ ...s, reelTmpl: i }));
-  }, []);
-  const setReelTime = useCallback<VoomActions["setReelTime"]>((t) => {
-    setState((s) => ({ ...s, reelTime: t }));
-  }, []);
-  const setReelCaption = useCallback<VoomActions["setReelCaption"]>((c) => {
-    setState((s) => ({ ...s, reelCaption: c }));
-  }, []);
-
-  const maraRewriteCaption = useCallback<VoomActions["maraRewriteCaption"]>(() => {
-    setState((s) => {
-      const pack = PACKS[s.brand.industry] ?? PACKS[FALLBACK_INDUSTRY];
-      return { ...s, reelCaption: pack.cap + "\n\n#dubai #smallbusiness " + s.brand.handle.replace("@", "#") };
-    });
-    toast("MARA rewrote your caption in brand voice");
-  }, [toast]);
-
-  const scheduleReel = useCallback<VoomActions["scheduleReel"]>(() => {
-    let ok = true;
-    setState((s) => {
-      if (!s.igConnected) {
-        ok = false;
-        return s;
-      }
-      const cap = s.reelCaption || s.defaultCap;
-      const item: ReelQueueItem = {
-        t: cap.split("\n")[0].slice(0, 38),
-        when: `Tue, Aug 25 · ${fmtTime(s.reelTime)}`,
-        st: "Scheduled",
-        t2: "t-green",
-        g: TMPLS[s.reelTmpl].g,
-        views: "—",
-      };
-      const post: Post = { d: 25, t: "Reel · " + TMPLS[s.reelTmpl].n, c: "#e8481f", ch: "Reel", time: fmtTime(s.reelTime), st: "Scheduled" };
-      return { ...s, reelQueue: [item, ...s.reelQueue], posts: [...s.posts, post] };
-    });
-    if (ok) toast("Sample: Reel added to this workspace — nothing published or scheduled", "ok", true);
-    return ok;
-  }, [toast]);
-
-  const saveReelDraft = useCallback<VoomActions["saveReelDraft"]>(() => {
-    setState((s) => {
-      const cap = s.reelCaption || s.defaultCap;
-      const item: ReelQueueItem = {
-        t: cap.split("\n")[0].slice(0, 38),
-        when: "Not scheduled",
-        st: "Draft",
-        t2: "t-amber",
-        g: TMPLS[s.reelTmpl].g,
-        views: "—",
-      };
-      return { ...s, reelQueue: [item, ...s.reelQueue] };
-    });
-    toast("Saved as draft", "info");
-  }, [toast]);
-
-  const reelDelete = useCallback<VoomActions["reelDelete"]>((i) => {
-    setState((s) => ({ ...s, reelQueue: s.reelQueue.filter((_, idx) => idx !== i) }));
-    toast("Removed from queue", "info");
-  }, [toast]);
-
-  const reelSchedule = useCallback<VoomActions["reelSchedule"]>((i) => {
-    setState((s) => {
-      const pack = PACKS[s.brand.industry] ?? PACKS[FALLBACK_INDUSTRY];
-      const q = s.reelQueue.slice();
-      q[i] = { ...q[i], st: "Scheduled", t2: "t-green", when: "Fri, Aug 28 · " + pack.slot };
-      return { ...s, reelQueue: q };
-    });
-    toast("Sample: marked scheduled in this workspace only", "ok", true);
-  }, [toast]);
-
-  const reelChangeTime = useCallback<VoomActions["reelChangeTime"]>((i) => {
-    setState((s) => {
-      const q = s.reelQueue.slice();
-      q[i] = { ...q[i], when: q[i].when.replace(/· .*/, "· 7:10 PM") };
-      return { ...s, reelQueue: q };
-    });
-    toast("Moved to your best slot — 7:10 PM");
-  }, [toast]);
-
-  const bestTimeAll = useCallback<VoomActions["bestTimeAll"]>(() => {
-    setState((s) => {
-      const pack = PACKS[s.brand.industry] ?? PACKS[FALLBACK_INDUSTRY];
-      return {
-        ...s,
-        reelQueue: s.reelQueue.map((r) => (r.st !== "Live" ? { ...r, when: r.when.replace(/· .*/, "· " + pack.slot) } : r)),
-      };
-    });
-    toast("Sample: queue moved to best slot (workspace only)", "ok", true);
-  }, [toast]);
-
   const igDisconnect = useCallback<VoomActions["igDisconnect"]>(() => {
     setState((s) => ({ ...s, igConnected: false }));
-    toast("Instagram disconnected", "info");
-  }, [toast]);
-
-  const adGuard = useCallback((s: VoomState) => {
-    if (!s.approvedPlan || s.changeMode) return true;
-    toast('Budget is locked by your approval — use "Request budget change"', "err");
-    return false;
-  }, [toast]);
-
-  const setAdTotal = useCallback<VoomActions["setAdTotal"]>((v) => {
-    let ok = true;
-    setState((s) => {
-      if (!adGuard(s)) {
-        ok = false;
-        return s;
-      }
-      return { ...s, adTotal: v };
-    });
-    return ok;
-  }, [adGuard]);
-
-  const setAdAlloc = useCallback<VoomActions["setAdAlloc"]>((i, v) => {
-    let ok = true;
-    setState((s) => {
-      if (!adGuard(s)) {
-        ok = false;
-        return s;
-      }
-      const a = s.adAlloc.slice();
-      a[i] = { ...a[i], pct: v };
-      return { ...s, adAlloc: a };
-    });
-    return ok;
-  }, [adGuard]);
-
-  const resetAlloc = useCallback<VoomActions["resetAlloc"]>(() => {
-    let ok = true;
-    setState((s) => {
-      if (!adGuard(s)) {
-        ok = false;
-        return s;
-      }
-      const pack = PACKS[s.brand.industry] ?? PACKS[FALLBACK_INDUSTRY];
-      return { ...s, adAlloc: buildAdAlloc(pack) };
-    });
-    if (ok) toast("Reset to MARA's recommendation", "info");
-    return ok;
-  }, [adGuard, toast]);
-
-  const normalizeAlloc = useCallback<VoomActions["normalizeAlloc"]>(() => {
-    let ok = true;
-    setState((s) => {
-      if (!adGuard(s)) {
-        ok = false;
-        return s;
-      }
-      const sum = s.adAlloc.reduce((a, b) => a + b.pct, 0) || 1;
-      const a = s.adAlloc.map((x) => ({ ...x, pct: Math.round((x.pct / sum) * 100) }));
-      const d = 100 - a.reduce((acc, x) => acc + x.pct, 0);
-      a[0] = { ...a[0], pct: a[0].pct + d };
-      return { ...s, adAlloc: a };
-    });
-    if (ok) toast("Balanced to 100%");
-    return ok;
-  }, [adGuard, toast]);
-
-  const declineAds = useCallback<VoomActions["declineAds"]>(() => {
-    setState((s) => {
-      if (s.approvedPlan) return s;
-      const pack = PACKS[s.brand.industry] ?? PACKS[FALLBACK_INDUSTRY];
-      return {
-        ...s,
-        adTotal: 600,
-        adAlloc: [
-          { n: pack.ad[1], ch: "Meta Advantage+", pct: 70, c: "#0f6f68", roas: "5.1×" },
-          { n: pack.ad[0], ch: "Instagram Reels", pct: 30, c: "#e8481f", roas: "4.2×" },
-        ],
-        chat: [
-          ...s.chat,
-          {
-            r: "mara" as const,
-            h: `Understood — I've dropped the proposal to <b>AED 600</b> and shifted it into
-            ${pack.ad[1].toLowerCase()}, the highest-ROAS line in this demo dataset. Still nothing spends until you approve it.`,
-            acts: [["Review new budget", "ads"]] as [string, string][],
-          },
-        ],
-      };
-    });
-    toast("Budget declined — MARA is rebuilding the plan", "info");
-  }, [toast]);
-
-  const requestChange = useCallback<VoomActions["requestChange"]>(() => {
-    setState((s) => {
-      if (!s.approvedPlan) return s;
-      return { ...s, changeMode: true, adTotal: s.approvedPlan.limit, adAlloc: s.approvedPlan.alloc.map((a) => ({ ...a })) };
-    });
-    toast("Change request opened — nothing extra is spent until you approve it", "info");
-  }, [toast]);
-
-  const cancelChange = useCallback<VoomActions["cancelChange"]>(() => {
-    setState((s) => {
-      if (!s.approvedPlan) return s;
-      return { ...s, changeMode: false, adTotal: s.approvedPlan.limit, adAlloc: s.approvedPlan.alloc.map((a) => ({ ...a })) };
-    });
-    toast("Change cancelled — your approved limit is unchanged", "info");
-  }, [toast]);
-
-  const confirmAds = useCallback<VoomActions["confirmAds"]>(
-    (isChange) => {
-      setState((s) => {
-        const proj = s.adAlloc.reduce((a, b) => a + (s.adTotal * b.pct) / 100 * parseFloat(b.roas), 0);
-        const roas = (proj / s.adTotal).toFixed(1);
-        if (isChange && s.approvedPlan) {
-          const prev = s.approvedPlan.limit;
-          const newPlan: ApprovedPlan = { ...s.approvedPlan, limit: s.adTotal, alloc: s.adAlloc.map((a) => ({ ...a })) };
-          return {
-            ...s,
-            approvedPlan: newPlan,
-            changeMode: false,
-            adHistory: [
-              { n: "Budget change — approved", amt: "AED " + s.adTotal.toLocaleString("en-US"), st: "Active", t: "t-green", roas: roas + "×", when: "Changed just now" },
-              ...s.adHistory,
-            ],
-            chat: [
-              ...s.chat,
-              {
-                r: "mara" as const,
-                h: `New limit approved — <b>AED ${s.adTotal.toLocaleString("en-US")}</b> (was AED ${prev.toLocaleString("en-US")}).
-                I'll stay inside it and ask you again before any further increase.`,
-                acts: [["See live spend", "ads"]] as [string, string][],
-              },
-            ],
-          };
-        }
-        const newPlan: ApprovedPlan = {
-          limit: s.adTotal,
-          alloc: s.adAlloc.map((a) => ({ ...a })),
-          spent: Math.round(s.adTotal * 0.34),
-          start: formatPlanDay(localDate(new Date(), DEFAULT_TIMEZONE)),
-          end: formatPlanDay(addDays(localDate(new Date(), DEFAULT_TIMEZONE), 14)),
-          paused: false,
-        };
-        return {
-          ...s,
-          approvedPlan: newPlan,
-          changeMode: false,
-          adHistory: [
-            { n: "Sept sprint — MARA plan", amt: "AED " + s.adTotal.toLocaleString("en-US"), st: "Active", t: "t-green", roas: roas + "×", when: "Approved just now" },
-            ...s.adHistory,
-          ],
-          chat: [
-            ...s.chat,
-            {
-              r: "mara" as const,
-              h: `Budget approved — <b>AED ${s.adTotal.toLocaleString("en-US")}</b> is live across ${s.adAlloc.length} campaigns.
-              That limit is now fixed: I'll optimise and pause inside it, and I'll ask you again before spending a dirham more.`,
-              acts: [["See live spend", "ads"]] as [string, string][],
-            },
-          ],
-        };
-      });
-      toast(isChange ? "New limit approved" : "Budget approved — campaigns launching (simulated)", "ok", true);
-    },
-    [toast],
-  );
-
-  const pauseAds = useCallback<VoomActions["pauseAds"]>(() => {
-    setState((s) => (s.approvedPlan ? { ...s, approvedPlan: { ...s.approvedPlan, paused: true } } : s));
-    toast("All paid spend paused", "info", true);
-  }, [toast]);
-
-  const resumeAds = useCallback<VoomActions["resumeAds"]>(() => {
-    setState((s) => (s.approvedPlan ? { ...s, approvedPlan: { ...s.approvedPlan, paused: false } } : s));
-    toast("Spend resumed inside your approved limit", "info", true);
-  }, [toast]);
-
-  const setPlan = useCallback<VoomActions["setPlan"]>((id) => {
-    setState((s) => ({ ...s, plan: id }));
   }, []);
-
-  const upgrade = useCallback<VoomActions["upgrade"]>(
-    (id) => {
-      setState((s) => ({ ...s, plan: id }));
-      toast(`Upgraded — simulated`, "ok", true);
-    },
-    [toast],
-  );
 
   const toggleTone = useCallback<VoomActions["toggleTone"]>((t) => {
     setState((s) => {
@@ -904,9 +296,12 @@ export function VoomProvider({
         setState((s) => ({ ...s, settingsSaving: false, settingsError: result.error }));
         return false;
       }
-      setState((s) => {
-        const pack = PACKS[input.industry] ?? PACKS[FALLBACK_INDUSTRY];
-        const brand: Brand = {
+      setState((s) => ({
+        ...s,
+        settingsSaving: false,
+        settingsError: null,
+        displayName: input.displayName.trim(),
+        brand: {
           name: input.brandName.trim(),
           handle: deriveHandle(input.brandName.trim()),
           industry: input.industry,
@@ -919,25 +314,9 @@ export function VoomProvider({
           auto: input.automationLevel,
           permission: input.publishingPermission,
           color: s.brand.color,
-        };
-        return {
-          ...s,
-          settingsSaving: false,
-          settingsError: null,
-          displayName: input.displayName.trim(),
-          brand,
-          posts: buildPosts(pack),
-          reelQueue: buildReelQueue(pack),
-          campaignsTable: buildCampaignsTable(pack),
-          emails: buildEmails(pack),
-          sms: buildSms(),
-          adAlloc: buildAdAlloc(pack),
-          adHistory: buildAdHistory(pack),
-          insights: buildInsights(pack),
-          defaultCap: pack.cap,
-        };
-      });
-      toast("Brand profile saved", "ok");
+        },
+      }));
+      toast("Brand profile saved");
       return true;
     },
     [toast],
@@ -993,45 +372,27 @@ export function VoomProvider({
         return false;
       }
 
-      setState((s) => {
-        const industry = payload.industry;
-        const pack = PACKS[industry] ?? PACKS[FALLBACK_INDUSTRY];
-        const displayName = payload.displayName.trim();
-        const firstName = displayName.split(" ")[0] ?? "";
-        const brand: Brand = skipped
-          ? s.brand
-          : {
-              name: payload.brandName.trim(),
-              handle: deriveHandle(payload.brandName.trim()),
-              industry,
-              audience: payload.targetCustomer,
-              goals: payload.mainGoal ? [payload.mainGoal] : [],
-              tone: payload.brandPersonality,
-              channels: payload.preferredChannels,
-              budget: payload.monthlyAdBudget,
-              freq: payload.contentFrequency,
-              auto: payload.automationLevel,
-              permission: payload.publishingPermission,
-              color: o.color,
-            };
-        return {
-          ...s,
-          onboardSaving: false,
-          onboardError: null,
-          displayName,
-          brand,
-          posts: buildPosts(pack),
-          reelQueue: buildReelQueue(pack),
-          campaignsTable: buildCampaignsTable(pack),
-          emails: buildEmails(pack),
-          sms: buildSms(),
-          adAlloc: buildAdAlloc(pack),
-          adHistory: buildAdHistory(pack),
-          insights: buildInsights(pack),
-          defaultCap: pack.cap,
-          chat: seedChatFor(firstName, brand.name, pack.slot, pack.slotWhy, pack.cold),
-        };
-      });
+      const displayName = payload.displayName.trim();
+      setState((s) => ({
+        ...s,
+        onboardSaving: false,
+        onboardError: null,
+        displayName,
+        brand: skipped ? s.brand : {
+          name: payload.brandName.trim(),
+          handle: deriveHandle(payload.brandName.trim()),
+          industry: payload.industry,
+          audience: payload.targetCustomer,
+          goals: payload.mainGoal ? [payload.mainGoal] : [],
+          tone: payload.brandPersonality,
+          channels: payload.preferredChannels,
+          budget: payload.monthlyAdBudget,
+          freq: payload.contentFrequency,
+          auto: payload.automationLevel,
+          permission: payload.publishingPermission,
+          color: o.color,
+        },
+      }));
       return true;
     },
     [state.onboard],
@@ -1054,44 +415,10 @@ export function VoomProvider({
       toggleMenu,
       closeMenu,
       setTheme,
-      openNotifs,
       toast,
       dismissToast,
-      logout,
-      calMove,
-      calToday,
-      setCalFilter,
-      askMara,
-      sendMsg,
-      approveAllDrafts,
-      clearChat,
-      addPost,
-      deletePost,
-      schedulePost,
       setCampTab,
-      setReelTmpl,
-      setReelTime,
-      setReelCaption,
-      maraRewriteCaption,
-      scheduleReel,
-      saveReelDraft,
-      reelDelete,
-      reelSchedule,
-      reelChangeTime,
-      bestTimeAll,
       igDisconnect,
-      setAdTotal,
-      setAdAlloc,
-      resetAlloc,
-      normalizeAlloc,
-      declineAds,
-      requestChange,
-      cancelChange,
-      confirmAds,
-      pauseAds,
-      resumeAds,
-      setPlan,
-      upgrade,
       toggleTone,
       saveBrandSettings,
       setOnboardField,
@@ -1106,44 +433,10 @@ export function VoomProvider({
       toggleMenu,
       closeMenu,
       setTheme,
-      openNotifs,
       toast,
       dismissToast,
-      logout,
-      calMove,
-      calToday,
-      setCalFilter,
-      askMara,
-      sendMsg,
-      approveAllDrafts,
-      clearChat,
-      addPost,
-      deletePost,
-      schedulePost,
       setCampTab,
-      setReelTmpl,
-      setReelTime,
-      setReelCaption,
-      maraRewriteCaption,
-      scheduleReel,
-      saveReelDraft,
-      reelDelete,
-      reelSchedule,
-      reelChangeTime,
-      bestTimeAll,
       igDisconnect,
-      setAdTotal,
-      setAdAlloc,
-      resetAlloc,
-      normalizeAlloc,
-      declineAds,
-      requestChange,
-      cancelChange,
-      confirmAds,
-      pauseAds,
-      resumeAds,
-      setPlan,
-      upgrade,
       toggleTone,
       saveBrandSettings,
       setOnboardField,
@@ -1161,37 +454,14 @@ export function VoomProvider({
   );
 }
 
-export function useVoomState() {
+export function useVoomState(): VoomState {
   const ctx = useContext(StateCtx);
   if (!ctx) throw new Error("useVoomState must be used inside VoomProvider");
   return ctx;
 }
 
-export function useVoomActions() {
+export function useVoomActions(): VoomActions {
   const ctx = useContext(ActionsCtx);
   if (!ctx) throw new Error("useVoomActions must be used inside VoomProvider");
   return ctx;
 }
-
-export function useCurrentPack() {
-  const s = useVoomState();
-  return PACKS[s.brand.industry] ?? PACKS[FALLBACK_INDUSTRY];
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
-}
-
-export function getInitials(displayName: string, email: string): string {
-  const name = displayName.trim();
-  if (name) {
-    const parts = name.split(/\s+/).filter(Boolean);
-    const initials = parts.length > 1 ? parts[0][0] + parts[parts.length - 1][0] : parts[0].slice(0, 2);
-    return initials.toUpperCase();
-  }
-  const emailName = email.trim().split("@")[0];
-  if (emailName) return emailName.slice(0, 2).toUpperCase();
-  return "?";
-}
-
-export { KPIS, SERIES, CHANNEL_SHARE };

@@ -11,8 +11,10 @@ test("AI credentials are server-only placeholders", async () => {
   }
   assert.doesNotMatch(example, /NEXT_PUBLIC_AI_/);
 
-  const client = await read("components/voom/mara/LegacyMaraChat.tsx");
-  assert.doesNotMatch(client, /AI_API_KEY|AI_BASE_URL|process\.env/);
+  // No client component may reference AI credentials; the demo chat client
+  // that once consumed this API was removed outright.
+  const client = await read("app/app/(shell)/settings/page.tsx");
+  assert.doesNotMatch(client, /AI_API_KEY|AI_BASE_URL/);
 });
 
 test("MARA storage isolates conversations, messages, and drafts by owner", async () => {
@@ -111,29 +113,30 @@ test("the allowlist contains every approved Voom tool and no execution tools", a
 });
 
 test("pending action cards persist, confirm or cancel explicitly, and refresh product data", async () => {
-  const client = await read("components/voom/mara/LegacyMaraChat.tsx");
+  // Pending MARA actions are now surfaced on the Approvals board (the demo
+  // chat client that also rendered them was removed).
+  const board = await read("components/voom/operating/ApprovalsBoard.tsx");
   const actionRoute = await read("app/api/mara/actions/[id]/route.ts");
-  assert.match(client, /data-mara-pending-action/);
-  assert.match(client, /failed \? "Retry" : "Confirm"/);
-  assert.match(client, />Cancel</);
-  assert.match(client, /voom:data-changed/);
-  assert.match(client, /View in calendar/);
-  assert.match(client, /View campaign/);
+  assert.match(board, /failed \? "Retry" : "Confirm"/);
+  assert.match(board, />Cancel</);
+  assert.match(board, /voom:data-changed/);
+  assert.match(board, /View in calendar|View calendar|detail\.href/);
   assert.match(actionRoute, /eq\("status", "pending"\)|in\("status", \["pending", "failed"\]\)/);
   assert.match(actionRoute, /mara_tool_runs/);
   const tools = await read("lib/mara/tools.ts");
   assert.match(tools, /eq\("status", "executing"\)\.select\("id"\)\.maybeSingle\(\)/);
 });
 
-test("content drafts render inline with persistent actions", async () => {
-  const client = await read("components/voom/mara/LegacyMaraChat.tsx");
-  assert.match(client, /item\.message_id === message\.id/);
-  assert.match(client, /<DraftCard draft=\{item\} inline/);
-  for (const action of ["Copy", "Edit", "Regenerate", "Approve", "Reject"]) {
-    assert.match(client, new RegExp(`>${action}<`));
-  }
-  assert.match(client, /whitespace-pre-wrap/);
-  assert.match(client, /Nothing is published, sent, or funded/);
+test("content drafts render with persistent, explicit actions", async () => {
+  // Drafts now live in the Create Content studio with an explicit editor.
+  const studio = await read("app/app/(shell)/studio/page.tsx");
+  const editor = await read("components/voom/modals/PostEditorModal.tsx");
+  assert.match(studio, /PostEditorModal/);
+  assert.match(editor, /"Save Draft"/);
+  assert.match(editor, /"Approve"/);
+  // The editor previews the concept as a heading inside the modal.
+  assert.match(editor, /\{concept \|\| "Untitled"\}/);
+  assert.match(editor, /Saved inside Voom only\. Nothing is published to Instagram\./);
 });
 
 test("incomplete content generation retries once before returning a clear error", async () => {

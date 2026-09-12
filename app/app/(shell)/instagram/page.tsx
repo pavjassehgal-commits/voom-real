@@ -96,7 +96,7 @@ function InstagramPageContent() {
                   </Tag>
                 </div>
                 <div className="text-[13px] text-text-3">@{connection.username} · {formatAccountType(connection.accountType)}</div>
-                <div className="mt-0.5 text-xs text-text-3">Connected {connection.connectedAt ? new Date(connection.connectedAt).toLocaleString() : "recently"}</div>
+                <div className="mt-0.5 text-xs text-text-3">Connected {connection.connectedAt ? formatConnectedAt(connection.connectedAt) : "recently"}</div>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -135,9 +135,8 @@ function InstagramPageContent() {
             <h2 className="mb-3 font-display text-lg font-semibold">What Voom can do now</h2>
             {(
               [
-                ["Prepare Reel drafts for your review", "reels"],
-                ["Keep publishing blocked until explicitly enabled", "instagram"],
-                ["Create approved Instagram drafts", "reels"],
+                ["Create Instagram Posts, Reels and Stories", "studio"],
+                ["Approve and schedule them", "approvals"],
                 ["Review scheduled content", "calendar"],
               ] as [string, string][]
             ).map(([t, g]) => (
@@ -172,7 +171,7 @@ function InstagramPageContent() {
         </div>
         <h2 className="font-display text-2xl font-bold">Connect Instagram securely</h2>
         <p className="mt-1.5 max-w-[440px] text-[14.5px] leading-[1.6] opacity-90">
-          Connect a professional account through Instagram. Drafting and scheduling stay inside Voom; external publishing remains blocked until it is separately enabled.
+          Connect a professional account through Instagram. Drafting and scheduling stay inside Voom, and nothing is ever published without your explicit approval.
         </p>
         <Btn
           className="mt-5 bg-white text-[#b62d6a] hover:bg-white/90"
@@ -217,6 +216,10 @@ function InstagramPageContent() {
       </Card>
     </div>
   );
+}
+
+function formatConnectedAt(value: string) {
+  return new Date(value).toLocaleString("en-AE", { timeZone: "Asia/Dubai", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 }
 
 function formatAccountType(value: string | null) {

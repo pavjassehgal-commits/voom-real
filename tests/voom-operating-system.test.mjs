@@ -4,13 +4,16 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("MARA chat is preserved but removed from navigation and redirected", async () => {
-  const [nav, route, legacy] = await Promise.all([read("components/voom/shell/nav.ts"), read("app/app/(shell)/mara/page.tsx"), read("components/voom/mara/LegacyMaraChat.tsx")]);
+test("the demo MARA chat UI is removed from the product and navigation", async () => {
+  const nav = await read("components/voom/shell/nav.ts");
+  // The fake MARA chat was removed outright; protected MARA actions live on
+  // Approvals and the /app/mara route simply forwards to Today.
   assert.doesNotMatch(nav, /n: "MARA"/);
+  let missing = false;
+  try { await read("components/voom/mara/LegacyMaraChat.tsx"); } catch { missing = true; }
+  assert.equal(missing, true, "LegacyMaraChat.tsx must not exist in production");
+  const route = await read("app/app/(shell)/mara/page.tsx");
   assert.match(route, /redirect\("\/app\/today"\)/);
-  assert.match(legacy, /LegacyMaraChat/);
-  assert.match(legacy, /fetch\("\/api\/mara"/);
-  assert.match(legacy, /pendingActions/);
 });
 
 test("marketing plans are owner-scoped, anonymous-blocked, and server-written", async () => {

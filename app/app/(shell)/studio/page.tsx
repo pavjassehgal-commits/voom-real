@@ -167,8 +167,9 @@ export default function StudioPage() {
         </div>
 
         <p className="mt-4 rounded-xl bg-surface-2 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-text-3">
-          Every state above is internal to Voom. There is no “Posted” state because publishing to Instagram is not
-          connected — approving a post saves the approval and its internal schedule only.
+          Approved items with a schedule and a visual are published to your connected Instagram account automatically
+          at their scheduled time. Voom marks something “Published” only after Instagram confirms it — nothing is
+          ever posted without your approval.
         </p>
       </Card>
     </div>

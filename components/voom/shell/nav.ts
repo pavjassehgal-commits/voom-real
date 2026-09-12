@@ -10,6 +10,12 @@ export interface NavGroup {
   items: NavItem[];
 }
 
+/**
+ * Only genuinely implemented features appear in navigation. "Content Studio"
+ * (the old sample Reel workspace) and "Paid Advertising" (no ad integration
+ * yet) were removed; their routes still resolve — /app/reels forwards to the
+ * real Create Content studio and /app/ads shows a truthful state.
+ */
 export const NAV: NavGroup[] = [
   {
     g: "Operate",
@@ -24,14 +30,12 @@ export const NAV: NavGroup[] = [
     items: [
       { id: "studio", n: "Create Content", i: "plus" },
       { id: "calendar", n: "Content Calendar", i: "cal" },
-      { id: "reels", n: "Content Studio", i: "film" },
       { id: "campaigns", n: "Campaigns", i: "mail" },
     ],
   },
   {
     g: "Grow",
     items: [
-      { id: "ads", n: "Paid Advertising", i: "target" },
       { id: "automations", n: "Automations", i: "bolt" },
       { id: "performance", n: "Performance", i: "trend" },
       { id: "connections", n: "Connections", i: "globe" },
@@ -52,7 +56,6 @@ export const TITLES: Record<string, string> = {
   approvals: "Approvals",
   plan: "Marketing Plan",
   calendar: "Content Calendar",
-  reels: "Content Studio",
   campaigns: "Campaigns",
   ads: "Paid Advertising",
   automations: "Automations",

@@ -2,14 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { useVoomActions, useVoomState, useCurrentPack } from "@/lib/voom/store";
+import { useVoomActions, useVoomState } from "@/lib/voom/store";
 import { useModal } from "@/lib/voom/modal";
 import type { CampaignDeliveryState, CampaignDeliveryView, CampaignRecord, CampaignStatus } from "@/lib/voom/types";
 import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { CampaignEditorModal } from "@/components/voom/modals/CampaignEditorModal";
 import { Btn, Card, Chip, Tag } from "@/components/voom/ui/primitives";
-import { DemoTag } from "@/components/voom/ui/Notes";
 
 type StatusFilter = "all" | CampaignStatus;
 
@@ -20,12 +19,16 @@ const FILTERS: Array<{ id: StatusFilter; label: string }> = [
   { id: "rejected", label: "Not approved" },
 ];
 
+const HOW_IT_WORKS: [string, string][] = [
+  ["Drafts stay inside Voom", "Campaigns are saved drafts until you approve one and send it explicitly. Nothing is ever sent automatically."],
+  ["One real recipient at a time", "A send goes to the verified recipient you choose in the campaign — there is no bulk blast from this screen."],
+  ["Delivery is only ever real", "Voom marks a campaign Delivered only after the provider's verified callback confirms it. Failed sends say so and can be retried."],
+];
+
 export default function CampaignsPage() {
-  const { campTab, brand } = useVoomState();
+  const { campTab } = useVoomState();
   const { setCampTab, goTo } = useVoomActions();
   const { open } = useModal();
-  const pack = useCurrentPack();
-  const brandLabel = brand.name || "your business";
   const em = campTab === "email";
 
   const [savedCampaigns, setSavedCampaigns] = useState<CampaignRecord[]>([]);
@@ -56,17 +59,6 @@ export default function CampaignsPage() {
 
   const visible = savedCampaigns.filter((campaign) => statusFilter === "all" || campaign.status === statusFilter);
 
-  const maraTake = em
-    ? [
-        ["Re-engage cold subscribers", "Prepare a win-back sequence in Voom first — nothing is sent until a provider is connected."],
-        ["Move sends to Tuesday 9 AM", "From the illustrative sample: your opens are 12% higher then."],
-        ["Segment out non-openers before launch", "Protects sender reputation once real delivery is connected."],
-      ]
-    : [
-        ["Send only on restock days", "Over-texting is the #1 cause of opt-outs."],
-        ["Keep it short and useful", "Long splits cost more per message once a provider is connected."],
-        ["Add an SMS opt-in to checkout", "Sample insight: roughly 40 signups a week are being missed."],
-      ];
 
   function openNew() {
     open(<CampaignEditorModal kind={campTab} />);
@@ -106,39 +98,9 @@ export default function CampaignsPage() {
             <Icon name="msg" size={14} /> SMS
           </button>
         </div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <DemoTag />
-          <Tag>
-            <Icon name="info" size={12} /> Delivery status stays truthful — Voom never fabricates a send
-          </Tag>
-        </div>
-      </div>
-
-      <div className="mb-3.5">
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          <DemoTag />
-          <span className="text-[12.5px] text-text-3">Illustrative sample metrics for this prototype — they are not results from Voom.</span>
-        </div>
-        <div className="grid gap-3.5 sm:grid-cols-3">
-          {(em
-            ? [
-                ["Sample subscribers", "8,412", "+312 this month"],
-                ["Sample open rate", "41.2%", "+4.1 pts"],
-                ["Sample revenue / send", "AED 1.45", "+AED 0.22"],
-              ]
-            : [
-                ["Sample SMS opt-ins", "3,190", "+184 this month"],
-                ["Sample click rate", "11.4%", "+1.8 pts"],
-                ["Sample revenue / send", "AED 2.93", "+AED 0.41"],
-              ]
-          ).map(([a, b, c]) => (
-            <Card key={a} className="p-4">
-              <span className="text-[12.5px] text-text-2">{a}</span>
-              <div className="my-1.5 font-display text-[26px]">{b}</div>
-              <span className="text-[12.5px] font-semibold text-green">{c}</span>
-            </Card>
-          ))}
-        </div>
+        <Tag>
+          <Icon name="info" size={12} /> Delivery status stays truthful — Voom never fabricates a send
+        </Tag>
       </div>
 
       <Card className="p-4">
@@ -223,61 +185,31 @@ export default function CampaignsPage() {
         </p>
       </Card>
 
-      <div className="mt-3.5 grid gap-3.5 lg:grid-cols-2">
-        <Card className="p-4">
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <DemoTag />
-            <h2 className="font-display text-lg font-semibold">{em ? "Sample email preview" : "Sample SMS preview"}</h2>
-          </div>
-          {em ? (
-            <div className="overflow-hidden rounded-2xl border border-line">
-              <div className="voom-grad-deep p-[30px_22px] text-center text-white">
-                <div className="font-display text-[22px] font-bold">{brandLabel}</div>
-                <p className="mt-1.5 text-[13px] opacity-85">{pack.emailN}</p>
+      <Card className="mt-3.5 p-4">
+        <h2 className="font-display text-lg font-semibold">How email & SMS work in Voom</h2>
+        <div className="mt-3 grid gap-2.5 sm:grid-cols-3">
+          {HOW_IT_WORKS.map(([title, body]) => (
+            <div key={title} className="rounded-2xl border border-line p-3.5">
+              <div className="flex items-center gap-2">
+                <span className="voom-grad grid h-[26px] w-[26px] flex-none place-items-center rounded-full text-white">
+                  <Icon name="check" size={13} />
+                </span>
+                <b className="text-[13.5px]">{title}</b>
               </div>
-              <div className="p-5">
-                <h3 className="mb-2.5 font-display text-[17px]">{pack.emailSub}</h3>
-                <p className="text-[13.5px] leading-[1.65] text-text-2">Hi {"{{first_name}}"} — {pack.emailBody}</p>
-                <Btn variant="primary" size="sm" className="mt-3.5" disabled>
-                  Read more →
-                </Btn>
-                <div className="my-3.5 h-px bg-line" />
-                <p className="text-[11px] text-text-3">
-                  You&apos;re receiving this because you shop with {brandLabel}. Unsubscribe anytime.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="mx-auto max-w-[270px] rounded-[26px] border border-line bg-surface-2 p-4">
-              <p className="mb-3 text-center text-[11px] text-text-3">Sample · no message has been sent</p>
-              <div className="ml-auto max-w-[88%] break-words rounded-[17px] rounded-br-[5px] bg-brand px-3.5 py-2.5 text-[13px] leading-[1.5] text-white">
-                {pack.smsT}
-              </div>
-            </div>
-          )}
-        </Card>
-        <Card className="p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <span className="voom-grad h-[26px] w-[26px] flex-none rounded-full" />
-            <h2 className="font-display text-lg font-semibold">Voom&apos;s recommendation</h2>
-            <DemoTag />
-          </div>
-          {maraTake.map(([t, b]) => (
-            <div key={t} className="mb-2.5 flex gap-3 rounded-2xl border border-line p-3.5">
-              <span className="grid h-[34px] w-[34px] flex-none place-items-center rounded-[10px] bg-[var(--brand-soft)] text-brand">
-                <Icon name="spark" size={17} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <b className="text-[13.5px]">{t}</b>
-                <p className="mb-2 mt-1 text-[13px] text-text-2">{b}</p>
-                <Btn variant="outline" size="sm" onClick={() => goTo("plan")}>
-                  Review in plan
-                </Btn>
-              </div>
+              <p className="mt-1.5 text-[12.5px] leading-relaxed text-text-2">{body}</p>
             </div>
           ))}
-        </Card>
-      </div>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Btn variant="outline" size="sm" onClick={() => goTo("plan")}>
+            <Icon name="spark" size={14} /> Review marketing plan
+          </Btn>
+          <Btn variant="outline" size="sm" onClick={() => goTo("contacts")}>
+            <Icon name="users" size={14} /> Manage contacts
+          </Btn>
+        </div>
+      </Card>
+
     </div>
   );
 }
