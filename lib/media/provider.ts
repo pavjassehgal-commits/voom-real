@@ -110,7 +110,12 @@ class OpenRouterMediaProvider implements MediaProvider {
         model: this.config.imageModel,
         prompt: input.prompt,
         n: 1,
-        resolution: "1K",
+        // Seedream 4.5 requires at least 3,686,400 output pixels; the old 1K
+        // tier (a 1024-pixel square, 1,048,576 pixels) is rejected with HTTP
+        // 400. The 2K tier clears the floor for every supported aspect ratio;
+        // the ratio itself is carried by aspect_ratio, so no pixel size is
+        // hardcoded.
+        resolution: "2K",
         aspect_ratio: input.aspectRatio,
       }),
     });
