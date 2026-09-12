@@ -1,41 +1,61 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { generateAndPersistPlan, resumeAutomatedPlan } from "@/lib/mara/plan-persistence";
 import { createAdminClient } from "@/utils/supabase/admin";
-import { dubaiWeek } from "@/lib/voom/weekly-cycle";
+import { runOwnerWorkflow } from "@/lib/voom/workflow/service";
+import type { AdminClient } from "@/lib/post/server-data";
+
+/**
+ * The scheduled rolling-plan automation.
+ *
+ * Replaces the legacy "generate exactly 3 Instagram recommendations once per
+ * week" rule. On every run (daily cron is enough) each automated account has
+ * its rolling horizon topped up to the number of items its selected posting
+ * cadence requires, starting on that account's real current local date.
+ *
+ * Idempotent by construction: a workflow item is keyed by (plan, local slot
+ * date), so a second run on the same day reuses every existing item and
+ * creates nothing. Manual accounts are never touched.
+ */
 
 const AUTOMATED_MODES = ["assisted", "autopilot"];
 
-export async function runWeeklyPlanAutomation(now = new Date(), db: SupabaseClient = createAdminClient(), ownerIds?: string[]) {
-  const { weekKey, cycleStartIso } = dubaiWeek(now);
-  let businessesQuery = db.from("businesses").select("owner_user_id,automation_level").eq("onboarding_completed", true).in("automation_level", AUTOMATED_MODES);
-  if (ownerIds) businessesQuery = businessesQuery.in("owner_user_id", ownerIds);
-  const { data: businesses, error } = await businessesQuery;
+export interface RollingAutomationResult {
+  checked: number;
+  created: number;
+  reused: number;
+  autoApproved: number;
+  awaitingApproval: number;
+  failed: number;
+}
+
+export async function runRollingPlanAutomation(
+  now = new Date(),
+  db: SupabaseClient = createAdminClient(),
+  ownerIds?: string[],
+): Promise<RollingAutomationResult> {
+  let query = db.from("businesses").select("owner_user_id,automation_level")
+    .eq("onboarding_completed", true).in("automation_level", AUTOMATED_MODES);
+  if (ownerIds) query = query.in("owner_user_id", ownerIds);
+  const { data: businesses, error } = await query;
   if (error) throw new Error("automation_businesses_unavailable");
-  const result = { checked: businesses?.length ?? 0, created: 0, resumed: 0, skipped: 0, failed: 0 };
+
+  const result: RollingAutomationResult = { checked: businesses?.length ?? 0, created: 0, reused: 0, autoApproved: 0, awaitingApproval: 0, failed: 0 };
   for (const business of businesses ?? []) {
     try {
-      const outcome = await ensureOwnerWeek(db, business.owner_user_id, business.automation_level === "autopilot", weekKey, cycleStartIso, now);
-      result[outcome] += 1;
+      const run = await runOwnerWorkflow(db as AdminClient, { ownerId: String(business.owner_user_id), now });
+      result.created += run.created;
+      result.reused += run.reused;
+      result.autoApproved += run.autoApproved;
+      result.awaitingApproval += run.awaitingApproval;
+      if (run.failures.length) result.failed += 1;
     } catch {
+      // One broken account never stops the rest of the fleet.
       result.failed += 1;
     }
   }
   return result;
 }
 
-async function ensureOwnerWeek(db: SupabaseClient, ownerId: string, autopilot: boolean, weekKey: string, cycleStartIso: string, now: Date): Promise<"created" | "resumed" | "skipped"> {
-  const existing = await db.from("marketing_plans").select("*").eq("owner_user_id", ownerId).eq("automation_week_key", weekKey).maybeSingle();
-  if (existing.error) throw new Error("automation_plan_lookup_failed");
-  if (existing.data) { await resumeAutomatedPlan(db, ownerId, existing.data, autopilot); return "resumed"; }
-
-  const current = await db.from("marketing_plans").select("id,created_at,valid_until").eq("owner_user_id", ownerId).eq("status", "active").gte("created_at", cycleStartIso).gte("valid_until", dubaiDate(now)).order("created_at", { ascending: false }).limit(1).maybeSingle();
-  if (current.error) throw new Error("automation_current_plan_lookup_failed");
-  if (current.data) return "skipped";
-
-  const persisted = await generateAndPersistPlan(db, ownerId, weekKey, autopilot);
-  return persisted.created ? "created" : "resumed";
-}
-
-function dubaiDate(value: Date) { return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dubai", year: "numeric", month: "2-digit", day: "2-digit" }).format(value); }
+/** Back-compatible name for the existing cron entry point. */
+export const runWeeklyPlanAutomation = runRollingPlanAutomation;

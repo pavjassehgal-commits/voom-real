@@ -423,8 +423,8 @@ test("Create content offers Instagram Post, Reel and Instagram Story", async () 
 
 test("the Content Calendar filters and badges Story entries", async () => {
   const page = await read("app/app/(shell)/calendar/page.tsx");
-  assert.match(page, /"All", "Reel", "Story", "Feed", "Email", "SMS"/);
-  assert.match(page, /item\.contentType === "Instagram Story"/);
+  assert.match(page, /"All", "Instagram Post", "Reel", "Instagram Story"/);
+  assert.match(page, /item\.contentTypeLabel/);
 });
 
 // ---------------------------------------------------------------------------

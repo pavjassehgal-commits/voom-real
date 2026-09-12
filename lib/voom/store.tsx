@@ -40,7 +40,29 @@ import {
   buildSms,
   fmtTime,
 } from "./demoData";
+import { DEFAULT_TIMEZONE, addDays, localDate } from "./timezone";
 import { saveOnboarding as saveOnboardingAction, saveBrandSettings as saveBrandSettingsAction, restartOnboarding as restartOnboardingAction } from "./mutations";
+
+/**
+ * Calendar defaults follow the real current date in the account timezone.
+ * Nothing in the UI may pin itself to a fixed month, or production would keep
+ * showing a stale window (the old default opened on August 2026).
+ */
+function currentLocalMonth(): number {
+  return Number(localDate(new Date(), DEFAULT_TIMEZONE).slice(5, 7)) - 1;
+}
+
+function currentLocalYear(): number {
+  return Number(localDate(new Date(), DEFAULT_TIMEZONE).slice(0, 4));
+}
+
+const PLAN_DAY_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "2026-09-12" -> "12 Sep 2026". */
+function formatPlanDay(date: string): string {
+  const [year, month, day] = date.split("-");
+  return `${Number(day)} ${PLAN_DAY_MONTHS[Number(month) - 1]} ${year}`;
+}
 
 const NAV_PATHS: Record<string, string> = {
   dash: "/app/today",
@@ -213,8 +235,8 @@ function initialState(init: { displayName: string | null; email: string | null; 
     sideOpen: false,
     menuOpen: false,
     notif: 3,
-    calMonth: 7,
-    calYear: 2026,
+    calMonth: currentLocalMonth(),
+    calYear: currentLocalYear(),
     calFilter: "All",
     campTab: "email",
     reelTmpl: 0,
@@ -416,7 +438,7 @@ export function VoomProvider({
   }, []);
 
   const calToday = useCallback<VoomActions["calToday"]>(() => {
-    setState((s) => ({ ...s, calMonth: 7, calYear: 2026 }));
+    setState((s) => ({ ...s, calMonth: currentLocalMonth(), calYear: currentLocalYear() }));
   }, []);
 
   const setCalFilter = useCallback<VoomActions["setCalFilter"]>((f) => {
@@ -817,8 +839,8 @@ export function VoomProvider({
           limit: s.adTotal,
           alloc: s.adAlloc.map((a) => ({ ...a })),
           spent: Math.round(s.adTotal * 0.34),
-          start: "24 Aug 2026",
-          end: "7 Sep 2026",
+          start: formatPlanDay(localDate(new Date(), DEFAULT_TIMEZONE)),
+          end: formatPlanDay(addDays(localDate(new Date(), DEFAULT_TIMEZONE), 14)),
           paused: false,
         };
         return {

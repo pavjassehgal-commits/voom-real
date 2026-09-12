@@ -9,6 +9,7 @@ import { PageHead } from "@/components/voom/shell/AppShell";
 import { ConnectInstagramFirstModal } from "@/components/voom/modals/ConnectInstagramFirstModal";
 import { Btn, Card, IconBtn, Tag, Textarea } from "@/components/voom/ui/primitives";
 import { DemoTag, ExTag } from "@/components/voom/ui/Notes";
+import { DEFAULT_TIMEZONE, localDate } from "@/lib/voom/timezone";
 
 export default function ReelsPage() {
   const { reelTmpl, reelCaption, reelTime, igConnected, reelQueue, brand } = useVoomState();
@@ -16,7 +17,7 @@ export default function ReelsPage() {
     useVoomActions();
   const { open } = useModal();
   const pack = useCurrentPack();
-  const [reelDate, setReelDate] = useState("2026-08-25");
+  const [reelDate, setReelDate] = useState(() => localDate(new Date(), DEFAULT_TIMEZONE));
 
   const tmpl = TMPLS[reelTmpl];
   const cap = reelCaption || pack.cap;

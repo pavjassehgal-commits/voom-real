@@ -184,8 +184,9 @@ test("Post format needed no schema change; 0022-0027 remain intact and 0028 is v
   assert.deepEqual(files.filter((name) => /^0026_/.test(name)), ["0026_mara_media_brief.sql"], "the only 0026 is MARA media brief");
   assert.deepEqual(files.filter((name) => /^0027_/.test(name)), ["0027_mara_media_provider_diagnostics.sql"], "the only 0027 is provider diagnostics");
   assert.deepEqual(files.filter((name) => /^0028_/.test(name)), ["0028_openrouter_video_job_metadata.sql"], "the only 0028 is OpenRouter video job metadata");
+  assert.deepEqual(files.filter((name) => /^0029_/.test(name)), ["0029_workflow_timezone_and_slots.sql"], "the only 0029 is the workflow timezone + slot migration");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 28), "no migration beyond 0028 may exist");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 29), "no migration beyond 0029 may exist");
 
   // 0021 is unchanged by this fix: it still carries no format column on
   // mara_drafts, and the format is stored in the pre-existing channel column.

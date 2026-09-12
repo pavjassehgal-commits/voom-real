@@ -86,7 +86,7 @@ test("campaign editor labels the real destination fields and SMS validation uses
 
 test("automation paths still never send campaigns externally", async () => {
   const [workflow, automation, tools] = await Promise.all([
-    read("lib/mara/plan-workflow.ts"),
+    read("lib/voom/workflow/service.ts"),
     read("lib/voom/weekly-automation.ts"),
     read("lib/mara/tools.ts"),
   ]);

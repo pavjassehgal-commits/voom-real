@@ -478,6 +478,7 @@ test("live 0023 is not modified; 0024-0027 remain intact; 0028 is OpenRouter vid
     "0026_mara_media_brief.sql",
     "0027_mara_media_provider_diagnostics.sql",
     "0028_openrouter_video_job_metadata.sql",
+    "0029_workflow_timezone_and_slots.sql",
   ]);
   const keyRotation = await read("supabase/migrations/0023_instagram_token_key_rotation.sql");
   assert.doesNotMatch(keyRotation, /instagram_publish_/);
