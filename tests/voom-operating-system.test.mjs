@@ -142,18 +142,38 @@ test("Reel production capability is conservative and requests exact real-world a
   const educational = classifyReelProduction({ concept: "Three coffee storage tips", script: "An educational text-led explainer." });
   assert.deepEqual(educational.availableMethods, ["create_with_mara", "upload_asset", "film_yourself"]);
   assert.equal(educational.recommendedMethod, "create_with_mara");
+  assert.equal(educational.maraOption.state, "recommended");
   assert.equal(educational.missingAssetRequest, null);
 
+  // Filming is recommended, but Create with MARA STAYS available with an
+  // adapted animated equivalent — the recommended method and the available
+  // methods are different concepts.
   const storefront = classifyReelProduction({ concept: "Show our real storefront", script: "Walk viewers through our location." });
-  assert.deepEqual(storefront.availableMethods, ["film_yourself", "upload_asset"]);
-  assert.doesNotMatch(storefront.availableMethods.join(" "), /create_with_mara/);
+  assert.equal(storefront.recommendedMethod, "film_yourself");
+  assert.ok(storefront.availableMethods.includes("create_with_mara"), "adapted MARA option stays visible");
+  assert.equal(storefront.maraOption.state, "adapted");
+  assert.match(String(storefront.maraOption.concept), /animated/i);
+  assert.doesNotMatch(String(storefront.maraOption.concept), /storefront and entrance/i);
   assert.match(storefront.missingAssetRequest, /storefront and entrance/);
 
+  const founder = classifyReelProduction({ concept: "Founder explains SynraPay on camera", script: "The founder introduces the product." });
+  assert.equal(founder.recommendedMethod, "film_yourself");
+  assert.ok(founder.availableMethods.includes("create_with_mara"));
+  assert.equal(founder.maraOption.state, "adapted");
+  assert.match(String(founder.maraOption.concept), /animated explainer/i);
+
+  // A real customer testimonial can never be fabricated: MARA is truthfully
+  // disabled WITH a specific reason, never silently removed.
   const testimonial = classifyReelProduction({ concept: "Real customer testimonial", script: "A customer explains their visit." });
   assert.deepEqual(testimonial.availableMethods, ["film_yourself", "upload_asset"]);
+  assert.doesNotMatch(testimonial.availableMethods.join(" "), /create_with_mara/);
+  assert.equal(testimonial.maraOption.state, "unavailable");
+  assert.match(String(testimonial.maraOption.disabledReason), /testimonial/i);
   assert.match(testimonial.missingAssetRequest, /real customer.*permission/);
 
   const product = classifyReelProduction({ concept: "Dessert being cut open", script: "Reveal the centre." });
+  assert.equal(product.maraOption.state, "unavailable");
+  assert.match(String(product.maraOption.disabledReason), /product/i);
   assert.match(product.missingAssetRequest, /5–8 second close-up clip.*cut open/);
 });
 

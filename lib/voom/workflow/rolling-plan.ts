@@ -20,8 +20,8 @@
  */
 
 import {
-  contentTypeForSlot,
   DEFAULT_HORIZON_DAYS,
+  planContentTypes,
   resolveSlotMinutes,
   slotDates,
   type Cadence,
@@ -141,9 +141,14 @@ export function buildSlots(input: RollingPlanInput): PlanSlot[] {
   const horizon = input.horizonDays ?? DEFAULT_HORIZON_DAYS;
   const today = localDate(input.now, input.timeZone);
   const nowMinutes = localMinutes(input.now, input.timeZone);
+  const dates = slotDates(today, input.cadence, horizon);
+  // Content types are balanced across the WHOLE horizon by cadence + goal
+  // (posts/reels/stories), never by a per-slot modulo that can collapse into
+  // one repeated format. The same horizon always resolves to the same types.
+  const types = planContentTypes({ cadence: input.cadence, count: dates.length, goal: input.goal });
   const slots: PlanSlot[] = [];
-  for (const [index, date] of slotDates(today, input.cadence, horizon).entries()) {
-    const contentType = contentTypeForSlot(date, index);
+  for (const [index, date] of dates.entries()) {
+    const contentType = types[index] ?? "post";
     const minutes = resolveSlotMinutes({ contentType, index, isToday: date === today, nowMinutes });
     // A slot whose local day has no usable time left is skipped rather than
     // scheduled in the past — stale dates can never enter the workflow.

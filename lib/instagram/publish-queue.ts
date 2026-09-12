@@ -37,6 +37,12 @@ export const PUBLISH_QUEUE_COLUMNS =
  * Enqueues (or reschedules) one approved+scheduled draft. Idempotent: one row
  * per (owner, draft) forever, so re-approving or re-saving never duplicates a
  * publish identity. Published/publishing rows are left untouched.
+ *
+ * `waitingForMedia` holds the row in the truthful 'waiting_for_media' state
+ * while the visual is still generating, instead of pretending the schedule is
+ * ready. The claim predicate already re-claims those rows when due, so a
+ * visual that arrives late still publishes; a visual that never arrives keeps
+ * the item visible as waiting/missed instead of silently dead.
  */
 export async function enqueuePublishItem(
   db: SupabaseClient,
@@ -47,6 +53,7 @@ export async function enqueuePublishItem(
     mediaKind: PublishMediaKind;
     caption: string;
     scheduledAt: string;
+    waitingForMedia?: boolean;
   },
 ): Promise<PublishQueueRow | null> {
   const { data, error } = await db.rpc("upsert_instagram_publish_queue_item", {
@@ -56,6 +63,7 @@ export async function enqueuePublishItem(
     p_media_kind: input.mediaKind,
     p_caption: input.caption,
     p_scheduled_at: input.scheduledAt,
+    p_waiting_for_media: input.waitingForMedia === true,
   });
   if (error) throw new Error("instagram_publish_enqueue_failed");
   return normalizeRow(data);

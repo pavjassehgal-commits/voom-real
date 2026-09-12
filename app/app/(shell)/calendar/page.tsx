@@ -155,11 +155,14 @@ function WorkflowDetail({ item }: { item: WorkflowView }) {
     <div className="flex flex-wrap items-center gap-2">
       <Tag tone="t-blue">{item.contentTypeLabel}</Tag>
       <Tag tone={toneFor(item.status)}>{item.statusLabel}</Tag>
-      {pastDue && <Tag tone="t-amber">Past due</Tag>}
+      {item.status === "missed" && <Tag tone="t-red">Missed scheduled time</Tag>}
     </div>
     <h2 className="mt-3 font-display text-lg font-semibold">{item.concept}</h2>
     <p className="mt-1 text-sm text-text-3">{item.dayLabel} · {item.localTime}</p>
-    {pastDue && <p className="mt-3 rounded-xl border border-amber/35 bg-amber/10 px-3.5 py-2.5 text-sm text-amber">
+    {item.status === "missed" && <p role="alert" className="mt-3 rounded-xl border border-amber/35 bg-amber/10 px-3.5 py-2.5 text-sm text-amber">
+      {item.missedReason ?? "Its scheduled time passed without publishing."} Voom never publishes hours late on its own — post it now or reschedule from the Marketing Plan.
+    </p>}
+    {pastDue && item.status !== "missed" && <p className="mt-3 rounded-xl border border-amber/35 bg-amber/10 px-3.5 py-2.5 text-sm text-amber">
       This item is past its scheduled time. It stays right here until Voom completes it — it is never silently dropped or published twice.
     </p>}
     <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-text-2">{item.caption}</p>
@@ -201,14 +204,16 @@ function countByStatus(items: WorkflowView[]) {
 function colorFor(status: string) {
   if (status === "published") return "#1c8a52";
   if (status === "failed") return "#c0392b";
-  if (status === "needs_approval") return "#f2a516";
-  if (status === "generating" || status === "publishing") return "#2f6f9f";
+  if (status === "missed") return "#c0392b";
+  if (status === "needs_approval" || status === "ready_for_review") return "#f2a516";
+  if (status === "generating" || status === "publishing" || status === "scheduled") return "#2f6f9f";
   return "#e8481f";
 }
 function toneFor(status: string) {
   if (status === "published") return "t-green";
   if (status === "failed") return "t-red";
-  if (status === "needs_approval") return "t-amber";
-  if (status === "generating" || status === "publishing") return "t-blue";
+  if (status === "missed") return "t-red";
+  if (status === "needs_approval" || status === "ready_for_review") return "t-amber";
+  if (status === "generating" || status === "publishing" || status === "scheduled") return "t-blue";
   return "t-grey";
 }
