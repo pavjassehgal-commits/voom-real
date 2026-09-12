@@ -5,7 +5,8 @@
  * pattern as gemini-image-jpeg-output.test.mjs):
  *   - POSTs to /api/v1/images (never /images/generations, never Gemini)
  *   - model bytedance-seed/seedream-4.5 (or MEDIA_IMAGE_MODEL override)
- *   - n=1, resolution "1K"
+ *   - n=1, resolution "2K" (Seedream 4.5 rejects "1K"/1024x1024: its minimum
+ *     is 3,686,400 output pixels and 1024x1024 is only 1,048,576)
  *   - aspect_ratio 1:1 / 4:5 / 9:16 pass through directly
  *   - decodes data[0].b64_json
  *   - respects data[0].media_type when present
@@ -148,7 +149,7 @@ test(".env.example documents OPENROUTER_API_KEY and MEDIA_IMAGE_MODEL as server-
 // 2. Request shape (extracted from shipping OpenRouter adapter source)
 // ---------------------------------------------------------------------------
 
-test("OpenRouter image request uses /api/v1/images with Seedream 4.5, n=1, resolution 1K", () => {
+test("OpenRouter image request uses /api/v1/images with Seedream 4.5, n=1, resolution 2K", () => {
   // Endpoint: POST {baseUrl}/images  →  https://openrouter.ai/api/v1/images
   assert.match(openRouterSource, /jsonRequest\(`\$\{this\.config\.baseUrl\}\/images`/);
   assert.match(openRouterSource, /method:\s*"POST"/);
@@ -174,13 +175,22 @@ test("OpenRouter image request uses /api/v1/images with Seedream 4.5, n=1, resol
     const body = buildBody({ prompt: `format ${aspectRatio}`, aspectRatio });
     assert.equal(body.model, "bytedance-seed/seedream-4.5");
     assert.equal(body.n, 1);
-    assert.equal(body.resolution, "1K");
+    assert.equal(body.resolution, "2K", "Seedream 4.5 minimum is 3,686,400 pixels; 2K is required");
     assert.equal(body.aspect_ratio, aspectRatio, `${aspectRatio} must pass through unchanged`);
     assert.equal(body.prompt, `format ${aspectRatio}`);
     assert.equal(body.size, undefined, "size shorthand is not used; resolution + aspect_ratio are");
+    // Regression: the "1K" tier and hardcoded 1024-pixel square sizes must
+    // never be sent (1,048,576 pixels is below the Seedream 4.5 floor → 400).
+    assert.notEqual(body.resolution, "1K");
+    assert.equal(body.size, undefined);
+    assert.equal(body.width, undefined, "pixel width is not hardcoded; resolution + aspect_ratio are used");
+    assert.equal(body.height, undefined, "pixel height is not hardcoded; resolution + aspect_ratio are used");
+    assert.doesNotMatch(JSON.stringify(body), /1K|1024x1024/);
   }
 
-  assert.match(openRouterSource, /resolution:\s*"1K"/);
+  assert.match(openRouterSource, /resolution:\s*"2K"/);
+  assert.doesNotMatch(openRouterSource, /resolution:\s*"1K"/);
+  assert.doesNotMatch(openRouterSource, /1024x1024/);
   assert.match(openRouterSource, /n:\s*1/);
   assert.match(openRouterSource, /aspect_ratio:\s*input\.aspectRatio/);
   assert.match(openRouterSource, /model:\s*this\.config\.imageModel/);
