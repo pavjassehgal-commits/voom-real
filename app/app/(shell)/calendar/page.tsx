@@ -6,7 +6,8 @@ import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { CreateContentModal } from "@/components/voom/modals/CreateContentModal";
 import { SavedCalendarDetailModal } from "@/components/voom/modals/SavedCalendarDetailModal";
-import { Btn, Card, Chip, IconBtn, Tag } from "@/components/voom/ui/primitives";
+import { Btn, Card, Chip, EmptyState, IconBtn, Tag } from "@/components/voom/ui/primitives";
+import { currentScheduleDate } from "@/lib/voom/schedule-guard";
 import { PublishingQueue } from "@/components/voom/PublishingQueue";
 import type { WorkflowSnapshot, WorkflowView } from "@/lib/voom/workflow/read";
 import { WORKFLOW_STATUS_LABELS, WORKFLOW_STATUSES } from "@/lib/voom/workflow/state";
@@ -63,7 +64,9 @@ export default function CalendarPage() {
     return map;
   }, [items]);
 
-  const view = cursor ?? monthOf(new Date().toISOString().slice(0, 10));
+  // Fallback before the first snapshot arrives: the real current local date,
+  // not a hardcoded month and not the device's UTC date.
+  const view = cursor ?? monthOf(currentScheduleDate());
   const cells = useMemo(() => buildCells(view.year, view.month), [view.year, view.month]);
   const counts = useMemo(() => countByStatus(items), [items]);
 
@@ -95,17 +98,15 @@ export default function CalendarPage() {
     </div>
 
     {snapshot && items.length === 0 && (
-      <Card className="mb-3.5 flex flex-col items-start gap-2 border-line bg-surface-2 p-4 sm:flex-row sm:items-center">
-        <span className="grid h-10 w-10 flex-none place-items-center rounded-xl bg-[var(--brand-soft)] text-brand"><Icon name="cal" size={18} /></span>
-        <div className="min-w-0 flex-1">
-          <b className="block text-sm">Your calendar is empty</b>
-          <p className="mt-0.5 text-[12.5px] leading-relaxed text-text-3">
-            This calendar shows the content Voom is actually executing. Build your rolling plan (or create content directly) and items appear here with their real status.
-          </p>
-        </div>
-        <Btn variant="outline" size="sm" onClick={() => open(<CreateContentModal onChanged={() => void load()} />)}>
-          <Icon name="plus" size={14} /> Create content
-        </Btn>
+      <Card className="mb-3.5">
+        <EmptyState
+          icon="cal"
+          title="Your calendar is empty"
+          reason="This calendar shows the content Voom is actually executing — planned drafts, items waiting for your approval, and what is scheduled or published. Build your rolling plan, or create content directly, and items appear here with their real status."
+          action={<Btn variant="outline" size="sm" onClick={() => open(<CreateContentModal onChanged={() => void load()} />)}>
+            <Icon name="plus" size={14} /> Create content
+          </Btn>}
+        />
       </Card>
     )}
 

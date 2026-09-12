@@ -70,7 +70,9 @@ test("email/SMS campaign drafts stay a separate, send-free surface", async () =>
   // the Marketing Plan only renders executable content items.
   assert.doesNotMatch(workflow, /send_campaign|send_email|send_sms|spend/);
   assert.doesNotMatch(workspace, /send|Send/);
-  assert.match(page, /generate a marketing plan so Voom can prepare campaign drafts/);
+  // The empty state explains purpose + next actions without inventing data.
+  assert.match(page, /EmptyState/);
+  assert.match(page, /let Voom prepare campaign drafts for you/);
 });
 
 test("content creation goes through the real persisted workflow, not a demo composer", async () => {

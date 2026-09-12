@@ -6,6 +6,7 @@ import { Icon } from "@/components/voom/icons";
 import { Btn, Card, Tag } from "@/components/voom/ui/primitives";
 import { CADENCES, CADENCE_LABELS, type Cadence } from "@/lib/voom/cadence";
 import type { WorkflowSnapshot, WorkflowView } from "@/lib/voom/workflow/read";
+import { formatLocalDate } from "@/lib/voom/timezone";
 // TEMPORARY: planning-only preview control, dev-flag gated. Remove with
 // lib/voom/planning-only-preview.ts when the experiment ends.
 import { PlanningOnlyPreviewCard } from "@/components/voom/operating/PlanningOnlyPreview";
@@ -49,7 +50,7 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
     <Card className="mb-4 p-4 sm:p-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <span className="text-xs text-text-3">Rolling 7-day plan · {snapshot.timeZone.replace("_", " ")} · starts {snapshot.today}</span>
+          <span className="text-xs text-text-3">Rolling 7-day plan · {snapshot.timeZone.replace("_", " ")} · starts {formatLocalDate(snapshot.today)}</span>
           <p className="mt-0.5 text-sm font-semibold">{snapshot.planGoal ?? "No goal set yet"}</p>
         </div>
         <Btn variant="outline" size="sm" disabled={busy} onClick={() => void build(cadence)}>

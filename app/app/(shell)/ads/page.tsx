@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { Icon } from "@/components/voom/icons";
-import { Card, Tag } from "@/components/voom/ui/primitives";
+import { Card, EmptyState, Tag } from "@/components/voom/ui/primitives";
 
 /**
  * Paid advertising is not implemented yet: Voom has no Meta or Google ads
@@ -28,30 +28,20 @@ export default function AdsPage() {
         description="Voom will prepare the allocation and you approve it. Nothing spends until you do."
       />
 
-      <Card className="p-7 text-center sm:p-10">
-        <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[var(--brand-soft)] text-brand">
-          <Icon name="target" size={24} />
-        </span>
-        <h2 className="mt-4 font-display text-xl font-semibold">Paid advertising isn’t set up for your business yet</h2>
-        <p className="mx-auto mt-2 max-w-xl text-sm leading-relaxed text-text-2">
-          Voom can’t see or spend any advertising budget right now — no ad account is connected and nothing was ever
-          charged through Voom. When Meta or Google advertising is connected, Voom will prepare a budget allocation
-          here for your explicit approval before anything runs.
-        </p>
-        <div className="mt-5 flex flex-wrap justify-center gap-2">
-          <Link
-            href="/app/connections"
-            className="voom-grad inline-flex h-[42px] items-center gap-2 rounded-[11px] px-[18px] text-sm font-semibold text-white shadow-[0_6px_18px_-8px_var(--brand)] hover:brightness-110"
-          >
-            <Icon name="globe" size={15} /> Check connections
-          </Link>
-          <Link
-            href="/app/today"
-            className="inline-flex h-[42px] items-center gap-2 rounded-[11px] border border-line-2 px-[18px] text-sm font-semibold hover:bg-surface-2"
-          >
-            <Icon name="home" size={15} /> Back to Today
-          </Link>
-        </div>
+      <Card className="p-0">
+        <EmptyState
+          icon="target"
+          title="Paid advertising isn’t set up for your business yet"
+          reason="Voom can’t see or spend any advertising budget right now — no ad account is connected and nothing was ever charged through Voom. When Meta or Google advertising is connected, Voom will prepare a budget allocation here for your explicit approval before anything runs."
+          action={<>
+            <Link href="/app/connections" className="voom-grad inline-flex h-[42px] items-center gap-2 rounded-[11px] px-[18px] text-sm font-semibold text-white shadow-[0_6px_18px_-8px_var(--brand)] hover:brightness-110">
+              <Icon name="globe" size={15} /> Check connections
+            </Link>
+            <Link href="/app/today" className="inline-flex h-[42px] items-center gap-2 rounded-[11px] border border-line-2 px-[18px] text-sm font-semibold hover:bg-surface-2">
+              <Icon name="home" size={15} /> Back to Today
+            </Link>
+          </>}
+        />
       </Card>
 
       <Card className="mt-4 p-5 sm:p-6">

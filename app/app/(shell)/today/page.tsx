@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { Icon } from "@/components/voom/icons";
-import { Card, Tag } from "@/components/voom/ui/primitives";
+import { Card, EmptyState, Tag } from "@/components/voom/ui/primitives";
 import { AutomationMode } from "@/components/voom/operating/AutomationMode";
 import { normalizeAutomationMode } from "@/lib/voom/automation";
 import { getOperatingData } from "@/lib/voom/operating-data";
 import type { WorkflowView } from "@/lib/voom/workflow/read";
+import { formatLocalDate } from "@/lib/voom/timezone";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +24,7 @@ export default async function TodayPage() {
   return <div>
     <PageHead
       title="Today"
-      description={`${snapshot.cadenceLabel} plan · ${snapshot.timeZone.replace("_", " ")} · ${snapshot.today}`}
+      description={`${snapshot.cadenceLabel} plan · ${snapshot.timeZone.replace("_", " ")} · ${formatLocalDate(snapshot.today)}`}
       actions={<AutomationMode compact initial={normalizeAutomationMode(data.business.automation_level)} />}
     />
 
@@ -78,6 +79,14 @@ function Stat({ label, value }: { label: string; value: number }) {
   </div>;
 }
 
+/** Why each Today section is (truthfully) empty when it is. */
+const emptyWhy: Record<string, string> = {
+  "Open Content Calendar": "When an item's schedule reaches today it moves here — see the full rolling schedule in the Content Calendar.",
+  "Open Approvals": "Voom prepares work and brings it here before it schedules anything, so you always decide what goes out.",
+  "View schedule": "MARA generates visuals on its own after a plan is built. Items show up here while that work is in progress.",
+  "Review failures": "If publishing or media generation stops, the item waits here with what happened and a safe retry — nothing is published twice.",
+};
+
 function Section({ title, icon, href, action, items, empty }: { title: string; icon: string; href: string; action: string; items: WorkflowView[]; empty: string }) {
   return <Card className="mb-4 p-5 sm:p-6">
     <div className="mb-4 flex items-center gap-2">
@@ -85,9 +94,10 @@ function Section({ title, icon, href, action, items, empty }: { title: string; i
       <h2 className="font-display text-base font-semibold">{title}</h2>
       <Tag tone="t-grey">{items.length}</Tag>
     </div>
-    {items.length ? <div className="space-y-2">{items.map((item) => <WorkflowRow key={item.draftId} item={item} />)}</div>
-      : <p className="text-sm text-text-3">{empty}</p>}
-    <Link href={href} className="mt-4 inline-flex text-sm font-semibold text-brand hover:underline">{action} →</Link>
+    {items.length
+      ? <div className="space-y-2">{items.map((item) => <WorkflowRow key={item.draftId} item={item} />)}</div>
+      : <EmptyState icon={icon} title={empty} reason={emptyWhy[action]} className="py-6" />}
+    <Link href={href} className="mt-1 inline-flex text-sm font-semibold text-brand hover:underline">{action} →</Link>
   </Card>;
 }
 

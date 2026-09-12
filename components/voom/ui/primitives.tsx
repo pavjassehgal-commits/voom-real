@@ -1,6 +1,7 @@
 "use client";
 
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
+import { Icon } from "../icons";
 
 export function cx(...parts: (string | false | null | undefined)[]) {
   return parts.filter(Boolean).join(" ");
@@ -205,4 +206,32 @@ export function Between({ className, children }: { className?: string; children:
 
 export function Row({ className, children }: { className?: string; children: ReactNode }) {
   return <div className={cx("flex items-center gap-2.5", className)}>{children}</div>;
+}
+
+/**
+ * The one empty-state presentation: consistent icon, hierarchy and spacing so
+ * an intentionally empty screen never reads as broken. Every state it renders
+ * is truthful: what the screen is for, why it is empty, what to do next.
+ */
+export function EmptyState({
+  icon = "spark",
+  title,
+  reason,
+  action,
+  className,
+}: {
+  icon?: string;
+  title: string;
+  reason: string;
+  action?: ReactNode;
+  className?: string;
+}) {
+  return <div className={cx("flex flex-col items-center px-5 py-10 text-center sm:py-12", className)}>
+    <span className="grid h-14 w-14 place-items-center rounded-2xl bg-[var(--brand-soft)] text-brand">
+      <Icon name={icon} size={24} />
+    </span>
+    <h2 className="mt-4 font-display text-lg font-semibold sm:text-xl">{title}</h2>
+    <p className="mx-auto mt-2 max-w-xl text-sm leading-relaxed text-text-2">{reason}</p>
+    {action && <div className="mt-5 flex flex-wrap justify-center gap-2">{action}</div>}
+  </div>;
 }

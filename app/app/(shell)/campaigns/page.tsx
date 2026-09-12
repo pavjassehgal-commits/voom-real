@@ -8,7 +8,7 @@ import type { CampaignDeliveryState, CampaignDeliveryView, CampaignRecord, Campa
 import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { CampaignEditorModal } from "@/components/voom/modals/CampaignEditorModal";
-import { Btn, Card, Chip, Tag } from "@/components/voom/ui/primitives";
+import { Btn, Card, Chip, EmptyState, Tag } from "@/components/voom/ui/primitives";
 
 type StatusFilter = "all" | CampaignStatus;
 
@@ -130,10 +130,29 @@ export default function CampaignsPage() {
               </tr>
             </thead>
             <tbody>
-              {visible.length === 0 && (
+              {visible.length === 0 && savedCampaigns.length === 0 && (
+                <tr className="border-t border-line">
+                  <td colSpan={6} className="p-0">
+                    <EmptyState
+                      icon={em ? "mail" : "msg"}
+                      title={`No ${em ? "email" : "SMS"} drafts yet`}
+                      reason={`This is where Voom keeps the ${em ? "emails" : "text messages"} it drafts for your approval. Create one yourself, or build your Marketing Plan and let Voom prepare campaign drafts for you. Nothing is ever sent until you approve it and choose a verified recipient.`}
+                      action={<>
+                        <Btn variant="primary" size="sm" onClick={openNew}>
+                          <Icon name="plus" size={14} /> New {em ? "email" : "SMS"}
+                        </Btn>
+                        <Btn variant="outline" size="sm" onClick={() => goTo("plan")}>
+                          <Icon name="spark" size={14} /> Build the plan
+                        </Btn>
+                      </>}
+                    />
+                  </td>
+                </tr>
+              )}
+              {visible.length === 0 && savedCampaigns.length > 0 && (
                 <tr className="border-t border-line">
                   <td colSpan={6} className="py-8 text-center text-sm text-text-3">
-                    No {em ? "email" : "SMS"} drafts yet. Create one, or generate a marketing plan so Voom can prepare campaign drafts for you.
+                    No drafts match this filter yet. Choose All to see every {em ? "email" : "SMS"} campaign.
                   </td>
                 </tr>
               )}
