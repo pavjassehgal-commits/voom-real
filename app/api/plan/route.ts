@@ -27,11 +27,19 @@ export async function POST(request: Request) {
   const admin = createAdminClient();
 
   let cadence: ReturnType<typeof normalizeCadence> | undefined;
+  // Planning-only execution: the owner runs the real cadence-aware rolling
+  // planner and persists the upcoming drafts, but the run stops before paid
+  // media generation, approval, scheduling and Instagram queueing. Only the
+  // exact "planning_only" value narrows the run; anything else keeps the
+  // existing full behaviour. No owner identity is ever read from the body —
+  // the run always operates on the authenticated owner below.
+  let stage: "planning_only" | undefined;
   try {
-    const body = await request.json() as { cadence?: unknown };
+    const body = await request.json() as { cadence?: unknown; stage?: unknown };
     if (typeof body.cadence === "string" && (CADENCES as readonly string[]).includes(body.cadence)) {
       cadence = normalizeCadence(body.cadence);
     }
+    if (body.stage === "planning_only") stage = "planning_only";
   } catch { /* an empty body is fine */ }
 
   // Modest rate limit: plan building calls MARA and media providers.
@@ -48,7 +56,7 @@ export async function POST(request: Request) {
     const { data: business } = await admin.from("businesses").select("automation_level")
       .eq("owner_user_id", user.id).maybeSingle();
     const mode = business?.automation_level === "autopilot" ? "autopilot" as const : "assisted" as const;
-    const run = await runOwnerWorkflow(admin, { ownerId: user.id, cadence, mode });
+    const run = await runOwnerWorkflow(admin, { ownerId: user.id, cadence, mode, stage });
     const snapshot = await loadWorkflowSnapshot(admin, user.id);
     return Response.json({ run, snapshot });
   } catch {
