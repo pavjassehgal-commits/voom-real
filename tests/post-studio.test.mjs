@@ -246,7 +246,7 @@ test("post_draft_assets is owner-scoped, service-written, and hides storage_path
   assert.match(sql, /update storage\.buckets set public = false where id = 'mara-media'/);
 });
 
-test("0021 is marked already-applied; the only 0022 is Instagram auto-publishing; 0023 is key rotation; 0024 is Story publishing; 0025 is MARA media video generation; 0026 is media brief; 0018-0020 are untouched", async () => {
+test("0021 is marked already-applied; 0018-0020 are untouched and 0022-0028 stay scoped", async () => {
   const sql = await read("supabase/migrations/0021_instagram_post_studio.sql");
   assert.match(sql, /ALREADY APPLIED to the production Supabase database/i);
   assert.match(sql, /Do NOT run this file again/i);
@@ -268,8 +268,9 @@ test("0021 is marked already-applied; the only 0022 is Instagram auto-publishing
   assert.deepEqual(files.filter((name) => /^0025_/.test(name)), ["0025_mara_media_video_generation.sql"], "the only 0025 is MARA media video generation");
   assert.deepEqual(files.filter((name) => /^0026_/.test(name)), ["0026_mara_media_brief.sql"], "the only 0026 is MARA media brief");
   assert.deepEqual(files.filter((name) => /^0027_/.test(name)), ["0027_mara_media_provider_diagnostics.sql"], "the only 0027 is provider diagnostics");
+  assert.deepEqual(files.filter((name) => /^0028_/.test(name)), ["0028_openrouter_video_job_metadata.sql"], "the only 0028 is OpenRouter video job metadata");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 27), "no migration beyond 0027 may exist");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 28), "no migration beyond 0028 may exist");
 });
 
 // ---------------------------------------------------------------------------

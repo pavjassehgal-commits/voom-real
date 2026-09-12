@@ -174,7 +174,7 @@ test("base channel labels stay clean for calendar and legacy consumers", () => {
   }
 });
 
-test("Post format needed no schema change; 0022 is Instagram auto-publishing, 0023 is the key rotation, 0024 is Story publishing, 0025 is MARA media video generation, 0026 is media brief", async () => {
+test("Post format needed no schema change; 0022-0027 remain intact and 0028 is video metadata", async () => {
   const files = await readdir(new URL("supabase/migrations/", root));
   assert.ok(files.includes("0021_instagram_post_studio.sql"), "0021 must be checked in");
   assert.deepEqual(files.filter((name) => /^0022_/.test(name)), ["0022_instagram_auto_publishing.sql"], "the only 0022 is Instagram auto-publishing");
@@ -183,8 +183,9 @@ test("Post format needed no schema change; 0022 is Instagram auto-publishing, 00
   assert.deepEqual(files.filter((name) => /^0025_/.test(name)), ["0025_mara_media_video_generation.sql"], "the only 0025 is MARA media video generation");
   assert.deepEqual(files.filter((name) => /^0026_/.test(name)), ["0026_mara_media_brief.sql"], "the only 0026 is MARA media brief");
   assert.deepEqual(files.filter((name) => /^0027_/.test(name)), ["0027_mara_media_provider_diagnostics.sql"], "the only 0027 is provider diagnostics");
+  assert.deepEqual(files.filter((name) => /^0028_/.test(name)), ["0028_openrouter_video_job_metadata.sql"], "the only 0028 is OpenRouter video job metadata");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 27), "no migration beyond 0027 may exist");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 28), "no migration beyond 0028 may exist");
 
   // 0021 is unchanged by this fix: it still carries no format column on
   // mara_drafts, and the format is stored in the pre-existing channel column.

@@ -121,7 +121,9 @@ export async function startVideoJob(service: VideoService, input: StartJobInput 
     ownerId: service.ownerId,
     providerName: service.videoConfig.provider,
     supportsImageToVideo: service.videoConfig.supportsImageToVideo,
-    estimatedCostUsd: estimatedCostUsdForDuration(durationTarget),
+    // OpenRouter V1 pins the billable request to its six-second default;
+    // legacy providers retain the planner's requested duration.
+    estimatedCostUsd: estimatedCostUsdForDuration(service.videoConfig.durationSeconds ?? durationTarget),
     monthlySpendLimitUsd: monthlySpendLimitUsd(),
   });
   if (!result.ok) return { ...result, view: "generation" in result ? toClientGenerationView(result.generation, null) : null };
