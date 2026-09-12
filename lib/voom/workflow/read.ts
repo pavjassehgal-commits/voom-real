@@ -1,7 +1,7 @@
 import "server-only";
 
 import { accountTimezone, formatLocalTime, isoToLocalDate, localDate, relativeDayLabel } from "@/lib/voom/timezone";
-import { CADENCE_LABELS, normalizeCadence, type Cadence } from "@/lib/voom/cadence";
+import { CADENCE_LABELS, DEFAULT_HORIZON_DAYS, isWithinHorizon, normalizeCadence, type Cadence } from "@/lib/voom/cadence";
 import type { AdminClient } from "@/lib/post/server-data";
 import {
   contentTypeLabel,
@@ -18,6 +18,15 @@ import {
  * Every row is one real `mara_drafts` workflow item joined to its real media,
  * calendar and publishing facts, so no screen can show content that does not
  * exist and no screen can disagree about a status or a date.
+ *
+ * Only the ACTIVE rolling workflow is surfaced. Rows produced by the legacy
+ * ordinal-slot planner (`source_plan_item_key` = "0", "1", …) and any draft
+ * whose slot lies outside the current rolling horizon stay in the database
+ * untouched for history/debugging, but they are never mixed into the current
+ * 7-day views. See `isCurrentWorkflowItem` for the exact validity rule — it is
+ * based on current workflow validity (date-based slot + live horizon), never
+ * on `created_at`, so a valid current-horizon item created before this change
+ * remains fully visible.
  */
 
 export interface WorkflowView {
@@ -52,14 +61,100 @@ export interface WorkflowSnapshot {
   planGoal: string | null;
   planValidFrom: string | null;
   planValidUntil: string | null;
+  /** Every `mara_drafts` id attached to the active plan, including rows the horizon filter hides. */
+  planDraftIds: string[];
   items: WorkflowView[];
 }
 
 export const EMPTY_SNAPSHOT: WorkflowSnapshot = {
   timeZone: "Asia/Dubai", today: "", cadence: "3x_week", cadenceLabel: CADENCE_LABELS["3x_week"],
-  mode: "assisted", planId: null, planGoal: null, planValidFrom: null, planValidUntil: null, items: [],
+  mode: "assisted", planId: null, planGoal: null, planValidFrom: null, planValidUntil: null, planDraftIds: [], items: [],
 };
 
+/** The new slot semantics: `source_plan_item_key` holds a real local date. */
+const LOCAL_SLOT_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * True when a draft uses the NEW date-based slot semantics — its per-plan slot
+ * key is a real local YYYY-MM-DD date. Legacy ordinal keys ("0", "1", …) are
+ * never current-workflow items, even when their publish time happens to fall
+ * inside the live horizon.
+ */
+export function isLocalSlotDateKey(value: unknown): boolean {
+  const key = String(value ?? "");
+  if (!LOCAL_SLOT_DATE.test(key)) return false;
+  const instant = Date.parse(`${key}T00:00:00Z`);
+  // Round-trip guard: rejects impossible calendar dates the regex allows.
+  return Number.isFinite(instant) && new Date(instant).toISOString().slice(0, 10) === key;
+}
+
+/** True when a draft carries a real, parseable proposed publish instant. */
+export function isValidPublishInstant(value: unknown): boolean {
+  return typeof value === "string" && value.length > 0 && Number.isFinite(Date.parse(value));
+}
+
+/** What the horizon rule needs from one workflow view. */
+export type CurrentWorkflowItem = Pick<WorkflowView, "slotDate" | "localDate" | "status">;
+
+/**
+ * The one validity rule for surfacing a workflow item in the CURRENT views.
+ *
+ * An item is part of the active rolling workflow when it already uses the new
+ * date-based slot (guaranteed by the row-level pre-filter) AND either
+ *   - its slot/local publish date lies inside the current rolling horizon
+ *     `[today, today + horizonDays)` in the account timezone, or
+ *   - it has progressed beyond planning — approved and scheduled, or
+ *     published — so legitimate scheduled/published work stays on the Content
+ *     Calendar wherever its date now sits.
+ *
+ * Deliberately NOT part of the rule: `created_at`. A valid date-keyed item
+ * inside the current horizon is never hidden just because it was created
+ * before this change (or long ago); stale items are hidden because their slot
+ * is legacy or outside the horizon.
+ */
+export function isCurrentWorkflowItem(item: CurrentWorkflowItem, selection: { today: string; horizonDays?: number }): boolean {
+  const horizonDays = selection.horizonDays ?? DEFAULT_HORIZON_DAYS;
+  if (isWithinHorizon(selection.today, item.slotDate, horizonDays)) return true;
+  if (item.localDate && isWithinHorizon(selection.today, item.localDate, horizonDays)) return true;
+  return item.status === "scheduled" || item.status === "published";
+}
+
+/**
+ * Filters an approval-action list (the Approvals screen feed) so rolling-plan
+ * workflow cards follow the same horizon rule as the rest of the read model.
+ *
+ * Only cards that belong to the active plan's drafts are filtered: a stale
+ * `propose_calendar_item` card for a legacy/out-of-horizon plan draft never
+ * appears as a current approval need. Everything else — other tool names,
+ * chat proposals without a draft, cards for drafts outside the active plan —
+ * is passed through untouched.
+ */
+export function filterApprovalActionsForCurrentWorkflow<
+  T extends { id: string | number; tool_name: string; new_value?: Record<string, unknown> | null; sanitized_arguments?: Record<string, unknown> | null },
+>(actions: T[], snapshot: Pick<WorkflowSnapshot, "items" | "planDraftIds">): T[] {
+  const surfacedActionIds = new Set(
+    snapshot.items.flatMap((item) => (item.approvalActionId ? [item.approvalActionId] : [])),
+  );
+  const planDraftIds = new Set(snapshot.planDraftIds.map(String));
+  return actions.filter((action) => {
+    if (action.tool_name !== "propose_calendar_item") return true;
+    const args = (action.new_value ?? action.sanitized_arguments ?? null) as { sourceDraftId?: unknown } | null;
+    const sourceDraftId = args?.sourceDraftId;
+    // Not a rolling-plan workflow card: never hidden by the horizon filter.
+    if (typeof sourceDraftId !== "string" || !planDraftIds.has(sourceDraftId)) return true;
+    return surfacedActionIds.has(String(action.id));
+  });
+}
+
+/**
+ * Loads the ONE executable workflow snapshot for the ACTIVE rolling horizon.
+ *
+ * Scoped to the active plan and resolved in the account's business timezone.
+ * Of the plan's drafts, only current-workflow items are surfaced (see
+ * `isCurrentWorkflowItem`): new date-keyed slots inside the live horizon, plus
+ * scheduled/published work. Legacy ordinal-slot rows and out-of-horizon drafts
+ * stay in the database, untouched, and simply never reach the current views.
+ */
 export async function loadWorkflowSnapshot(
   admin: AdminClient, ownerId: string, options: { now?: Date; horizonDays?: number } = {},
 ): Promise<WorkflowSnapshot> {
@@ -83,6 +178,7 @@ export async function loadWorkflowSnapshot(
     planGoal: plan?.business_goal ? String(plan.business_goal) : null,
     planValidFrom: plan?.valid_from ? String(plan.valid_from) : null,
     planValidUntil: plan?.valid_until ? String(plan.valid_until) : null,
+    planDraftIds: [],
     items: [],
   };
   if (!snapshot.planId) return snapshot;
@@ -91,7 +187,19 @@ export async function loadWorkflowSnapshot(
     .select("id,kind,title,content,proposed_publish_at,status,source_plan_item_key")
     .eq("owner_user_id", ownerId).eq("source_plan_id", snapshot.planId)
     .order("proposed_publish_at", { ascending: true });
-  const rows = drafts ?? [];
+
+  // History stays in the database: every active-plan draft id is kept on the
+  // snapshot (so the Approvals feed can recognise stale plan cards), while the
+  // surfaced items below are narrowed to the current rolling workflow.
+  const allRows = drafts ?? [];
+  snapshot.planDraftIds = allRows.map((row) => String(row.id));
+  if (!allRows.length) return snapshot;
+
+  // Current-workflow rows only: the NEW date-based slot semantics plus a real
+  // proposed publish instant. Legacy ordinal-slot rows are never surfaced, and
+  // this is a read-model filter — no row is ever deleted or mutated here.
+  const rows = allRows
+    .filter((row) => isLocalSlotDateKey(row.source_plan_item_key) && isValidPublishInstant(row.proposed_publish_at));
   if (!rows.length) return snapshot;
 
   const ids = rows.map((row) => String(row.id));
@@ -153,6 +261,11 @@ export async function loadWorkflowSnapshot(
       instagramMediaId: publishRow?.instagram_media_id ?? null,
     };
   });
+  // The horizon rule (see `isCurrentWorkflowItem`): the ACTIVE rolling horizon
+  // in the account's business timezone, plus work that has already progressed
+  // to scheduled/published. Legacy and out-of-horizon rows are simply left out
+  // of the current views; they remain stored, untouched, for history.
+  snapshot.items = snapshot.items.filter((item) => isCurrentWorkflowItem(item, { today, horizonDays: options.horizonDays }));
   return snapshot;
 }
 

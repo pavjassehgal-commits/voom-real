@@ -92,6 +92,41 @@ export async function requestPlanningOnlyPreview(
   return payload.run;
 }
 
+/**
+ * One planning-only request in flight per browser session, ever.
+ *
+ * Production showed two `POST /api/plan` planning-only runs 40s apart from one
+ * button click. The button was already disabled while busy, but `disabled`
+ * only exists after React commits the state update: a second click inside that
+ * window (double-click/double-tap, or a click after the card remounted and
+ * reset its local `busy` state while the first request was still running)
+ * reached the handler again and issued a second run. This module-level gate is
+ * synchronous and survives remounts, so no UI path can start a second
+ * planning-only request before the first one finishes. It is a UI-side guard
+ * only — the backend's idempotent (owner, plan, slot-date) reuse stays intact.
+ */
+let inFlightPreview: Promise<PlanningPreviewRun> | null = null;
+
+/**
+ * Starts the preview request unless one is already in flight, in which case it
+ * returns `null` and sends nothing. Resolve/rejection of the first request
+ * clears the gate, so the next click always starts a fresh run.
+ */
+export function beginPlanningOnlyPreview(
+  fetchImpl: PlanningPreviewFetch = fetch,
+): Promise<PlanningPreviewRun> | null {
+  if (inFlightPreview) return null;
+  inFlightPreview = requestPlanningOnlyPreview(fetchImpl).finally(() => {
+    inFlightPreview = null;
+  });
+  return inFlightPreview;
+}
+
+/** Test/debug visibility: is a planning-only request currently in flight? */
+export function planningOnlyPreviewInFlight(): boolean {
+  return inFlightPreview !== null;
+}
+
 export interface PlanningPreviewSlot {
   /** Local slot date (YYYY-MM-DD). */
   slot: string;

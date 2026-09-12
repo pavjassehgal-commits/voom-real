@@ -2,7 +2,12 @@ import "server-only";
 
 import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
-import { loadWorkflowSnapshot, todaySummary, type WorkflowSnapshot } from "@/lib/voom/workflow/read";
+import {
+  filterApprovalActionsForCurrentWorkflow,
+  loadWorkflowSnapshot,
+  todaySummary,
+  type WorkflowSnapshot,
+} from "@/lib/voom/workflow/read";
 import { getCurrentUser, getBusinessRecord } from "./server-data";
 
 /**
@@ -22,7 +27,10 @@ export async function getOperatingData() {
   const { data: actions } = await db.from("mara_pending_actions")
     .select("id,tool_name,summary,old_value,new_value,status,result_summary,error_summary,created_at,updated_at,executed_at")
     .eq("owner_user_id", user.id).order("created_at", { ascending: false }).limit(50);
-  const actionRows = actions ?? [];
+  // The Approvals feed follows the same active-horizon rule as the snapshot:
+  // rolling-plan cards for stale legacy/out-of-horizon drafts never surface as
+  // current approval needs. All other cards pass through untouched.
+  const actionRows = filterApprovalActionsForCurrentWorkflow(actions ?? [], snapshot);
   const reelTaskCount = actionRows.filter((action) => action.tool_name === "choose_reel_production" && action.status === "pending"
     && !["ready_for_mara_production", "produced"].includes(String(action.new_value?.productionStatus ?? ""))).length;
 
