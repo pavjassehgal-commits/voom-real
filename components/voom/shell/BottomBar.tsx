@@ -11,7 +11,7 @@ const ITEMS: [string, string, string][] = [
   ["approvals", "Approvals", "check"],
   ["plan", "Plan", "spark"],
   ["calendar", "Calendar", "cal"],
-  ["reels", "Studio", "film"],
+  ["studio", "Create", "plus"],
 ];
 
 export function BottomBar() {

@@ -114,6 +114,7 @@ export function ContactsWorkspace({
       {tab === "contacts" ? (
         <ContactsTab
           contacts={filteredContacts}
+          totalContacts={summary.total}
           search={search}
           onSearch={setSearch}
           filter={filter}
@@ -172,6 +173,7 @@ const FILTERS: Array<{ id: Filter; label: string }> = [
 
 function ContactsTab({
   contacts,
+  totalContacts,
   search,
   onSearch,
   filter,
@@ -181,6 +183,7 @@ function ContactsTab({
   onEdit,
 }: {
   contacts: ContactRecord[];
+  totalContacts: number;
   search: string;
   onSearch: (v: string) => void;
   filter: Filter;
@@ -244,8 +247,13 @@ function ContactsTab({
           <tbody>
             {contacts.length === 0 && (
               <tr className="border-t border-line">
-                <td colSpan={8} className="py-10 text-center text-sm text-text-3">
-                  No contacts match this filter. Add one manually or import a CSV.
+                <td colSpan={8} className="py-10 text-center">
+                  <b className="block text-sm text-text-2">{totalContacts === 0 ? "No contacts yet" : "No contacts match this filter"}</b>
+                  <span className="mx-auto mt-1 block max-w-md text-[12.5px] leading-relaxed text-text-3">
+                    {totalContacts === 0
+                      ? "This is your audience workspace — the people who gave you consent to email or message them. Add one manually or import a CSV to get started."
+                      : "Try a different search or tag, or clear the filter to see everyone again."}
+                  </span>
                 </td>
               </tr>
             )}

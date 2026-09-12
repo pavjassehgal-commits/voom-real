@@ -102,6 +102,15 @@ export function formatLocalTime(iso: string, timeZone = DEFAULT_TIMEZONE): strin
   return new Intl.DateTimeFormat("en-AE", { timeZone, hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 }
 
+/** Readable local date label, e.g. "12 September 2026", from a YYYY-MM-DD or ISO instant. */
+export function formatLocalDate(date: string, timeZone = DEFAULT_TIMEZONE): string {
+  const value = date.length === 10 ? new Date(`${date}T12:00:00Z`) : new Date(date);
+  if (Number.isNaN(value.getTime())) return date;
+  return new Intl.DateTimeFormat("en-AE", {
+    timeZone: date.length === 10 ? "UTC" : timeZone, day: "numeric", month: "long", year: "numeric",
+  }).format(value);
+}
+
 /** Full local label, e.g. "Sun, 14 Sep, 6:30 PM". */
 export function formatLocalDateTime(iso: string, timeZone = DEFAULT_TIMEZONE): string {
   return new Intl.DateTimeFormat("en-AE", {

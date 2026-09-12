@@ -4,13 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useModal } from "@/lib/voom/modal";
 import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
-import { ComposeModal } from "@/components/voom/modals/ComposeModal";
 import { CreateContentModal } from "@/components/voom/modals/CreateContentModal";
 import { SavedCalendarDetailModal } from "@/components/voom/modals/SavedCalendarDetailModal";
-import { Btn, Card, Chip, IconBtn, Tag } from "@/components/voom/ui/primitives";
+import { Btn, Card, Chip, EmptyState, IconBtn, Tag } from "@/components/voom/ui/primitives";
+import { currentScheduleDate } from "@/lib/voom/schedule-guard";
 import { PublishingQueue } from "@/components/voom/PublishingQueue";
 import type { WorkflowSnapshot, WorkflowView } from "@/lib/voom/workflow/read";
 import { WORKFLOW_STATUS_LABELS, WORKFLOW_STATUSES } from "@/lib/voom/workflow/state";
+import { isPastInstant } from "@/lib/voom/schedule-guard";
 
 /**
  * The Content Calendar is the authoritative visual schedule of the ONE
@@ -63,7 +64,9 @@ export default function CalendarPage() {
     return map;
   }, [items]);
 
-  const view = cursor ?? monthOf(new Date().toISOString().slice(0, 10));
+  // Fallback before the first snapshot arrives: the real current local date,
+  // not a hardcoded month and not the device's UTC date.
+  const view = cursor ?? monthOf(currentScheduleDate());
   const cells = useMemo(() => buildCells(view.year, view.month), [view.year, view.month]);
   const counts = useMemo(() => countByStatus(items), [items]);
 
@@ -73,14 +76,9 @@ export default function CalendarPage() {
       description={snapshot
         ? `${items.length} workflow item${items.length === 1 ? "" : "s"} · ${snapshot.cadenceLabel} · times shown in ${snapshot.timeZone.replace("_", " ")}`
         : "Loading your real schedule…"}
-      actions={<>
-        <Btn variant="outline" size="sm" onClick={() => open(<CreateContentModal onChanged={() => void load()} />)}>
-          <Icon name="ig" size={14} /> Create content
-        </Btn>
-        <Btn variant="primary" size="sm" onClick={() => open(<ComposeModal />)}>
-          <Icon name="plus" size={14} /> New post
-        </Btn>
-      </>}
+      actions={<Btn variant="primary" size="sm" onClick={() => open(<CreateContentModal onChanged={() => void load()} />)}>
+        <Icon name="plus" size={14} /> Create content
+      </Btn>}
     />
 
     <PublishingQueue />
@@ -98,6 +96,19 @@ export default function CalendarPage() {
         {FILTERS.map((value) => <Chip key={value} active={filter === value} onClick={() => setFilter(value)}>{value}</Chip>)}
       </div>
     </div>
+
+    {snapshot && items.length === 0 && (
+      <Card className="mb-3.5">
+        <EmptyState
+          icon="cal"
+          title="Your calendar is empty"
+          reason="This calendar shows the content Voom is actually executing — planned drafts, items waiting for your approval, and what is scheduled or published. Build your rolling plan, or create content directly, and items appear here with their real status."
+          action={<Btn variant="outline" size="sm" onClick={() => open(<CreateContentModal onChanged={() => void load()} />)}>
+            <Icon name="plus" size={14} /> Create content
+          </Btn>}
+        />
+      </Card>
+    )}
 
     <div className="grid grid-cols-7 gap-px overflow-hidden rounded-[var(--r)] border border-line bg-line">
       {DOW.map((day) => <div key={day} className="bg-surface-2 py-2.5 text-center text-[11px] font-bold uppercase tracking-[.06em] text-text-3">{day}</div>)}
@@ -139,13 +150,18 @@ export default function CalendarPage() {
 
 function WorkflowDetail({ item }: { item: WorkflowView }) {
   const { close } = useModal();
+  const pastDue = (item.status === "scheduled" || item.status === "publishing") && isPastInstant(item.publishAt);
   return <div className="max-w-lg rounded-[var(--r)] border border-line bg-surface p-5">
     <div className="flex flex-wrap items-center gap-2">
       <Tag tone="t-blue">{item.contentTypeLabel}</Tag>
       <Tag tone={toneFor(item.status)}>{item.statusLabel}</Tag>
+      {pastDue && <Tag tone="t-amber">Past due</Tag>}
     </div>
     <h2 className="mt-3 font-display text-lg font-semibold">{item.concept}</h2>
     <p className="mt-1 text-sm text-text-3">{item.dayLabel} · {item.localTime}</p>
+    {pastDue && <p className="mt-3 rounded-xl border border-amber/35 bg-amber/10 px-3.5 py-2.5 text-sm text-amber">
+      This item is past its scheduled time. It stays right here until Voom completes it — it is never silently dropped or published twice.
+    </p>}
     <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-text-2">{item.caption}</p>
     {item.failedStage && <p role="alert" className="mt-3 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-sm text-red">
       {item.failedStage === "media" ? "Media generation stopped safely. Nothing was published and you can retry without paying twice."

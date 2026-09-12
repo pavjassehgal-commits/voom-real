@@ -3,10 +3,11 @@
 Voom is a marketing platform for small businesses. MARA, its AI marketing
 manager, plans, drafts, and reports on campaigns on the business's behalf.
 
-This repository is currently in its first phase: a bare Next.js scaffold with
-the approved Voom visual identity (ink/dark background, signal-orange accent,
-deep-teal support colour) and three placeholder routes. No backend services
-are connected yet.
+Voom runs on Next.js (App Router) with the approved Voom visual identity
+(ink/dark background, signal-orange accent, deep-teal support colour). The
+authenticated product is backed by Supabase: a rolling marketing plan, an
+approvals board, a content calendar, Instagram publishing, contacts,
+campaigns and truthful delivery tracking.
 
 ## Getting started
 
@@ -54,5 +55,10 @@ reference/
 ## Status
 
 - Framework: Next.js (App Router), TypeScript, Tailwind CSS, ESLint
-- No Supabase, Stripe, Meta, email, or SMS integrations yet
-- Routes are placeholders — no real authentication or data
+- Supabase auth + data (RLS owner-scoped), Instagram publishing, OpenRouter
+  media generation with Magic Hour fallback, Resend/ClickSend campaign
+  delivery with verified callbacks
+- Not yet implemented: Stripe billing, paid advertising connections. The UI
+  says so truthfully instead of simulating them
+- No demo/sample data ships in the product: every screen renders real account
+  data or an honest empty state

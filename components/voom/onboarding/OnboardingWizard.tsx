@@ -18,7 +18,6 @@ import {
 } from "@/lib/voom/onboardingData";
 import { Icon } from "../icons";
 import { Btn, Chip, Orb, Textarea } from "../ui/primitives";
-import { DemoTag } from "../ui/Notes";
 import { AnalyzingScreen } from "./AnalyzingScreen";
 import Logo from "@/app/components/Logo";
 
@@ -194,7 +193,6 @@ function StepDescribe({ words }: { words: number }) {
         <span className="text-xs text-text-3">
           <span>{words}</span> words — a few sentences is plenty
         </span>
-        <DemoTag />
       </div>
     </div>
   );

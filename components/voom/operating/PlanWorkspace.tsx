@@ -6,8 +6,17 @@ import { Icon } from "@/components/voom/icons";
 import { Btn, Card, Tag } from "@/components/voom/ui/primitives";
 import { CADENCES, CADENCE_LABELS, type Cadence } from "@/lib/voom/cadence";
 import type { WorkflowSnapshot, WorkflowView } from "@/lib/voom/workflow/read";
-// TEMPORARY: planning-only preview control. Remove with lib/voom/planning-only-preview.ts.
+import { formatLocalDate } from "@/lib/voom/timezone";
+// TEMPORARY: planning-only preview control, dev-flag gated. Remove with
+// lib/voom/planning-only-preview.ts when the experiment ends.
 import { PlanningOnlyPreviewCard } from "@/components/voom/operating/PlanningOnlyPreview";
+
+/**
+ * The preview control is a developer/test-only affordance. It stays available
+ * for the current controlled workflow testing, but normal production users
+ * never see it unless NEXT_PUBLIC_ENABLE_PLANNING_PREVIEW=1 is set.
+ */
+const SHOW_PLANNING_PREVIEW = process.env.NEXT_PUBLIC_ENABLE_PLANNING_PREVIEW === "1";
 
 /**
  * The Marketing Plan renders the real rolling horizon of executable workflow
@@ -41,7 +50,7 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
     <Card className="mb-4 p-4 sm:p-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <span className="text-xs text-text-3">Rolling 7-day plan · {snapshot.timeZone.replace("_", " ")} · starts {snapshot.today}</span>
+          <span className="text-xs text-text-3">Rolling 7-day plan · {snapshot.timeZone.replace("_", " ")} · starts {formatLocalDate(snapshot.today)}</span>
           <p className="mt-0.5 text-sm font-semibold">{snapshot.planGoal ?? "No goal set yet"}</p>
         </div>
         <Btn variant="outline" size="sm" disabled={busy} onClick={() => void build(cadence)}>
@@ -64,8 +73,8 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
       </div>
     </Card>
 
-    {/* TEMPORARY: planning-only preview control — delete this line to remove it. */}
-    <PlanningOnlyPreviewCard className="mb-4" />
+    {/* TEMPORARY: planning-only preview control — dev-flag gated. */}
+    {SHOW_PLANNING_PREVIEW && <PlanningOnlyPreviewCard className="mb-4" />}
 
     {error && <p role="alert" className="mb-4 rounded-xl border border-red/35 bg-red/10 px-4 py-3 text-sm text-red">{error}</p>}
 

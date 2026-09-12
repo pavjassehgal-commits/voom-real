@@ -5,9 +5,10 @@ import test from "node:test";
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 test("Marketing Plan clearly labels Reel recommendations and links to the real Approvals workflow", async () => {
-  const [workspace, board, reels] = await Promise.all([
+  const [workspace, board, create, reelsRoute] = await Promise.all([
     read("components/voom/operating/PlanWorkspace.tsx"),
     read("components/voom/operating/ApprovalsBoard.tsx"),
+    read("components/voom/modals/CreateContentModal.tsx"),
     read("app/app/(shell)/reels/page.tsx"),
   ]);
   // The Marketing Plan renders the real rolling horizon, with each item's own
@@ -19,11 +20,12 @@ test("Marketing Plan clearly labels Reel recommendations and links to the real A
   assert.match(board, /Reel production choices live here too/);
   assert.match(board, /Create with MARA/);
   assert.match(board, /Generate or refresh your Marketing Plan/);
-  assert.match(reels, /The real MARA Reel workflow/);
-  assert.match(reels, /Marketing Plan → Generate\/Refresh plan → Approvals/);
-  assert.match(reels, /Review marketing plan/);
-  assert.match(reels, /Open real Reel workflow/);
-  assert.doesNotMatch(reels + workspace + board, /generateVideo|mara_media_generations|instagram_publish_jobs/);
+  // The sample Reel studio is gone: /app/reels forwards to the real Create
+  // Content studio, and the create flow points at the real Approvals workflow.
+  assert.match(reelsRoute, /redirect\("\/app\/studio"\)/);
+  assert.match(create, /existing Reel workflow/);
+  assert.match(create, /\/app\/approvals/);
+  assert.doesNotMatch(reelsRoute + workspace + board, /generateVideo|mara_media_generations|instagram_publish_jobs/);
 });
 
 test("Reel production choices remain plan-driven and never fake production", async () => {

@@ -2,6 +2,7 @@ import { getCurrentUser } from "@/lib/voom/server-data";
 import { normalizePostFormat, normalizeSchedule, postApprovalBlockers } from "@/lib/post/core";
 import { approvePostDraft, getPostDraft, normalizeMediaBrief, savePostDraft } from "@/lib/post/server-data";
 import { cancelPublishItem } from "@/lib/instagram/publish-queue";
+import { checkScheduleInstant } from "@/lib/voom/schedule-guard";
 import { createAdminClient } from "@/utils/supabase/admin";
 
 export const runtime = "nodejs";
@@ -76,7 +77,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     else {
       const normalized = normalizeSchedule(body.scheduledAt);
       if (!normalized) return Response.json({ error: "That schedule date is not valid." }, { status: 400 });
-      if (Date.parse(normalized) < Date.now() - 5 * 60_000) return Response.json({ error: "Choose a date in the future to schedule this." }, { status: 400 });
+      // Same shared guard the client runs: no past dates, no same-day past
+      // times, evaluated in the business timezone.
+      const check = checkScheduleInstant(normalized);
+      if (!check.ok) return Response.json({ error: check.error }, { status: 400 });
       scheduledAt = normalized;
     }
   }

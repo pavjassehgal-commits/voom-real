@@ -392,7 +392,7 @@ test("posts can be saved as a draft, scheduled, and approved without publishing"
   assert.match(route, /action === "approve"/);
   assert.match(route, /approvePostDraft\(admin, user\.id, id\)/);
   assert.match(route, /postApprovalBlockers\(\{ caption: existing\.caption, hasVisual: existing\.visualReady, kind: existing\.kind \}\)/);
-  assert.match(route, /Choose a date in the future to schedule this\./);
+  assert.match(route, /checkScheduleInstant/);
   assert.match(route, /Voom will automatically publish this to Instagram at the scheduled time\./);
   const data = await read("lib/post/server-data.ts");
   assert.match(data, /update\(\{ status: "approved" \}\)/);
@@ -539,8 +539,9 @@ test("the existing Reel workflow and other flows are left intact", async () => {
   for (const [name, source] of [["reels", reels], ["produce", produce], ["assets", assets], ["board", board]]) {
     assert.doesNotMatch(source, /@\/lib\/post\//, `${name} must not depend on Post Studio`);
   }
-  assert.match(reels, /The real MARA Reel workflow/);
-  assert.match(reels, /Open real Reel workflow/);
+  // The sample Reel studio was removed; the route forwards to the real studio
+  // while the production flow itself stays untouched.
+  assert.match(reels, /redirect\("\/app\/studio"\)/);
   assert.match(produce, /productionStatus: "produced"/);
   assert.match(assets, /add_reel_draft_asset/);
   assert.match(board, /Create with MARA/);

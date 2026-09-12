@@ -20,7 +20,10 @@ test("campaign screens never claim a send and clearly separate Draft / Approved 
   assert.match(modal, /Approve for send/);
   assert.match(modal, /Only the explicit Send action can contact a real recipient/);
   assert.match(modal, /Voom will never mark it <b>Delivered<\/b>/);
-  assert.match(notes, /Prototype demonstration/);
+  // Demo shims are gone; the only note left is the honest ad-separation note.
+  assert.match(notes, /Advertising budgets are optional/);
+  assert.doesNotMatch(notes, /Prototype demonstration|DemoTag|ExTag|ProtoNote/);
+  assert.doesNotMatch(page, /Sample subscribers|Sample open rate|Sample SMS opt-ins|DemoTag/);
   assert.doesNotMatch(page + modal, />Send now</);
   assert.doesNotMatch(page + modal, />Send test</);
   assert.doesNotMatch(page + modal, /Review & send/);
@@ -67,44 +70,50 @@ test("email/SMS campaign drafts stay a separate, send-free surface", async () =>
   // the Marketing Plan only renders executable content items.
   assert.doesNotMatch(workflow, /send_campaign|send_email|send_sms|spend/);
   assert.doesNotMatch(workspace, /send|Send/);
-  assert.match(page, /generate a marketing plan so Voom can prepare campaign drafts/);
+  // The empty state explains purpose + next actions without inventing data.
+  assert.match(page, /EmptyState/);
+  assert.match(page, /let Voom prepare campaign drafts for you/);
 });
 
-test("new calendar posts are persisted instead of only mutating demo state", async () => {
-  const [route, modal, page] = await Promise.all([
+test("content creation goes through the real persisted workflow, not a demo composer", async () => {
+  const [route, create, page] = await Promise.all([
     read("app/api/voom/calendar/route.ts"),
-    read("components/voom/modals/ComposeModal.tsx"),
+    read("components/voom/modals/CreateContentModal.tsx"),
     read("app/app/(shell)/calendar/page.tsx"),
   ]);
   assert.match(route, /export async function POST/);
   assert.match(route, /createCalendarItem\(await createClient\(\), user\.id/);
-  assert.match(modal, /fetch\("\/api\/voom\/calendar"/);
-  assert.match(modal, /method: "POST"/);
-  assert.match(modal, /voom:data-changed/);
-  assert.match(modal, /nothing published externally/);
-  assert.doesNotMatch(modal, /addPost/);
-  // The calendar now renders only real workflow items — there is no sample
-  // dataset left to disclaim.
-  assert.match(page, /\/api\/voom\/workflow/);
-  assert.doesNotMatch(page, /Sample|illustration-only|isAug/);
+  assert.match(create, /fetch\("\/api\/posts"/);
+  assert.match(create, /method: "POST"/);
+  assert.match(create, /Nothing is published to Instagram/);
+  // The demo compose modal was deleted; the calendar only offers the real
+  // create modal and renders only real workflow items.
+  let composeMissing = false;
+  try { await read("components/voom/modals/ComposeModal.tsx"); } catch { composeMissing = true; }
+  assert.equal(composeMissing, true, "ComposeModal.tsx must not exist in production");
+  assert.match(page, /CreateContentModal/);
+  assert.doesNotMatch(page, /ComposeModal|Sample|illustration-only|isAug/);
+  // The calendar POST endpoint rejects scheduling in the past.
+  assert.match(route, /checkScheduleInstant/);
 });
 
-test("legacy sample workspaces and notifications never claim external actions happened", async () => {
-  const [reels, store, notifications, reelsModalCopy] = await Promise.all([
+test("sample workspaces are deleted and notifications are real workflow facts", async () => {
+  const [reels, store, notifications] = await Promise.all([
     read("app/app/(shell)/reels/page.tsx"),
     read("lib/voom/store.tsx"),
     read("components/voom/modals/NotificationsModal.tsx"),
-    read("components/voom/modals/PostDetailModal.tsx"),
   ]);
-  assert.match(reels, /sample workspace/);
-  assert.match(reels, /Open real Reel workflow/);
-  assert.match(reels, /illustration-only/);
-  assert.doesNotMatch(store, /Reel scheduled for Aug 25/);
-  assert.doesNotMatch(store, /Whole queue moved to best slot/);
-  assert.match(store, /sample/i);
-  assert.match(notifications, /Nothing has been sent/);
-  assert.doesNotMatch(notifications, /" sent",/);
-  assert.match(notifications, /Sample: email draft prepared/);
-  assert.match(reelsModalCopy, /Sample/);
-  assert.match(reelsModalCopy, /not saved in Voom/);
+  // /app/reels is a redirect; the sample studio and detail modal are deleted.
+  assert.match(reels, /redirect\("\/app\/studio"\)/);
+  for (const gone of ["components/voom/modals/PostDetailModal.tsx", "components/voom/mara/LegacyMaraChat.tsx"]) {
+    let missing = false;
+    try { await read(gone); } catch { missing = true; }
+    assert.equal(missing, true, `${gone} must not exist in production`);
+  }
+  // The store seeds nothing from sample data.
+  assert.doesNotMatch(store, /buildPosts|buildReelQueue|buildAdAlloc|buildInsights|seedChatFor|notif: 3/);
+  // Notifications are derived from the real workflow read model.
+  assert.match(notifications, /\/api\/voom\/workflow/);
+  assert.match(notifications, /You’re all caught up/);
+  assert.doesNotMatch(notifications, /Sample:/);
 });

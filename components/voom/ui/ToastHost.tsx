@@ -32,14 +32,6 @@ export function ToastHost() {
           </span>
           <span>
             {t.msg}
-            {t.proto && (
-              <>
-                <br />
-                <span className="text-xs font-medium text-text-3">
-                  Prototype demonstration — no real action was performed.
-                </span>
-              </>
-            )}
           </span>
           <button
             className="ml-1 text-text-3 hover:text-text"

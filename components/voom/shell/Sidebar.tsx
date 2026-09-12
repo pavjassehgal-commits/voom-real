@@ -8,7 +8,7 @@ import Logo from "@/app/components/Logo";
 import { NAV, pageIdFromPath } from "./nav";
 
 export function Sidebar() {
-  const { sideOpen, plan } = useVoomState();
+  const { sideOpen } = useVoomState();
   const { goTo, toggleSidebar } = useVoomActions();
   const pathname = usePathname();
   const active = pageIdFromPath(pathname);
@@ -60,32 +60,19 @@ export function Sidebar() {
             </div>
           ))}
         </nav>
-        {plan !== "max" ? (
-          <div className="voom-grad-deep relative mx-1.5 mt-3 overflow-hidden rounded-[15px] p-3.5 text-white">
-            <b className="font-display text-[15px]">{plan === "free" ? "You’re on Free" : "You’re on Pro"}</b>
-            <p className="my-0.5 mb-2.5 text-xs opacity-85">
-              {plan === "free"
-                ? "Your assisted marketing workspace is active."
-                : "Unlock paid ad management with Max — AED 549/mo."}
-            </p>
-            <Btn
-              variant="plain"
-              size="sm"
-              block
-              className="h-[34px] bg-white/96 text-[13px] text-[#a82c08] hover:bg-white"
-              onClick={() => goTo("pricing")}
-            >
-              <Icon name="crown" size={14} /> Upgrade
-            </Btn>
-          </div>
-        ) : (
-          <div className="mx-1.5 mt-3 rounded-[15px] bg-surface-2 p-3.5">
-            <b className="flex items-center gap-1.5 text-[15px]">
-              <Icon name="crown" size={14} /> Max plan
-            </b>
-            <p className="mt-0.5 text-xs opacity-70">Voom intelligence is coordinating your approved work.</p>
-          </div>
-        )}
+        <div className="voom-grad-deep relative mx-1.5 mt-3 overflow-hidden rounded-[15px] p-3.5 text-white">
+          <b className="font-display text-[15px]">You’re on Free</b>
+          <p className="my-0.5 mb-2.5 text-xs opacity-85">Your assisted marketing workspace is active — no card required.</p>
+          <Btn
+            variant="plain"
+            size="sm"
+            block
+            className="h-[34px] bg-white/96 text-[13px] text-[#a82c08] hover:bg-white"
+            onClick={() => goTo("pricing")}
+          >
+            <Icon name="card" size={14} /> See plans
+          </Btn>
+        </div>
       </aside>
     </>
   );

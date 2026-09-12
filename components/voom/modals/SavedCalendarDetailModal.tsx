@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useModal } from "@/lib/voom/modal";
+import { isPastInstant } from "@/lib/voom/schedule-guard";
 import { Btn, Tag } from "@/components/voom/ui/primitives";
 import { ModalBody, ModalFoot, ModalHead, ModalShell } from "@/components/voom/ui/Modal";
 
@@ -52,8 +53,14 @@ export function SavedCalendarDetailModal({ itemId }: { itemId: string }) {
           <Detail label="Final caption / content"><p className="whitespace-pre-wrap text-sm leading-relaxed text-text-1">{item.content || "No content was saved."}</p></Detail>
           <div className="grid gap-3 sm:grid-cols-2">
             <Detail label="Scheduled for"><p className="text-sm font-semibold">{formatDateTime(item.publishAt)}</p></Detail>
-            <Detail label="Internal status"><Tag tone={statusTone(item.status)}>{statusLabel(item.status)}</Tag></Detail>
+            <Detail label="Status"><Tag tone={statusTone(item.status)}>{statusLabel(item.status)}</Tag></Detail>
           </div>
+          {item.status === "scheduled" && isPastInstant(item.publishAt) && (
+            <p className="rounded-xl border border-amber/35 bg-amber/10 px-3.5 py-2.5 text-xs leading-relaxed text-amber">
+              This item is past its scheduled time. It stays on the schedule until Voom completes it on the next
+              automatic run — it is never silently dropped or published twice.
+            </p>
+          )}
           {item.contentType
             ? <Detail label="Content type"><p className="text-sm text-text-2">{item.contentType} · created in Voom</p></Detail>
             : item.source ? <Detail label="Source"><p className="text-sm text-text-2">{item.source}</p></Detail> : null}

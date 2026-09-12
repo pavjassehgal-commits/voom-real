@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { Card, Chip, Tag } from "@/components/voom/ui/primitives";
+import { isPastInstant } from "@/lib/voom/schedule-guard";
 
 export interface PublishingQueueItem {
   id: string;
@@ -109,10 +110,22 @@ export function PublishingQueue() {
       ) : null}
 
       {items.length === 0 ? (
-        <p className="py-6 text-center text-sm text-text-3">Nothing in this view.</p>
+        <div className="py-6 text-center">
+          <b className="block text-sm text-text-2">
+            {filter === "All" ? "Nothing is queued for automatic publishing yet" : `Nothing under “${filter}” yet`}
+          </b>
+          <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-text-3">
+            {filter === "All"
+              ? "Approve an Instagram Post, Reel or Story with a date and time, and it appears here — Voom publishes it automatically at the scheduled moment."
+              : "Items appear under this filter as Voom prepares, publishes, or needs to retry them."}
+          </p>
+        </div>
       ) : (
         <ul className="divide-y divide-line">
-          {items.map((item) => (
+          {items.map((item) => {
+            const pastDue = (item.status === "scheduled" || item.status === "waiting_for_media")
+              && isPastInstant(item.scheduledAt);
+            return (
             <li key={item.id} className="flex items-center gap-3 py-2.5">
               <div className={`h-11 w-11 flex-none overflow-hidden rounded-lg bg-surface-2 ${item.type === "Story" ? "ring-1 ring-brand/40" : ""}`}>
                 {item.thumbnailUrl ? (
@@ -130,6 +143,9 @@ export function PublishingQueue() {
                   {item.account} · {formatDateTime(item.scheduledAt)}
                   {item.autoPublish ? " · Voom will auto-publish" : ""}
                 </p>
+                {pastDue && (
+                  <p className="mt-0.5 text-xs text-amber">Past its scheduled time — Voom completes it on the next automatic run. It is never dropped or published twice.</p>
+                )}
                 {item.tone === "red" && item.failureReason ? (
                   <p className="mt-0.5 text-xs text-red">{item.failureReason}{item.attempts ? ` (attempt ${item.attempts})` : ""}</p>
                 ) : null}
@@ -137,9 +153,10 @@ export function PublishingQueue() {
                   <p className="mt-0.5 text-xs text-text-3">Published to Instagram on {formatDateTime(item.publishedAt)}</p>
                 ) : null}
               </div>
-              <Tag tone={toneClass(item.tone)}>{item.status === "permission_required" ? "Needs attention" : item.statusLabel}</Tag>
+              <Tag tone={pastDue ? "t-amber" : toneClass(item.tone)}>{item.status === "permission_required" ? "Needs attention" : item.statusLabel}</Tag>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </Card>
