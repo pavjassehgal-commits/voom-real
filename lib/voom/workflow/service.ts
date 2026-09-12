@@ -16,6 +16,7 @@ import {
   type RollingPlanPorts,
   type RollingPlanResult,
   type WorkflowItem,
+  type WorkflowStage,
 } from "./rolling-plan";
 import { draftKindForContentType } from "./state";
 
@@ -39,6 +40,13 @@ export interface WorkflowRunInput {
   now?: Date;
   cadence?: Cadence;
   mode?: "manual" | "assisted" | "autopilot";
+  /**
+   * "planning_only" runs the same cadence-aware rolling planner and persists
+   * the same drafts/plan items, but stops before `ensureMedia` and
+   * `autoApproveAndSchedule`: no provider call, no media job, no approval, no
+   * calendar scheduling, no queueing, no publishing. Defaults to "full".
+   */
+  stage?: WorkflowStage;
 }
 
 export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInput): Promise<RollingPlanResult> {
@@ -62,7 +70,7 @@ export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInp
     goal,
     now,
   });
-  return ensureRollingPlan(ports, { now, timeZone, cadence, mode, goal });
+  return ensureRollingPlan(ports, { now, timeZone, cadence, mode, goal, stage: input.stage });
 }
 
 function normalizeMode(value: string | null | undefined): "manual" | "assisted" | "autopilot" {
@@ -359,5 +367,5 @@ function arrayText(value: unknown): string {
   return Array.isArray(value) ? value.map(String).join(", ") : String(value ?? "");
 }
 
-export type { RollingPlanResult };
+export type { RollingPlanResult, WorkflowStage };
 export type WorkflowAdmin = SupabaseClient;

@@ -27,7 +27,20 @@ import {
   type Cadence,
   type ContentType,
 } from "../cadence.ts";
-import { localDate, localMinutes, localToUtcIso } from "../timezone.ts";
+import { formatLocalTime, isoToLocalDate, localDate, localMinutes, localToUtcIso } from "../timezone.ts";
+
+/**
+ * Execution stages for the rolling workflow.
+ *
+ *   - "full"          -> plan/reuse slots, MARA copy, paid media generation,
+ *                        approval, scheduling and the Instagram queue.
+ *   - "planning_only" -> plan/reuse slots + MARA copy only. Stops before the
+ *                        existing `ensureMedia` and `autoApproveAndSchedule`
+ *                        stages, so it can never spend on media, approve,
+ *                        schedule, queue or publish anything.
+ */
+export const WORKFLOW_STAGES = ["full", "planning_only"] as const;
+export type WorkflowStage = (typeof WORKFLOW_STAGES)[number];
 
 export interface PlanSlot {
   /** Local YYYY-MM-DD. Doubles as the durable per-plan slot key. */
@@ -82,10 +95,37 @@ export interface RollingPlanInput {
   mode: "manual" | "assisted" | "autopilot";
   goal: string;
   horizonDays?: number;
+  /** Defaults to "full". Unknown values fall back to "full". */
+  stage?: WorkflowStage;
+}
+
+/** One resolved horizon slot, for the run summary. */
+export interface PlanSummaryItem {
+  /** Local slot date (YYYY-MM-DD); the durable per-plan slot key. */
+  slot: string;
+  /** Absolute UTC publish instant for the slot. */
+  publishAt: string;
+  /** Local date/time of `publishAt` in the account timezone. */
+  localDate: string;
+  localTime: string;
+  contentType: ContentType;
+  draftId: string;
+  /** False when an existing slot item was reused instead of created. */
+  created: boolean;
 }
 
 export interface RollingPlanResult {
   planId: string | null;
+  stage: WorkflowStage;
+  /** Resolved horizon summary. Null when nothing was planned (manual/empty). */
+  plan: {
+    cadence: Cadence;
+    timeZone: string;
+    horizonDays: number;
+    validFrom: string;
+    validUntil: string;
+    items: PlanSummaryItem[];
+  } | null;
   slots: number;
   created: number;
   reused: number;
@@ -114,8 +154,12 @@ export function buildSlots(input: RollingPlanInput): PlanSlot[] {
 }
 
 export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingPlanInput): Promise<RollingPlanResult> {
+  // Only the explicit "planning_only" stage narrows the run. Anything else —
+  // including an unknown value — keeps the existing full behaviour.
+  const stage: WorkflowStage = input.stage === "planning_only" ? "planning_only" : "full";
+  const horizonDays = input.horizonDays ?? DEFAULT_HORIZON_DAYS;
   const result: RollingPlanResult = {
-    planId: null, slots: 0, created: 0, reused: 0, mediaQueued: 0,
+    planId: null, stage, plan: null, slots: 0, created: 0, reused: 0, mediaQueued: 0,
     awaitingApproval: 0, autoApproved: 0, heldForReview: 0, failures: [],
   };
   if (input.mode === "manual") return result;
@@ -134,9 +178,11 @@ export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingP
 
   const existing = new Map((await ports.listItems(planId)).map((item) => [item.slotKey, item]));
   const items: WorkflowItem[] = [];
+  const summary: PlanSummaryItem[] = [];
 
   for (const slot of slots) {
     let item = existing.get(slot.date) ?? null;
+    let created = false;
     if (item) {
       result.reused += 1;
     } else {
@@ -144,12 +190,28 @@ export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingP
         const content = await ports.generateContent(slot);
         item = await ports.createDraft({ planId, slot, content });
         result.created += 1;
+        created = true;
       } catch (reason) {
         result.failures.push({ slot: slot.date, stage: "content", code: codeOf(reason) });
         continue;
       }
     }
     items.push(item);
+    summary.push({
+      slot: slot.date,
+      publishAt: item.publishAt,
+      localDate: isoToLocalDate(item.publishAt, input.timeZone),
+      localTime: formatLocalTime(item.publishAt, input.timeZone),
+      contentType: item.contentType,
+      draftId: item.draftId,
+      created,
+    });
+
+    // Planning-only stops here: before `ensureMedia`, before any approval, and
+    // therefore before any scheduling, calendar mirroring or queueing. The
+    // ports below are never invoked, so no provider, job or publish side
+    // effect is even reachable.
+    if (stage === "planning_only") continue;
 
     // Media. A failure here must not kill the workflow: the item stays visible
     // with a failed media stage and can be retried without paying twice.
@@ -187,6 +249,14 @@ export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingP
   }
 
   await ports.savePlanItems(planId, items);
+  result.plan = {
+    cadence: input.cadence,
+    timeZone: input.timeZone,
+    horizonDays,
+    validFrom: slots[0].date,
+    validUntil: slots[slots.length - 1].date,
+    items: summary,
+  };
   return result;
 }
 
