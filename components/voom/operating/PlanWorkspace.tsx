@@ -6,6 +6,8 @@ import { Icon } from "@/components/voom/icons";
 import { Btn, Card, Tag } from "@/components/voom/ui/primitives";
 import { CADENCES, CADENCE_LABELS, type Cadence } from "@/lib/voom/cadence";
 import type { WorkflowSnapshot, WorkflowView } from "@/lib/voom/workflow/read";
+// TEMPORARY: planning-only preview control. Remove with lib/voom/planning-only-preview.ts.
+import { PlanningOnlyPreviewCard } from "@/components/voom/operating/PlanningOnlyPreview";
 
 /**
  * The Marketing Plan renders the real rolling horizon of executable workflow
@@ -61,6 +63,9 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
         </p>
       </div>
     </Card>
+
+    {/* TEMPORARY: planning-only preview control — delete this line to remove it. */}
+    <PlanningOnlyPreviewCard className="mb-4" />
 
     {error && <p role="alert" className="mb-4 rounded-xl border border-red/35 bg-red/10 px-4 py-3 text-sm text-red">{error}</p>}
 
