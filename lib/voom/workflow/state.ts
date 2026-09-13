@@ -10,22 +10,30 @@
  * This module is pure so every screen derives identical status from identical
  * facts. The derived stages, in execution order:
  *
- *   planned          the slot exists; production has not started
- *   needs_content    production is expected but no usable visual exists yet
- *   generating       MARA media generation is queued/running
- *   ready_for_review media is stored; the item can be reviewed and approved
- *   needs_approval   an approval action is open (Assisted stops here)
- *   scheduled        approved and queued for its publish time
- *   publishing       the publishing worker is executing it right now
- *   published        Meta confirmed the media id — terminal
- *   missed           the scheduled time passed without a successful publish
- *   failed           media or publishing failed, or the item was rejected
+ *   planned           the slot exists; production has not started
+ *   needs_content     production is expected but no usable visual exists yet
+ *   generating        MARA media generation is queued/running
+ *   waiting_for_media approved and scheduled, but the queue is held truthfully
+ *                     in 'waiting_for_media' because no visual exists yet —
+ *                     never derived as plain "Scheduled"
+ *   media_delayed     an in-flight generation has been queued/generating/
+ *                     processing beyond the stale threshold — explicit
+ *                     Retry / Upload replacement / Cancel schedule actions
+ *   ready_for_review  media is stored; the item can be reviewed and approved
+ *   needs_approval    an approval action is open (Assisted stops here)
+ *   scheduled         approved and queued for its publish time
+ *   publishing        the publishing worker is executing it right now
+ *   published         Meta confirmed the media id — terminal
+ *   missed            the scheduled time passed without a successful publish
+ *   failed            media or publishing failed, or the item was rejected
  */
 
 export const WORKFLOW_STATUSES = [
   "planned",
   "needs_content",
   "generating",
+  "waiting_for_media",
+  "media_delayed",
   "ready_for_review",
   "needs_approval",
   "scheduled",
@@ -40,6 +48,8 @@ export const WORKFLOW_STATUS_LABELS: Record<WorkflowStatus, string> = {
   planned: "Planned",
   needs_content: "Needs content",
   generating: "Generating",
+  waiting_for_media: "Waiting for media",
+  media_delayed: "Media generation delayed",
   ready_for_review: "Ready for review",
   needs_approval: "Needs approval",
   scheduled: "Scheduled",
@@ -63,7 +73,9 @@ export interface WorkflowFacts {
   /** True once Voom owns the stored bytes for the visual. */
   hasMedia: boolean;
   /** Latest mara_media_generations status for this draft, if any. */
-  mediaStatus: "queued" | "processing" | "completed" | "failed" | "cancelled" | "pending_confirmation" | null;
+  mediaStatus: "queued" | "generating" | "processing" | "completed" | "failed" | "cancelled" | "pending_confirmation" | null;
+  /** updated_at of that latest generation, for stale-generation derivation. */
+  mediaUpdatedAt?: string | null;
   /** Latest instagram_publish_queue status for this draft, if any. */
   publishStatus: PublishStatusFact | null;
   /** True when an approval action is still open for this item. */
@@ -72,6 +84,41 @@ export interface WorkflowFacts {
   publishAt?: string | null;
   /** Current instant, for the missed-schedule derivation. */
   now?: Date;
+}
+
+/**
+ * How long a media generation may sit in an active state (queued / generating
+ * / processing) with no progress before the item is derived as
+ * `media_delayed`. Deliberately under the video job's 30-minute hard timeout,
+ * so the user can act (retry / upload / cancel) while the job would still be
+ * self-timing-out — and far above any healthy image or video generation.
+ */
+export const MEDIA_GENERATION_STALE_MINUTES = 15;
+
+/** Media-generation states in which a paid attempt may still be running. */
+export const ACTIVE_MEDIA_STATUSES = ["queued", "generating", "processing"] as const;
+
+export function isActiveMediaStatus(status: string | null | undefined): boolean {
+  return status === "queued" || status === "generating" || status === "processing";
+}
+
+/**
+ * True when the latest generation is in an active state but has made no
+ * progress beyond the stale threshold. A generation that is NOT active
+ * (completed / failed / cancelled / pending_confirmation) is never stale —
+ * those are finished attempts, not stuck ones.
+ */
+export function isStaleMediaGeneration(
+  status: string | null | undefined,
+  updatedAt: string | null | undefined,
+  now: Date,
+  staleMinutes: number = MEDIA_GENERATION_STALE_MINUTES,
+): boolean {
+  if (!isActiveMediaStatus(status)) return false;
+  if (!updatedAt) return false;
+  const at = Date.parse(updatedAt);
+  if (!Number.isFinite(at)) return false;
+  return now.getTime() - at > staleMinutes * 60_000;
 }
 
 function isPast(instance: string | null | undefined, now: Date): boolean {
@@ -89,6 +136,15 @@ function isPast(instance: string | null | undefined, now: Date): boolean {
  * approved item whose scheduled time passed without a successful publish
  * (queue missing, queue cancelled, media missing, worker did not claim, or a
  * schedule mismatch) derives `missed` so every screen shows it truthfully.
+ *
+ * The PRODUCTION INCIDENT THIS BRANCH FIXES: an approved item scheduled while
+ * its visual was still generating held its queue row truthfully in
+ * 'waiting_for_media', but this function fell through to `scheduled` — every
+ * screen (Marketing Plan / Today / Calendar) showed "Voom will publish it at
+ * the scheduled time" for an item with NO visual that no worker could ever
+ * publish. The queue state now wins: approved + waiting_for_media + no stored
+ * visual derives `waiting_for_media` (or `media_delayed` / `missed` once the
+ * generation is stale or the time has passed), never plain "Scheduled".
  */
 export function deriveWorkflowStatus(facts: WorkflowFacts): WorkflowStatus {
   const now = facts.now ?? new Date();
@@ -97,7 +153,28 @@ export function deriveWorkflowStatus(facts: WorkflowFacts): WorkflowStatus {
   if (facts.publishStatus === "failed" || facts.publishStatus === "permission_required") return "failed";
   if (facts.mediaStatus === "failed" && !facts.hasMedia) return "failed";
   if (facts.draftStatus === "rejected") return "failed";
-  if (facts.mediaStatus === "queued" || facts.mediaStatus === "processing") return "generating";
+
+  // Approved + the queue held in 'waiting_for_media' + no stored visual: the
+  // schedule is real but the item CANNOT publish yet. Truthful order:
+  //  1. the scheduled time already passed without media -> missed (the user
+  //     decides: post now / reschedule / cancel),
+  //  2. the generation is active but stale -> media_delayed (explicit
+  //     retry / upload replacement / cancel schedule),
+  //  3. otherwise -> waiting_for_media, self-healing the moment the visual is
+  //     stored (the late-media sync flips the row to 'scheduled').
+  if (facts.draftStatus === "approved" && facts.publishStatus === "waiting_for_media" && !facts.hasMedia) {
+    if (isPast(facts.publishAt ?? null, now)) return "missed";
+    if (isStaleMediaGeneration(facts.mediaStatus, facts.mediaUpdatedAt, now)) return "media_delayed";
+    return "waiting_for_media";
+  }
+
+  // A generation that has been queued/generating/processing beyond the stale
+  // threshold cannot make progress on its own, in ANY stage (not only the
+  // approved queue): it derives media_delayed instead of sitting as
+  // "Generating" forever with no way to act on it.
+  if (!facts.hasMedia && isStaleMediaGeneration(facts.mediaStatus, facts.mediaUpdatedAt, now)) return "media_delayed";
+
+  if (facts.mediaStatus === "queued" || facts.mediaStatus === "generating" || facts.mediaStatus === "processing") return "generating";
 
   if (facts.draftStatus === "approved") {
     // Scheduled, but the schedule already expired without a publish: the item
@@ -122,7 +199,7 @@ export function requiresApproval(status: WorkflowStatus): boolean {
 
 /** Statuses the user can safely retry without risking a duplicate charge/post. */
 export function isRetryable(status: WorkflowStatus): boolean {
-  return status === "failed" || status === "missed";
+  return status === "failed" || status === "missed" || status === "media_delayed";
 }
 
 /**

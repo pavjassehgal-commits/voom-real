@@ -32,13 +32,14 @@ export default async function TodayPage() {
       <h2 className="font-display text-lg font-semibold">What Voom is doing today, {firstName}</h2>
       <p className="mt-1 text-sm leading-relaxed text-text-2">
         {snapshot.items.length
-          ? `${summary.publishingToday.length} item${summary.publishingToday.length === 1 ? "" : "s"} due today · ${summary.needsApproval.length} waiting for you · ${summary.generating.length} generating · ${summary.failed.length} needing attention.`
+          ? `${summary.publishingToday.length} item${summary.publishingToday.length === 1 ? "" : "s"} due today · ${summary.needsApproval.length} waiting for you · ${summary.generating.length} generating · ${summary.waitingForMedia.length} waiting for media · ${summary.failed.length} needing attention.`
           : "No executable plan yet. Build your rolling plan and Voom will start today."}
       </p>
       <div className="mt-4 flex flex-wrap gap-2">
         <Stat label="Due today" value={summary.publishingToday.length} />
         <Stat label="Needs approval" value={summary.needsApproval.length} />
         <Stat label="Generating" value={summary.generating.length} />
+        <Stat label="Waiting for media" value={summary.waitingForMedia.length} />
         <Stat label="Scheduled" value={summary.scheduled.length} />
         <Stat label="Published" value={summary.published.length} />
         <Stat label="Missed" value={summary.missed.length} />
@@ -52,6 +53,8 @@ export default async function TodayPage() {
       empty="Nothing needs your decision right now." />
     <Section title="Being generated" icon="spark" href="/app/calendar" action="View schedule" items={summary.generating}
       empty="No media is generating." />
+    <Section title="Waiting for media" icon="film" href="/app/calendar" action="Review waiting items" items={summary.waitingForMedia}
+      empty="Nothing is scheduled but waiting for its visual." />
     <Section title="Missed scheduled time" icon="clock" href="/app/calendar" action="Review missed items" items={summary.missed}
       empty="Nothing missed its schedule." />
     <Section title="Needs attention" icon="warn" href="/app/calendar" action="Review failures" items={summary.failed}
@@ -65,9 +68,10 @@ export default async function TodayPage() {
   </div>;
 }
 
-function nextStep(mode: string, summary: { needsApproval: WorkflowView[]; failed: WorkflowView[]; missed: WorkflowView[]; next: WorkflowView | null; generating: WorkflowView[] }) {
+function nextStep(mode: string, summary: { needsApproval: WorkflowView[]; failed: WorkflowView[]; missed: WorkflowView[]; next: WorkflowView | null; generating: WorkflowView[]; waitingForMedia: WorkflowView[] }) {
   if (summary.missed.length) return `${summary.missed.length} item${summary.missed.length === 1 ? "" : "s"} missed its scheduled time. Voom never publishes hours late on its own — post it now or reschedule from the Marketing Plan.`;
   if (summary.failed.length) return `${summary.failed.length} item${summary.failed.length === 1 ? "" : "s"} stopped safely and can be retried. Nothing was published twice.`;
+  if (summary.waitingForMedia.length) return `${summary.waitingForMedia.length} item${summary.waitingForMedia.length === 1 ? " is" : "s are"} scheduled but waiting for ${summary.waitingForMedia.length === 1 ? "its" : "their"} visual — Voom cannot publish until the media is ready. Retry a delayed generation, upload a replacement, or let Voom keep waiting.`;
   if (summary.needsApproval.length) return `Approve ${summary.needsApproval.length} item${summary.needsApproval.length === 1 ? "" : "s"} and Voom will schedule ${summary.needsApproval.length === 1 ? "it" : "them"} automatically.`;
   if (summary.generating.length) return "MARA is generating the visuals. Items move to Scheduled on their own once the media is stored.";
   if (summary.next) return `Next up: “${summary.next.concept}” — ${summary.next.dayLabel} at ${summary.next.localTime}.`;
@@ -88,6 +92,7 @@ const emptyWhy: Record<string, string> = {
   "Open Content Calendar": "When an item's schedule reaches today it moves here — see the full rolling schedule in the Content Calendar.",
   "Open Approvals": "Voom prepares work and brings it here before it schedules anything, so you always decide what goes out.",
   "View schedule": "MARA generates visuals on its own after a plan is built. Items show up here while that work is in progress.",
+  "Review waiting items": "Approved items whose visual is still generating are held here with their schedule — they publish automatically once the media is ready.",
   "Review failures": "If publishing or media generation stops, the item waits here with what happened and a safe retry — nothing is published twice.",
 };
 
@@ -117,7 +122,7 @@ export function WorkflowRow({ item }: { item: WorkflowView }) {
 export function statusTone(status: string) {
   if (status === "published") return "t-green";
   if (status === "failed") return "t-red";
-  if (status === "missed" || status === "needs_approval" || status === "ready_for_review") return "t-amber";
+  if (status === "missed" || status === "needs_approval" || status === "ready_for_review" || status === "waiting_for_media" || status === "media_delayed") return "t-amber";
   if (status === "generating" || status === "publishing" || status === "scheduled") return "t-blue";
   return "t-grey";
 }

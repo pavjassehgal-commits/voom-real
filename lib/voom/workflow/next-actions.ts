@@ -96,6 +96,8 @@ export interface PlanItemFacts {
   hasMedia: boolean;
   /** True when the stored media came from MARA (regeneratable). */
   mediaFromMara?: boolean;
+  /** Latest mara_media_generations status, when any — drives retry safety. */
+  mediaStatus?: string | null;
   production?: ReelProductionFacts | null;
 }
 
@@ -131,6 +133,18 @@ export function planItemActions(item: PlanItemFacts): PlanItemActions {
         stage: item.stage, stageLabel: WORKFLOW_STATUS_LABELS.generating,
         headline: "MARA is generating the visual. Nothing is published — the item stays right here until it is ready to review.",
         actions: [], explanation,
+      };
+    case "waiting_for_media":
+      return {
+        stage: item.stage, stageLabel: WORKFLOW_STATUS_LABELS.waiting_for_media,
+        headline: `This item is scheduled for ${when ?? "its time"}, but it cannot publish until the visual is ready. Voom is holding the schedule while the media is generated — nothing is published early.`,
+        actions: waitingMediaActions(item), explanation,
+      };
+    case "media_delayed":
+      return {
+        stage: item.stage, stageLabel: WORKFLOW_STATUS_LABELS.media_delayed,
+        headline: "Media generation is delayed, so the schedule is held — Voom will not publish until a real visual exists. Retry the generation, upload a replacement, or cancel the schedule.",
+        actions: delayedMediaActions(), explanation,
       };
     case "ready_for_review":
       return {
@@ -282,6 +296,64 @@ function failedActions(item: PlanItemFacts): PlanAction[] {
   ];
 }
 
+/** True while a generation is genuinely in flight (queued/generating/processing). */
+function generationInFlight(item: PlanItemFacts): boolean {
+  return item.mediaStatus === "queued" || item.mediaStatus === "generating" || item.mediaStatus === "processing";
+}
+
+/**
+ * Waiting-for-media: scheduled, held, visual not ready. Retry is only offered
+ * as a LIVE action when no generation is in flight — while one is running it
+ * is shown but disabled, so a click can never start (or pay for) a second
+ * generation. Upload and cancel are always safe.
+ */
+function waitingMediaActions(item: PlanItemFacts): PlanAction[] {
+  const inFlight = generationInFlight(item);
+  return [
+    {
+      id: "retry_media",
+      label: "Retry generation",
+      tone: "primary",
+      hint: inFlight
+        ? "A generation is already running — it will finish or time out first, so retrying now starts nothing new."
+        : "Starts the generation now. A repeated click can never start a second paid generation.",
+      disabled: inFlight,
+      disabledReason: inFlight ? "A media generation is already in flight for this item." : undefined,
+    },
+    {
+      id: "upload_asset",
+      label: "Upload replacement",
+      hint: "Stored privately in Voom — the held schedule publishes it once it is ready.",
+      tone: "outline",
+    },
+    { id: "cancel_schedule", label: "Cancel schedule", tone: "danger", hint: "Also removes it from the publishing queue. Published items are never cancelled." },
+  ];
+}
+
+/**
+ * Media generation delayed: the generation has been in flight beyond the
+ * stale threshold. All three explicit actions are available; the retry
+ * itself is idempotent (a still-running job is finished first, never
+ * double-billed) — it can never be triggered automatically.
+ */
+function delayedMediaActions(): PlanAction[] {
+  return [
+    {
+      id: "retry_media",
+      label: "Retry generation",
+      tone: "primary",
+      hint: "Explicit new attempt — never a double charge: an in-flight job is finished first, never paid for twice.",
+    },
+    {
+      id: "upload_asset",
+      label: "Upload replacement",
+      hint: "Skip the provider entirely — your file is stored privately and the schedule publishes it once ready.",
+      tone: "outline",
+    },
+    { id: "cancel_schedule", label: "Cancel schedule", tone: "danger", hint: "Also removes it from the publishing queue. Published items are never cancelled." },
+  ];
+}
+
 function explanationWhat(item: PlanItemFacts): string {
   if (item.contentType === "reel") {
     const option = item.production?.maraOption;
@@ -320,6 +392,8 @@ function explanationWhy(item: PlanItemFacts): string | null {
 
 function explanationAutoPublish(item: PlanItemFacts): string {
   if (item.stage === "missed") return "No. Voom never publishes hours late on its own — you choose Post now or a new time.";
+  if (item.stage === "waiting_for_media") return "Not yet — it is scheduled, but it cannot publish until the visual is ready. It posts at the scheduled time as soon as the media is stored.";
+  if (item.stage === "media_delayed") return "No — publishing stays blocked until a real visual exists. Retry the generation, upload a replacement, or cancel the schedule.";
   if (item.stage === "scheduled" || item.stage === "publishing") return "Yes — after approval, the existing publishing queue posts it at the scheduled time.";
   return item.mode === "autopilot" ? "Safe content publishes automatically; anything risky stops for your approval." : "No — your approval is the trigger.";
 }

@@ -22,9 +22,12 @@ registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier === "server-only") return { url: EMPTY, shortCircuit: true };
     if (specifier.startsWith("@/")) {
-      // All @/ imports in this codebase are extensionless .ts files.
+      // All @/ imports in this codebase are extensionless .ts files — or a
+      // directory module resolved through its index.ts (e.g. @/lib/media).
       const withTs = new URL(`${specifier.replace(/^@\//, "")}.ts`, ROOT);
       if (existsSync(fileURLToPath(withTs))) return { url: withTs.href, shortCircuit: true };
+      const withIndex = new URL(`${specifier.replace(/^@\//, "")}/index.ts`, ROOT);
+      if (existsSync(fileURLToPath(withIndex))) return { url: withIndex.href, shortCircuit: true };
       return { url: new URL(specifier.replace(/^@\//, ""), ROOT).href, shortCircuit: true };
     }
     // Extensionless relative imports (./video-job) also need the .ts suffix.

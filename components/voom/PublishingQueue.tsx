@@ -75,7 +75,9 @@ export function PublishingQueue() {
     return all.filter((item) => item.status === "published");
   }, [state, filter]);
 
-  const upcoming = (state?.items ?? []).filter((item) => item.autoPublish).length;
+  const all = state?.items ?? [];
+  const upcoming = all.filter((item) => item.autoPublish).length;
+  const waiting = all.filter((item) => item.status === "waiting_for_media").length;
 
   return (
     <Card className="mb-3.5 p-4">
@@ -84,7 +86,7 @@ export function PublishingQueue() {
           <h2 className="font-display text-lg">Instagram publishing queue</h2>
           <p className="text-xs text-text-3">
             {upcoming > 0
-              ? `${upcoming} item${upcoming === 1 ? "" : "s"} will be published to Instagram automatically by Voom — you don't need to post them yourself.`
+              ? `${upcoming} item${upcoming === 1 ? "" : "s"} will be published to Instagram automatically by Voom — you don't need to post them yourself.${waiting > 0 ? ` ${waiting} item${waiting === 1 ? " is" : "s are"} waiting for its visual and cannot publish until the media is ready.` : ""}`
               : "Approve an Instagram Post, Reel or Story and give it a date to have Voom publish it automatically."}
           </p>
         </div>
@@ -143,8 +145,14 @@ export function PublishingQueue() {
                   {item.account} · {formatDateTime(item.scheduledAt)}
                   {item.autoPublish ? " · Voom will auto-publish" : ""}
                 </p>
-                {pastDue && (
+                {pastDue && item.status === "waiting_for_media" && (
+                  <p className="mt-0.5 text-xs text-amber">Its scheduled time passed before the visual was ready — the Marketing Plan flags it for your decision.</p>
+                )}
+                {pastDue && item.status !== "waiting_for_media" && (
                   <p className="mt-0.5 text-xs text-amber">Past its scheduled time — Voom completes it on the next automatic run. It is never dropped or published twice.</p>
+                )}
+                {!pastDue && item.status === "waiting_for_media" && (
+                  <p className="mt-0.5 text-xs text-amber">Waiting for the visual — it cannot publish until the media is ready.</p>
                 )}
                 {item.tone === "red" && item.failureReason ? (
                   <p className="mt-0.5 text-xs text-red">{item.failureReason}{item.attempts ? ` (attempt ${item.attempts})` : ""}</p>

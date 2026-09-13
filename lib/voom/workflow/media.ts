@@ -4,7 +4,8 @@ import { randomUUID } from "node:crypto";
 import { createMediaProvider, getMediaConfig, MediaError } from "@/lib/media";
 import { aspectMatches, inspectImageBytes } from "@/lib/media/media-inspect";
 import { putPostAsset, removePostAssetObject, syncPostToCalendar, type AdminClient } from "@/lib/post/server-data";
-import { startPostStudioVideo } from "@/lib/mara/video-service";
+import { advanceVideoJob, buildVideoService, startPostStudioVideo } from "@/lib/mara/video-service";
+import { isActiveMediaStatus, isStaleMediaGeneration } from "./state";
 import type { ContentType } from "@/lib/voom/cadence";
 
 /**
@@ -19,9 +20,22 @@ import type { ContentType } from "@/lib/voom/cadence";
  *
  * No new provider implementation is introduced here.
  *
- * Duplicate-charge protection: a generation is started only when the draft has
- * no stored visual and no live job. Retrying a failed item reuses the same
- * idempotency identity for video jobs, so a retry cannot double-bill.
+ * Duplicate-charge protection (explicit + idempotent):
+ *   - a FRESH in-flight generation always resolves to "exists": repeated
+ *     clicks (or a second tab) can never start, let alone pay for, a second
+ *     generation — `decideMediaStart` encodes the whole policy so it is
+ *     unit tested,
+ *   - a STALE in-flight VIDEO job is re-advanced (polled) instead of
+ *     replaced: the provider job may still be running, so a second one is
+ *     never submitted; the job self-times-out at its hard limit, after which
+ *     an explicit retry is a fresh attempt,
+ *   - a STALE in-flight IMAGE row is a dead synchronous attempt: the explicit
+ *     retry retires it (cancelled) and starts exactly one fresh attempt,
+ *   - video retries after a FINISHED attempt get a fresh token only because
+ *     the finished row can never complete; a first run keeps the stable
+ *     per-draft token, so repeated clicks resolve to the same job,
+ *   - the database keeps the final guard: one active generation per
+ *     (owner, draft) partial unique index.
  */
 
 const GENERATED_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
@@ -37,12 +51,108 @@ export interface MediaRequest {
 
 export type MediaOutcome = { ok: true; state: "exists" | "queued" | "completed" } | { ok: false; code: string };
 
+/** The latest generation row for a draft (any media type, any status). */
+export interface LatestGeneration {
+  id: string;
+  status: string;
+  updatedAt: string | null;
+}
+
+/**
+ * The one explicit/idempotent media start policy (pure — unit tested).
+ *
+ *   exists  — something already owns this item's visual (a stored asset or a
+ *             fresh in-flight generation): do NOTHING. This is what makes a
+ *             repeated retry click a no-op instead of a second charge.
+ *   advance — a STALE in-flight video job: re-poll the SAME job. No second
+ *             provider job is ever submitted for an in-flight one.
+ *   start   — actually (re)start. `token` decides the paid identity:
+ *             "stable"  = the per-draft token (first runs; repeats resolve
+ *                          to the same job),
+ *             "fresh"   = a brand-new token (an explicit retry after a
+ *                          FINISHED attempt — the old row is terminal and
+ *                          can never complete, so nothing is duplicated),
+ *             <string>  = an explicit caller token (e.g. "Regenerate").
+ *             `retireGenerationId` = a dead synchronous attempt that the
+ *             explicit retry replaces (cancelled first).
+ */
+export type MediaStartDecision =
+  | { kind: "exists" }
+  | { kind: "advance"; generationId: string }
+  | { kind: "start"; token: "stable" | "fresh" | string; retireGenerationId: string | null };
+
+export function decideMediaStart(input: {
+  contentType: ContentType;
+  latest: LatestGeneration | null;
+  hasAsset: boolean;
+  explicitToken?: string;
+  now?: Date;
+  staleMinutes?: number;
+}): MediaStartDecision {
+  const now = input.now ?? new Date();
+  const latest = input.latest;
+
+  if (latest && isActiveMediaStatus(latest.status)) {
+    // A generation is genuinely in flight.
+    if (!isStaleMediaGeneration(latest.status, latest.updatedAt, now, input.staleMinutes)) {
+      return { kind: "exists" };
+    }
+    if (input.contentType === "reel") {
+      // Stale but in flight: the provider job may still be alive (OpenRouter
+      // pending). Re-advance it — never submit a second paid job.
+      return { kind: "advance", generationId: latest.id };
+    }
+    // A stale image row is a dead synchronous attempt: the explicit retry
+    // retires it and starts one fresh attempt.
+    return { kind: "start", token: "fresh", retireGenerationId: latest.id };
+  }
+
+  // No in-flight generation.
+  if (input.explicitToken) return { kind: "start", token: input.explicitToken, retireGenerationId: null };
+  if (input.contentType !== "reel") return { kind: "start", token: "fresh", retireGenerationId: null };
+  // Video, no explicit token:
+  if (!latest) return { kind: "start", token: "stable", retireGenerationId: null };
+  // A stored asset already satisfies a plain retry — only an explicit
+  // "Regenerate" (fresh token) may pay for a second generation.
+  if (latest.status === "completed" && input.hasAsset) return { kind: "exists" };
+  // The latest attempt is finished (failed / cancelled / orphaned completed):
+  // an explicit retry is a NEW attempt — a fresh identity, never a duplicate
+  // of anything still running.
+  return { kind: "start", token: "fresh", retireGenerationId: null };
+}
+
+/** Resolves the decision's token kind into the durable idempotency token. */
+export function resolveGenerationToken(token: string | "stable" | "fresh", draftId: string): string {
+  if (token === "stable") return `workflow-${draftId}`;
+  if (token === "fresh") return `workflow-${draftId}:${randomUUID()}`;
+  return token;
+}
+
+/** The newest generation row for a draft (any media type), owner-scoped. */
+export async function getLatestGeneration(admin: AdminClient, ownerId: string, draftId: string): Promise<LatestGeneration | null> {
+  const { data } = await admin.from("mara_media_generations")
+    .select("id,status,updated_at")
+    .eq("owner_user_id", ownerId).eq("draft_id", draftId)
+    .order("updated_at", { ascending: false }).limit(1).maybeSingle();
+  if (!data) return null;
+  return {
+    id: String(data.id),
+    status: String(data.status),
+    updatedAt: typeof data.updated_at === "string" ? data.updated_at : null,
+  };
+}
+
+async function hasStoredAsset(admin: AdminClient, ownerId: string, draftId: string): Promise<boolean> {
+  const { data } = await admin.from("post_draft_assets").select("id").eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
+  return Boolean(data?.id);
+}
+
 /** True when the draft already owns stored bytes or has a live generation. */
 export async function mediaAlreadyHandled(admin: AdminClient, ownerId: string, draftId: string): Promise<boolean> {
   const [{ data: asset }, { data: live }] = await Promise.all([
     admin.from("post_draft_assets").select("id").eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle(),
     admin.from("mara_media_generations").select("id")
-      .eq("owner_user_id", ownerId).eq("draft_id", draftId).in("status", ["queued", "processing"]).limit(1).maybeSingle(),
+      .eq("owner_user_id", ownerId).eq("draft_id", draftId).in("status", ["queued", "generating", "processing"]).limit(1).maybeSingle(),
   ]);
   return Boolean(asset?.id || live?.id);
 }
@@ -56,30 +166,62 @@ export async function ensureWorkflowMedia(admin: AdminClient, request: MediaRequ
  * Produces media for one workflow item WITHOUT the "already handled" guard.
  *
  * Used by the in-place Marketing Plan actions ("Create with MARA" /
- * "Regenerate") so a user can (re)generate the visual of the SAME workflow
- * item on demand. Duplicate-charge protection stays intact:
- *   - images get a fresh generation identity per attempt (an attempt either
- *     completes and stores bytes, or records a failed generation),
- *   - videos reuse `idempotencyToken` (the caller passes a fresh token only
- *     for an explicit regenerate, exactly like Post Studio).
+ * "Regenerate" / "Retry generation") so a user can (re)generate the visual of
+ * the SAME workflow item on demand. The duplicate-charge policy lives in
+ * `decideMediaStart` (see module docs): nothing starts unless the policy
+ * says so, and a repeated click while a generation is in flight is a no-op.
  */
 export async function produceWorkflowMedia(
   admin: AdminClient,
   request: MediaRequest,
-  options: { idempotencyToken?: string } = {},
+  options: { idempotencyToken?: string; now?: Date } = {},
 ): Promise<MediaOutcome> {
+  const [latest, hasAsset] = await Promise.all([
+    getLatestGeneration(admin, request.ownerId, request.draftId),
+    hasStoredAsset(admin, request.ownerId, request.draftId),
+  ]);
+  const decision = decideMediaStart({
+    contentType: request.contentType,
+    latest,
+    hasAsset,
+    explicitToken: options.idempotencyToken,
+    now: options.now,
+  });
+
+  if (decision.kind === "exists") return { ok: true, state: "exists" };
+
+  if (decision.kind === "advance") {
+    // A stale in-flight video job: re-poll the SAME durable job. This either
+    // completes it (asset attached + held schedule re-synced) or lets it
+    // self-time-out to failed — after which the next explicit retry is a
+    // fresh attempt. No second provider job is ever submitted here.
+    const service = await buildVideoService(admin, request.ownerId);
+    if (service) {
+      await advanceVideoJob(service, request.draftId, decision.generationId, "reel").catch(() => null);
+    }
+    return { ok: true, state: "queued" };
+  }
+
+  if (decision.retireGenerationId) {
+    // Retire the dead synchronous attempt the explicit retry replaces.
+    try {
+      await admin.from("mara_media_generations")
+        .update({ status: "cancelled", error_code: "superseded_by_retry" })
+        .eq("id", decision.retireGenerationId).eq("owner_user_id", request.ownerId)
+        .eq("status", "processing");
+    } catch { /* best effort — the fresh attempt below is the real state */ }
+  }
+
   if (request.contentType === "reel") {
     const result = await startPostStudioVideo({
       admin,
       ownerId: request.ownerId,
       post: { id: request.draftId, kind: "reel", conversationId: request.conversationId, concept: request.concept },
       brief: request.visualBrief,
-      // Stable per-draft token by default: a retry reuses the same job
-      // identity instead of paying for a second generation.
-      idempotencyToken: options.idempotencyToken ?? `workflow-${request.draftId}`,
+      idempotencyToken: resolveGenerationToken(decision.token, request.draftId),
     });
     if ("error" in result) return { ok: false, code: "video_start_failed" };
-    return { ok: true, state: "queued" };
+    return { ok: true, state: result.status === 202 ? "queued" : "exists" };
   }
 
   const outcome = await generateWorkflowImage(admin, request);
