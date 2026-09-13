@@ -81,8 +81,9 @@ export function GenerationPanel({
     }
   }, [postId, onSettled]);
 
-  // Lazy server-side polling: each GET advances the real job (provider poll,
-  // validation, storage) — the same endpoint the server uses to finish work.
+  // Optional UI refresh: the server-side media worker owns the provider
+  // lifecycle and continues without this component. A refresh may opportunistically
+  // advance the persisted job, but closing this panel never stops generation.
   useEffect(() => {
     if (!active) return;
     const timer = window.setInterval(() => void refresh(), 6000);

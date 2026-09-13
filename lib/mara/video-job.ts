@@ -32,6 +32,8 @@ export const VIDEO_STALE_PROCESSING_MINUTES = 10;
 export const VIDEO_STALE_QUEUED_MINUTES = 10;
 /** The terminal error_code persisted when the hard timeout is enforced. */
 export const VIDEO_JOB_TIMEOUT_ERROR_CODE = "provider_timeout";
+/** Server-side media polling cadence. One provider status check per job per tick. */
+export const VIDEO_JOB_POLL_INTERVAL_MS = 2 * 60_000;
 
 export function isActiveVideoState(status: string): boolean {
   return (ACTIVE_VIDEO_STATES as string[]).includes(status);

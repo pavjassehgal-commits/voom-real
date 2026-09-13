@@ -31,7 +31,8 @@ Rules:
  *   - video provider configured  -> REAL 9:16 video: MARA plans the video,
  *     generates a clean base frame (or animates the uploaded image), and a
  *     durable asynchronous provider job runs. productionStatus tracks the
- *     job; GET below lazily polls it. On success the validated MP4 becomes
+ *     job; the server-side media worker polls it independently of the board.
+ *     GET below may refresh the display. On success the validated MP4 becomes
  *     the draft's private asset, so the existing approval -> schedule ->
  *     publish pipeline takes over unchanged.
  *   - video provider not configured -> the previous deterministic composition
