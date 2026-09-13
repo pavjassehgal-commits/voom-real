@@ -149,7 +149,14 @@ export function isCurrentWorkflowItem(item: CurrentWorkflowItem, selection: { to
   const horizonDays = selection.horizonDays ?? DEFAULT_HORIZON_DAYS;
   if (isWithinHorizon(selection.today, item.slotDate, horizonDays)) return true;
   if (item.localDate && isWithinHorizon(selection.today, item.localDate, horizonDays)) return true;
-  return item.status === "scheduled" || item.status === "published" || item.status === "missed" || item.status === "failed";
+  // Waiting-for-media and delayed-media items are LIVE scheduled work whose
+  // visual is not ready yet: if the owner rescheduled them beyond the horizon
+  // they must stay visible (a held schedule is never silently hidden), exactly
+  // like scheduled/published/missed/failed work.
+  return (
+    item.status === "scheduled" || item.status === "published" || item.status === "missed" || item.status === "failed"
+    || item.status === "waiting_for_media" || item.status === "media_delayed"
+  );
 }
 
 /**
@@ -250,10 +257,14 @@ export async function loadWorkflowSnapshot(
   ]);
 
   const assetByDraft = new Map((assets.data ?? []).map((row) => [String(row.draft_id), row]));
-  const mediaStatus = new Map<string, string>();
+  const mediaByDraft = new Map<string, { status: string; updatedAt: string | null }>();
   for (const row of generations.data ?? []) {
-    // Rows arrive oldest-first, so the newest generation wins.
-    mediaStatus.set(String(row.draft_id), String(row.status));
+    // Rows arrive oldest-first, so the newest generation wins. updated_at is
+    // kept: the read model derives "Media generation delayed" from it.
+    mediaByDraft.set(String(row.draft_id), {
+      status: String(row.status),
+      updatedAt: typeof row.updated_at === "string" ? row.updated_at : null,
+    });
   }
   const publish = new Map((queue.data ?? []).map((row) => [String(row.draft_id), row]));
   const calendarIds = new Map((calendar.data ?? []).map((row) => [String(row.source_draft_id), String(row.id)]));
@@ -280,10 +291,12 @@ export async function loadWorkflowSnapshot(
     const publishAt = String(row.proposed_publish_at ?? "");
     const asset = assetByDraft.get(draftId) as { mime_type?: unknown; origin?: unknown; storage_path?: unknown } | undefined;
     const hasMedia = Boolean(asset && typeof asset.storage_path === "string");
+    const media = mediaByDraft.get(draftId) ?? null;
     const facts = {
       draftStatus: (String(row.status ?? "draft") as "draft" | "approved" | "rejected"),
       hasMedia,
-      mediaStatus: (mediaStatus.get(draftId) ?? null) as never,
+      mediaStatus: (media?.status ?? null) as never,
+      mediaUpdatedAt: media?.updatedAt ?? null,
       publishStatus: publishRow?.status ?? null,
       awaitingApproval: approvalIds.has(draftId),
       publishAt,
@@ -321,7 +334,7 @@ export async function loadWorkflowSnapshot(
       approvalActionId: approvalIds.get(draftId) ?? null,
       hasMedia,
       instagramMediaId: publishRow?.instagram_media_id ?? null,
-      mediaStatus: mediaStatus.get(draftId) ?? null,
+      mediaStatus: media?.status ?? null,
       mediaPreviewUrl,
       mediaMimeType: hasMedia && typeof asset!.mime_type === "string" ? asset!.mime_type : null,
       mediaFromMara: asset?.origin === "mara",
@@ -398,6 +411,9 @@ export function todaySummary(snapshot: WorkflowSnapshot) {
     publishingToday: itemsForToday(snapshot).filter((item) => item.status !== "failed" && item.status !== "missed"),
     needsApproval: items.filter((item) => item.status === "needs_approval"),
     generating: items.filter((item) => item.status === "generating"),
+    // Scheduled but CANNOT publish until the visual is ready — surfaced as its
+    // own truthful bucket, never folded into "Scheduled".
+    waitingForMedia: items.filter((item) => item.status === "waiting_for_media" || item.status === "media_delayed"),
     failed: items.filter((item) => item.status === "failed"),
     missed: items.filter((item) => item.status === "missed"),
     scheduled: items.filter((item) => item.status === "scheduled"),

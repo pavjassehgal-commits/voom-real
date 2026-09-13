@@ -38,11 +38,11 @@ export function NotificationsModal() {
       const body = await response.json() as WorkflowResponse;
       if (!response.ok || !body.snapshot) throw new Error(body.error ?? "Notifications couldn't load. Please retry.");
       const all = body.snapshot.items ?? [];
-      const order: Record<string, number> = { needs_approval: 0, failed: 1 };
+      const order: Record<string, number> = { needs_approval: 0, media_delayed: 1, failed: 2 };
       setItems(
         all
-          .filter((item) => item.status === "needs_approval" || item.status === "failed")
-          .sort((a, b) => (order[a.status] ?? 2) - (order[b.status] ?? 2)),
+          .filter((item) => item.status === "needs_approval" || item.status === "failed" || item.status === "media_delayed")
+          .sort((a, b) => (order[a.status] ?? 3) - (order[b.status] ?? 3)),
       );
       setError("");
     } catch (reason) {
@@ -78,21 +78,27 @@ export function NotificationsModal() {
         )}
         {items?.map((item) => {
           const failed = item.status === "failed";
+          const delayed = item.status === "media_delayed";
+          const destination = failed ? "/app/calendar" : delayed ? "/app/plan" : "/app/approvals";
           return (
             <button
               key={item.draftId}
-              onClick={() => go(failed ? "/app/calendar" : "/app/approvals")}
+              onClick={() => go(destination)}
               className="flex w-full items-start gap-3 rounded-2xl border border-line p-3.5 text-left transition hover:border-brand"
             >
               <span
-                className={`grid h-[34px] w-[34px] flex-none place-items-center rounded-[10px] ${failed ? "bg-red/10 text-red" : "bg-[var(--brand-soft)] text-brand"}`}
+                className={`grid h-[34px] w-[34px] flex-none place-items-center rounded-[10px] ${failed || delayed ? "bg-red/10 text-red" : "bg-[var(--brand-soft)] text-brand"}`}
               >
-                <Icon name={failed ? "warn" : "check"} size={16} />
+                <Icon name={failed || delayed ? "warn" : "check"} size={16} />
               </span>
               <span className="min-w-0 flex-1">
                 <b className="block text-[13.5px]">{item.concept || "Untitled item"}</b>
                 <span className="mt-0.5 block text-[12.5px] text-text-2">
-                  {failed ? "Stopped safely — review and retry. Nothing was published twice." : "Voom is waiting for your approval before scheduling."}
+                  {failed
+                    ? "Stopped safely — review and retry. Nothing was published twice."
+                    : delayed
+                      ? "Media generation is delayed, so the schedule is held. Retry it, upload a replacement, or cancel from the Marketing Plan."
+                      : "Voom is waiting for your approval before scheduling."}
                 </span>
                 <span className="mt-1 flex flex-wrap items-center gap-1.5">
                   <Tag tone={failed ? "t-red" : "t-amber"}>{item.statusLabel}</Tag>
@@ -107,8 +113,14 @@ export function NotificationsModal() {
       <ModalFoot>
         <Btn variant="ghost" onClick={close}>Close</Btn>
         {items && items.length > 0 && (
-          <Btn variant="primary" onClick={() => go(items.some((item) => item.status === "failed") ? "/app/calendar" : "/app/approvals")}>
-            {items.some((item) => item.status === "failed") ? "Review now" : "Open approvals"}
+          <Btn variant="primary" onClick={() => go(
+            items.some((item) => item.status === "failed") ? "/app/calendar"
+              : items.some((item) => item.status === "media_delayed") ? "/app/plan"
+              : "/app/approvals",
+          )}>
+            {items.some((item) => item.status === "failed") ? "Review now"
+              : items.some((item) => item.status === "media_delayed") ? "Open Marketing Plan"
+              : "Open approvals"}
           </Btn>
         )}
       </ModalFoot>

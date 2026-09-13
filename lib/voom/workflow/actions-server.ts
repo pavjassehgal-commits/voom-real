@@ -72,13 +72,15 @@ function revalidate() {
 }
 
 /**
- * "Create with MARA" / "Regenerate" on the SAME item.
+ * "Create with MARA" / "Regenerate" / "Retry generation" on the SAME item.
  *
  * Images (Post 1:1, Story 9:16) go through the existing Seedream-backed
  * provider abstraction; Reels go through the existing durable video job
- * service (Seedance, Magic Hour fallback). `regenerate` passes a fresh video
- * idempotency token so an explicit regenerate is a NEW generation — a retry
- * of a failed one reuses the protected identity. Nothing is published.
+ * service (Seedance, Magic Hour fallback). Retry safety is decided by
+ * `decideMediaStart` (lib/voom/workflow/media.ts): while a generation is in
+ * flight a repeated click is a no-op (never a second charge); after a
+ * finished attempt an explicit retry is a fresh attempt; `regenerate` passes
+ * a fresh token so it is deliberately a NEW generation. Nothing is published.
  */
 export async function producePlanItemMedia(draftId: string, options: { regenerate?: boolean } = {}): Promise<ActionResult> {
   const ctx = await context();
@@ -87,17 +89,24 @@ export async function producePlanItemMedia(draftId: string, options: { regenerat
   if (!draft) return { ok: false, error: "That plan item was not found." };
   const contentType = draftContentType(draft);
   if (contentType === "reel" && options.regenerate) {
-    // Regenerate is an explicit second generation: new identity. (First-run
-    // media keeps the stable per-draft token, so retries never double-bill.)
+    // Regenerate is an explicit second generation: new identity — but only
+    // when nothing is in flight (the policy resolves to "exists" otherwise,
+    // so a repeated click can never pay for a second generation).
     const { randomUUID } = await import("node:crypto");
     const outcome = await produceWorkflowMedia(ctx.admin, mediaRequest(ctx.userId, draft, contentType), { idempotencyToken: `workflow-${draftId}:${randomUUID()}` });
     if (!outcome.ok) return { ok: false, error: "MARA couldn't start that Reel generation. Nothing was changed." };
     revalidate();
+    if (outcome.state === "exists") {
+      return { ok: true, message: "A generation is already in flight for this item — nothing new was started, so nothing was charged." };
+    }
     return { ok: true, message: "MARA is generating a fresh Reel for this item. Nothing was published." };
   }
   const outcome = await produceWorkflowMedia(ctx.admin, mediaRequest(ctx.userId, draft, contentType));
   if (!outcome.ok) return { ok: false, error: "MARA couldn't generate that visual. Nothing was changed — retrying cannot double-charge you." };
   revalidate();
+  if (outcome.state === "exists") {
+    return { ok: true, message: "A generation is already in flight for this item — nothing new was started, so nothing was charged." };
+  }
   return { ok: true, message: "MARA is generating the visual for this item. Nothing was published." };
 }
 
