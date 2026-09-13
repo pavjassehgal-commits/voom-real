@@ -30,9 +30,25 @@ export const VIDEO_JOB_TIMEOUT_MINUTES = 30;
 export const VIDEO_STALE_PROCESSING_MINUTES = 10;
 /** A queued row older than this never got a provider job (start request died). */
 export const VIDEO_STALE_QUEUED_MINUTES = 10;
+/** The terminal error_code persisted when the hard timeout is enforced. */
+export const VIDEO_JOB_TIMEOUT_ERROR_CODE = "provider_timeout";
 
 export function isActiveVideoState(status: string): boolean {
   return (ACTIVE_VIDEO_STATES as string[]).includes(status);
+}
+
+/**
+ * True when a generation row is the TERMINAL hard-timeout failure: the job
+ * outlived `VIDEO_JOB_TIMEOUT_MINUTES` (or its start request died) and Voom
+ * stopped it safely. The row keeps its provider job id and its history — only
+ * its status/error_code changed — so an explicit "Retry as new generation" is
+ * always a NEW row, never a rewrite of this one.
+ */
+export function isTimedOutVideoGeneration(
+  status: string | null | undefined,
+  errorCode: string | null | undefined,
+): boolean {
+  return status === "failed" && errorCode === VIDEO_JOB_TIMEOUT_ERROR_CODE;
 }
 
 export function isTerminalVideoState(status: string): boolean {
@@ -76,6 +92,20 @@ export function staleDecision(status: string, clock: JobClock): "timeout" | "rec
   if (status === "processing" && sinceUpdateMs > VIDEO_STALE_PROCESSING_MINUTES * 60_000) return "reclaim";
   if (status === "queued" && sinceUpdateMs > VIDEO_STALE_QUEUED_MINUTES * 60_000) return "timeout";
   return "ok";
+}
+
+/**
+ * True when an ACTIVE job has outlived the hard timeout — the same lifetime
+ * rule `staleDecision` enforces, exposed on its own so read-only views can
+ * derive the truthful "Generation timed out" state without writing anything.
+ */
+export function isBeyondVideoJobHardTimeout(
+  status: string | null | undefined,
+  clock: { nowMs: number; createdAtMs: number },
+): boolean {
+  if (typeof status !== "string" || !isActiveVideoState(status)) return false;
+  if (!Number.isFinite(clock.createdAtMs) || clock.createdAtMs <= 0) return false;
+  return clock.nowMs - clock.createdAtMs > VIDEO_JOB_TIMEOUT_MINUTES * 60_000;
 }
 
 /** Deterministic idempotency keys. Same click (same token) -> same key. */

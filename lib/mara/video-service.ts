@@ -8,7 +8,14 @@ import { loadPostBrandContext, loadPostPlanContext, syncPostToCalendar, type Adm
 import { advanceVideoGeneration, startVideoGeneration, type StartInput, type StartResult, type AdvanceResult, type VideoGenerationPorts, type VideoJobRow } from "./video-generation";
 import { buildVideoGenerationPorts } from "./video-ports";
 import { VIDEO_JOB_SELECT } from "./video-generation";
-import { videoIdempotencyKey } from "./video-job";
+import {
+  ACTIVE_VIDEO_STATES,
+  VIDEO_JOB_TIMEOUT_ERROR_CODE,
+  VIDEO_JOB_TIMEOUT_MINUTES,
+  isActiveVideoState,
+  staleDecision,
+  videoIdempotencyKey,
+} from "./video-job";
 import { toClientGenerationView, type ClientGenerationView } from "./video-view";
 
 export interface VideoService {
@@ -110,6 +117,89 @@ export async function latestVideoGeneration(admin: AdminClient, ownerId: string,
     .maybeSingle();
   if (error) throw new Error("video_job_read_failed");
   return (data as Record<string, unknown> | null) ? (data as unknown as VideoJobRow) : null;
+}
+
+/** One generation job by id (any status), owner-scoped. */
+export async function findVideoGeneration(admin: AdminClient, ownerId: string, generationId: string): Promise<VideoJobRow | null> {
+  const { data, error } = await admin.from("mara_media_generations")
+    .select(VIDEO_JOB_SELECT)
+    .eq("owner_user_id", ownerId)
+    .eq("id", generationId)
+    .maybeSingle();
+  if (error) throw new Error("video_job_read_failed");
+  return (data as Record<string, unknown> | null) ? (data as unknown as VideoJobRow) : null;
+}
+
+export interface HardTimeoutEnforcement {
+  /** True when THIS call moved the row into its terminal timeout state. */
+  enforced: boolean;
+  /** The row as it is now (terminal), or null when it does not exist. */
+  row: VideoJobRow | null;
+}
+
+/**
+ * Enforces the durable video job's hard timeout with a DATABASE write only —
+ * no provider call, no new job, no charge.
+ *
+ * Why this exists separately from `advanceVideoGeneration`: advancing needs the
+ * whole provider stack (video config, brand context, polling), so a job that
+ * outlived its hard timeout while that stack was unavailable stayed
+ * `generating/pending` forever — the production incident behind this helper.
+ * The hard timeout is a Voom-side lifetime rule, so Voom can always persist it.
+ *
+ * Guarantees:
+ *   - only an ACTIVE row that `staleDecision` calls a timeout is touched (the
+ *     status guard means concurrent callers cannot both transition it),
+ *   - the row keeps its provider job id, its provider metadata and its history:
+ *     it becomes terminal, it is never deleted or rewritten,
+ *   - the draft's stored asset (if any) is untouched, and nothing is published.
+ */
+export async function enforceVideoJobHardTimeout(
+  admin: AdminClient,
+  ownerId: string,
+  generationId: string,
+  options: { now?: number } = {},
+): Promise<HardTimeoutEnforcement> {
+  const row = await findVideoGeneration(admin, ownerId, generationId);
+  if (!row) return { enforced: false, row: null };
+  if (!isActiveVideoState(row.status)) return { enforced: false, row };
+
+  const nowMs = options.now ?? Date.now();
+  const clock = {
+    nowMs,
+    createdAtMs: Date.parse(row.created_at) || nowMs,
+    updatedAtMs: Date.parse(row.updated_at) || nowMs,
+  };
+  if (staleDecision(row.status, clock) !== "timeout") return { enforced: false, row };
+
+  const { data, error } = await admin.from("mara_media_generations")
+    .update({
+      status: "failed",
+      error_code: VIDEO_JOB_TIMEOUT_ERROR_CODE,
+      // Bounded, server-only diagnostic: our own enforcement facts, never
+      // credentials and never a raw provider payload.
+      provider_diagnostic: {
+        code: VIDEO_JOB_TIMEOUT_ERROR_CODE,
+        reason: "hard_timeout_exceeded",
+        limitMinutes: VIDEO_JOB_TIMEOUT_MINUTES,
+        jobAgeMinutes: Math.round((nowMs - clock.createdAtMs) / 60_000),
+        providerStatus: row.provider_status ?? null,
+        enforcedAt: new Date(nowMs).toISOString(),
+      },
+    })
+    .eq("id", generationId)
+    .eq("owner_user_id", ownerId)
+    .in("status", ACTIVE_VIDEO_STATES)
+    .select(VIDEO_JOB_SELECT)
+    .maybeSingle();
+  if (error) throw new Error("video_job_update_failed");
+  const updated = (data as Record<string, unknown> | null) ? (data as unknown as VideoJobRow) : null;
+  if (updated) return { enforced: true, row: updated };
+  // The status guard matched nothing: another caller moved the row first (it
+  // may even have completed while we were writing). Report the row as it
+  // actually is now — never a synthesised guess.
+  const current = await findVideoGeneration(admin, ownerId, generationId);
+  return { enforced: false, row: current ?? row };
 }
 
 export type StartJobInput = Omit<StartInput, "ownerId" | "providerName" | "supportsImageToVideo" | "estimatedCostUsd" | "monthlySpendLimitUsd">;

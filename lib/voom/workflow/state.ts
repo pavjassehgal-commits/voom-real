@@ -17,8 +17,14 @@
  *                     in 'waiting_for_media' because no visual exists yet —
  *                     never derived as plain "Scheduled"
  *   media_delayed     an in-flight generation has been queued/generating/
- *                     processing beyond the stale threshold — explicit
+ *                     processing beyond the stale threshold but is still
+ *                     inside the video job's hard timeout — explicit
  *                     Retry / Upload replacement / Cancel schedule actions
+ *   media_timed_out   an asynchronous video generation is beyond its hard
+ *                     timeout (still active, or already stopped with
+ *                     provider_timeout) — it can never complete on its own, so
+ *                     the explicit actions are Retry as new generation /
+ *                     Upload replacement / Cancel schedule
  *   ready_for_review  media is stored; the item can be reviewed and approved
  *   needs_approval    an approval action is open (Assisted stops here)
  *   scheduled         approved and queued for its publish time
@@ -28,12 +34,22 @@
  *   failed            media or publishing failed, or the item was rejected
  */
 
+// The durable video job's own lifetime rules (pure module — no I/O, no
+// secrets), so the workflow derivation and the job state machine can never
+// disagree about what "timed out" means.
+import {
+  VIDEO_JOB_TIMEOUT_MINUTES,
+  isBeyondVideoJobHardTimeout,
+  isTimedOutVideoGeneration,
+} from "@/lib/mara/video-job";
+
 export const WORKFLOW_STATUSES = [
   "planned",
   "needs_content",
   "generating",
   "waiting_for_media",
   "media_delayed",
+  "media_timed_out",
   "ready_for_review",
   "needs_approval",
   "scheduled",
@@ -50,6 +66,7 @@ export const WORKFLOW_STATUS_LABELS: Record<WorkflowStatus, string> = {
   generating: "Generating",
   waiting_for_media: "Waiting for media",
   media_delayed: "Media generation delayed",
+  media_timed_out: "Generation timed out",
   ready_for_review: "Ready for review",
   needs_approval: "Needs approval",
   scheduled: "Scheduled",
@@ -76,6 +93,12 @@ export interface WorkflowFacts {
   mediaStatus: "queued" | "generating" | "processing" | "completed" | "failed" | "cancelled" | "pending_confirmation" | null;
   /** updated_at of that latest generation, for stale-generation derivation. */
   mediaUpdatedAt?: string | null;
+  /** created_at of that latest generation — the video job's lifetime anchor. */
+  mediaCreatedAt?: string | null;
+  /** error_code of that latest generation, e.g. 'provider_timeout'. */
+  mediaErrorCode?: string | null;
+  /** media_type of that latest generation ('image' | 'video'). */
+  mediaType?: string | null;
   /** Latest instagram_publish_queue status for this draft, if any. */
   publishStatus: PublishStatusFact | null;
   /** True when an approval action is still open for this item. */
@@ -121,6 +144,47 @@ export function isStaleMediaGeneration(
   return now.getTime() - at > staleMinutes * 60_000;
 }
 
+/**
+ * The hard lifetime limit of an ASYNCHRONOUS video generation. This is the
+ * video job state machine's own limit (lib/mara/video-job.ts) re-exported so
+ * the workflow view can never invent a second, different number: past it, the
+ * job cannot complete and the item must stop claiming "Generating".
+ */
+export const MEDIA_GENERATION_HARD_TIMEOUT_MINUTES = VIDEO_JOB_TIMEOUT_MINUTES;
+
+/** What the hard-timeout derivation needs from one generation row. */
+export interface MediaGenerationTimingFacts {
+  status: string | null | undefined;
+  errorCode?: string | null | undefined;
+  mediaType?: string | null | undefined;
+  createdAt?: string | null | undefined;
+  updatedAt?: string | null | undefined;
+}
+
+function parseInstant(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? at : null;
+}
+
+/**
+ * True when an asynchronous video generation is beyond Voom's hard timeout:
+ * either it was already stopped with `provider_timeout` (the terminal state
+ * the retry path persists) or it is STILL active although its lifetime
+ * exceeded the limit — in which case nothing can ever complete it and every
+ * screen must say "Generation timed out" instead of "Generating".
+ *
+ * Images are synchronous: a dead image attempt stays `media_delayed` and its
+ * explicit retry replaces it, so the hard-timeout rule never applies to them.
+ */
+export function isMediaGenerationTimedOut(media: MediaGenerationTimingFacts, now: Date): boolean {
+  if (media.mediaType === "image") return false;
+  if (isTimedOutVideoGeneration(media.status ?? null, media.errorCode ?? null)) return true;
+  const createdAtMs = parseInstant(media.createdAt ?? media.updatedAt);
+  if (createdAtMs === null) return false;
+  return isBeyondVideoJobHardTimeout(media.status ?? null, { nowMs: now.getTime(), createdAtMs });
+}
+
 function isPast(instance: string | null | undefined, now: Date): boolean {
   if (!instance) return false;
   const value = Date.parse(instance);
@@ -143,35 +207,60 @@ function isPast(instance: string | null | undefined, now: Date): boolean {
  * screen (Marketing Plan / Today / Calendar) showed "Voom will publish it at
  * the scheduled time" for an item with NO visual that no worker could ever
  * publish. The queue state now wins: approved + waiting_for_media + no stored
- * visual derives `waiting_for_media` (or `media_delayed` / `missed` once the
- * generation is stale or the time has passed), never plain "Scheduled".
+ * visual derives `waiting_for_media` (or `media_delayed` / `media_timed_out` /
+ * `missed` once the generation is stale, beyond its hard timeout, or the time
+ * has passed), never plain "Scheduled".
+ *
+ * THE FOLLOW-UP INCIDENT: an asynchronous video job that outlived its hard
+ * timeout was still derived as `media_delayed` (or, while its provider kept
+ * the row's updated_at fresh, as plain `generating`) forever — the UI promised
+ * a generation that could never complete. Beyond the hard timeout the item now
+ * derives `media_timed_out` whether or not the terminal state is persisted
+ * yet, so no screen ever claims work is still in flight when it is not.
  */
 export function deriveWorkflowStatus(facts: WorkflowFacts): WorkflowStatus {
   const now = facts.now ?? new Date();
+  // Beyond the hard timeout the generation can never complete on its own. A
+  // stored visual always wins: the timed-out job simply did not replace it.
+  const mediaTimedOut = !facts.hasMedia && isMediaGenerationTimedOut({
+    status: facts.mediaStatus,
+    errorCode: facts.mediaErrorCode,
+    mediaType: facts.mediaType,
+    createdAt: facts.mediaCreatedAt,
+    updatedAt: facts.mediaUpdatedAt,
+  }, now);
+
   if (facts.publishStatus === "published") return "published";
   if (facts.publishStatus === "publishing") return "publishing";
   if (facts.publishStatus === "failed" || facts.publishStatus === "permission_required") return "failed";
-  if (facts.mediaStatus === "failed" && !facts.hasMedia) return "failed";
+  // A stopped video generation keeps the precedence a media failure always
+  // had — it is only named truthfully when the reason was the hard timeout.
+  if (facts.mediaStatus === "failed" && !facts.hasMedia) return mediaTimedOut ? "media_timed_out" : "failed";
   if (facts.draftStatus === "rejected") return "failed";
 
   // Approved + the queue held in 'waiting_for_media' + no stored visual: the
   // schedule is real but the item CANNOT publish yet. Truthful order:
   //  1. the scheduled time already passed without media -> missed (the user
   //     decides: post now / reschedule / cancel),
-  //  2. the generation is active but stale -> media_delayed (explicit
+  //  2. the generation is beyond its hard timeout -> media_timed_out (only an
+  //     explicit "Retry as new generation", an upload or a cancel can move it),
+  //  3. the generation is active but stale -> media_delayed (explicit
   //     retry / upload replacement / cancel schedule),
-  //  3. otherwise -> waiting_for_media, self-healing the moment the visual is
+  //  4. otherwise -> waiting_for_media, self-healing the moment the visual is
   //     stored (the late-media sync flips the row to 'scheduled').
   if (facts.draftStatus === "approved" && facts.publishStatus === "waiting_for_media" && !facts.hasMedia) {
     if (isPast(facts.publishAt ?? null, now)) return "missed";
+    if (mediaTimedOut) return "media_timed_out";
     if (isStaleMediaGeneration(facts.mediaStatus, facts.mediaUpdatedAt, now)) return "media_delayed";
     return "waiting_for_media";
   }
 
-  // A generation that has been queued/generating/processing beyond the stale
-  // threshold cannot make progress on its own, in ANY stage (not only the
-  // approved queue): it derives media_delayed instead of sitting as
+  // A generation beyond its hard timeout, or one that has been
+  // queued/generating/processing beyond the stale threshold, cannot make
+  // progress on its own, in ANY stage (not only the approved queue): it
+  // derives media_timed_out / media_delayed instead of sitting as
   // "Generating" forever with no way to act on it.
+  if (mediaTimedOut) return "media_timed_out";
   if (!facts.hasMedia && isStaleMediaGeneration(facts.mediaStatus, facts.mediaUpdatedAt, now)) return "media_delayed";
 
   if (facts.mediaStatus === "queued" || facts.mediaStatus === "generating" || facts.mediaStatus === "processing") return "generating";
@@ -199,7 +288,7 @@ export function requiresApproval(status: WorkflowStatus): boolean {
 
 /** Statuses the user can safely retry without risking a duplicate charge/post. */
 export function isRetryable(status: WorkflowStatus): boolean {
-  return status === "failed" || status === "missed" || status === "media_delayed";
+  return status === "failed" || status === "missed" || status === "media_delayed" || status === "media_timed_out";
 }
 
 /**

@@ -461,17 +461,37 @@ test("5b. repeated retry clicks through the real media path create zero extra ge
     0, "no second (paid) generation row is ever created while one is in flight",
   );
 
-  // Video: a stale in-flight job — retry re-advances the same job; still no new row.
+  // Video: a stale in-flight job (still INSIDE the 30-minute hard timeout) —
+  // retry re-checks the same job; still no new row. The outcome is truthfully
+  // "advanced", never "queued": nothing new was started, so the toast cannot
+  // claim a new video generation began.
   const videoDb = createFakeAdmin(seedIncident({ generation: "generating", updatedAt: STALE_GEN_AT, queue: null }));
   const reelRequest = { ...request, contentType: "reel" };
+  let advanceCalls = 0;
   for (let click = 0; click < 2; click += 1) {
-    const outcome = await mediaMod.produceWorkflowMedia(videoDb, reelRequest, { now: NOW });
+    const outcome = await mediaMod.produceWorkflowMedia(videoDb, reelRequest, {
+      now: NOW,
+      explicit: true,
+      deps: { advance: async () => { advanceCalls += 1; return "advanced"; } },
+    });
     assert.equal(outcome.ok, true);
-    assert.equal(outcome.state, "queued");
+    assert.equal(outcome.state, "advanced");
+    assert.match(mediaMod.mediaOutcomeMessage("advanced"), /no new video was started/i);
   }
+  assert.equal(advanceCalls, 2, "the SAME durable job is re-checked, never replaced");
   assert.equal(
     videoDb.writes.filter((write) => write.table === "mara_media_generations" && write.op === "insert").length,
     0, "an in-flight video job is never replaced by a second paid job",
+  );
+
+  // No provider stack at all: the retry cannot even re-check the job, and it
+  // says so instead of implying a poll happened. Still nothing was started.
+  const unconfigured = createFakeAdmin(seedIncident({ generation: "generating", updatedAt: STALE_GEN_AT, queue: null }));
+  const unavailable = await mediaMod.produceWorkflowMedia(unconfigured, reelRequest, { now: NOW, explicit: true });
+  assert.deepEqual(unavailable, { ok: false, code: "video_provider_unavailable" });
+  assert.equal(
+    unconfigured.writes.filter((write) => write.table === "mara_media_generations" && write.op === "insert").length,
+    0, "an unavailable provider never becomes a new paid generation",
   );
 });
 
