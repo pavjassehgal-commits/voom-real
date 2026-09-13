@@ -307,10 +307,19 @@ export function missedReason(facts: WorkflowFacts): string | null {
   return "Its scheduled time passed without a successful publish.";
 }
 
-/** The stage that failed, for a truthful "what broke" message. */
+/**
+ * The stage that failed, for a truthful "what broke" message.
+ *
+ * PRECEDENCE: a missing visual outranks a publish failure. When media
+ * generation failed and Voom owns no bytes, the publish attempt could only
+ * ever fail — it is the SYMPTOM, not the cause. Reporting "publishing failed"
+ * there sends the user to "Post now", which cannot work without media and
+ * simply fails again. Naming the media failure points at the one action that
+ * actually fixes the item: retry the generation or upload a replacement.
+ */
 export function failureStage(facts: WorkflowFacts): "media" | "publishing" | "rejected" | null {
-  if (facts.publishStatus === "failed" || facts.publishStatus === "permission_required") return "publishing";
   if (facts.mediaStatus === "failed" && !facts.hasMedia) return "media";
+  if (facts.publishStatus === "failed" || facts.publishStatus === "permission_required") return "publishing";
   if (facts.draftStatus === "rejected") return "rejected";
   return null;
 }

@@ -4,7 +4,14 @@ import { createAdminClient } from "@/utils/supabase/admin";
 import { syncPostToCalendar, type AdminClient } from "@/lib/post/server-data";
 import { getVideoConfig } from "@/lib/media/video-config";
 import { createVideoProvider, type VideoGenerationProvider } from "@/lib/media/video-provider";
-import { isActiveVideoState, VIDEO_JOB_POLL_INTERVAL_MS, VIDEO_JOB_TIMEOUT_ERROR_CODE, VIDEO_JOB_TIMEOUT_MINUTES } from "./video-job";
+import {
+  isActiveVideoState,
+  isTimedOutVideoGeneration,
+  reconcileDecision,
+  VIDEO_JOB_POLL_INTERVAL_MS,
+  VIDEO_JOB_RECOVERY_WINDOW_MINUTES,
+  VIDEO_JOB_TIMEOUT_ERROR_CODE,
+} from "./video-job";
 import {
   advanceVideoGeneration,
   VIDEO_JOB_SELECT,
@@ -50,7 +57,7 @@ export interface VideoPollerDependencies {
   ports?: VideoGenerationPorts | null;
   jobs?: DueVideoGeneration[];
   listJobs?: (admin: AdminClient, options: { now: number; providerName: string | null; limit: number }) => Promise<DueVideoGeneration[]>;
-  advance?: (ports: VideoGenerationPorts, ownerId: string, generationId: string, kind: VideoKind) => Promise<AdvanceResult>;
+  advance?: (ports: VideoGenerationPorts, ownerId: string, generationId: string, kind: VideoKind, options?: { reconcile?: boolean }) => Promise<AdvanceResult>;
   enforceTimeout?: (admin: AdminClient, ownerId: string, generationId: string, now: number) => Promise<{ enforced: boolean; row: VideoJobRow | null }>;
   syncCalendar?: (admin: AdminClient, ownerId: string, draftId: string) => Promise<unknown>;
   logger?: (event: VideoPollEvent, input?: Parameters<typeof logVideoPoll>[1]) => void;
@@ -72,10 +79,16 @@ export async function listDueVideoGenerations(
   const limit = Math.min(Math.max(options.limit ?? VIDEO_GENERATION_POLL_BATCH_SIZE, 1), VIDEO_GENERATION_POLL_BATCH_SIZE);
   const dueBefore = new Date(now - VIDEO_JOB_POLL_INTERVAL_MS).toISOString();
 
+  // 'failed' is selected alongside the active states so a job Voom already
+  // stopped as `provider_timeout` can still be RECONCILED: the provider may
+  // have finished that video after the timeout was written, and the account
+  // has already paid for it. `reconcileDecision` decides per row whether such
+  // a row is genuinely recoverable; every other failure code is filtered out
+  // below and never re-polled.
   const queryBase = admin.from("mara_media_generations")
     .select(VIDEO_JOB_SELECT)
     .eq("media_type", "video")
-    .in("status", [...VIDEO_ACTIVE_STATES])
+    .in("status", [...VIDEO_ACTIVE_STATES, "failed"])
     .not("provider_job_id", "is", null)
     .or(`updated_at.is.null,updated_at.lte.${dueBefore}`)
     .order("updated_at", { ascending: true })
@@ -93,6 +106,16 @@ export async function listDueVideoGenerations(
     .filter((row) => {
       const retryAt = typeof row.provider_retry_after_at === "string" ? Date.parse(row.provider_retry_after_at) : NaN;
       return !Number.isFinite(retryAt) || retryAt <= now;
+    })
+    // A terminal row qualifies ONLY as a timed-out job still inside its
+    // recovery window. A genuine provider failure (rejected, invalid_output,
+    // insufficient_credits, …) stays terminal and is never polled again.
+    .filter((row) => {
+      const status = typeof row.status === "string" ? row.status : "";
+      if (isActiveVideoState(status)) return true;
+      if (!isTimedOutVideoGeneration(status, typeof row.error_code === "string" ? row.error_code : null)) return false;
+      const created = typeof row.created_at === "string" ? Date.parse(row.created_at) : NaN;
+      return Number.isFinite(created) && now - created <= VIDEO_JOB_RECOVERY_WINDOW_MINUTES * 60_000;
     })
     .slice(0, limit);
 
@@ -157,23 +180,38 @@ export async function runVideoGenerationPoller(deps: VideoPollerDependencies = {
     const startedAt = now();
     logger("poll_started", { generationId: row.id, provider: row.provider ?? providerName });
 
-    // A hard timeout is a Voom database truth, not a provider operation. Apply
-    // it even when credentials/config are unavailable, and never poll a job
-    // after the 30-minute lifetime has elapsed.
-    if (isBeyondHardTimeout(row, nowMs)) {
-      const enforced = await enforceTimeout(admin, row.owner_user_id, row.id, nowMs).catch(() => ({ enforced: false, row: null }));
-      if (enforced.enforced || enforced.row?.error_code === VIDEO_JOB_TIMEOUT_ERROR_CODE) {
-        result.timedOut += 1;
-        logger("timed_out", { generationId: row.id, provider: row.provider ?? providerName, errorCode: VIDEO_JOB_TIMEOUT_ERROR_CODE, durationMs: elapsed(startedAt, now) });
-        result.results.push({ generationId: row.id, outcome: "timed_out", errorCode: VIDEO_JOB_TIMEOUT_ERROR_CODE });
-        continue;
-      }
-      // A concurrent worker may have completed/failed it while this run was
-      // reading. Do not make a second provider call on an uncertain row.
-      if (!isActiveVideoState(enforced.row?.status ?? row.status)) {
-        result.skipped += 1;
-        result.results.push({ generationId: row.id, outcome: "skipped" });
-        continue;
+    // A job at/past its 30-minute lifetime gets ONE final reconciliation
+    // against the provider before Voom writes it off. The provider may have
+    // finished the video at minute 29 — the account already paid for it, so
+    // failing it unseen would throw away work that exists. Reconciliation is
+    // a status read on the STORED provider_job_id (see reconcileDecision); it
+    // can never submit a replacement job.
+    //
+    // Only when there is no usable handle, no provider stack, or the answer
+    // is still "pending" does the timeout become a persisted database truth.
+    const decision = reconcileDecision({
+      status: row.status,
+      providerJobId: typeof row.provider_job_id === "string" ? row.provider_job_id : null,
+      errorCode: typeof row.error_code === "string" ? row.error_code : null,
+      clock: { nowMs, createdAtMs: Date.parse(row.created_at) || 0 },
+    });
+
+    if (decision !== "none") {
+      // Without a provider stack there is nothing to reconcile with. A hard
+      // timeout is still a Voom truth, so it is applied even when provider
+      // configuration or credentials are temporarily unavailable.
+      if (decision === "timeout" || !ports) {
+        const outcome = await persistTimeout({
+          admin, row, nowMs, enforceTimeout, logger, providerName, startedAt, now, result,
+        });
+        if (outcome === "handled") continue;
+        if (outcome === "no_longer_active") continue;
+      } else {
+        const settled = await reconcileOnce({
+          admin, ports, row, kind, nowMs, advance, enforceTimeout, syncCalendar,
+          logger, providerName, startedAt, now, result,
+        });
+        if (settled) continue;
       }
     }
 
@@ -238,6 +276,139 @@ export async function runVideoGenerationPoller(deps: VideoPollerDependencies = {
   return result;
 }
 
+interface SettleContext {
+  admin: AdminClient;
+  row: VideoJobRow;
+  nowMs: number;
+  enforceTimeout: NonNullable<VideoPollerDependencies["enforceTimeout"]>;
+  logger: (event: VideoPollEvent, input?: Parameters<typeof logVideoPoll>[1]) => void;
+  providerName: string | null;
+  startedAt: number;
+  now: () => number;
+  result: VideoPollerResult;
+}
+
+/**
+ * Persists the hard timeout as a Voom database truth. No provider call is made
+ * here, so this path stays available when credentials or configuration are
+ * missing — a stuck job can never hold a schedule open forever just because
+ * the provider stack is down.
+ */
+async function persistTimeout(ctx: SettleContext): Promise<"handled" | "no_longer_active" | "still_active"> {
+  const { admin, row, nowMs, enforceTimeout, logger, providerName, startedAt, now, result } = ctx;
+  const enforced = await enforceTimeout(admin, row.owner_user_id, row.id, nowMs).catch(() => ({ enforced: false, row: null }));
+  if (enforced.enforced || enforced.row?.error_code === VIDEO_JOB_TIMEOUT_ERROR_CODE) {
+    result.timedOut += 1;
+    logger("timed_out", { generationId: row.id, provider: row.provider ?? providerName, errorCode: VIDEO_JOB_TIMEOUT_ERROR_CODE, durationMs: elapsed(startedAt, now) });
+    result.results.push({ generationId: row.id, outcome: "timed_out", errorCode: VIDEO_JOB_TIMEOUT_ERROR_CODE });
+    return "handled";
+  }
+  // A concurrent worker may have completed/failed it while this run was
+  // reading. Do not make a second provider call on an uncertain row.
+  if (!isActiveVideoState(enforced.row?.status ?? row.status)) {
+    result.skipped += 1;
+    result.results.push({ generationId: row.id, outcome: "skipped" });
+    return "no_longer_active";
+  }
+  return "still_active";
+}
+
+/**
+ * The final provider reconciliation.
+ *
+ * One read-only status check on the job id already stored on the row, routed
+ * through `advanceVideoGeneration` so completion reuses the SAME validated
+ * download → store → attach path as a normal poll. Three real outcomes:
+ *
+ *   completed — the provider finished (possibly after an earlier timeout).
+ *               The asset is attached and the held schedule re-synced, so a
+ *               paid video is recovered instead of discarded.
+ *   failed    — the provider reported a real failure. That truthful reason is
+ *               persisted INSTEAD of a generic timeout.
+ *   pending   — the provider is still working with no result to collect, so
+ *               the hard timeout is persisted and the job stops.
+ *
+ * Returns true when the job reached a settled outcome and needs no further
+ * work this tick.
+ */
+async function reconcileOnce(ctx: SettleContext & {
+  ports: VideoGenerationPorts;
+  kind: VideoKind;
+  advance: NonNullable<VideoPollerDependencies["advance"]>;
+  syncCalendar: NonNullable<VideoPollerDependencies["syncCalendar"]>;
+}): Promise<boolean> {
+  const { admin, ports, row, kind, advance, syncCalendar, logger, providerName, startedAt, now, result } = ctx;
+  const wasCompleted = row.status === "completed";
+
+  result.polled += 1;
+  let advanced: AdvanceResult;
+  try {
+    advanced = await advance(ports, row.owner_user_id, row.id, kind, { reconcile: true });
+  } catch {
+    // The reconciliation itself failed. Fall back to the database truth so a
+    // provider outage cannot leave the job active forever. No replacement job
+    // is ever submitted on this path.
+    const outcome = await persistTimeout(ctx);
+    if (outcome === "still_active") {
+      result.failed += 1;
+      logger("provider_failed", { generationId: row.id, provider: row.provider ?? providerName, errorCode: "unavailable", durationMs: elapsed(startedAt, now) });
+      result.results.push({ generationId: row.id, outcome: "failed", errorCode: "unavailable" });
+    }
+    return true;
+  }
+  if (!advanced.ok) {
+    result.skipped += 1;
+    result.results.push({ generationId: row.id, outcome: "skipped" });
+    return true;
+  }
+
+  const current = advanced.generation;
+  logger("provider_status", {
+    generationId: current.id,
+    provider: current.provider ?? providerName,
+    providerStatus: current.provider_status ?? current.status,
+    durationMs: elapsed(startedAt, now),
+  });
+
+  if (current.status === "completed") {
+    // A real video exists. Recovering it is the whole point of reconciling:
+    // the account already paid for these bytes.
+    result.completed += 1;
+    logger("provider_completed", { generationId: current.id, provider: current.provider ?? providerName, providerStatus: current.provider_status ?? "completed" });
+    if (!wasCompleted && advanced.attached) {
+      await syncCalendar(admin, current.owner_user_id, current.draft_id).catch(() => undefined);
+      logger("asset_stored", { generationId: current.id, provider: current.provider ?? providerName });
+    }
+    result.results.push({ generationId: current.id, outcome: "completed" });
+    return true;
+  }
+
+  if (current.status === "failed") {
+    const code = current.error_code ?? VIDEO_JOB_TIMEOUT_ERROR_CODE;
+    if (code === VIDEO_JOB_TIMEOUT_ERROR_CODE) {
+      result.timedOut += 1;
+      logger("timed_out", { generationId: current.id, provider: current.provider ?? providerName, errorCode: code });
+      result.results.push({ generationId: current.id, outcome: "timed_out", errorCode: code });
+    } else {
+      // A REAL provider failure reason is more truthful than "timed out", so
+      // it is kept exactly as the provider reported it.
+      result.failed += 1;
+      logger("provider_failed", { generationId: current.id, provider: current.provider ?? providerName, providerStatus: current.provider_status ?? "failed", errorCode: code });
+      result.results.push({ generationId: current.id, outcome: "failed", errorCode: code });
+    }
+    return true;
+  }
+
+  // Still genuinely pending past its lifetime: nothing to collect, so the
+  // timeout becomes the persisted truth and the job stops here.
+  const outcome = await persistTimeout(ctx);
+  if (outcome === "still_active") {
+    result.pending += 1;
+    result.results.push({ generationId: current.id, outcome: "pending" });
+  }
+  return true;
+}
+
 async function findVideoKind(admin: AdminClient, ownerId: string, draftId: string): Promise<VideoKind | null> {
   const { data, error } = await admin.from("mara_drafts")
     .select("kind")
@@ -246,11 +417,6 @@ async function findVideoKind(admin: AdminClient, ownerId: string, draftId: strin
     .maybeSingle();
   if (error || !data) return null;
   return data.kind === "story" ? "story" : data.kind === "reel" ? "reel" : null;
-}
-
-function isBeyondHardTimeout(row: VideoJobRow, nowMs: number): boolean {
-  const created = Date.parse(row.created_at);
-  return Number.isFinite(created) && nowMs - created > VIDEO_JOB_TIMEOUT_MINUTES * 60_000;
 }
 
 function elapsed(start: number, now: () => number): number {

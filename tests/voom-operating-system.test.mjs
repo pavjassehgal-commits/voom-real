@@ -66,7 +66,18 @@ test("rolling plan automation is server-scheduled, cadence-aware, mode-aware, an
     read("lib/voom/weekly-automation.ts"), read("lib/voom/workflow/service.ts"), read("app/api/cron/weekly-plans/route.ts"),
     read("supabase/migrations/0029_workflow_timezone_and_slots.sql"), read("vercel.json"), read("app/api/plan/route.ts"),
   ]);
-  assert.match(automation, /\["assisted", "autopilot"\]/);
+  // Which modes run automatically is now EXECUTED, not string-matched: the
+  // scheduled runner derives its list from the same shared predicate the
+  // Automations screen uses, so the promise and the behaviour cannot drift.
+  const automationModes = await import("../lib/voom/automation.ts");
+  assert.equal(automationModes.automationRunsAutomatically("assisted"), true);
+  assert.equal(automationModes.automationRunsAutomatically("autopilot"), true);
+  assert.equal(automationModes.automationRunsAutomatically("manual"), false, "Manual accounts are never picked up by the scheduled run");
+  assert.deepEqual(
+    automationModes.AUTOMATION_MODES.filter(automationModes.automationRunsAutomatically),
+    ["assisted", "autopilot"],
+  );
+  assert.match(automation, /AUTOMATION_MODES\.filter\(automationRunsAutomatically\)/);
   assert.doesNotMatch(automation, /"manual"/);
   assert.match(automation, /for \(const business of businesses/);
   // The old "exactly 3 per week" rule is gone.

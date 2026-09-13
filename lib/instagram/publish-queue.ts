@@ -3,6 +3,8 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   MAX_PUBLISH_ATTEMPTS,
+  NOT_APPROVED_FAILURE_CODE,
+  shouldRepairNotApproved,
   STALE_CLAIM_MINUTES,
   type PublishMediaKind,
   type PublishState,
@@ -136,6 +138,70 @@ export async function failPublishItem(
     p_retry_at: input.retryAt ?? null,
   });
   if (error) throw new Error("instagram_publish_fail_record_failed");
+}
+
+/**
+ * Repairs queue rows stuck in a terminal `not_approved` state whose draft is
+ * genuinely approved right now.
+ *
+ * These rows are the residue of a transient draft read (or an approval that
+ * committed a moment after the row was claimed). The item was approved, but
+ * the terminal failure meant nothing would ever look at it again — a silently
+ * dead schedule, the same class of bug as the 6:30 PM incident.
+ *
+ * Safety: this ONLY rewrites queue state. It never publishes, never touches
+ * the idempotency key or container id, and skips anything already published.
+ * A genuinely rejected or un-approved draft fails `shouldRepairNotApproved`
+ * and stays terminal, so an item the user withdrew is never resurrected.
+ * Returns the number of rows repaired.
+ */
+export async function repairNotApprovedItems(
+  db: SupabaseClient,
+  options: { limit?: number; now?: Date } = {},
+): Promise<number> {
+  const limit = Math.min(Math.max(options.limit ?? 25, 1), 100);
+  const { data, error } = await db.from(PUBLISH_QUEUE_TABLE)
+    .select(PUBLISH_QUEUE_COLUMNS)
+    .eq("status", "failed")
+    .eq("failure_code", NOT_APPROVED_FAILURE_CODE)
+    .is("instagram_media_id", null)
+    .limit(limit);
+  if (error || !Array.isArray(data) || !data.length) return 0;
+
+  const rows = (data as unknown[]).map((row) => normalizeRow(row)).filter((row): row is PublishQueueRow => Boolean(row));
+  if (!rows.length) return 0;
+
+  // Re-read approval from the drafts table — the queue row's own copy is
+  // exactly the fact that was wrong.
+  const { data: draftRows } = await db.from("mara_drafts")
+    .select("id,status")
+    .in("id", rows.map((row) => row.draft_id));
+  const approval = new Map<string, string>();
+  for (const draft of (draftRows ?? []) as { id?: unknown; status?: unknown }[]) {
+    if (typeof draft.id === "string") approval.set(draft.id, String(draft.status ?? ""));
+  }
+
+  let repaired = 0;
+  for (const row of rows) {
+    const draftStatus = approval.get(row.draft_id) ?? "";
+    if (!shouldRepairNotApproved({
+      status: row.status,
+      failureCode: row.failure_code,
+      instagramMediaId: row.instagram_media_id,
+      draftStatus,
+    })) continue;
+    // The guard is repeated in the WHERE clause so a row that changed
+    // underneath this loop is never overwritten.
+    const { error: updateError } = await db.from(PUBLISH_QUEUE_TABLE)
+      .update({ status: "scheduled", failure_code: null, failure_message: null })
+      .eq("id", row.id)
+      .eq("owner_user_id", row.owner_user_id)
+      .eq("status", "failed")
+      .eq("failure_code", NOT_APPROVED_FAILURE_CODE)
+      .is("instagram_media_id", null);
+    if (!updateError) repaired += 1;
+  }
+  return repaired;
 }
 
 /** Owner-scoped read of the whole queue, used by the Content Calendar. */

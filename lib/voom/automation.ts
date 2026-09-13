@@ -120,3 +120,65 @@ export function activeAutomationModeCard(savedMode: AutomationModeValue): Automa
   if (!card) throw new Error(`no_active_automation_mode_card:${savedMode}`);
   return card;
 }
+
+/**
+ * What changing the automation mode does to work that ALREADY EXISTS.
+ *
+ * The rule: a mode switch governs FUTURE automation only. Turning Autopilot
+ * off stops Voom from approving, scheduling and generating on its own from
+ * that moment — it does not reach back and withdraw items the user already
+ * approved, cancel schedules they already accepted, or delete media already
+ * paid for and stored.
+ *
+ * Both directions of the mistake are real damage. Retroactively cancelling
+ * approved schedules silently destroys work the user asked for; equally,
+ * leaving automation running after a switch to Manual keeps spending credits
+ * the user just said to stop spending. So: existing commitments stand, future
+ * automated runs stop.
+ *
+ * `automationRunsAutomatically` is the single predicate the scheduled runner
+ * and the mode copy share, so the promise on the card and the behaviour of the
+ * worker can never drift apart.
+ */
+export function automationRunsAutomatically(mode: AutomationModeValue): boolean {
+  return mode === "assisted" || mode === "autopilot";
+}
+
+export interface AutomationModeChangeEffect {
+  /** Scheduled/automated runs continue for this account after the change. */
+  futureAutomationEnabled: boolean;
+  /** Voom may approve and schedule items by itself after the change. */
+  futureAutoApproval: boolean;
+  /** Always false: a mode change never rewrites work that already exists. */
+  cancelsExistingSchedules: boolean;
+  /** Always false: already-approved items keep their approval. */
+  revokesExistingApprovals: boolean;
+  /** Always false: stored media is already paid for and is kept. */
+  deletesExistingMedia: boolean;
+  /** The truthful sentence shown when the mode is changed. */
+  message: string;
+}
+
+export function automationModeChangeEffect(
+  previousMode: AutomationModeValue,
+  nextMode: AutomationModeValue,
+): AutomationModeChangeEffect {
+  const futureAutomationEnabled = automationRunsAutomatically(nextMode);
+  const stoppingAutomation = automationRunsAutomatically(previousMode) && !futureAutomationEnabled;
+  const losingAutoApproval = previousMode === "autopilot" && nextMode !== "autopilot";
+
+  const message = stoppingAutomation
+    ? `Switched to ${AUTOMATION_MODE_LABELS[nextMode]}. Scheduled runs stop from now on — nothing new is planned, generated, approved or scheduled automatically. Items you already approved keep their schedules and will still publish, and media you already generated is kept.`
+    : losingAutoApproval
+      ? `Switched to ${AUTOMATION_MODE_LABELS[nextMode]}. Voom will no longer approve or schedule items by itself; new items wait for your approval. Items you already approved keep their schedules and will still publish.`
+      : `Switched to ${AUTOMATION_MODE_LABELS[nextMode]}. This applies to future runs — your existing approvals, schedules and stored media are unchanged.`;
+
+  return {
+    futureAutomationEnabled,
+    futureAutoApproval: nextMode === "autopilot",
+    cancelsExistingSchedules: false,
+    revokesExistingApprovals: false,
+    deletesExistingMedia: false,
+    message,
+  };
+}

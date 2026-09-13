@@ -89,8 +89,19 @@ export async function runPublishFlow(item: FlowItem, ports: FlowPorts): Promise<
   if (item.instagramMediaId) return { outcome: "published", mediaId: item.instagramMediaId };
 
   // 1) Approval is re-checked server-side; a rejected/cancelled draft never posts.
-  const draft = await ports.loadDraft(item.ownerUserId, item.draftId);
-  if (!draft || draft.status !== "approved") {
+  //
+  // A draft Voom cannot READ is a different fact from a draft the user did not
+  // approve. Only the latter is terminal: an unreadable draft is retried, so
+  // one transient database blip can never permanently kill an approved
+  // schedule by branding it "not approved".
+  let draft: { status: string; content: string } | null;
+  try {
+    draft = await ports.loadDraft(item.ownerUserId, item.draftId);
+  } catch {
+    return fail(item, ports, timeline, endedAt, "draft_unavailable");
+  }
+  if (!draft) return fail(item, ports, timeline, endedAt, "draft_unavailable");
+  if (draft.status !== "approved") {
     return fail(item, ports, timeline, endedAt, "not_approved_custom");
   }
 
