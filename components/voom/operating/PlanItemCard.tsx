@@ -7,6 +7,7 @@ import { Icon } from "@/components/voom/icons";
 import { Btn, Card, Input, Tag } from "@/components/voom/ui/primitives";
 import type { WorkflowView, WorkflowSnapshot } from "@/lib/voom/workflow/read";
 import { planItemActions, type PlanAction, type PlanItemFacts, type WorkflowMode } from "@/lib/voom/workflow/next-actions";
+import { MEDIA_GENERATION_HARD_TIMEOUT_MINUTES } from "@/lib/voom/workflow/state";
 import { classifyReelProduction } from "@/lib/mara/reel-production";
 import { currentScheduleDate, minScheduleTime } from "@/lib/voom/schedule-guard";
 import { formatLocalTimeInput } from "@/lib/voom/timezone";
@@ -120,7 +121,10 @@ export function PlanItemCard({
     if (action.id === "produce_with_mara" || action.id === "regenerate_media" || action.id === "retry_media") {
       const regenerate = action.id === "regenerate_media";
       return <Btn key={action.id} variant={action.tone === "primary" ? "primary" : "outline"} size="sm" disabled={busy !== null} onClick={() => void run(action.id, () => producePlanItemMedia(item.draftId, { regenerate }))}>
-        <Icon name="spark" size={13} /> {busyNow ? "Generating…" : action.label}
+        {/* The busy label stays neutral: whether this click starts a NEW generation
+            or only re-checks the existing job is decided server-side, and the
+            message below reports what actually happened. */}
+        <Icon name="spark" size={13} /> {busyNow ? "Working…" : action.label}
       </Btn>;
     }
     if (action.id === "change_time" || action.id === "reschedule") {
@@ -173,6 +177,9 @@ export function PlanItemCard({
       </p>}
       {item.status === "media_delayed" && <p role="alert" className="mt-2 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-[12.5px] text-red">
         Media generation is delayed, so the schedule is held — Voom will not publish until a real visual exists.
+      </p>}
+      {item.status === "media_timed_out" && <p role="alert" className="mt-2 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-[12.5px] text-red">
+        That generation ran past Voom&apos;s {MEDIA_GENERATION_HARD_TIMEOUT_MINUTES}-minute limit, so it cannot finish on its own and the schedule stays held. Nothing was published and nothing new was charged — retry it as a new generation, upload a replacement, or cancel the schedule.
       </p>}
       {item.status === "missed" && <p role="alert" className="mt-2 rounded-xl border border-amber/35 bg-amber/10 px-3.5 py-2.5 text-[12.5px] text-amber">
         {item.missedReason ?? "Its scheduled time passed without publishing."} Voom never publishes hours late on its own.
@@ -266,7 +273,7 @@ function reelProductionFacts(item: WorkflowView): PlanItemFacts["production"] {
 
 export function stageTone(status: string) {
   if (status === "published") return "t-green";
-  if (status === "failed") return "t-red";
+  if (status === "failed" || status === "media_timed_out") return "t-red";
   if (status === "missed" || status === "media_delayed") return "t-amber";
   if (status === "needs_approval" || status === "ready_for_review" || status === "waiting_for_media") return "t-amber";
   if (status === "generating" || status === "publishing") return "t-blue";
@@ -276,7 +283,7 @@ export function stageTone(status: string) {
 
 function stageColor(status: string) {
   if (status === "published") return "#1c8a52";
-  if (status === "failed") return "#c0392b";
+  if (status === "failed" || status === "media_timed_out") return "#c0392b";
   if (status === "missed" || status === "needs_approval" || status === "ready_for_review" || status === "waiting_for_media" || status === "media_delayed") return "#f2a516";
   if (status === "generating" || status === "publishing" || status === "scheduled") return "#2f6f9f";
   return "var(--line, #e5e5e5)";

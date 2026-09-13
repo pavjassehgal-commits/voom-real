@@ -13,6 +13,7 @@
  */
 
 import {
+  MEDIA_GENERATION_HARD_TIMEOUT_MINUTES,
   WORKFLOW_STATUS_LABELS,
   type WorkflowStatus,
 } from "./state.ts";
@@ -145,6 +146,12 @@ export function planItemActions(item: PlanItemFacts): PlanItemActions {
         stage: item.stage, stageLabel: WORKFLOW_STATUS_LABELS.media_delayed,
         headline: "Media generation is delayed, so the schedule is held — Voom will not publish until a real visual exists. Retry the generation, upload a replacement, or cancel the schedule.",
         actions: delayedMediaActions(), explanation,
+      };
+    case "media_timed_out":
+      return {
+        stage: item.stage, stageLabel: WORKFLOW_STATUS_LABELS.media_timed_out,
+        headline: `That generation ran past Voom's ${MEDIA_GENERATION_HARD_TIMEOUT_MINUTES}-minute limit, so it cannot finish and Voom is no longer waiting on it — nothing was published and nothing new was charged. Retry it as a new generation, upload a replacement, or cancel the schedule.`,
+        actions: timedOutMediaActions(), explanation,
       };
     case "ready_for_review":
       return {
@@ -332,9 +339,10 @@ function waitingMediaActions(item: PlanItemFacts): PlanAction[] {
 
 /**
  * Media generation delayed: the generation has been in flight beyond the
- * stale threshold. All three explicit actions are available; the retry
- * itself is idempotent (a still-running job is finished first, never
- * double-billed) — it can never be triggered automatically.
+ * stale threshold but is still INSIDE the video job's hard timeout, so the
+ * provider job may genuinely still finish. Retry therefore re-checks the
+ * existing job — it never submits a second paid one — and all three explicit
+ * actions stay available. Nothing here can ever be triggered automatically.
  */
 function delayedMediaActions(): PlanAction[] {
   return [
@@ -342,7 +350,7 @@ function delayedMediaActions(): PlanAction[] {
       id: "retry_media",
       label: "Retry generation",
       tone: "primary",
-      hint: "Explicit new attempt — never a double charge: an in-flight job is finished first, never paid for twice.",
+      hint: "Re-checks the existing generation with the provider — it never starts a second paid job, so it cannot double-charge you. It only runs when you click it.",
     },
     {
       id: "upload_asset",
@@ -351,6 +359,36 @@ function delayedMediaActions(): PlanAction[] {
       tone: "outline",
     },
     { id: "cancel_schedule", label: "Cancel schedule", tone: "danger", hint: "Also removes it from the publishing queue. Published items are never cancelled." },
+  ];
+}
+
+/**
+ * Generation timed out: the asynchronous video job is beyond its hard timeout,
+ * so it can never complete. These are the ONLY three ways forward, and
+ * "Retry as new generation" is the only action that may submit a NEW provider
+ * job — it needs this explicit click, and a repeated click still creates at
+ * most one fresh generation.
+ */
+function timedOutMediaActions(): PlanAction[] {
+  return [
+    {
+      id: "retry_media",
+      label: "Retry as new generation",
+      tone: "primary",
+      hint: "Starts ONE new generation — this is the only action that can, and only when you click it. The timed-out attempt is kept in history and a repeated click never starts a second paid job.",
+    },
+    {
+      id: "upload_asset",
+      label: "Upload replacement",
+      hint: "Skip the provider entirely — your file is stored privately and the held schedule publishes it once ready.",
+      tone: "outline",
+    },
+    {
+      id: "cancel_schedule",
+      label: "Cancel schedule",
+      tone: "danger",
+      hint: "Also removes it from the publishing queue. Published items are never cancelled.",
+    },
   ];
 }
 
@@ -394,6 +432,7 @@ function explanationAutoPublish(item: PlanItemFacts): string {
   if (item.stage === "missed") return "No. Voom never publishes hours late on its own — you choose Post now or a new time.";
   if (item.stage === "waiting_for_media") return "Not yet — it is scheduled, but it cannot publish until the visual is ready. It posts at the scheduled time as soon as the media is stored.";
   if (item.stage === "media_delayed") return "No — publishing stays blocked until a real visual exists. Retry the generation, upload a replacement, or cancel the schedule.";
+  if (item.stage === "media_timed_out") return `No — that generation timed out after ${MEDIA_GENERATION_HARD_TIMEOUT_MINUTES} minutes, so nothing was published and nothing new was charged. Publishing stays blocked until you retry it as a new generation, upload a replacement, or cancel the schedule.`;
   if (item.stage === "scheduled" || item.stage === "publishing") return "Yes — after approval, the existing publishing queue posts it at the scheduled time.";
   return item.mode === "autopilot" ? "Safe content publishes automatically; anything risky stops for your approval." : "No — your approval is the trigger.";
 }

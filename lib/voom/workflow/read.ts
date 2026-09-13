@@ -149,13 +149,13 @@ export function isCurrentWorkflowItem(item: CurrentWorkflowItem, selection: { to
   const horizonDays = selection.horizonDays ?? DEFAULT_HORIZON_DAYS;
   if (isWithinHorizon(selection.today, item.slotDate, horizonDays)) return true;
   if (item.localDate && isWithinHorizon(selection.today, item.localDate, horizonDays)) return true;
-  // Waiting-for-media and delayed-media items are LIVE scheduled work whose
-  // visual is not ready yet: if the owner rescheduled them beyond the horizon
-  // they must stay visible (a held schedule is never silently hidden), exactly
-  // like scheduled/published/missed/failed work.
+  // Waiting-for-media, delayed-media and timed-out-media items are LIVE
+  // scheduled work whose visual is not ready yet: if the owner rescheduled
+  // them beyond the horizon they must stay visible (a held schedule is never
+  // silently hidden), exactly like scheduled/published/missed/failed work.
   return (
     item.status === "scheduled" || item.status === "published" || item.status === "missed" || item.status === "failed"
-    || item.status === "waiting_for_media" || item.status === "media_delayed"
+    || item.status === "waiting_for_media" || item.status === "media_delayed" || item.status === "media_timed_out"
   );
 }
 
@@ -246,7 +246,7 @@ export async function loadWorkflowSnapshot(
   const ids = rows.map((row) => String(row.id));
   const [assets, generations, queue, calendar, approvals, productionActions] = await Promise.all([
     admin.from("post_draft_assets").select("draft_id,mime_type,origin,storage_path").eq("owner_user_id", ownerId).in("draft_id", ids),
-    admin.from("mara_media_generations").select("draft_id,status,updated_at").eq("owner_user_id", ownerId).in("draft_id", ids).order("updated_at", { ascending: true }),
+    admin.from("mara_media_generations").select("draft_id,status,media_type,error_code,created_at,updated_at").eq("owner_user_id", ownerId).in("draft_id", ids).order("updated_at", { ascending: true }),
     admin.from("instagram_publish_queue").select("draft_id,status,instagram_media_id,failure_message,scheduled_at").eq("owner_user_id", ownerId).in("draft_id", ids),
     admin.from("content_calendar_items").select("id,source_draft_id").eq("owner_user_id", ownerId).in("source_draft_id", ids),
     admin.from("mara_pending_actions").select("id,sanitized_arguments,status")
@@ -257,12 +257,17 @@ export async function loadWorkflowSnapshot(
   ]);
 
   const assetByDraft = new Map((assets.data ?? []).map((row) => [String(row.draft_id), row]));
-  const mediaByDraft = new Map<string, { status: string; updatedAt: string | null }>();
+  const mediaByDraft = new Map<string, { status: string; mediaType: string | null; errorCode: string | null; createdAt: string | null; updatedAt: string | null }>();
   for (const row of generations.data ?? []) {
-    // Rows arrive oldest-first, so the newest generation wins. updated_at is
-    // kept: the read model derives "Media generation delayed" from it.
+    // Rows arrive oldest-first, so the newest generation wins. The timing and
+    // reason columns are kept: the read model derives "Media generation
+    // delayed" from updated_at and "Generation timed out" from the video job's
+    // lifetime (created_at) or its terminal provider_timeout reason.
     mediaByDraft.set(String(row.draft_id), {
       status: String(row.status),
+      mediaType: typeof row.media_type === "string" ? row.media_type : null,
+      errorCode: typeof row.error_code === "string" ? row.error_code : null,
+      createdAt: typeof row.created_at === "string" ? row.created_at : null,
       updatedAt: typeof row.updated_at === "string" ? row.updated_at : null,
     });
   }
@@ -297,6 +302,9 @@ export async function loadWorkflowSnapshot(
       hasMedia,
       mediaStatus: (media?.status ?? null) as never,
       mediaUpdatedAt: media?.updatedAt ?? null,
+      mediaCreatedAt: media?.createdAt ?? null,
+      mediaErrorCode: media?.errorCode ?? null,
+      mediaType: media?.mediaType ?? null,
       publishStatus: publishRow?.status ?? null,
       awaitingApproval: approvalIds.has(draftId),
       publishAt,
@@ -412,8 +420,10 @@ export function todaySummary(snapshot: WorkflowSnapshot) {
     needsApproval: items.filter((item) => item.status === "needs_approval"),
     generating: items.filter((item) => item.status === "generating"),
     // Scheduled but CANNOT publish until the visual is ready — surfaced as its
-    // own truthful bucket, never folded into "Scheduled".
-    waitingForMedia: items.filter((item) => item.status === "waiting_for_media" || item.status === "media_delayed"),
+    // own truthful bucket, never folded into "Scheduled". A timed-out
+    // generation belongs here too: the queue row is still held in
+    // 'waiting_for_media', and the item's own label says "Generation timed out".
+    waitingForMedia: items.filter((item) => item.status === "waiting_for_media" || item.status === "media_delayed" || item.status === "media_timed_out"),
     failed: items.filter((item) => item.status === "failed"),
     missed: items.filter((item) => item.status === "missed"),
     scheduled: items.filter((item) => item.status === "scheduled"),

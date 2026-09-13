@@ -10,7 +10,7 @@ import { Btn, Card, Chip, EmptyState, IconBtn, Tag } from "@/components/voom/ui/
 import { currentScheduleDate } from "@/lib/voom/schedule-guard";
 import { PublishingQueue } from "@/components/voom/PublishingQueue";
 import type { WorkflowSnapshot, WorkflowView } from "@/lib/voom/workflow/read";
-import { WORKFLOW_STATUS_LABELS, WORKFLOW_STATUSES } from "@/lib/voom/workflow/state";
+import { MEDIA_GENERATION_HARD_TIMEOUT_MINUTES, WORKFLOW_STATUS_LABELS, WORKFLOW_STATUSES } from "@/lib/voom/workflow/state";
 import { isPastInstant } from "@/lib/voom/schedule-guard";
 
 /**
@@ -165,6 +165,9 @@ function WorkflowDetail({ item }: { item: WorkflowView }) {
     {item.status === "media_delayed" && <p role="alert" className="mt-3 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-sm text-red">
       Media generation is delayed, so this schedule is held — Voom will not publish until a real visual exists. Retry the generation, upload a replacement, or cancel it from the Marketing Plan.
     </p>}
+    {item.status === "media_timed_out" && <p role="alert" className="mt-3 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-sm text-red">
+      That generation ran past Voom&apos;s {MEDIA_GENERATION_HARD_TIMEOUT_MINUTES}-minute limit, so it cannot finish and this schedule stays held — nothing was published and nothing new was charged. Retry it as a new generation, upload a replacement, or cancel it from the Marketing Plan.
+    </p>}
     {item.status === "missed" && <p role="alert" className="mt-3 rounded-xl border border-amber/35 bg-amber/10 px-3.5 py-2.5 text-sm text-amber">
       {item.missedReason ?? "Its scheduled time passed without publishing."} Voom never publishes hours late on its own — post it now or reschedule from the Marketing Plan.
     </p>}
@@ -211,6 +214,7 @@ function colorFor(status: string) {
   if (status === "published") return "#1c8a52";
   if (status === "failed") return "#c0392b";
   if (status === "missed") return "#c0392b";
+  if (status === "media_timed_out") return "#c0392b";
   if (status === "needs_approval" || status === "ready_for_review" || status === "waiting_for_media" || status === "media_delayed") return "#f2a516";
   if (status === "generating" || status === "publishing" || status === "scheduled") return "#2f6f9f";
   return "#e8481f";
@@ -219,6 +223,7 @@ function toneFor(status: string) {
   if (status === "published") return "t-green";
   if (status === "failed") return "t-red";
   if (status === "missed") return "t-red";
+  if (status === "media_timed_out") return "t-red";
   if (status === "needs_approval" || status === "ready_for_review" || status === "waiting_for_media" || status === "media_delayed") return "t-amber";
   if (status === "generating" || status === "publishing" || status === "scheduled") return "t-blue";
   return "t-grey";

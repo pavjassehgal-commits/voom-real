@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { getPostDraft, normalizeMediaBrief } from "@/lib/post/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
-import { advanceVideoJob, buildVideoService, latestVideoGeneration, startPostStudioVideo } from "@/lib/mara/video-service";
+import { advanceVideoJob, buildVideoService, enforceVideoJobHardTimeout, latestVideoGeneration, startPostStudioVideo } from "@/lib/mara/video-service";
 import { isActiveVideoState } from "@/lib/mara/video-job";
 import { toClientGenerationView } from "@/lib/mara/video-view";
 
@@ -48,9 +48,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (isActiveVideoState(row.status)) {
     const service = await buildVideoService(admin, user.id);
     if (!service) {
-      // The provider went unconfigured underneath a running job; report the
-      // job as-is without touching it.
-      return Response.json({ generation: toClientGenerationView(row, null), post }, { headers: { "Cache-Control": "no-store" } });
+      // The provider stack went unconfigured underneath a running job, so it
+      // cannot be polled. Voom's OWN hard timeout does not depend on that
+      // stack: a job that outlived it is stopped here — a guarded database
+      // write only, no provider call, no new job, no charge — instead of
+      // staying "generating" forever. A job still inside its limit is reported
+      // as-is, untouched.
+      const enforced = await enforceVideoJobHardTimeout(admin, user.id, row.id).catch(() => null);
+      return Response.json({ generation: toClientGenerationView(enforced?.row ?? row, null), post }, { headers: { "Cache-Control": "no-store" } });
     }
     try {
       const advanced = await advanceVideoJob(service, id, row.id, post.kind);

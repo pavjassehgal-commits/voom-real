@@ -121,7 +121,7 @@ export function WorkflowRow({ item }: { item: WorkflowView }) {
 
 export function statusTone(status: string) {
   if (status === "published") return "t-green";
-  if (status === "failed") return "t-red";
+  if (status === "failed" || status === "media_timed_out") return "t-red";
   if (status === "missed" || status === "needs_approval" || status === "ready_for_review" || status === "waiting_for_media" || status === "media_delayed") return "t-amber";
   if (status === "generating" || status === "publishing" || status === "scheduled") return "t-blue";
   return "t-grey";

@@ -145,7 +145,8 @@ export function Topbar() {
       const body = await response.json() as { snapshot?: { items?: { status: string }[] } };
       if (response.ok && body.snapshot) {
         const items = body.snapshot.items ?? [];
-        setAttention(items.filter((item) => item.status === "needs_approval" || item.status === "failed" || item.status === "media_delayed").length);
+        setAttention(items.filter((item) => item.status === "needs_approval" || item.status === "failed"
+          || item.status === "media_delayed" || item.status === "media_timed_out").length);
       }
     } catch { /* badge stays at its last known value */ }
   }, []);

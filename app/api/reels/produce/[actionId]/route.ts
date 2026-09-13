@@ -4,7 +4,8 @@ import { buildReelComposition, isReelComposition } from "@/lib/mara/reel-composi
 import { enforceViewerCopy, fallbackViewerCopy, viewerCopySchema, type ViewerCopyContext } from "@/lib/mara/reel-copy";
 import { classifyReelProduction } from "@/lib/mara/reel-production";
 import { assetKindForMime, assignReelVisuals } from "@/lib/mara/reel-visuals";
-import { startPostStudioVideo, advanceVideoJob, buildVideoService, latestVideoGeneration } from "@/lib/mara/video-service";
+import { startPostStudioVideo, advanceVideoJob, buildVideoService, enforceVideoJobHardTimeout, latestVideoGeneration } from "@/lib/mara/video-service";
+import { VIDEO_JOB_TIMEOUT_ERROR_CODE, videoJobSafeError } from "@/lib/mara/video-job";
 import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
 
@@ -184,7 +185,26 @@ export async function GET(_request: Request, { params }: { params: Promise<{ act
     const admin = createAdminClient();
     if (!generationId) return Response.json({ action, error: "This Reel video lost its job record. Retry production." }, { status: 503 });
     const service = await buildVideoService(admin, user.id);
-    if (!service) return Response.json({ action, message: "Create with MARA is temporarily unavailable. Your previous asset is unchanged." });
+    if (!service) {
+      // The provider stack is unavailable, so the job cannot be polled. Voom's
+      // OWN hard timeout does not depend on that stack: a job that outlived it
+      // is stopped here (a guarded database write — no provider call, no new
+      // job, no charge) and the board card tells the truth, instead of both
+      // staying "generating" forever. A job still inside its limit is reported
+      // as-is, untouched.
+      const enforced = await enforceVideoJobHardTimeout(admin, user.id, generationId).catch(() => null);
+      if (enforced?.enforced) {
+        const { data: timedOut } = await db.from("mara_pending_actions")
+          .update({
+            new_value: { ...value, productionStatus: "video_failed" },
+            error_summary: videoJobSafeError(VIDEO_JOB_TIMEOUT_ERROR_CODE),
+            result_summary: "Reel video production stopped safely after Voom's generation time limit. Nothing was published.",
+          })
+          .eq("id", actionId).eq("owner_user_id", user.id).eq("status", "pending").select(ACTION_COLUMNS).maybeSingle();
+        return Response.json({ action: timedOut ?? action, generation: null }, { headers: { "Cache-Control": "no-store" } });
+      }
+      return Response.json({ action, message: "Create with MARA is temporarily unavailable. Your previous asset is unchanged." });
+    }
     const generation = await latestVideoGeneration(admin, user.id, action.new_value.draftId as string);
     if (!generation || generation.id !== generationId) {
       return Response.json({ action, message: "This Reel video lost its job record. Retry production." });
