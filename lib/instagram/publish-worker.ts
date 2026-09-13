@@ -12,7 +12,16 @@ import {
   recordContainerId,
   type PublishQueueRow,
 } from "./publish-queue";
-import { PUBLISH_SIGNED_URL_TTL_SECONDS, type PublishState } from "./publishing";
+import {
+  logPublishTimeline,
+  type PublishTimelineEvent,
+  type PublishTimelineInput,
+} from "./publish-timeline";
+import {
+  PUBLISH_POLLING_BUDGET_MS,
+  PUBLISH_SIGNED_URL_TTL_SECONDS,
+  type PublishState,
+} from "./publishing";
 
 const ASSET_BUCKET = "mara-media";
 
@@ -32,6 +41,14 @@ export interface WorkerDeps {
   sleep?: (ms: number) => Promise<void>;
   now?: () => Date;
   limit?: number;
+  /**
+   * Wall-clock polling budget for the whole invocation. Defaults to
+   * PUBLISH_POLLING_BUDGET_MS, which is derived from the cron route's
+   * maxDuration. Shared by every claimed item — it is what stops a batch of
+   * slow videos from overrunning the serverless function.
+   */
+  pollingBudgetMs?: number;
+  timeline?: (event: PublishTimelineEvent, input?: PublishTimelineInput) => void;
 }
 
 /**
@@ -41,12 +58,20 @@ export interface WorkerDeps {
  * call happens, so a duplicate cron run, a retry, or a redeploy cannot produce
  * a second Instagram post. `published` is written only with a media id Meta
  * returned from media_publish.
+ *
+ * TIMING CONTRACT. Items are processed sequentially inside one serverless
+ * invocation with a hard runtime ceiling, so readiness polling is bounded by
+ * a deadline shared across the whole batch rather than per item. When Meta is
+ * still working, the item is parked for the NEXT CRON BOUNDARY (see retryAt in
+ * ./publishing.ts) so the following tick claims it — never `now + 5 minutes`,
+ * which lands after the tick and costs a whole cadence.
  */
 export async function runInstagramPublishing(deps: WorkerDeps = {}): Promise<PublishRunResult> {
   const db = deps.db ?? (await import("@/utils/supabase/admin")).createAdminClient();
   const config = deps.config !== undefined ? deps.config : readInstagramConfig();
   const now = deps.now ?? (() => new Date());
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const timeline = deps.timeline ?? ((event: PublishTimelineEvent, input?: PublishTimelineInput) => logPublishTimeline(event, input));
   const result: PublishRunResult = { claimed: 0, published: 0, failed: 0, retrying: 0, skipped: 0, results: [] };
 
   if (!config) {
@@ -57,13 +82,25 @@ export async function runInstagramPublishing(deps: WorkerDeps = {}): Promise<Pub
     return result;
   }
 
+  const startedAt = now().getTime();
+  const budgetMs = deps.pollingBudgetMs ?? PUBLISH_POLLING_BUDGET_MS;
+  // One deadline for the entire batch, measured in wall-clock time.
+  const deadlineAt = startedAt + budgetMs;
+  const remainingBudgetMs = () => deadlineAt - Date.now();
+
   const items = await claimDueItems(db, deps.limit ?? 10, now());
   result.claimed = items.length;
+  timeline("run_started", { budgetMs });
   const client = (deps.clientFor ?? ((value: InstagramConfig) => new InstagramClient(value)))(config);
-  const ports = buildPorts(db, client, config, sleep);
+  const ports = buildPorts(db, client, config, sleep, { remainingBudgetMs, timeline });
 
   for (const row of items) {
     const item = toFlowItem(row);
+    timeline("claimed", {
+      itemId: row.id, ownerUserId: row.owner_user_id, draftId: row.draft_id,
+      mediaKind: row.media_kind, attempt: row.attempts,
+      containerId: row.container_id, budgetMs: remainingBudgetMs(),
+    });
     try {
       const outcome = await runPublishFlow(item, ports);
       if (outcome.outcome === "published") {
@@ -79,6 +116,10 @@ export async function runInstagramPublishing(deps: WorkerDeps = {}): Promise<Pub
         message: "Instagram publishing did not complete. Please review this item.",
         status: "failed",
       }).catch(() => undefined);
+      timeline("failed", {
+        itemId: row.id, ownerUserId: row.owner_user_id, draftId: row.draft_id,
+        mediaKind: row.media_kind, attempt: row.attempts, code: "publish_unknown_error",
+      });
       result.failed += 1;
       result.results.push({ id: row.id, outcome: "failed", code: "publish_unknown_error" });
     }
@@ -104,7 +145,12 @@ export function buildPorts(
   client: InstagramClient,
   config: InstagramConfig,
   sleep: (ms: number) => Promise<void>,
+  options: {
+    remainingBudgetMs?: () => number;
+    timeline?: (event: PublishTimelineEvent, input?: PublishTimelineInput) => void;
+  } = {},
 ): FlowPorts {
+  const timeline = options.timeline;
   return {
     async loadDraft(ownerId, draftId) {
       const { data } = await db.from("mara_drafts").select("status,content")
@@ -178,5 +224,7 @@ export function buildPorts(
       });
     },
     sleep,
+    ...(options.remainingBudgetMs ? { remainingBudgetMs: options.remainingBudgetMs } : {}),
+    ...(timeline ? { timeline: (event: PublishTimelineEvent, input: PublishTimelineInput) => timeline(event, input) } : {}),
   };
 }
