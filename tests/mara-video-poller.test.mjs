@@ -227,7 +227,7 @@ test("a provider-reported failure becomes terminal and is not retried as a new p
   assert.ok(logs.events.some((entry) => entry.event === "provider_failed"));
 });
 
-test("a job beyond the 30-minute hard timeout becomes provider_timeout without a provider call", async () => {
+test("a job still pending past the hard timeout reconciles once, then becomes provider_timeout", async () => {
   const row = videoRow({ created_at: new Date(NOW - 31 * 60_000).toISOString(), updated_at: new Date(NOW - 3 * 60_000).toISOString() });
   const fake = fakePorts(row, { kind: "pending" });
   const stub = providerStub();
@@ -242,10 +242,150 @@ test("a job beyond the 30-minute hard timeout becomes provider_timeout without a
     },
   }));
   assert.equal(output.timedOut, 1);
-  assert.equal(fake.calls.poll, 0);
-  assert.equal(fake.calls.create, 0);
+  // ONE final read-only status check on the stored handle: the provider may
+  // have finished the video at minute 29, and the account already paid for it.
+  assert.equal(fake.calls.poll, 1, "exactly one reconciliation, never a blind write-off");
+  assert.equal(fake.calls.create, 0, "reconciliation never submits a replacement job");
+  assert.equal(stub.calls.create, 0);
+  // The provider had nothing to give, so the timeout is still the truth.
+  assert.equal(fake.state.row.status, "failed");
   assert.equal(fake.state.row.error_code, "provider_timeout");
   assert.ok(logs.events.some((entry) => entry.event === "timed_out"));
+});
+
+test("reconciliation reuses the stored provider_job_id and never submits a replacement", async () => {
+  const row = videoRow({ created_at: new Date(NOW - 31 * 60_000).toISOString(), updated_at: new Date(NOW - 3 * 60_000).toISOString() });
+  const seen = [];
+  const fake = fakePorts(row, { kind: "pending" });
+  const basePoll = fake.ports.pollVideoJob;
+  fake.ports.pollVideoJob = async (providerJobId, pollingUrl) => {
+    seen.push(providerJobId);
+    return basePoll(providerJobId, pollingUrl);
+  };
+  const stub = providerStub();
+  await poller.runVideoGenerationPoller(runOptions(row, fake.ports, stub.provider, {
+    enforceTimeout: async () => {
+      fake.state.row.status = "failed";
+      fake.state.row.error_code = "provider_timeout";
+      return { enforced: true, row: fake.state.row };
+    },
+  }));
+  assert.deepEqual(seen, ["provider-job-test"], "the original handle is reused, never a new one");
+  assert.equal(fake.calls.create, 0);
+});
+
+test("a video the provider finished just before the timeout is recovered, not thrown away", async () => {
+  const row = videoRow({ created_at: new Date(NOW - 31 * 60_000).toISOString(), updated_at: new Date(NOW - 3 * 60_000).toISOString() });
+  const fake = fakePorts(row, { kind: "complete", providerStatus: "completed", media: { kind: "complete", bytes: testMp4(), mimeType: "video/mp4" } });
+  const stub = providerStub();
+  const logs = logEvents();
+  const syncCalls = [];
+  let enforced = 0;
+  const output = await poller.runVideoGenerationPoller(runOptions(row, fake.ports, stub.provider, {
+    logger: logs.logger,
+    syncCalendar: async (_admin, ownerId, draftId) => syncCalls.push({ ownerId, draftId }),
+    enforceTimeout: async () => { enforced += 1; return { enforced: false, row: fake.state.row }; },
+  }));
+  assert.equal(output.completed, 1);
+  assert.equal(output.timedOut, 0, "a completed video is never reported as a timeout");
+  assert.equal(enforced, 0, "the timeout is not persisted once real bytes exist");
+  assert.equal(fake.state.row.status, "completed");
+  assert.equal(fake.calls.store, 1, "the paid video is stored");
+  assert.equal(fake.calls.create, 0);
+  assert.deepEqual(syncCalls, [{ ownerId: OWNER, draftId: DRAFT }], "the held schedule is re-synced");
+});
+
+test("a real provider failure past the timeout is persisted instead of a generic timeout", async () => {
+  const row = videoRow({ created_at: new Date(NOW - 31 * 60_000).toISOString(), updated_at: new Date(NOW - 3 * 60_000).toISOString() });
+  const fake = fakePorts(row, { kind: "failed", code: "rejected", providerStatus: "failed" });
+  const stub = providerStub();
+  const output = await poller.runVideoGenerationPoller(runOptions(row, fake.ports, stub.provider, {
+    enforceTimeout: async () => { throw new Error("the real failure reason must win over a timeout"); },
+  }));
+  assert.equal(output.failed, 1);
+  assert.equal(output.timedOut, 0);
+  assert.equal(fake.state.row.status, "failed");
+  assert.equal(fake.state.row.error_code, "rejected", "the truthful provider reason is kept");
+  assert.equal(fake.calls.create, 0);
+});
+
+test("a previously timed-out job that has since completed is recovered on a later tick", async () => {
+  const row = videoRow({
+    status: "failed",
+    error_code: "provider_timeout",
+    created_at: new Date(NOW - 90 * 60_000).toISOString(),
+    updated_at: new Date(NOW - 55 * 60_000).toISOString(),
+  });
+  const fake = fakePorts(row, { kind: "complete", providerStatus: "completed", media: { kind: "complete", bytes: testMp4(), mimeType: "video/mp4" } });
+  const stub = providerStub();
+  const syncCalls = [];
+  const output = await poller.runVideoGenerationPoller(runOptions(row, fake.ports, stub.provider, {
+    syncCalendar: async (_admin, ownerId, draftId) => syncCalls.push({ ownerId, draftId }),
+  }));
+  assert.equal(output.completed, 1);
+  assert.equal(fake.state.row.status, "completed");
+  assert.equal(fake.state.row.error_code, null, "the stale timeout reason is cleared by real bytes");
+  assert.equal(fake.calls.store, 1);
+  assert.equal(fake.calls.create, 0, "recovery is a status read, never a new paid job");
+  assert.deepEqual(syncCalls, [{ ownerId: OWNER, draftId: DRAFT }]);
+});
+
+test("a timed-out job the provider is still working on stays terminal, never parked in processing", async () => {
+  const row = videoRow({
+    status: "failed",
+    error_code: "provider_timeout",
+    created_at: new Date(NOW - 90 * 60_000).toISOString(),
+    updated_at: new Date(NOW - 55 * 60_000).toISOString(),
+  });
+  const fake = fakePorts(row, { kind: "pending" });
+  const stub = providerStub();
+  await poller.runVideoGenerationPoller(runOptions(row, fake.ports, stub.provider));
+  assert.equal(fake.state.row.status, "failed", "a recovery attempt can settle a job but never revive it");
+  assert.equal(fake.state.row.error_code, "provider_timeout");
+  assert.equal(fake.calls.store, 0);
+  assert.equal(fake.calls.create, 0);
+});
+
+test("a genuinely failed job and a cold timed-out job are never re-polled", async () => {
+  const rejected = videoRow({ status: "failed", error_code: "rejected", created_at: new Date(NOW - 40 * 60_000).toISOString() });
+  const rejectedPorts = fakePorts(rejected, { kind: "pending" });
+  await poller.runVideoGenerationPoller(runOptions(rejected, rejectedPorts.ports, providerStub().provider));
+  assert.equal(rejectedPorts.calls.poll, 0, "a real provider failure is terminal forever");
+
+  // Past the recovery window the handle is cold: Voom stops asking.
+  const cold = videoRow({
+    status: "failed",
+    error_code: "provider_timeout",
+    created_at: new Date(NOW - 49 * 60 * 60_000).toISOString(),
+  });
+  const coldPorts = fakePorts(cold, { kind: "complete", providerStatus: "completed", media: { kind: "complete", bytes: testMp4(), mimeType: "video/mp4" } });
+  await poller.runVideoGenerationPoller(runOptions(cold, coldPorts.ports, providerStub().provider));
+  assert.equal(coldPorts.calls.poll, 0, "a cold handle is not polled forever");
+  assert.equal(coldPorts.calls.store, 0);
+});
+
+test("the hard timeout is still enforced as a database truth when the provider stack is unavailable", async () => {
+  const row = videoRow({ created_at: new Date(NOW - 31 * 60_000).toISOString(), updated_at: new Date(NOW - 3 * 60_000).toISOString() });
+  const fake = fakePorts(row, { kind: "pending" });
+  let enforced = 0;
+  const output = await poller.runVideoGenerationPoller({
+    admin: {},
+    now: () => NOW,
+    jobs: [{ row, kind: "reel" }],
+    // No ports and no provider: configuration or credentials are missing.
+    ports: null,
+    provider: null,
+    logger: () => undefined,
+    enforceTimeout: async () => {
+      enforced += 1;
+      fake.state.row.status = "failed";
+      fake.state.row.error_code = "provider_timeout";
+      return { enforced: true, row: fake.state.row };
+    },
+  });
+  assert.equal(enforced, 1, "a stuck job cannot hold a schedule open just because the provider is down");
+  assert.equal(output.timedOut, 1);
+  assert.equal(fake.calls.poll, 0);
 });
 
 test("the same job completes normally when no UI or browser request runs", async () => {

@@ -316,7 +316,21 @@ test("2c. a stale generation never hides a missed schedule (missed handling pres
     contentType: "reel", stage: "missed", failedStage: null, mode: "assisted",
     publishAt: SCHEDULED, dayLabel: "Today", localTime: "7:15 PM", hasMedia: false,
   });
-  assert.deepEqual(resolved.actions.map((action) => action.id), ["post_now", "reschedule", "cancel_schedule"]);
+  // With NO stored visual, "Post now" cannot succeed — Instagram has nothing
+  // to publish — so it is offered but disabled, and the card leads with the
+  // actions that actually recover the item.
+  assert.deepEqual(resolved.actions.map((action) => action.id), ["post_now", "retry_media", "upload_asset", "reschedule", "cancel_schedule"]);
+  const postNow = resolved.actions[0];
+  assert.equal(postNow.disabled, true, "an item with no stored media can never be posted now");
+  assert.match(String(postNow.disabledReason), /no stored visual/i);
+
+  // Once the visual exists, the same missed card offers the normal recovery.
+  const withMedia = nextActions.planItemActions({
+    contentType: "reel", stage: "missed", failedStage: null, mode: "assisted",
+    publishAt: SCHEDULED, dayLabel: "Today", localTime: "7:15 PM", hasMedia: true,
+  });
+  assert.deepEqual(withMedia.actions.map((action) => action.id), ["post_now", "reschedule", "cancel_schedule"]);
+  assert.notEqual(withMedia.actions[0].disabled, true);
 });
 
 // ===========================================================================

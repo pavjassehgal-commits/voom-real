@@ -246,6 +246,37 @@ export function hasPublishPermission(scopes: readonly string[] | null | undefine
   return Array.isArray(scopes) && scopes.includes(INSTAGRAM_PUBLISH_PERMISSION);
 }
 
+/** The failure code written when a draft was genuinely not approved. */
+export const NOT_APPROVED_FAILURE_CODE = "not_approved";
+
+/**
+ * Whether a queue row stuck in `not_approved` should be REPAIRED back to a
+ * publishable state.
+ *
+ * THE BUG THIS FIXES. `not_approved` is terminal by design — an un-approved
+ * draft must never publish. But the same code was also written when the draft
+ * read merely failed or raced (an approval committed a moment after the row
+ * was claimed). Those items were approved, yet they could never publish again:
+ * nothing re-examines a terminal row, so the schedule silently died.
+ *
+ * The repair is deliberately narrow. It requires the draft to be approved
+ * RIGHT NOW, the item to have never published, and the row to be carrying
+ * exactly that failure code. It restores the queue state only — it never
+ * publishes, never changes the publish identity, and never resurrects an item
+ * the user actually rejected, because a rejected draft fails this check.
+ */
+export function shouldRepairNotApproved(row: {
+  status: string;
+  failureCode: string | null;
+  instagramMediaId: string | null;
+  draftStatus: string;
+}): boolean {
+  if (row.instagramMediaId) return false;
+  if (row.draftStatus !== "approved") return false;
+  if (row.failureCode !== NOT_APPROVED_FAILURE_CODE) return false;
+  return row.status === "failed";
+}
+
 export interface PublishFailure {
   status: Extract<PublishState, "failed" | "scheduled" | "permission_required" | "waiting_for_media">;
   code: string;
@@ -277,6 +308,15 @@ export const PUBLISH_FAILURES = {
     status: "waiting_for_media",
     code: "media_missing",
     message: "This content has no stored visual yet.",
+    retryable: true,
+  },
+  draft_unavailable: {
+    // A draft Voom could not READ is not a draft the user un-approved. Failing
+    // it as 'not_approved' is a lie that also makes it terminal, so an
+    // approved item would never publish again after one transient blip.
+    status: "scheduled",
+    code: "draft_unavailable",
+    message: "Voom could not confirm this item's approval just now. It will retry.",
     retryable: true,
   },
   media_unsupported: {

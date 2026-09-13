@@ -280,12 +280,45 @@ function scheduledActions(item: PlanItemFacts): PlanAction[] {
   ];
 }
 
+/**
+ * "Post now" is offered ONLY when Voom already owns the bytes.
+ *
+ * Instagram cannot publish an item with no stored visual, so offering the
+ * button without media promises something that can only fail. A missed item
+ * without media is recovered by producing the visual first — the button stays
+ * visible (so the card does not silently lose its primary action) but is
+ * disabled with the truthful reason.
+ */
+function postNowAction(item: PlanItemFacts): PlanAction {
+  if (item.hasMedia) {
+    return { id: "post_now", label: "Post now", hint: "Publishes through the normal queue within minutes — never a second copy.", tone: "primary" };
+  }
+  return {
+    id: "post_now",
+    label: "Post now",
+    tone: "primary",
+    hint: "Instagram needs a stored visual first — generate it or upload one, then post.",
+    disabled: true,
+    disabledReason: "This item has no stored visual yet, so it cannot post now.",
+  };
+}
+
 function missedActions(item: PlanItemFacts): PlanAction[] {
-  return [
-    { id: "post_now", label: "Post now", hint: "Publishes through the normal queue within minutes — never a second copy.", tone: "primary" },
-    { id: "reschedule", label: "Reschedule", hint: item.localTime ? `Pick a new time instead of ${item.localTime}.` : "Pick a new time." },
-    { id: "cancel_schedule", label: "Cancel", tone: "danger" },
-  ];
+  const actions: PlanAction[] = [postNowAction(item)];
+  if (!item.hasMedia) {
+    actions.push({
+      id: "retry_media",
+      label: "Retry generation",
+      hint: "Produces the missing visual. It never starts a second paid job while one is in flight.",
+      tone: "outline",
+      disabled: generationInFlight(item),
+      disabledReason: generationInFlight(item) ? "A media generation is already in flight for this item." : undefined,
+    });
+    actions.push({ id: "upload_asset", label: item.contentType === "reel" ? "Upload video" : "Upload image", tone: "outline" });
+  }
+  actions.push({ id: "reschedule", label: "Reschedule", hint: item.localTime ? `Pick a new time instead of ${item.localTime}.` : "Pick a new time." });
+  actions.push({ id: "cancel_schedule", label: "Cancel", tone: "danger" });
+  return actions;
 }
 
 function failedActions(item: PlanItemFacts): PlanAction[] {
@@ -296,6 +329,15 @@ function failedActions(item: PlanItemFacts): PlanAction[] {
     ];
   }
   if (item.failedStage === "rejected") return [];
+  // A publishing failure with no stored visual cannot be retried by posting:
+  // the same missing-media failure would repeat. Fixing the visual comes first.
+  if (!item.hasMedia) {
+    return [
+      { id: "retry_media", label: "Retry generation", hint: "Produces the missing visual so this item can publish.", tone: "primary" },
+      { id: "upload_asset", label: item.contentType === "reel" ? "Upload existing video" : "Upload image", tone: "outline" },
+      { id: "cancel_schedule", label: "Cancel", tone: "danger" },
+    ];
+  }
   return [
     { id: "post_now", label: "Post now", hint: "Retries publishing through the queue. Idempotent: one publish identity per item.", tone: "primary" },
     { id: "reschedule", label: "Reschedule", tone: "outline" },

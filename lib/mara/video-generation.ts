@@ -6,7 +6,14 @@ import { MediaError, type GeneratedMedia } from "@/lib/media/types";
 import type { MediaAspectRatio } from "@/lib/media/types";
 import { GENERATED_VIDEO_MAX_BYTES } from "@/lib/media/video-provider";
 import type { CreatedVideoJob, ReferenceImage, VideoJobPoll } from "@/lib/media/video-provider";
-import { VIDEO_JOB_POLL_INTERVAL_MS, VIDEO_JOB_TIMEOUT_MINUTES, isActiveVideoState, staleDecision, videoJobSafeError } from "./video-job";
+import {
+  VIDEO_JOB_POLL_INTERVAL_MS,
+  VIDEO_JOB_TIMEOUT_MINUTES,
+  isActiveVideoState,
+  isTimedOutVideoGeneration,
+  staleDecision,
+  videoJobSafeError,
+} from "./video-job";
 
 /**
  * The MARA video generation orchestrator.
@@ -366,14 +373,36 @@ export type AdvanceResult =
  * atomic draft-asset replacement. Safe to call repeatedly and concurrently;
  * only one caller ever claims a job (status guard on the update).
  */
-export async function advanceVideoGeneration(ports: VideoGenerationPorts, ownerId: string, generationId: string, kind: "reel" | "story"): Promise<AdvanceResult> {
+export async function advanceVideoGeneration(
+  ports: VideoGenerationPorts,
+  ownerId: string,
+  generationId: string,
+  kind: "reel" | "story",
+  options: { reconcile?: boolean } = {},
+): Promise<AdvanceResult> {
   const row = await ports.findGeneration(ownerId, generationId);
   if (!row) return { ok: false, notFound: true };
 
   const now = ports.now();
   const clock = { nowMs: now, createdAtMs: Date.parse(row.created_at) || 0, updatedAtMs: Date.parse(row.updated_at) || now };
+  /**
+   * Reconciliation mode (the durable worker's final check). It changes exactly
+   * two things and nothing else:
+   *   1. a job past its lifetime is POLLED once more before being written off,
+   *      instead of being failed unseen,
+   *   2. a job already stopped as `provider_timeout` may be re-checked, so a
+   *      video the provider finished late is recovered rather than discarded.
+   * It authorises no new provider job: `createVideoJob` is not reachable from
+   * this function in any mode.
+   */
+  const reconciling = options.reconcile === true;
+  const storedProviderJobId = typeof row.provider_job_id === "string" && row.provider_job_id ? row.provider_job_id : null;
+  const recoveringTimedOut = reconciling
+    && isTimedOutVideoGeneration(row.status, typeof row.error_code === "string" ? row.error_code : null)
+    && storedProviderJobId !== null;
+
   const decision = staleDecision(row.status, clock);
-  if (decision === "timeout") {
+  if (decision === "timeout" && !reconciling) {
     const failed = await ports.updateGeneration(ownerId, generationId, { status: "failed", error_code: "provider_timeout" }, isActiveVideoState(row.status) ? [row.status] : undefined);
     const finalRow = failed ?? row;
     return { ok: true, generation: finalRow, previewUrl: null, attached: false, safeError: videoJobSafeError("provider_timeout") };
@@ -383,7 +412,7 @@ export async function advanceVideoGeneration(ports: VideoGenerationPorts, ownerI
     return { ok: true, generation: reclaimed ?? row, previewUrl: null, attached: false, safeError: null };
   }
 
-  if (!isActiveVideoState(row.status)) {
+  if (!isActiveVideoState(row.status) && !recoveringTimedOut) {
     const previewUrl = row.status === "completed" && typeof row.storage_path === "string" ? await ports.signPreview(row.storage_path) : null;
     return { ok: true, generation: row, previewUrl, attached: row.status === "completed", safeError: row.status === "failed" ? videoJobSafeError(row.error_code) : null };
   }
@@ -412,11 +441,17 @@ export async function advanceVideoGeneration(ports: VideoGenerationPorts, ownerI
   // the provider job id is still the only handle ever used.
   const nowIso = new Date(now).toISOString();
   const eligibleBeforeIso = new Date(now - VIDEO_JOB_POLL_INTERVAL_MS).toISOString();
-  const claimed: VideoJobRow | null = ports.claimGenerationForPoll
-    ? await ports.claimGenerationForPoll(ownerId, generationId, nowIso, eligibleBeforeIso)
-    : row.status === "processing"
-      ? row
-      : await ports.updateGeneration(ownerId, generationId, { status: "processing" }, [row.status]);
+  // Recovering a terminal timed-out row cannot use the active-status lease
+  // (its status is 'failed'), so it is re-claimed explicitly from exactly that
+  // state. The guard keeps it a single-winner transition: a concurrent worker
+  // that already moved the row gets null and re-reads the truth below.
+  const claimed: VideoJobRow | null = recoveringTimedOut
+    ? await ports.updateGeneration(ownerId, generationId, { status: "processing", error_code: null }, ["failed"])
+    : ports.claimGenerationForPoll
+      ? await ports.claimGenerationForPoll(ownerId, generationId, nowIso, eligibleBeforeIso)
+      : row.status === "processing"
+        ? row
+        : await ports.updateGeneration(ownerId, generationId, { status: "processing" }, [row.status]);
   if (!claimed) {
     const current = await ports.findGeneration(ownerId, generationId);
     if (!current) return { ok: false, notFound: true };
@@ -436,13 +471,25 @@ export async function advanceVideoGeneration(ports: VideoGenerationPorts, ownerI
   } catch (reason) {
     const code = reason instanceof Error ? (reason as Error & { code?: string }).code ?? "unavailable" : "unavailable";
     if (reason instanceof MediaError && isRetryableProviderError(reason) && reason.retryAfterMs !== null) {
-      const retrying = await ports.updateGeneration(ownerId, generationId, {
-        status: "generating",
-        provider_status: "retry_wait",
-        provider_retry_after_at: new Date(now + reason.retryAfterMs).toISOString(),
-        provider_diagnostic: reason.diagnostic,
-      }, ["processing"]).catch(() => null);
-      return { ok: true, generation: retrying ?? claimed, previewUrl: null, attached: false, safeError: null };
+      // A recovery attempt that cannot reach the provider must fall back to
+      // the terminal timeout it came from, never to an active state — a
+      // reconciliation can only ever settle a job, never revive it.
+      const retryPatch = recoveringTimedOut
+        ? { status: "failed", error_code: "provider_timeout", provider_diagnostic: reason.diagnostic }
+        : {
+            status: "generating",
+            provider_status: "retry_wait",
+            provider_retry_after_at: new Date(now + reason.retryAfterMs).toISOString(),
+            provider_diagnostic: reason.diagnostic,
+          };
+      const retrying = await ports.updateGeneration(ownerId, generationId, retryPatch, ["processing"]).catch(() => null);
+      return {
+        ok: true,
+        generation: retrying ?? claimed,
+        previewUrl: null,
+        attached: false,
+        safeError: recoveringTimedOut ? videoJobSafeError("provider_timeout") : null,
+      };
     }
     const failed = await ports.updateGeneration(ownerId, generationId, {
       status: "failed",
@@ -453,6 +500,18 @@ export async function advanceVideoGeneration(ports: VideoGenerationPorts, ownerI
   }
 
   if (poll.kind === "pending") {
+    if (recoveringTimedOut) {
+      // Nothing to collect after all: restore the terminal timeout rather than
+      // leaving a re-claimed row parked in 'processing' forever.
+      const restored = await ports.updateGeneration(ownerId, generationId, {
+        status: "failed",
+        error_code: "provider_timeout",
+        provider_status: poll.providerStatus ?? claimed.provider_status ?? null,
+        provider_polling_url: poll.pollingUrl ?? claimed.provider_polling_url ?? null,
+        provider_retry_after_at: null,
+      }, ["processing"]).catch(() => null);
+      return { ok: true, generation: restored ?? claimed, previewUrl: null, attached: false, safeError: videoJobSafeError("provider_timeout") };
+    }
     const pending = await ports.updateGeneration(ownerId, generationId, {
       provider_status: poll.providerStatus ?? claimed.provider_status ?? null,
       provider_polling_url: poll.pollingUrl ?? claimed.provider_polling_url ?? null,

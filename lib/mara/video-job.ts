@@ -34,6 +34,16 @@ export const VIDEO_STALE_QUEUED_MINUTES = 10;
 export const VIDEO_JOB_TIMEOUT_ERROR_CODE = "provider_timeout";
 /** Server-side media polling cadence. One provider status check per job per tick. */
 export const VIDEO_JOB_POLL_INTERVAL_MS = 2 * 60_000;
+/**
+ * How long after a job was created Voom keeps offering to RECONCILE it with
+ * the provider (a read-only status check on the stored provider_job_id).
+ *
+ * A provider job that finished at minute 29 — or one that finished after Voom
+ * already stopped waiting — is still worth collecting: the account has already
+ * paid for it. Past this window the handle is treated as cold and the row is
+ * left terminal, so the worker cannot poll dead jobs forever.
+ */
+export const VIDEO_JOB_RECOVERY_WINDOW_MINUTES = 24 * 60;
 
 export function isActiveVideoState(status: string): boolean {
   return (ACTIVE_VIDEO_STATES as string[]).includes(status);
@@ -108,6 +118,55 @@ export function isBeyondVideoJobHardTimeout(
   if (typeof status !== "string" || !isActiveVideoState(status)) return false;
   if (!Number.isFinite(clock.createdAtMs) || clock.createdAtMs <= 0) return false;
   return clock.nowMs - clock.createdAtMs > VIDEO_JOB_TIMEOUT_MINUTES * 60_000;
+}
+
+/**
+ * Whether the worker should make ONE final read-only provider status check
+ * before (or after) the hard timeout is persisted.
+ *
+ * THE BUG THIS FIXES. A job whose provider work actually finished at minute
+ * 29:50 was failed as `provider_timeout` at minute 30 without ever asking the
+ * provider for its final status. The account had already paid for that video
+ * and Voom threw it away. Worse, a job that completed AFTER an earlier
+ * timeout stayed failed forever, because nothing ever looked at it again.
+ *
+ * The reconciliation is a status read on the ALREADY STORED provider job id.
+ * It never creates a job, so it cannot double-charge: the only provider
+ * operation it authorises is `pollVideoJob(provider_job_id)`.
+ *
+ *   "reconcile"  — ask the provider once more, then act on the real answer,
+ *   "timeout"    — no usable handle (or the window is cold): persist the
+ *                  timeout as a database truth with no provider call,
+ *   "none"       — nothing to do for this row.
+ */
+export type VideoReconcileDecision = "reconcile" | "timeout" | "none";
+
+export function reconcileDecision(input: {
+  status: string | null | undefined;
+  providerJobId: string | null | undefined;
+  errorCode?: string | null;
+  clock: { nowMs: number; createdAtMs: number };
+  recoveryWindowMinutes?: number;
+}): VideoReconcileDecision {
+  const { status, clock } = input;
+  if (typeof status !== "string") return "none";
+  const hasHandle = typeof input.providerJobId === "string" && input.providerJobId.length > 0;
+  const windowMs = (input.recoveryWindowMinutes ?? VIDEO_JOB_RECOVERY_WINDOW_MINUTES) * 60_000;
+  const ageMs = clock.nowMs - clock.createdAtMs;
+  const withinRecoveryWindow = Number.isFinite(clock.createdAtMs) && clock.createdAtMs > 0 && ageMs <= windowMs;
+
+  // An ACTIVE job at/past its hard lifetime: reconcile once before giving up.
+  if (isBeyondVideoJobHardTimeout(status, clock)) {
+    return hasHandle && withinRecoveryWindow ? "reconcile" : "timeout";
+  }
+
+  // A job Voom already stopped as `provider_timeout` may since have completed
+  // at the provider. Recovering it costs a status read and saves a paid video.
+  if (isTimedOutVideoGeneration(status, input.errorCode ?? null)) {
+    return hasHandle && withinRecoveryWindow ? "reconcile" : "none";
+  }
+
+  return "none";
 }
 
 /** Deterministic idempotency keys. Same click (same token) -> same key. */

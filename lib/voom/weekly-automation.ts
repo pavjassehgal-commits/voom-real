@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { AUTOMATION_MODES, automationRunsAutomatically } from "@/lib/voom/automation";
 import { runOwnerWorkflow } from "@/lib/voom/workflow/service";
 import type { AdminClient } from "@/lib/post/server-data";
 
@@ -18,7 +19,14 @@ import type { AdminClient } from "@/lib/post/server-data";
  * creates nothing. Manual accounts are never touched.
  */
 
-const AUTOMATED_MODES = ["assisted", "autopilot"];
+/**
+ * Derived from the shared predicate rather than re-listed here, so the modes
+ * the scheduled runner picks up can never drift from the modes the Automations
+ * screen promises will run automatically. Switching to Manual therefore stops
+ * FUTURE automated runs for that account — while leaving every approval,
+ * schedule and stored asset that already exists untouched.
+ */
+const AUTOMATED_MODES = AUTOMATION_MODES.filter(automationRunsAutomatically);
 
 export interface RollingAutomationResult {
   checked: number;

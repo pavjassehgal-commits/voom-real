@@ -10,6 +10,7 @@ import {
   completePublishItem,
   failPublishItem,
   recordContainerId,
+  repairNotApprovedItems,
   type PublishQueueRow,
 } from "./publish-queue";
 import {
@@ -31,6 +32,8 @@ export interface PublishRunResult {
   failed: number;
   retrying: number;
   skipped: number;
+  /** Approved items whose stuck `not_approved` queue state was restored. */
+  repaired: number;
   results: { id: string; outcome: string; code?: string }[];
 }
 
@@ -72,7 +75,7 @@ export async function runInstagramPublishing(deps: WorkerDeps = {}): Promise<Pub
   const now = deps.now ?? (() => new Date());
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const timeline = deps.timeline ?? ((event: PublishTimelineEvent, input?: PublishTimelineInput) => logPublishTimeline(event, input));
-  const result: PublishRunResult = { claimed: 0, published: 0, failed: 0, retrying: 0, skipped: 0, results: [] };
+  const result: PublishRunResult = { claimed: 0, published: 0, failed: 0, retrying: 0, skipped: 0, repaired: 0, results: [] };
 
   if (!config) {
     // Nothing is claimed when Instagram is not configured, so a misconfigured
@@ -87,6 +90,13 @@ export async function runInstagramPublishing(deps: WorkerDeps = {}): Promise<Pub
   // One deadline for the entire batch, measured in wall-clock time.
   const deadlineAt = startedAt + budgetMs;
   const remainingBudgetMs = () => deadlineAt - Date.now();
+
+  // Heal genuinely-approved items that an earlier transient draft read left
+  // terminally marked 'not_approved'. This only restores queue state — it
+  // publishes nothing itself; repaired rows become claimable when due, like
+  // any other scheduled item. Best effort: a repair failure must never stop
+  // the run that publishes everything else.
+  result.repaired = await repairNotApprovedItems(db, { now: now() }).catch(() => 0);
 
   const items = await claimDueItems(db, deps.limit ?? 10, now());
   result.claimed = items.length;
