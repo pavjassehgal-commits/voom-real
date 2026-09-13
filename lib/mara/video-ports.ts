@@ -136,6 +136,23 @@ export function buildVideoGenerationPorts(deps: VideoPortDependencies): VideoGen
       return readRow((data as Record<string, unknown> | null) ?? null);
     },
 
+    async claimGenerationForPoll(ownerId, id, _nowIso, eligibleBeforeIso) {
+      // The update is both the lease and the status claim. The existing
+      // updated_at trigger stamps the claim, so a second browser/cron
+      // invocation cannot poll the same provider job until the two-minute
+      // lease has expired. No schema change is needed for this lease.
+      const { data, error } = await admin.from(MEDIA_GENERATIONS_TABLE)
+        .update({ status: "processing" })
+        .eq("owner_user_id", ownerId)
+        .eq("id", id)
+        .in("status", ["queued", "generating", "processing"])
+        .or(`updated_at.is.null,updated_at.lte.${eligibleBeforeIso}`)
+        .select(VIDEO_JOB_SELECT)
+        .maybeSingle();
+      if (error) throw new Error("video_job_claim_failed");
+      return readRow((data as Record<string, unknown> | null) ?? null);
+    },
+
     async planMedia(input): Promise<VideoPlanResult> {
       const contentType = input.contentType;
       const systemPrompt = contentType === "reel" ? REEL_VIDEO_SYSTEM_PROMPT : STORY_VIDEO_SYSTEM_PROMPT;
@@ -245,4 +262,24 @@ export function buildVideoGenerationPorts(deps: VideoPortDependencies): VideoGen
       return data?.signedUrl ?? null;
     },
   };
+}
+
+/**
+ * Poll-only wiring for the scheduled worker. It deliberately does not load
+ * brand/plan context or expose a planning path: an active row already has its
+ * provider handle and the worker may only poll, validate and attach it.
+ */
+export function buildVideoPollingPorts(deps: { admin: SupabaseClient; provider: VideoGenerationProvider }): VideoGenerationPorts {
+  const imageProvider: MediaProvider = {
+    generateImage: async () => { throw new Error("poller_image_generation_disabled"); },
+    generateVideo: async () => { throw new Error("poller_video_generation_disabled"); },
+    pollVideo: async () => { throw new Error("poller_video_generation_disabled"); },
+  };
+  return buildVideoGenerationPorts({
+    admin: deps.admin,
+    provider: deps.provider,
+    imageProvider,
+    brand: { name: "", description: "", industry: "", targetCustomer: "", mainGoal: "", brandPersonality: "" },
+    plan: null,
+  });
 }

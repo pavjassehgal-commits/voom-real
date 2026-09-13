@@ -6,7 +6,7 @@ import { MediaError, type GeneratedMedia } from "@/lib/media/types";
 import type { MediaAspectRatio } from "@/lib/media/types";
 import { GENERATED_VIDEO_MAX_BYTES } from "@/lib/media/video-provider";
 import type { CreatedVideoJob, ReferenceImage, VideoJobPoll } from "@/lib/media/video-provider";
-import { VIDEO_JOB_TIMEOUT_MINUTES, isActiveVideoState, staleDecision, videoJobSafeError } from "./video-job";
+import { VIDEO_JOB_POLL_INTERVAL_MS, VIDEO_JOB_TIMEOUT_MINUTES, isActiveVideoState, staleDecision, videoJobSafeError } from "./video-job";
 
 /**
  * The MARA video generation orchestrator.
@@ -91,6 +91,14 @@ export interface VideoGenerationPorts {
   sumMonthlyVideoCost(ownerId: string, monthStartIso: string): Promise<number>;
   insertGeneration(row: Record<string, unknown>): Promise<"inserted" | "idempotency_conflict" | "active_conflict" | "error">;
   updateGeneration(ownerId: string, id: string, patch: Record<string, unknown>, whereStatuses?: string[]): Promise<VideoJobRow | null>;
+  /**
+   * Atomically claims one provider poll. Real Supabase wiring uses the
+   * existing updated_at timestamp as a short lease so a browser refresh and
+   * the cron worker cannot both download/attach the same completion. Older
+   * test ports may omit this optional method and use the status guard fallback
+   * below.
+   */
+  claimGenerationForPoll?(ownerId: string, id: string, nowIso: string, eligibleBeforeIso: string): Promise<VideoJobRow | null>;
   // -- MARA planning + providers --
   planMedia(input: { concept: string; script: string; brief: string; contentType: "reel" | "instagram_story"; hasSourceImage: boolean }): Promise<VideoPlanResult>;
   generateBaseImage(input: { prompt: string; aspectRatio: MediaAspectRatio }): Promise<GeneratedMedia>;
@@ -390,20 +398,25 @@ export async function advanceVideoGeneration(ports: VideoGenerationPorts, ownerI
     }
   }
 
-  if (row.status === "queued") {
-    // A queued row only becomes generating inside startVideoGeneration; if it
-    // shows up here the start request died before creating the job.
+  if (row.status === "queued" && !row.provider_job_id) {
+    // A queued row without a provider handle means the start request died
+    // before provider submission. There is nothing safe to poll or resume.
     const failed = await ports.updateGeneration(ownerId, generationId, { status: "failed", error_code: "provider_timeout" }, ["queued"]);
     const finalRow = failed ?? row;
     return { ok: true, generation: finalRow, previewUrl: null, attached: false, safeError: videoJobSafeError("provider_timeout") };
   }
 
-  // Claim generating -> processing atomically. A processing row is already
-  // owned by this durable poll attempt; polling it again is safe and avoids
-  // waiting ten minutes after a normal provider "pending" response.
-  const claimed: VideoJobRow | null = row.status === "processing"
-    ? row
-    : await ports.updateGeneration(ownerId, generationId, { status: "processing" }, ["generating"]);
+  // Claim one provider poll atomically. The real Supabase port stamps a
+  // two-minute lease before any network call. That makes a browser refresh,
+  // two cron invocations, and a late retry converge on one poll/attach path;
+  // the provider job id is still the only handle ever used.
+  const nowIso = new Date(now).toISOString();
+  const eligibleBeforeIso = new Date(now - VIDEO_JOB_POLL_INTERVAL_MS).toISOString();
+  const claimed: VideoJobRow | null = ports.claimGenerationForPoll
+    ? await ports.claimGenerationForPoll(ownerId, generationId, nowIso, eligibleBeforeIso)
+    : row.status === "processing"
+      ? row
+      : await ports.updateGeneration(ownerId, generationId, { status: "processing" }, [row.status]);
   if (!claimed) {
     const current = await ports.findGeneration(ownerId, generationId);
     if (!current) return { ok: false, notFound: true };

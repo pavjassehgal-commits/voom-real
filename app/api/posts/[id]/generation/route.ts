@@ -14,11 +14,10 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
  * MARA video generation status + actions for a Post Studio draft (Reel or
  * Story video).
  *
- * GET  — reads the draft's newest video job and lazily advances it: if a real
- *        provider job is in flight, this request polls it and, on success,
- *        downloads/validates/stores the video and atomically swaps it in as
- *        the draft's private asset. The previous asset is never removed until
- *        the new one is validated and linked.
+ * GET  — reads the draft's newest video job and may advance it for an
+ *        immediate UI refresh. The scheduled media worker is authoritative and
+ *        continues the same persisted provider job when this route is never
+ *        called; a browser session is never part of the provider lifecycle.
  * POST — { action: "regenerate" } starts a new job (only when no active job
  *        exists; the client's idempotency key makes repeated clicks safe) and
  *        { action: "cancel" } stops a job that has not reached the provider.
