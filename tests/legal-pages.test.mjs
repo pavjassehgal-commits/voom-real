@@ -84,6 +84,9 @@ test("Privacy Policy truthfully covers current Voom data flows", async () => {
   assert.match(privacy, /Instagram connection data/);
   assert.match(privacy, /instagram_business_basic/);
   assert.match(privacy, /instagram_business_content_publish/);
+  // Performance Intelligence reads per-media insights, so the insights
+  // permission is requested and disclosed.
+  assert.match(privacy, /instagram_business_manage_insights/);
   assert.match(privacy, /AES-256-GCM/);
   assert.match(privacy, /Marketing plans and content/);
   assert.match(privacy, /content calendars/);

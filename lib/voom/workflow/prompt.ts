@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { PERFORMANCE_ADVISORY_RULES, compactPlanContext, type PerformancePlanContext } from "@/lib/performance/plan-context";
+
 /**
  * MARA's structured content generation for one planned workflow item.
  *
@@ -48,7 +50,12 @@ Rules:
 - visualBrief: a precise description of the single visual to produce, 20-80 words. Describe setting, subject, light and mood. Do NOT ask for readable text, words, numbers, logos, or watermarks in the image.
 - Ground everything ONLY in the supplied business context and marketing goal. Never invent prices, discounts, offers, opening hours, links, awards, reviews, guarantees or statistics.
 - Never claim the content was generated, scheduled, sent or published. This is a plan for the user's workflow.
-- Plain text only. No markdown.`;
+- Plain text only. No markdown.
+
+PERFORMANCE EVIDENCE
+The payload may carry "recentPerformance": real measured results from this business's own already-published Instagram content (or null when Voom has not measured enough yet).
+${PERFORMANCE_ADVISORY_RULES.map((rule) => `- ${rule}`).join("\n")}
+- When recentPerformance is null, plan exactly as before: use the brand context, the goal and the already-planned concepts only.`;
 
 /** Text-only payload for one planned slot. */
 export function buildPlannedContentPayload(input: {
@@ -60,6 +67,12 @@ export function buildPlannedContentPayload(input: {
   localTime: string;
   timezone: string;
   recentConcepts: string[];
+  /**
+   * Advisory, data-backed evidence from the account's own published content.
+   * `null` means "not measured", which is different from "nothing worked" —
+   * the planner then behaves exactly as it did before this feature existed.
+   */
+  performance?: PerformancePlanContext | null;
 }) {
   return {
     business: input.business,
@@ -69,5 +82,8 @@ export function buildPlannedContentPayload(input: {
     scheduledFor: { date: input.localDate, localTime: input.localTime, timezone: input.timezone },
     // Prevents the rolling plan from repeating itself across the horizon.
     alreadyPlannedConcepts: input.recentConcepts.slice(0, 14),
+    // Measured results from this business's own published content. Bounded and
+    // advisory only — the rules for using it live in the system prompt above.
+    recentPerformance: input.performance ? compactPlanContext(input.performance) : null,
   };
 }

@@ -41,8 +41,9 @@ export default function PrivacyPage() {
         <p>
           If you choose to connect an Instagram account, the connection is
           authorized through Instagram (Meta) using OAuth. The permissions
-          requested are <b>instagram_business_basic</b> and{" "}
-          <b>instagram_business_content_publish</b>. For a connected account we
+          requested are <b>instagram_business_basic</b>,{" "}
+          <b>instagram_business_content_publish</b> and{" "}
+          <b>instagram_business_manage_insights</b>. For a connected account we
           store the Instagram user ID, username, display name, account type,
           profile picture URL, the permissions granted, and the token expiry
           date. The Instagram access token is stored encrypted at rest
@@ -50,8 +51,10 @@ export default function PrivacyPage() {
         </p>
         <p>
           We use the connection to read basic account information, your
-          Instagram media, and account insights so Voom can display your
-          performance inside the Service.
+          Instagram media, and insights (reach, views, likes, comments, saves,
+          shares and interactions) for content Voom published for you, so Voom
+          can show your performance inside the Service and use it when planning
+          future content. Voom never reads another business&apos;s data.
         </p>
         <LegalNote>
           Voom does not currently publish to Instagram on your behalf.

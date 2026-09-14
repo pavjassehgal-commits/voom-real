@@ -30,7 +30,10 @@ test("marketing plans are owner-scoped, anonymous-blocked, and server-written", 
 test("planning is server-only, structured, grounded, and never creates chat messages", async () => {
   const [service, route] = await Promise.all([read("lib/voom/workflow/service.ts"), read("app/api/plan/route.ts")]);
   assert.match(service, /import "server-only"/);
-  assert.match(service, /createAiProvider\(\)\.structured/);
+  // The provider is created inline in production and may be injected in tests;
+  // either way planning must go through the structured-output contract.
+  assert.match(service, /createAiProvider\(\)/);
+  assert.match(service, /\.structured\(\{/);
   assert.match(service, /evaluateAutopilotRecommendation/);
   assert.doesNotMatch(service + route, /from\("mara_messages"\).*insert/s);
   assert.match(route, /getCurrentUser/);

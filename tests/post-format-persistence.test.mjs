@@ -186,7 +186,12 @@ test("Post format needed no schema change; 0022-0027 remain intact and 0028 is v
   assert.deepEqual(files.filter((name) => /^0028_/.test(name)), ["0028_openrouter_video_job_metadata.sql"], "the only 0028 is OpenRouter video job metadata");
   assert.deepEqual(files.filter((name) => /^0029_/.test(name)), ["0029_workflow_timezone_and_slots.sql"], "the only 0029 is the workflow timezone + slot migration");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 31), "no migration beyond 0031 may exist");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 32), "no migration beyond 0032 may exist");
+  assert.deepEqual(
+    files.filter((name) => /^0032_/.test(name)),
+    ["0032_instagram_performance_intelligence.sql"],
+    "the only 0032 is the additive performance snapshots migration",
+  );
   assert.deepEqual(
     files.filter((name) => /^0031_/.test(name)),
     ["0031_ai_media_spend_control.sql"],
