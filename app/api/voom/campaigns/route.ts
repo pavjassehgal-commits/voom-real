@@ -1,19 +1,21 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createCampaign, listCampaigns } from "@/lib/mara/internal-data";
 import { readCampaignDelivery } from "@/lib/voom/campaign-delivery";
+import { readAutomatedCampaign } from "@/lib/campaign/server";
+import type { AutomatedCampaignView, CampaignContainerRecord } from "@/lib/campaign/types";
+import type { CampaignRecord } from "@/lib/voom/types";
 import { createClient } from "@/utils/supabase/server";
 import { z } from "zod";
 
 const UUID_VALUE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// Legacy single-channel draft creation (email only). SMS is no longer
+// creatable; automated multi-channel campaigns are POSTed to ./build.
 const campaignFields = z.object({
-  kind: z.enum(["email", "sms"]),
+  kind: z.literal("email"),
   name: z.string().trim().min(1).max(160),
   objective: z.string().trim().max(1000).default(""),
   audience: z.string().trim().max(1000).default(""),
-  // Links the campaign to one owned audience. The linked audience is
-  // re-resolved server-side at send time; a client-supplied recipient list
-  // is never accepted (the schema stays strict).
   audienceId: z.string().trim().regex(UUID_VALUE_RE).nullable().optional(),
   subject: z.string().trim().max(300).nullable().optional(),
   previewText: z.string().trim().max(500).nullable().optional(),
@@ -21,16 +23,50 @@ const campaignFields = z.object({
   proposedSendAt: z.string().datetime({ offset: true }).nullable().optional(),
 }).strict();
 
+function isAutomatedContainer(row: CampaignRecord | CampaignContainerRecord): boolean {
+  return Boolean(row.is_automated) || row.kind === "multi";
+}
+
 export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
   const kind = new URL(request.url).searchParams.get("kind") || undefined;
-  if (kind && kind !== "email" && kind !== "sms") return Response.json({ error: "That campaign type is invalid." }, { status: 400 });
+  // The legacy ?kind=sms filter remains readable for historical data; only
+  // email and sms literals are accepted (never a new SMS creation).
+  if (kind && kind !== "email" && kind !== "sms") {
+    return Response.json({ error: "That campaign type is invalid." }, { status: 400 });
+  }
   try {
     const db = await createClient();
-    const campaigns = await listCampaigns(db, user.id, kind);
-    const deliveries = Object.fromEntries(await Promise.all(campaigns.map(async (campaign) => [campaign.id, await readCampaignDelivery(db, user.id, campaign)] as const)));
-    return Response.json({ campaigns, deliveries });
+    const rows = await listCampaigns(db, user.id);
+    const all = rows as unknown as CampaignRecord[];
+
+    // Automated timeline campaigns (MARA-built containers).
+    const containers = all.filter((row) => isAutomatedContainer(row) && !row.parent_campaign_id);
+    const automated: AutomatedCampaignView[] = [];
+    for (const container of containers) {
+      const view = await readAutomatedCampaign(db, user.id, container.id).catch(() => null);
+      if (view) automated.push(view);
+    }
+
+    // Legacy single-channel drafts, including historical (read-only) SMS rows.
+    // Automated child campaigns never appear in the legacy list.
+    const legacy = all.filter((row) =>
+      !row.is_automated && !row.parent_campaign_id && (!kind || row.kind === kind),
+    );
+    const deliveries: Record<string, Awaited<ReturnType<typeof readCampaignDelivery>>> = {};
+    for (const campaign of legacy) {
+      if (campaign.kind === "multi") continue;
+      deliveries[campaign.id] = await readCampaignDelivery(db, user.id, campaign);
+    }
+
+    return Response.json({
+      // Back-compat: the legacy list keeps its old field name.
+      campaigns: legacy,
+      legacy,
+      automated,
+      deliveries,
+    });
   } catch {
     return Response.json({ error: "Campaigns couldn't load. Please retry." }, { status: 503 });
   }
@@ -43,12 +79,18 @@ export async function POST(request: Request) {
   let body: unknown;
   try { body = await request.json(); } catch { return Response.json({ error: "That campaign is not valid." }, { status: 400 }); }
   const parsed = campaignFields.safeParse(body);
-  if (!parsed.success) return Response.json({ error: "Check the campaign details before saving." }, { status: 400 });
+  if (!parsed.success) {
+    // SMS removal: a client that still asks for SMS gets an explicit refusal.
+    const rawKind = (body as { kind?: unknown } | null)?.kind;
+    if (rawKind === "sms") {
+      return Response.json({ error: "SMS marketing is no longer available in Voom. Build an email or Instagram campaign instead." }, { status: 400 });
+    }
+    return Response.json({ error: "Check the campaign details before saving." }, { status: 400 });
+  }
 
   try {
     const db = await createClient();
 
-    // Server-side audience ownership validation before the link is persisted.
     let audienceId: string | null = null;
     if (parsed.data.audienceId) {
       const { data: audience, error: audienceError } = await db
@@ -67,7 +109,7 @@ export async function POST(request: Request) {
     }
 
     const campaign = await createCampaign(db, user.id, {
-      kind: parsed.data.kind,
+      kind: "email",
       name: parsed.data.name,
       objective: parsed.data.objective,
       audience: parsed.data.audience,

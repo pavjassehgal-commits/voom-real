@@ -3,18 +3,18 @@ import { PageHead } from "@/components/voom/shell/AppShell";
 import { Icon } from "@/components/voom/icons";
 import { Card, Tag } from "@/components/voom/ui/primitives";
 import { getResendAvailability } from "@/lib/email/config";
-import { getClickSendAvailability } from "@/lib/sms/config";
 import { getOperatingData } from "@/lib/voom/operating-data";
 
 export const dynamic = "force-dynamic";
 
+// The active Voom channels are Instagram and email. SMS marketing was removed
+// from the product, so no SMS connection tile exists any more.
 export default async function ConnectionsPage() {
   const data = await getOperatingData();
   if (!data) return null;
 
   const selected = new Set(data.business.preferred_channels.map((x) => x.toLowerCase()));
   const email = getResendAvailability();
-  const sms = getClickSendAvailability();
 
   return (
     <div>
@@ -31,21 +31,15 @@ export default async function ConnectionsPage() {
           icon="mail"
           name="Email"
           description={email.configured
-            ? "Resend is configured on the server. Approved campaigns can send to one real recipient, and Delivered requires the verified webhook."
+            ? "Resend is configured on the server. Approved campaign emails send only through an explicit send action, and Delivered requires the verified webhook."
             : "Campaign delivery integration is not configured yet."}
           selected={selected.has("email")}
           configured={email.configured}
         />
-        <Connection
-          icon="chat"
-          name="SMS"
-          description={sms.configured
-            ? "ClickSend is configured on the server. Approved campaigns can send to one real recipient, and Delivered requires verified status callbacks."
-            : "Messaging delivery integration is not configured yet."}
-          selected={selected.has("sms")}
-          configured={sms.configured}
-        />
       </div>
+      <p className="mt-4 max-w-2xl text-xs leading-relaxed text-text-3">
+        Voom campaigns run on Instagram and email. SMS marketing is no longer part of the product.
+      </p>
     </div>
   );
 }

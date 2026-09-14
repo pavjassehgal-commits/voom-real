@@ -32,7 +32,7 @@ export const Q_GOAL: [string, string][] = [
 
 export const OB_TONE = ["Friendly", "Premium", "Playful", "Professional", "Bold", "Calm", "Traditional", "Modern"];
 
-export const Q_CHANNELS = ["Instagram", "TikTok", "Facebook", "WhatsApp", "Email", "SMS", "Google", "Paid ads"];
+export const Q_CHANNELS = ["Instagram", "TikTok", "Facebook", "WhatsApp", "Email", "Google", "Paid ads"];
 
 export const Q_BUDGET = ["AED 0 — organic only", "Under AED 1,000", "AED 1,000 – 3,000", "AED 3,000 – 10,000", "AED 10,000+"];
 

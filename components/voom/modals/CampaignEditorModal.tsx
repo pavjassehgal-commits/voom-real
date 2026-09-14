@@ -10,11 +10,15 @@ import { Btn, Card, Field, Input, Tag, Textarea } from "../ui/primitives";
 
 type RecipientMode = "single" | "audience";
 
-export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms"; campaign?: CampaignRecord | null }) {
+/**
+ * Legacy single email draft editor. This editor is email-only (the retired
+ * text-message channel is not offered). MARA-built automated campaign emails
+ * are reviewed on the campaign timeline instead.
+ */
+export function CampaignEditorModal({ campaign }: { campaign?: CampaignRecord | null }) {
   const { close } = useModal();
-  const em = kind === "email";
   const [id, setId] = useState<string | null>(campaign?.id ?? null);
-  const [name, setName] = useState(campaign?.name ?? (em ? "Untitled email" : "Untitled SMS"));
+  const [name, setName] = useState(campaign?.name ?? "Untitled email");
   const [objective, setObjective] = useState(campaign?.objective ?? "");
   const [audience, setAudience] = useState(campaign?.audience ?? "");
   const [recipientMode, setRecipientMode] = useState<RecipientMode>(campaign?.audience_id ? "audience" : "single");
@@ -36,8 +40,6 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
   const [recipientName, setRecipientName] = useState("");
   const [delivery, setDelivery] = useState<CampaignDeliveryView | null>(null);
 
-  const smsLength = content.length;
-
   const loadDelivery = useCallback(async () => {
     if (!id) return;
     try {
@@ -55,7 +57,6 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
-
     void (async () => {
       try {
         const response = await fetch(`/api/voom/campaigns/${encodeURIComponent(id)}/delivery`, { cache: "no-store" });
@@ -68,13 +69,9 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
         if (!cancelled) setDelivery(null);
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [id]);
 
-  // The picker lists only the owner's own audiences (enforced server-side).
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -86,34 +83,26 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
         // The picker stays empty; reopening the modal retries.
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
-  // Server-computed eligibility preview for the chosen audience. The browser
-  // only ever receives masked destinations. The preview is cleared in the
-  // change handler (chooseAudience) so no synchronous setState runs here.
   useEffect(() => {
     if (recipientMode !== "audience" || !audienceId) return;
     let cancelled = false;
     void (async () => {
       try {
-        const response = await fetch(`/api/voom/audiences/${encodeURIComponent(audienceId)}/eligibility?kind=${kind}`, { cache: "no-store" });
+        const response = await fetch(`/api/voom/audiences/${encodeURIComponent(audienceId)}/eligibility?kind=email`, { cache: "no-store" });
         const data = await response.json() as { preview?: AudienceEligibilityPreview };
         if (!cancelled) setAudiencePreview(response.ok ? data.preview ?? null : null);
       } catch {
         if (!cancelled) setAudiencePreview(null);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [recipientMode, audienceId, kind]);
+    return () => { cancelled = true; };
+  }, [recipientMode, audienceId]);
 
   function chooseAudience(nextId: string | null) {
     setAudienceId(nextId);
-    // Drop the previous preview immediately; the effect below refetches.
     setAudiencePreview(null);
     setLastResults(null);
     const chosen = audienceOptions.find((option) => option.id === nextId);
@@ -122,12 +111,12 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
 
   function payload() {
     return {
-      name: name.trim() || (em ? "Untitled email" : "Untitled SMS"),
+      name: name.trim() || "Untitled email",
       objective: objective.trim(),
       audience: audience.trim(),
       audienceId: recipientMode === "audience" ? audienceId : null,
-      subject: em ? subject.trim() || null : null,
-      previewText: em ? previewText.trim() || null : null,
+      subject: subject.trim() || null,
+      previewText: previewText.trim() || null,
       content: content.trim(),
       proposedSendAt: composeSendAt(sendDate, sendTime),
     };
@@ -142,9 +131,8 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
     setError("");
     setMessage("");
     try {
-      // The campaign kind is fixed at creation. PATCH only edits draft content,
-      // so it must not send kind (PATCH rejects unknown keys); POST still needs it.
-      const body = id ? payload() : { kind, ...payload() };
+      // kind is fixed to email; PATCH only edits draft content.
+      const body = id ? payload() : { kind: "email", ...payload() };
       const headers = { "Content-Type": "application/json" };
       const response = id
         ? await fetch(`/api/voom/campaigns/${encodeURIComponent(id)}`, { method: "PATCH", headers, body: JSON.stringify(body) })
@@ -158,11 +146,8 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
       setStatus(data.campaign.status);
       setRecipientMode(data.campaign.audience_id ? "audience" : "single");
       setAudienceId(data.campaign.audience_id ?? null);
-      if (data.campaign.status !== "approved") {
-        setDelivery(null);
-      } else {
-        await loadDelivery();
-      }
+      if (data.campaign.status !== "approved") setDelivery(null);
+      else await loadDelivery();
       setMessage("Draft saved in Voom. Nothing has been sent.");
       window.dispatchEvent(new Event("voom:data-changed"));
     } catch {
@@ -222,7 +207,7 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
         setError(data.error ?? "Voom couldn't send that campaign safely.");
         return;
       }
-      setMessage(data.message ?? `${em ? "Email" : "SMS"} accepted by the provider.`);
+      setMessage(data.message ?? "Email accepted by the provider.");
       window.dispatchEvent(new Event("voom:data-changed"));
       await loadDelivery();
     } catch {
@@ -245,8 +230,6 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
     setError("");
     setMessage("");
     try {
-      // Only an explicit confirmation is posted — the server re-resolves the
-      // linked audience itself; no recipient list ever leaves the browser.
       const response = await fetch(`/api/voom/campaigns/${encodeURIComponent(id)}/delivery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -275,7 +258,7 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
   return (
     <ModalShell wide>
       <ModalHead
-        title={em ? "Email campaign" : "SMS campaign"}
+        title="Email campaign"
         sub={id ? "Saved in Voom · refresh-safe" : "New draft — saved in Voom"}
         onClose={close}
       />
@@ -293,10 +276,10 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
         {error && <div role="alert" className="mb-3.5 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-sm text-red">{error}</div>}
 
         <Field label="Campaign name">
-          <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={160} placeholder={em ? "e.g. Tuesday newsletter" : "e.g. Restock heads-up"} />
+          <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={160} placeholder="e.g. Tuesday newsletter" />
         </Field>
-        <Field label={em ? "Objective" : "Purpose"} hint="Why Voom prepared this for you.">
-          <Textarea rows={2} maxLength={1000} value={objective} onChange={(e) => setObjective(e.target.value)} placeholder={em ? "Re-engage cold subscribers before the weekend." : "Tell regulars about the restock in one short message."} />
+        <Field label="Objective" hint="Why Voom prepared this for you.">
+          <Textarea rows={2} maxLength={1000} value={objective} onChange={(e) => setObjective(e.target.value)} placeholder="Re-engage cold subscribers before the weekend." />
         </Field>
 
         <Field label="Send to">
@@ -337,26 +320,18 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
                   <>
                     <div className="flex flex-wrap items-center gap-2">
                       <Tag tone={audiencePreview.eligibleCount > 0 ? "t-green" : "t-amber"}>
-                        {audiencePreview.eligibleCount} eligible {em ? "email" : "SMS"} destination{audiencePreview.eligibleCount === 1 ? "" : "s"}
+                        {audiencePreview.eligibleCount} eligible email destination{audiencePreview.eligibleCount === 1 ? "" : "s"}
                       </Tag>
                       <Tag>{audiencePreview.totalMembers} contacts in audience</Tag>
                     </div>
                     <p className="mt-2 text-[12.5px] leading-[1.55] text-text-2">
-                      Excluded: {audiencePreview.excludedCount} unsubscribed, unknown or missing a valid {em ? "email address" : "phone number"}
+                      Excluded: {audiencePreview.excludedCount} unsubscribed, unknown or missing a valid email address
                       {audiencePreview.duplicateCount > 0 ? ` · ${audiencePreview.duplicateCount} duplicate destination${audiencePreview.duplicateCount === 1 ? "" : "s"} removed` : ""}.
                     </p>
                     {audiencePreview.overLimitCount > 0 && (
                       <p className="mt-2 text-[12.5px] font-semibold text-amber">
                         Over the {audiencePreview.sendCap}-recipient limit per send — the send is refused entirely while this audience has more than {audiencePreview.sendCap} eligible destinations ({audiencePreview.overLimitCount} too many). Narrow the audience in Contacts, then try again.
                       </p>
-                    )}
-                    {audiencePreview.recipients.length > 0 && (
-                      <ul className="mt-2 space-y-1 font-mono text-[11.5px] text-text-3">
-                        {audiencePreview.recipients.slice(0, 8).map((r) => (
-                          <li key={r.contactId}>{r.contactName ? `${r.contactName} · ` : ""}{r.destination}</li>
-                        ))}
-                        {audiencePreview.recipients.length > 8 && <li>+ {audiencePreview.recipients.length - 8} more…</li>}
-                      </ul>
                     )}
                   </>
                 )}
@@ -365,23 +340,15 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
           </>
         )}
 
-        {em ? (
-          <>
-            <Field label="Subject line">
-              <Input value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={300} placeholder="What shows up in the inbox" />
-            </Field>
-            <Field label="Preview text">
-              <Input value={previewText} onChange={(e) => setPreviewText(e.target.value)} maxLength={500} placeholder="The line under the subject" />
-            </Field>
-            <Field label="Body / content">
-              <Textarea rows={7} maxLength={12000} value={content} onChange={(e) => setContent(e.target.value)} placeholder="Write the email content here, or review what MARA's weekly plan prepared." />
-            </Field>
-          </>
-        ) : (
-          <Field label="Message" hint={`${smsLength} characters · ${Math.max(1, Math.ceil(Math.max(1, smsLength) / 160))} SMS segment${Math.ceil(Math.max(1, smsLength) / 160) === 1 ? "" : "s"} (cost depends on the connected provider)`}>
-            <Textarea rows={6} maxLength={12000} value={content} onChange={(e) => setContent(e.target.value)} placeholder="One short, useful message." />
-          </Field>
-        )}
+        <Field label="Subject line">
+          <Input value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={300} placeholder="What shows up in the inbox" />
+        </Field>
+        <Field label="Preview text">
+          <Input value={previewText} onChange={(e) => setPreviewText(e.target.value)} maxLength={500} placeholder="The line under the subject" />
+        </Field>
+        <Field label="Body / content">
+          <Textarea rows={7} maxLength={12000} value={content} onChange={(e) => setContent(e.target.value)} placeholder="Write the email content here, or review what MARA prepared." />
+        </Field>
 
         <div className="flex flex-wrap gap-2.5">
           <div className="min-w-[180px] flex-1">
@@ -400,14 +367,14 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
           <Card className="mb-3.5 border-line-2 bg-surface-2 p-3.5">
             <div className="flex flex-wrap items-center gap-2">
               <Tag tone={deliveryState ? deliveryTone(deliveryState) : "t-grey"}>{deliveryState ? deliveryLabel(deliveryState) : "Ready"}</Tag>
-              <Tag tone={delivery?.provider.configured ? "t-green" : "t-amber"}>{delivery?.provider.label ?? (em ? "Resend" : "ClickSend")}</Tag>
+              <Tag tone={delivery?.provider.configured ? "t-green" : "t-amber"}>{delivery?.provider.label ?? "Resend"}</Tag>
             </div>
             <p className="mt-2 text-[13px] leading-[1.55] text-text-2">
               {delivery?.note ?? "This approved campaign can send to one real recipient when the provider is configured."}
             </p>
             <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
-              <Field label={em ? "Recipient email" : "Recipient phone number"} hint={em ? "One recipient for this MVP." : "Use E.164 format like +971501234567. One recipient for this MVP."}>
-                <Input value={recipientContact} onChange={(e) => setRecipientContact(e.target.value)} placeholder={em ? "customer@example.com" : "+971501234567"} />
+              <Field label="Recipient email" hint="One recipient for this MVP.">
+                <Input value={recipientContact} onChange={(e) => setRecipientContact(e.target.value)} placeholder="customer@example.com" />
               </Field>
               <Field label="Recipient name (optional)">
                 <Input value={recipientName} onChange={(e) => setRecipientName(e.target.value)} maxLength={200} placeholder="e.g. Sara" />
@@ -426,7 +393,7 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
           <Card className="mb-3.5 border-line-2 bg-surface-2 p-3.5">
             <div className="flex flex-wrap items-center gap-2">
               <Tag tone={deliveryState ? deliveryTone(deliveryState) : "t-grey"}>{deliveryState ? deliveryLabel(deliveryState) : "Ready"}</Tag>
-              <Tag tone={delivery?.provider.configured ? "t-green" : "t-amber"}>{delivery?.provider.label ?? (em ? "Resend" : "ClickSend")}</Tag>
+              <Tag tone={delivery?.provider.configured ? "t-green" : "t-amber"}>{delivery?.provider.label ?? "Resend"}</Tag>
             </div>
             <p className="mt-2 text-[13px] leading-[1.55] text-text-2">
               {delivery?.note ?? "This approved campaign can send to its linked audience when the provider is configured. The audience is re-resolved on the server at send time."}
@@ -476,28 +443,26 @@ export function CampaignEditorModal({ kind, campaign }: { kind: "email" | "sms";
             recipientMode === "audience" ? (
               <Btn
                 variant="outline"
-                // The server refuses an over-cap audience send entirely; the
-                // button stays disabled so the UI blocks it too.
                 disabled={busy || sendBusy || !id || !delivery?.canSend}
                 onClick={() => void sendApprovedCampaignToAudience()}
                 title={
                   delivery?.audience && delivery.audience.overLimitCount > 0
                     ? `Sending is refused while more than ${delivery.audience.sendCap} destinations are eligible — narrow the audience first`
                     : !delivery?.provider.configured
-                      ? `${delivery?.provider.label ?? (em ? "Resend" : "ClickSend")} is not configured on the server yet`
+                      ? "Resend is not configured on the server yet"
                       : undefined
                 }
               >
-                <Icon name="send" size={14} /> {sendBusy ? "Sending…" : `Send approved ${em ? "email" : "SMS"} to audience`}
+                <Icon name="send" size={14} /> {sendBusy ? "Sending…" : "Send approved email to audience"}
               </Btn>
             ) : (
               <Btn
                 variant="outline"
                 disabled={busy || sendBusy || !id || !recipientContact.trim() || !delivery?.canSend}
                 onClick={() => void sendApprovedCampaign()}
-                title={!delivery?.provider.configured ? `${delivery?.provider.label ?? (em ? "Resend" : "ClickSend")} is not configured on the server yet` : undefined}
+                title={!delivery?.provider.configured ? "Resend is not configured on the server yet" : undefined}
               >
-                <Icon name="send" size={14} /> {sendBusy ? "Sending…" : delivery?.send?.internal_status === "failed" ? `Retry ${em ? "email" : "SMS"}` : `Send approved ${em ? "email" : "SMS"}`}
+                <Icon name="send" size={14} /> {sendBusy ? "Sending…" : delivery?.send?.internal_status === "failed" ? "Retry email" : "Send approved email"}
               </Btn>
             )
           ) : (

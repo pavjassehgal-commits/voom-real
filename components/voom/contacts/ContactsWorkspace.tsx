@@ -15,7 +15,7 @@ import {
 } from "./Modals";
 
 type Tab = "contacts" | "audiences";
-type Filter = "all" | "email" | "sms" | "unsubscribed" | "unknown";
+type Filter = "all" | "email" | "unsubscribed" | "unknown";
 
 export function ContactsWorkspace({
   initialContacts,
@@ -80,12 +80,10 @@ export function ContactsWorkspace({
       switch (filter) {
         case "email":
           return c.email_status === "subscribed";
-        case "sms":
-          return c.sms_status === "subscribed";
         case "unsubscribed":
-          return c.email_status === "unsubscribed" || c.sms_status === "unsubscribed";
+          return c.email_status === "unsubscribed";
         case "unknown":
-          return c.email_status === "unknown" || c.sms_status === "unknown";
+          return c.email_status === "unknown";
         default:
           return true;
       }
@@ -108,7 +106,7 @@ export function ContactsWorkspace({
       <div className="mb-4 grid gap-3 sm:grid-cols-3">
         <KpiCard label="Total contacts" value={summary.total} />
         <KpiCard label="Email subscribers" value={summary.emailSubscribers} hint="Consent: subscribed" tone="green" />
-        <KpiCard label="SMS subscribers" value={summary.smsSubscribers} hint="Consent: subscribed" tone="brand" />
+        <KpiCard label="Unsubscribed" value={summary.unsubscribed} tone="default" />
       </div>
 
       {tab === "contacts" ? (
@@ -166,7 +164,6 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
 const FILTERS: Array<{ id: Filter; label: string }> = [
   { id: "all", label: "All" },
   { id: "email", label: "Email subscribers" },
-  { id: "sms", label: "SMS subscribers" },
   { id: "unsubscribed", label: "Unsubscribed" },
   { id: "unknown", label: "Unknown consent" },
 ];
@@ -237,8 +234,7 @@ function ContactsTab({
               <th className="pb-2.5">Name</th>
               <th className="pb-2.5">Email</th>
               <th className="pb-2.5">Phone</th>
-              <th className="pb-2.5">Email</th>
-              <th className="pb-2.5">SMS</th>
+              <th className="pb-2.5">Email consent</th>
               <th className="pb-2.5">Tags</th>
               <th className="pb-2.5">Source</th>
               <th className="pb-2.5 text-right">Action</th>
@@ -247,11 +243,11 @@ function ContactsTab({
           <tbody>
             {contacts.length === 0 && (
               <tr className="border-t border-line">
-                <td colSpan={8} className="py-10 text-center">
+                <td colSpan={7} className="py-10 text-center">
                   <b className="block text-sm text-text-2">{totalContacts === 0 ? "No contacts yet" : "No contacts match this filter"}</b>
                   <span className="mx-auto mt-1 block max-w-md text-[12.5px] leading-relaxed text-text-3">
                     {totalContacts === 0
-                      ? "This is your audience workspace — the people who gave you consent to email or message them. Add one manually or import a CSV to get started."
+                      ? "This is your audience workspace — the people who gave you consent to email them. Add one manually or import a CSV to get started."
                       : "Try a different search or tag, or clear the filter to see everyone again."}
                   </span>
                 </td>
@@ -270,9 +266,6 @@ function ContactsTab({
                 </td>
                 <td className="py-3.5 pr-3">
                   <ConsentChip status={c.email_status} />
-                </td>
-                <td className="py-3.5 pr-3">
-                  <ConsentChip status={c.sms_status} />
                 </td>
                 <td className="py-3.5 pr-3">
                   <TagsList tags={c.tags} />
@@ -302,7 +295,7 @@ function ContactsTab({
 
 const AUDIENCE_TYPE_LABEL: Record<AudienceType, string> = {
   all_email_subscribers: "All email subscribers",
-  all_sms_subscribers: "All SMS subscribers",
+  all_sms_subscribers: "Archived SMS subscribers",
   tag: "Tag audience",
   manual: "Manual audience",
 };

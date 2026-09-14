@@ -2,217 +2,206 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { useVoomActions, useVoomState } from "@/lib/voom/store";
+import { useVoomActions } from "@/lib/voom/store";
 import { useModal } from "@/lib/voom/modal";
-import type { CampaignDeliveryState, CampaignDeliveryView, CampaignRecord, CampaignStatus } from "@/lib/voom/types";
+import type { CampaignDeliveryView, CampaignRecord } from "@/lib/voom/types";
+import type { AutomatedCampaignView } from "@/lib/campaign/types";
 import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
+import { BuildCampaignModal } from "@/components/voom/modals/BuildCampaignModal";
+import { AutomatedCampaignModal } from "@/components/voom/modals/AutomatedCampaignModal";
 import { CampaignEditorModal } from "@/components/voom/modals/CampaignEditorModal";
-import { Btn, Card, Chip, EmptyState, Tag } from "@/components/voom/ui/primitives";
+import { Btn, Card, EmptyState, Tag } from "@/components/voom/ui/primitives";
 
-type StatusFilter = "all" | CampaignStatus;
-
-const FILTERS: Array<{ id: StatusFilter; label: string }> = [
-  { id: "all", label: "All" },
-  { id: "draft", label: "Draft" },
-  { id: "approved", label: "Approved" },
-  { id: "rejected", label: "Not approved" },
-];
-
-const HOW_IT_WORKS: [string, string][] = [
-  ["Drafts stay inside Voom", "Campaigns are saved drafts until you approve one and send it explicitly. Nothing is ever sent automatically."],
-  ["One real recipient at a time", "A send goes to the verified recipient you choose in the campaign — there is no bulk blast from this screen."],
-  ["Delivery is only ever real", "Voom marks a campaign Delivered only after the provider's verified callback confirms it. Failed sends say so and can be retried."],
-];
+interface CampaignsResponse {
+  legacy: CampaignRecord[];
+  automated: AutomatedCampaignView[];
+  deliveries: Record<string, CampaignDeliveryView>;
+  error?: string;
+}
 
 export default function CampaignsPage() {
-  const { campTab } = useVoomState();
-  const { setCampTab, goTo } = useVoomActions();
+  const { goTo } = useVoomActions();
   const { open } = useModal();
-  const em = campTab === "email";
 
-  const [savedCampaigns, setSavedCampaigns] = useState<CampaignRecord[]>([]);
-  const [deliveryByCampaignId, setDeliveryByCampaignId] = useState<Record<string, CampaignDeliveryView>>({});
-  const [campaignError, setCampaignError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [automated, setAutomated] = useState<AutomatedCampaignView[]>([]);
+  const [legacy, setLegacy] = useState<CampaignRecord[]>([]);
+  const [deliveries, setDeliveries] = useState<Record<string, CampaignDeliveryView>>({});
+  const [error, setError] = useState<string | null>(null);
 
-  const loadCampaigns = useCallback(async () => {
+  const load = useCallback(async () => {
     try {
-      const response = await fetch(`/api/voom/campaigns?kind=${campTab}`, { cache: "no-store" });
-      const body = await response.json() as { campaigns?: CampaignRecord[]; deliveries?: Record<string, CampaignDeliveryView>; error?: string };
-      if (!response.ok) throw new Error(body.error || "Campaign drafts couldn't load.");
-      setSavedCampaigns(body.campaigns ?? []);
-      setDeliveryByCampaignId(body.deliveries ?? {});
-      setCampaignError(null);
+      const response = await fetch("/api/voom/campaigns", { cache: "no-store" });
+      const body = await response.json() as CampaignsResponse;
+      if (!response.ok) throw new Error(body.error ?? "Campaigns couldn't load.");
+      setAutomated(body.automated ?? []);
+      setLegacy((body.legacy ?? []).filter((row) => row.kind !== "sms"));
+      setDeliveries(body.deliveries ?? {});
+      setError(null);
     } catch (reason) {
-      setDeliveryByCampaignId({});
-      setCampaignError(reason instanceof Error ? reason.message : "Campaign drafts couldn't load.");
+      setError(reason instanceof Error ? reason.message : "Campaigns couldn't load.");
     }
-  }, [campTab]);
+  }, []);
 
-  useEffect(() => { const timer = window.setTimeout(() => void loadCampaigns(), 0); return () => window.clearTimeout(timer); }, [loadCampaigns]);
+  useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
   useEffect(() => {
-    const refresh = () => void loadCampaigns();
+    const refresh = () => void load();
     window.addEventListener("voom:data-changed", refresh);
     return () => window.removeEventListener("voom:data-changed", refresh);
-  }, [loadCampaigns]);
+  }, [load]);
 
-  const visible = savedCampaigns.filter((campaign) => statusFilter === "all" || campaign.status === statusFilter);
+  // Historical SMS campaigns are loaded separately (read-only archive) so the
+  // active product experience never offers SMS, but old records still open.
+  const archivedSms = useLegacySmsArchive();
 
+  function openBuilder() {
+    open(<BuildCampaignModal onBuilt={(campaignId) => {
+      // Re-read then open the generated timeline.
+      void (async () => {
+        await load();
+        const response = await fetch(`/api/voom/campaigns/${encodeURIComponent(campaignId)}`, { cache: "no-store" });
+        const data = await response.json() as { automated?: AutomatedCampaignView };
+        if (data.automated) open(<AutomatedCampaignModal campaignId={campaignId} initial={data.automated} />);
+      })();
+    }} />);
+  }
 
-  function openNew() {
-    open(<CampaignEditorModal kind={campTab} />);
+  function openAutomated(campaignId: string) {
+    open(<AutomatedCampaignModal campaignId={campaignId} />);
   }
 
   return (
     <div>
       <PageHead
-        title="Email & SMS"
-        description="Campaign drafts prepared by Voom and approved by you. External delivery happens only through an explicit send action."
+        title="Campaigns"
+        description="Tell Voom what you want, and MARA builds a timed Instagram and email campaign for your review. Nothing is sent or published without you."
         actions={
           <>
-            <Btn variant="outline" size="sm" onClick={() => goTo("plan")}>
-              <Icon name="spark" size={14} /> Review marketing plan
+            <Btn variant="outline" size="sm" onClick={() => open(<CampaignEditorModal />)}>
+              <Icon name="edit" size={14} /> New email draft
             </Btn>
-            <Btn variant="primary" size="sm" onClick={openNew}>
-              <Icon name="plus" size={14} /> New {em ? "email" : "SMS"}
+            <Btn variant="primary" size="sm" onClick={openBuilder}>
+              <Icon name="spark" size={14} /> Build campaign with MARA
             </Btn>
           </>
         }
       />
 
-      {campaignError && <div role="alert" className="mb-3 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-sm text-red">{campaignError}</div>}
+      {error && <div role="alert" className="mb-3 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-sm text-red">{error}</div>}
 
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex w-fit gap-1 rounded-[13px] border border-line bg-surface-2 p-1">
-          <button
-            onClick={() => setCampTab("email")}
-            className={`flex items-center gap-1.5 rounded-[10px] px-4 py-2 text-[13.5px] font-semibold transition ${em ? "bg-surface text-text shadow-[var(--shadow)]" : "text-text-2"}`}
-          >
-            <Icon name="mail" size={14} /> Email
-          </button>
-          <button
-            onClick={() => setCampTab("sms")}
-            className={`flex items-center gap-1.5 rounded-[10px] px-4 py-2 text-[13.5px] font-semibold transition ${!em ? "bg-surface text-text shadow-[var(--shadow)]" : "text-text-2"}`}
-          >
-            <Icon name="msg" size={14} /> SMS
-          </button>
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-display text-lg font-semibold">MARA-built campaigns</h2>
+          <Tag tone="t-grey">{automated.length}</Tag>
         </div>
-        <Tag>
-          <Icon name="info" size={12} /> Delivery status stays truthful — Voom never fabricates a send
-        </Tag>
-      </div>
+        <p className="mt-1 text-[13px] text-text-3">
+          One timeline per campaign — Instagram Posts, Reels, Stories and emails together, ordered by date, each with its real status.
+        </p>
 
-      <Card className="p-4">
-        <div className="mb-3.5 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="font-display text-lg font-semibold">
-            {em ? "Email campaigns" : "SMS broadcasts"}
-            <span className="ml-2 text-[12.5px] font-normal text-text-3">{visible.length} saved</span>
-          </h2>
-          <div className="flex flex-wrap gap-1.5">
-            {FILTERS.map((filter) => (
-              <Chip key={filter.id} active={statusFilter === filter.id} onClick={() => setStatusFilter(filter.id)}>
-                {filter.label}
-              </Chip>
+        {automated.length === 0 ? (
+          <EmptyState
+            icon="spark"
+            title="No automated campaigns yet"
+            reason="Give MARA a goal, a short idea and dates, and it will build the full Instagram and email sequence for you to approve. It never sends or publishes during the build."
+            action={
+              <Btn variant="primary" size="sm" onClick={openBuilder}>
+                <Icon name="spark" size={14} /> Build campaign with MARA
+              </Btn>
+            }
+            className="py-8"
+          />
+        ) : (
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            {automated.map((view) => (
+              <AutomatedCampaignCard key={view.campaign.id} view={view} onOpen={() => openAutomated(view.campaign.id)} />
             ))}
           </div>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-[13.5px]">
-            <thead>
-              <tr className="text-left font-mono text-[10.5px] uppercase tracking-[.07em] text-text-3">
-                <th className="pb-2.5">Campaign</th>
-                <th className="pb-2.5">Audience</th>
-                <th className="pb-2.5">Draft content</th>
-                <th className="pb-2.5">Proposed send</th>
-                <th className="pb-2.5">Status</th>
-                <th className="pb-2.5 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visible.length === 0 && savedCampaigns.length === 0 && (
-                <tr className="border-t border-line">
-                  <td colSpan={6} className="p-0">
-                    <EmptyState
-                      icon={em ? "mail" : "msg"}
-                      title={`No ${em ? "email" : "SMS"} drafts yet`}
-                      reason={`This is where Voom keeps the ${em ? "emails" : "text messages"} it drafts for your approval. Create one yourself, or build your Marketing Plan and let Voom prepare campaign drafts for you. Nothing is ever sent until you approve it and choose a verified recipient.`}
-                      action={<>
-                        <Btn variant="primary" size="sm" onClick={openNew}>
-                          <Icon name="plus" size={14} /> New {em ? "email" : "SMS"}
-                        </Btn>
-                        <Btn variant="outline" size="sm" onClick={() => goTo("plan")}>
-                          <Icon name="spark" size={14} /> Build the plan
-                        </Btn>
-                      </>}
-                    />
-                  </td>
-                </tr>
-              )}
-              {visible.length === 0 && savedCampaigns.length > 0 && (
-                <tr className="border-t border-line">
-                  <td colSpan={6} className="py-8 text-center text-sm text-text-3">
-                    No drafts match this filter yet. Choose All to see every {em ? "email" : "SMS"} campaign.
-                  </td>
-                </tr>
-              )}
-              {visible.map((campaign) => {
-                const delivery = deliveryByCampaignId[campaign.id];
-                const state = delivery?.state;
-                return (
-                  <tr key={campaign.id} className="border-t border-line">
-                    <td className="py-3.5 pr-3">
-                      <b className="block max-w-[220px] truncate">{campaign.name}</b>
-                    </td>
-                    <td className="py-3.5 pr-3 text-text-2">
-                      <span className="block max-w-[200px] truncate">{campaign.audience || "Audience not set"}</span>
-                    </td>
-                    <td className="py-3.5 pr-3 text-text-2">
-                      <span className="block max-w-[260px] truncate">
-                        {campaign.kind === "email"
-                          ? campaign.subject || campaign.content || "No content yet"
-                          : campaign.content || "No message yet"}
-                      </span>
-                    </td>
-                    <td className="py-3.5 pr-3 whitespace-nowrap text-[12.5px] text-text-2">
-                      {campaign.proposed_send_at ? formatWhen(campaign.proposed_send_at) : "Not scheduled"}
-                    </td>
-                    <td className="py-3.5 pr-3 whitespace-nowrap">
-                      <div className="flex flex-wrap gap-1.5">
-                        <Tag tone={statusTone(campaign.status)}>{statusLabel(campaign.status)}</Tag>
-                        {state && <Tag tone={deliveryTone(state)}>{deliveryLabel(state)}</Tag>}
-                      </div>
-                    </td>
-                    <td className="py-3.5 text-right">
-                      <div className="flex flex-col items-end gap-1.5">
-                        {campaign.status === "approved" && (
-                          <span className="text-[11px] font-semibold text-text-3">{deliveryActionText(campaign.kind, delivery)}</span>
-                        )}
-                        <Btn variant="outline" size="sm" onClick={() => open(<CampaignEditorModal kind={campaign.kind} campaign={campaign} />)}>
-                          {campaign.status === "approved" ? "Open" : "Edit"}
-                        </Btn>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <p className="mt-3 text-[11.5px] leading-relaxed text-text-3">
-          Every draft here is saved in Voom and survives a refresh. Approving marks it ready for an explicit send; Voom never records a campaign as Delivered without provider confirmation.
-        </p>
+        )}
       </Card>
 
-      <Card className="mt-3.5 p-4">
-        <h2 className="font-display text-lg font-semibold">How email & SMS work in Voom</h2>
+      <Card className="mt-3.5 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-display text-lg font-semibold">Standalone email drafts</h2>
+          <Tag tone="t-grey">{legacy.length}</Tag>
+        </div>
+        <p className="mt-1 text-[12.5px] leading-relaxed text-text-3">
+          Delivery status stays truthful — Voom never fabricates a send. An approved draft shows Ready — open campaign to send, and Voom never records a campaign as Delivered without provider confirmation.
+        </p>
+        {legacy.length === 0 ? (
+          <p className="mt-3 py-4 text-center text-sm text-text-3">
+            No standalone email drafts yet. For a full sequence, use <b>Build campaign with MARA</b>.
+          </p>
+        ) : (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full border-collapse text-[13.5px]">
+              <thead>
+                <tr className="text-left font-mono text-[10.5px] uppercase tracking-[.07em] text-text-3">
+                  <th className="pb-2.5">Campaign</th>
+                  <th className="pb-2.5">Audience</th>
+                  <th className="pb-2.5">Subject</th>
+                  <th className="pb-2.5">Proposed send</th>
+                  <th className="pb-2.5">Status</th>
+                  <th className="pb-2.5 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {legacy.map((campaign) => {
+                  const delivery = deliveries[campaign.id];
+                  return (
+                    <tr key={campaign.id} className="border-t border-line">
+                      <td className="py-3 pr-3"><b className="block max-w-[200px] truncate">{campaign.name}</b></td>
+                      <td className="py-3 pr-3 text-text-2"><span className="block max-w-[180px] truncate">{campaign.audience || "Audience not set"}</span></td>
+                      <td className="py-3 pr-3 text-text-2"><span className="block max-w-[240px] truncate">{campaign.subject || campaign.content || "No content yet"}</span></td>
+                      <td className="py-3 pr-3 whitespace-nowrap text-[12.5px] text-text-2">{campaign.proposed_send_at ? formatWhen(campaign.proposed_send_at) : "Not scheduled"}</td>
+                      <td className="py-3 pr-3 whitespace-nowrap">
+                        <div className="flex flex-wrap gap-1.5">
+                          <Tag tone={campaign.status === "approved" ? "t-green" : campaign.status === "rejected" ? "t-red" : "t-grey"}>{statusLabel(campaign.status)}</Tag>
+                          {delivery?.state && <Tag tone={deliveryTone(delivery.state)}>{deliveryLabel(delivery.state)}</Tag>}
+                        </div>
+                      </td>
+                      <td className="py-3 text-right">
+                        <Btn variant="outline" size="sm" onClick={() => open(<CampaignEditorModal campaign={campaign} />)}>
+                          {campaign.status === "approved" ? "Open" : "Edit"}
+                        </Btn>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {archivedSms.length > 0 && (
+        <Card className="mt-3.5 p-5 opacity-90">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-display text-base font-semibold">Archived SMS campaigns</h2>
+            <Tag tone="t-grey">Read-only · SMS retired</Tag>
+          </div>
+          <p className="mt-1 text-[12.5px] leading-relaxed text-text-3">
+            SMS marketing is no longer part of Voom. These historical SMS campaigns are kept for your records and cannot be edited or sent.
+          </p>
+          <ul className="mt-3 space-y-1.5 text-[13px]">
+            {archivedSms.map((campaign) => (
+              <li key={campaign.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-line px-3 py-2">
+                <Icon name="msg" size={14} className="text-text-3" />
+                <b className="truncate">{campaign.name}</b>
+                <span className="text-text-3">{campaign.proposed_send_at ? formatWhen(campaign.proposed_send_at) : "No date"}</span>
+                <Tag tone={campaign.status === "approved" ? "t-green" : campaign.status === "rejected" ? "t-red" : "t-grey"}>{statusLabel(campaign.status)}</Tag>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      <Card className="mt-3.5 p-5">
+        <h2 className="font-display text-base font-semibold">How campaigns work</h2>
         <div className="mt-3 grid gap-2.5 sm:grid-cols-3">
           {HOW_IT_WORKS.map(([title, body]) => (
             <div key={title} className="rounded-2xl border border-line p-3.5">
               <div className="flex items-center gap-2">
-                <span className="voom-grad grid h-[26px] w-[26px] flex-none place-items-center rounded-full text-white">
-                  <Icon name="check" size={13} />
-                </span>
+                <span className="voom-grad grid h-[26px] w-[26px] flex-none place-items-center rounded-full text-white"><Icon name="check" size={13} /></span>
                 <b className="text-[13.5px]">{title}</b>
               </div>
               <p className="mt-1.5 text-[12.5px] leading-relaxed text-text-2">{body}</p>
@@ -220,58 +209,92 @@ export default function CampaignsPage() {
           ))}
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Btn variant="outline" size="sm" onClick={() => goTo("plan")}>
-            <Icon name="spark" size={14} /> Review marketing plan
-          </Btn>
-          <Btn variant="outline" size="sm" onClick={() => goTo("contacts")}>
-            <Icon name="users" size={14} /> Manage contacts
-          </Btn>
+          <Btn variant="outline" size="sm" onClick={() => goTo("studio")}><Icon name="ig" size={14} /> Create content</Btn>
+          <Btn variant="outline" size="sm" onClick={() => goTo("contacts")}><Icon name="users" size={14} /> Manage contacts</Btn>
         </div>
       </Card>
-
     </div>
   );
 }
 
-function statusTone(status: CampaignStatus) {
-  return status === "approved" ? "t-green" : status === "rejected" ? "t-red" : "t-grey";
+function AutomatedCampaignCard({ view, onOpen }: { view: AutomatedCampaignView; onOpen: () => void }) {
+  const { campaign, counts, lifecycle, lifecycleLabel } = view;
+  return (
+    <button type="button" onClick={onOpen} className="overflow-hidden rounded-2xl border border-line bg-surface p-4 text-left transition hover:border-brand">
+      <div className="flex flex-wrap items-center gap-2">
+        <Tag tone={lifecycleTone(lifecycle)}>{lifecycleLabel}</Tag>
+        <Tag tone="t-grey">{counts.instagram} IG</Tag>
+        <Tag tone="t-grey">{counts.email} email</Tag>
+        {counts.needingApproval > 0 && <Tag tone="t-amber">{counts.needingApproval} to review</Tag>}
+      </div>
+      <b className="mt-2 block truncate font-display text-[15.5px]">{campaign.name}</b>
+      <p className="mt-1 line-clamp-3 text-[12.5px] leading-[1.55] text-text-3">
+        {campaign.generated_summary ?? "MARA is preparing this campaign."}
+      </p>
+      <p className="mt-2 text-[11.5px] text-text-3">
+        {campaign.start_at ? new Date(campaign.start_at).toLocaleDateString("en-AE", { timeZone: "Asia/Dubai", month: "short", day: "numeric" }) : "—"}
+        {" → "}
+        {campaign.end_at ? new Date(campaign.end_at).toLocaleDateString("en-AE", { timeZone: "Asia/Dubai", month: "short", day: "numeric" }) : "—"}
+        <span className="float-right font-semibold text-brand">Open timeline →</span>
+      </p>
+    </button>
+  );
 }
 
-function statusLabel(status: CampaignStatus) {
+function useLegacySmsArchive(): CampaignRecord[] {
+  const [rows, setRows] = useState<CampaignRecord[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const response = await fetch("/api/voom/campaigns?kind=sms", { cache: "no-store" });
+          const data = await response.json() as { campaigns?: CampaignRecord[] };
+          if (!cancelled && response.ok) setRows(data.campaigns ?? []);
+        } catch {
+          // Archive is best-effort and must never break the campaigns screen.
+        }
+      })();
+    }, 0);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, []);
+  return rows;
+}
+
+const HOW_IT_WORKS: [string, string][] = [
+  ["You give the brief", "A goal, a campaign name or idea and dates. Offer, audience and notes are optional."],
+  ["MARA builds the plan", "MARA sequences Instagram Posts, Reels, Stories and emails across the dates, using your business context and real performance when it exists."],
+  ["You approve, Voom executes", "Review the single timeline and approve per action. Emails send only via an explicit send; Instagram items still need a visual and schedule."],
+];
+
+function lifecycleTone(status: string) {
+  if (status === "completed") return "t-green";
+  if (status === "active" || status === "scheduled") return "t-blue";
+  if (status === "needs_attention") return "t-red";
+  if (status === "needs_approval") return "t-amber";
+  return "t-grey";
+}
+
+function statusLabel(status: string) {
   if (status === "approved") return "Approved — ready to send";
   if (status === "rejected") return "Not approved";
   return "Draft";
 }
 
-function deliveryTone(status: CampaignDeliveryState) {
-  return status === "delivered" ? "t-green" : status === "accepted" ? "t-blue" : status === "failed" ? "t-red" : status === "sending" ? "t-amber" : "t-grey";
+function deliveryTone(state: string) {
+  return state === "delivered" ? "t-green" : state === "accepted" ? "t-blue" : state === "failed" ? "t-red" : state === "sending" ? "t-amber" : "t-grey";
 }
 
-function deliveryLabel(status: CampaignDeliveryState) {
-  if (status === "delivered") return "Delivered";
-  if (status === "accepted") return "Accepted";
-  if (status === "failed") return "Failed";
-  if (status === "sending") return "Sending";
+function deliveryLabel(state: string) {
+  if (state === "delivered") return "Delivered";
+  if (state === "accepted") return "Accepted";
+  if (state === "failed") return "Failed";
+  if (state === "sending") return "Sending";
   return "Ready";
-}
-
-function deliveryActionText(kind: "email" | "sms", delivery?: CampaignDeliveryView) {
-  if (!delivery) return `Ready — open campaign to send`;
-  if (!delivery.provider.configured) return `${delivery.provider.label} not configured`;
-  if (delivery.state === "accepted") return `${kind === "email" ? "Email" : "SMS"} accepted — waiting for callback`;
-  if (delivery.state === "delivered") return `${kind === "email" ? "Email" : "SMS"} delivered`;
-  if (delivery.state === "failed") return `${kind === "email" ? "Email" : "SMS"} failed — open to retry`;
-  if (delivery.state === "sending") return `Send in progress`;
-  return `Ready — open campaign to send`;
 }
 
 function formatWhen(value: string) {
   return new Date(value).toLocaleString("en-AE", {
-    timeZone: "Asia/Dubai",
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
+    timeZone: "Asia/Dubai", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
   });
 }

@@ -12,7 +12,7 @@ export default async function ContactsPage() {
     <div>
       <PageHead
         title="Contacts"
-        description="Your audience in one place — every contact owner-scoped, with explicit consent. No email or SMS is sent from this screen."
+        description="Your audience in one place — every contact owner-scoped, with explicit consent. No email is sent from this screen."
         tags={
           <span className="inline-flex items-center gap-1.5 rounded-[7px] bg-[var(--brand-soft)] px-2.5 py-[3px] text-[11.5px] font-semibold text-brand">
             Workspace only

@@ -290,7 +290,7 @@ function shouldUseTools(message: string, expectedKind: MaraDraftKind | null) {
   const changesVoom = /\b(add|schedule|reschedule|move|delete|remove|approve|reject|update)\b[^?]{0,100}\b(calendar|post|draft|campaign)\b/i.test(message)
     || /\bpublish\b[^?]{0,80}\binstagram\b/i.test(message);
   if (readsCalendar || changesVoom) return true;
-  if (expectedKind && !/\b(create|build|draft)\b.*\b(email|sms)\b.*\bcampaign\b/i.test(message)) return false;
+  if (expectedKind && !/\b(create|build|draft)\b.*\bemail\b.*\bcampaign\b/i.test(message)) return false;
   return /\b(calendar|schedule|reschedule|move|delete|campaign|drafts?|brand profile|connected|instagram|subscription|feature limit|approve|reject|publish)\b/i.test(message);
 }
 
@@ -306,7 +306,7 @@ async function runToolLoop(input: {
 }) {
   const provider = createAiProvider();
   const messages: AiToolMessage[] = input.messages.map((item) => ({ role: item.role, content: item.content }));
-  messages[0] = { role: "system", content: `${messages[0]?.content ?? ""}\n\nYou can inspect and operate Voom only through the supplied tools. Today is ${new Date().toISOString()} and the user's timezone is Asia/Dubai. Never invent IDs or results. Reads can run automatically. Calendar additions, changes, deletions, and draft approval return a pending confirmation; clearly say no change happened yet. Never claim publishing, sending, Instagram execution, or ad spending succeeded because those capabilities are unavailable. Use create_campaign_draft for a requested email/SMS campaign and do not send it. Do not expose tool names, raw JSON, IDs unless needed for a view link, or internal errors. After tool results, answer naturally and concisely.` };
+  messages[0] = { role: "system", content: `${messages[0]?.content ?? ""}\n\nYou can inspect and operate Voom only through the supplied tools. Today is ${new Date().toISOString()} and the user's timezone is Asia/Dubai. Never invent IDs or results. Reads can run automatically. Calendar additions, changes, deletions, and draft approval return a pending confirmation; clearly say no change happened yet. Never claim publishing, sending, Instagram execution, or ad spending succeeded because those capabilities are unavailable. Use create_campaign_draft for a requested single email campaign and do not send it. SMS is not available. Do not expose tool names, raw JSON, IDs unless needed for a view link, or internal errors. After tool results, answer naturally and concisely.` };
   let calls = 0;
   const pendingSummaries: string[] = [];
   const pendingActionIds: string[] = [];
@@ -368,7 +368,7 @@ function selectRelevantTools(message: string) {
   else if (/\b(move|reschedule|update)\b/.test(value)) names = ["list_content_calendar", "get_calendar_item", "update_calendar_item"];
   else if (/\b(add|schedule)\b/.test(value)) names = ["list_content_calendar", "propose_calendar_item", "get_connected_channels"];
   else if (/calendar|post/.test(value)) names = ["list_content_calendar", "get_calendar_item"];
-  else if (/campaign|email|sms/.test(value)) names = ["list_campaigns", "get_campaign", "create_campaign_draft", "update_campaign_draft", "get_brand_profile", "get_connected_channels"];
+  else if (/campaign|email/.test(value)) names = ["list_campaigns", "get_campaign", "create_campaign_draft", "update_campaign_draft", "get_brand_profile", "get_connected_channels"];
   else if (/instagram|publish/.test(value)) names = ["get_instagram_connection_status", "get_connected_channels", "get_draft"];
   else if (/draft|approve|reject/.test(value)) names = ["list_drafts", "get_draft", "create_content_draft", "update_content_draft", "approve_draft", "reject_draft"];
   else if (/subscription|limit|plan/.test(value)) names = ["get_subscription_and_feature_limits"];

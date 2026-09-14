@@ -93,7 +93,11 @@ test("Privacy Policy truthfully covers current Voom data flows", async () => {
   assert.match(privacy, /Media you provide or generate/);
   assert.match(privacy, /Contacts and audiences/);
   assert.match(privacy, /Resend/);
-  assert.match(privacy, /ClickSend/);
+  // SMS marketing was retired: the policy must say so honestly and must not
+  // present ClickSend as a current processor.
+  assert.match(privacy, /no longer offers SMS marketing/i);
+  assert.match(privacy, /historical SMS delivery records[^\.]*read-only/i);
+  assert.doesNotMatch(privacy, /ClickSend|Twilio/);
   assert.match(privacy, /AI providers/);
   assert.match(privacy, /Groq, OpenAI, Google \(Gemini\), NVIDIA/);
   assert.match(privacy, /Supabase/);

@@ -43,7 +43,7 @@ export const PLANS: Plan[] = [
       "Everything in Free",
       "More connected businesses",
       "Priority media generation",
-      "Email & SMS sending once a provider is connected",
+      "Email sending once the provider is connected",
     ],
     off: ["Paid ad budget management"],
   },

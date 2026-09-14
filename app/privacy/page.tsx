@@ -11,7 +11,7 @@ import {
 export const metadata: Metadata = {
   title: "Privacy Policy — Voom",
   description:
-    "How Voom collects, uses, shares, and protects data — including account and business data, Instagram connections, AI processing, email and SMS delivery, and your deletion rights.",
+    "How Voom collects, uses, shares, and protects data — including account and business data, Instagram connections, AI processing, email delivery, and your deletion rights.",
 };
 
 export default function PrivacyPage() {
@@ -68,8 +68,7 @@ export default function PrivacyPage() {
         <p>
           We store the content you and MARA create in Voom so the Service can
           operate. This includes your MARA conversations and messages, drafts
-          (such as Instagram captions, Reel concepts and scripts, emails, SMS
-          messages, and campaign plans), weekly marketing plans and content
+          (such as Instagram captions, Reel concepts and scripts, emails, and campaign plans), weekly marketing plans and content
           calendars, approval decisions and pending actions, and campaign
           records with their delivery statuses.
         </p>
@@ -89,22 +88,25 @@ export default function PrivacyPage() {
           If you use Voom to manage outreach, we store the contacts and
           audiences you add, including contact names, email addresses, phone
           numbers, subscription status, and audience membership. This includes
-          contacts you import from a CSV file. Email and SMS campaigns are only
-          offered for contacts marked as subscribed with a valid destination,
-          and each send only happens after you explicitly approve and trigger
-          it.
+          contacts you import from a CSV file. Email campaigns are only
+          offered for contacts marked as subscribed with a valid email
+          destination, and each send only happens after you explicitly approve
+          and trigger it. Voom no longer offers SMS marketing; phone numbers
+          and SMS consent captured by older accounts remain stored on the
+          contact record for historical reference but cannot be messaged.
         </p>
       </LegalSection>
 
-      <LegalSection title="Email and SMS delivery data">
+      <LegalSection title="Email delivery data">
         <p>
-          Campaign emails are delivered through Resend and campaign SMS
-          messages through ClickSend. When you send a campaign we pass the
-          message content and the recipient destination to the relevant
-          provider so it can be delivered, and we receive delivery status
+          Campaign emails are delivered through Resend. When you send a
+          campaign we pass the message content and the recipient email address
+          to Resend so it can be delivered, and we receive delivery status
           events back (such as delivered or bounced) to keep your campaign
           records accurate. Account emails (such as signup confirmation) are
-          sent through our authentication provider.
+          sent through our authentication provider. SMS marketing was removed
+          from Voom; historical SMS delivery records, where they exist, remain
+          stored read-only and are never used for new sends.
         </p>
       </LegalSection>
 
@@ -228,7 +230,7 @@ export default function PrivacyPage() {
 
       <LegalSection title="If you are a contact of a Voom customer">
         <p>
-          If you received an email or SMS that was sent through Voom by a
+          If you received an email (or, from an older Voom account, an SMS) that was sent through Voom by a
           business, that business controls your contact record. You can ask
           them to remove you, or contact us at <LegalEmailLink /> and we will
           forward your request to the sending business and remove your

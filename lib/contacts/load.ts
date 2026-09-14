@@ -85,10 +85,13 @@ function computeSummary(contacts: ContactRecord[]): ContactsSummary {
     unknownConsent: 0,
   };
   for (const c of contacts) {
+    // SMS marketing was removed from the active product; the workspace KPIs
+    // describe the active email channel only. sms_status is still stored on
+    // historical contact rows and never deleted here.
     if (c.email_status === "subscribed") s.emailSubscribers++;
     if (c.sms_status === "subscribed") s.smsSubscribers++;
-    if (c.email_status === "unsubscribed" || c.sms_status === "unsubscribed") s.unsubscribed++;
-    if (c.email_status === "unknown" || c.sms_status === "unknown") s.unknownConsent++;
+    if (c.email_status === "unsubscribed") s.unsubscribed++;
+    if (c.email_status === "unknown") s.unknownConsent++;
   }
   return s;
 }

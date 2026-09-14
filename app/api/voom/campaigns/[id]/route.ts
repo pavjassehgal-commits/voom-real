@@ -1,5 +1,6 @@
 import { approveCampaign, getCampaign, rejectCampaign, updateCampaign } from "@/lib/mara/internal-data";
 import { getCurrentUser } from "@/lib/voom/server-data";
+import { readAutomatedCampaign } from "@/lib/campaign/server";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
 import { z } from "zod";
@@ -7,15 +8,14 @@ import { z } from "zod";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const UUID_VALUE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// Legacy single-channel email draft editing. SMS is no longer editable
+// (historical SMS rows stay read-only); automated campaigns are managed on
+// the timeline, so kind is accepted-and-ignored for legacy email clients only.
 const editFields = z.object({
-  // Tolerate kind for backward safety: the editor no longer sends it on PATCH,
-  // but older clients may. kind is immutable on edit, so it is accepted and ignored.
-  kind: z.enum(["email", "sms"]).optional(),
+  kind: z.literal("email").optional(),
   name: z.string().trim().min(1).max(160).optional(),
   objective: z.string().trim().max(1000).optional(),
   audience: z.string().trim().max(1000).optional(),
-  // Set to link an owned audience, null to unlink, omit to leave unchanged.
-  // Ownership is always re-validated server-side below.
   audienceId: z.string().trim().regex(UUID_VALUE_RE).nullable().optional(),
   subject: z.string().trim().max(300).nullable().optional(),
   previewText: z.string().trim().max(500).nullable().optional(),
@@ -35,14 +35,24 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   try { body = await request.json(); } catch { return Response.json({ error: "Those campaign changes are not valid." }, { status: 400 }); }
   const parsed = editFields.safeParse(body);
   if (!parsed.success || Object.keys(parsed.data).length === 0) {
+    const rawKind = (body as { kind?: unknown } | null)?.kind;
+    if (rawKind === "sms") {
+      return Response.json({ error: "SMS campaigns are read-only in Voom now." }, { status: 400 });
+    }
     return Response.json({ error: "Check the campaign details before saving." }, { status: 400 });
   }
 
   try {
     const db = await createClient();
+    const existing = await getCampaign(db, user.id, id);
+    if (!existing) return Response.json({ error: "That campaign was not found." }, { status: 404 });
+    if (existing.kind === "multi" || existing.is_automated) {
+      return Response.json({ error: "MARA-built campaigns are managed on their timeline, not as one draft." }, { status: 409 });
+    }
+    if (existing.kind === "sms") {
+      return Response.json({ error: "SMS marketing is no longer active in Voom. This historical campaign is read-only." }, { status: 410 });
+    }
 
-    // Only touch audience_id when the client explicitly provided the field;
-    // when provided, ownership is re-validated server-side before linking.
     let audienceId: string | null | undefined;
     if (parsed.data.audienceId !== undefined) {
       if (parsed.data.audienceId === null) {
@@ -93,6 +103,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!parsed.success) return Response.json({ error: "Choose a valid campaign action." }, { status: 400 });
 
   try {
+    const db = await createClient();
+    const existing = await getCampaign(db, user.id, id);
+    if (!existing) return Response.json({ error: "That campaign was not found." }, { status: 404 });
+    if (existing.kind === "multi" || existing.is_automated) {
+      return Response.json({ error: "Approve this MARA-built campaign one timeline action at a time." }, { status: 409 });
+    }
+    if (existing.kind === "sms") {
+      return Response.json({ error: "SMS marketing is no longer active in Voom. This historical campaign is read-only." }, { status: 410 });
+    }
+
     const adminCampaign = await tryAdminCampaignApproval(user.id, id, parsed.data.action);
     if (adminCampaign) {
       const message = parsed.data.action === "approve"
@@ -101,7 +121,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return Response.json({ campaign: adminCampaign, message });
     }
 
-    const db = await createClient();
     const campaign = parsed.data.action === "approve"
       ? await approveCampaign(db, user.id, id)
       : await rejectCampaign(db, user.id, id);
@@ -121,9 +140,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const { id } = await params;
   if (!UUID_RE.test(id)) return Response.json({ error: "That campaign was not found." }, { status: 404 });
   try {
-    const campaign = await getCampaign(await createClient(), user.id, id);
+    const db = await createClient();
+    const campaign = await getCampaign(db, user.id, id);
     if (!campaign) return Response.json({ error: "That campaign was not found." }, { status: 404 });
-    return Response.json({ campaign });
+    if (campaign.kind === "multi") {
+      const automated = await readAutomatedCampaign(db, user.id, id);
+      if (!automated) return Response.json({ error: "That campaign was not found." }, { status: 404 });
+      return Response.json({ campaign, automated }, { headers: { "Cache-Control": "no-store" } });
+    }
+    return Response.json({ campaign }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return Response.json({ error: "That campaign couldn't load. Please retry." }, { status: 503 });
   }

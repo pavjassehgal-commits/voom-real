@@ -5,9 +5,6 @@ import { Webhook } from "standardwebhooks";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createResendClient } from "@/lib/email/client";
 import { getResendAvailability } from "@/lib/email/config";
-import { createClickSendClient } from "@/lib/sms/client";
-import { getClickSendAvailability } from "@/lib/sms/config";
-import { clickSendSmsSendPath } from "@/lib/sms/core";
 import { resolveAudienceChannelEligibility } from "@/lib/contacts/server-data";
 import type { AudienceChannelEligibility, AudienceEligibilityPreview } from "@/lib/contacts/types";
 import type { CampaignRecord, CampaignRecipientRecord, CampaignSendRecord, CampaignDeliveryView, CampaignProviderAvailability, CampaignDeliveryState, CampaignSendSummary } from "./types";
@@ -20,7 +17,7 @@ import type { CampaignRecord, CampaignRecipientRecord, CampaignSendRecord, Campa
  */
 export const BULK_SEND_CAP = 100;
 
-export function getCampaignProviderAvailability(kind: "email" | "sms"): CampaignProviderAvailability {
+export function getCampaignProviderAvailability(kind: CampaignRecord["kind"]): CampaignProviderAvailability {
   if (kind === "email") {
     const config = getResendAvailability();
     return {
@@ -32,18 +29,23 @@ export function getCampaignProviderAvailability(kind: "email" | "sms"): Campaign
     };
   }
 
-  const config = getClickSendAvailability();
+  // SMS marketing was removed from the active Voom product (and automated
+  // multi-channel campaigns never send from this helper). Historical SMS
+  // campaigns stay readable, but no provider is configured or callable: the
+  // delivery route refuses new SMS execution with a 410, and nothing here
+  // imports an SMS client.
   return {
-    provider: "clicksend",
-    label: "ClickSend",
-    configured: config.configured,
-    // There is no safe, signature-verified ClickSend delivery callback wired up
-    // yet, so delivery tracking is reported as not configured. An accepted
-    // ClickSend send must therefore stay at "accepted" and never become
-    // "delivered" without a real verified receipt.
+    provider: "retired",
+    label: kind === "multi" ? "Automated campaign" : "SMS (retired)",
+    configured: false,
     deliveryTrackingConfigured: false,
-    missingEnv: config.missingEnv,
+    missingEnv: [],
   };
+}
+
+/** The single delivery channel kind supported by the active product. */
+function deliveryKindOf(campaign: CampaignRecord): "email" | "sms" {
+  return campaign.kind === "email" ? "email" : "sms";
 }
 
 export async function readCampaignDelivery(db: SupabaseClient, ownerId: string, campaign: CampaignRecord): Promise<CampaignDeliveryView> {
@@ -89,8 +91,8 @@ export async function readCampaignDelivery(db: SupabaseClient, ownerId: string, 
     // the UI never displays stale or client-decided recipient data.
     let audience: AudienceEligibilityPreview | null = null;
     let audienceNote: string | null = null;
-    if (campaign.audience_id) {
-      const eligibility = await resolveAudienceChannelEligibility(db, ownerId, campaign.audience_id, campaign.kind);
+    if (campaign.audience_id && campaign.kind !== "multi") {
+      const eligibility = await resolveAudienceChannelEligibility(db, ownerId, campaign.audience_id, deliveryKindOf(campaign));
       if (eligibility.ok) {
         audience = toAudienceEligibilityPreview(eligibility.data);
       } else if (eligibility.error.code === "not_found") {
@@ -157,9 +159,9 @@ function summarizeCampaignSends(rows: Array<{ internal_status?: string | null }>
   return summary;
 }
 
-export function normalizeCampaignContact(kind: "email" | "sms", value: string) {
-  const trimmed = value.trim();
-  return kind === "email" ? trimmed.toLowerCase() : trimmed;
+/** Normalizes a single email destination. SMS was retired; only email sends. */
+export function normalizeCampaignContact(value: string) {
+  return value.trim().toLowerCase();
 }
 
 export function getCampaignDeliveryState(status: CampaignRecord["status"], send: CampaignSendRecord | null): CampaignDeliveryState | null {
@@ -193,46 +195,12 @@ export async function sendEmailCampaign(campaign: CampaignRecord, recipient: Cam
   };
 }
 
-export async function sendSmsCampaign(campaign: CampaignRecord, recipient: CampaignRecipientRecord) {
-  const client = createClickSendClient();
-  // One explicit message to the single approved campaign recipient. No Sender
-  // ID / `from` is invented: ClickSend uses the account's own sender settings
-  // when `from` is omitted, so the payload only carries `to` and `body`.
-  const response = await client.postJson(clickSendSmsSendPath(), {
-    messages: [
-      {
-        to: recipient.contact,
-        body: campaign.content,
-      },
-    ],
-  });
-  const body = await safeProviderBody(response);
-  const responseCode = typeof body?.response_code === "string" ? body.response_code : null;
-  // ClickSend returning SUCCESS only means it accepted the request into its
-  // queue. It is not a delivery confirmation, so this stays "accepted".
-  const accepted = response.ok && responseCode?.toUpperCase() === "SUCCESS";
-  return {
-    ok: accepted,
-    providerMessageId: readClickSendMessageId(body),
-    providerStatus: responseCode ?? "accepted",
-    errorCode: response.ok ? null : String(responseCode ?? `HTTP_${response.status}`),
-    errorMessage: response.ok ? null : providerErrorMessage(body, "ClickSend couldn't accept that SMS send."),
-  };
-}
-
 export function verifyResendWebhook(payload: string, headers: Headers, secret: string) {
   return new Webhook(secret).verify(payload, {
     "webhook-id": headers.get("svix-id") ?? "",
     "webhook-timestamp": headers.get("svix-timestamp") ?? "",
     "webhook-signature": headers.get("svix-signature") ?? "",
   }) as Record<string, unknown>;
-}
-
-function readClickSendMessageId(body: Record<string, unknown> | null) {
-  const data = body?.data as Record<string, unknown> | undefined;
-  const messages = Array.isArray(data?.messages) ? (data?.messages as unknown[]) : [];
-  const first = messages[0] as Record<string, unknown> | undefined;
-  return typeof first?.message_id === "string" && first.message_id.length > 0 ? first.message_id : null;
 }
 
 export async function recordDeliveryFromWebhook(db: SupabaseClient, input: { provider: "resend" | "twilio"; providerMessageId: string | null; eventId: string; eventType: string; receivedAt: string; providerStatus: string | null }) {

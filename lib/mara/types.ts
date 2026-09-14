@@ -1,4 +1,7 @@
-export const DRAFT_KINDS = ["instagram_caption", "reel", "email", "sms", "campaign_plan", "weekly_calendar"] as const;
+// SMS was removed from the active Voom product and is intentionally absent
+// here: MARA can no longer produce SMS drafts. ("sms" still exists in the DB
+// constraint so historical SMS rows keep loading.)
+export const DRAFT_KINDS = ["instagram_caption", "instagram_post", "story", "reel", "email", "campaign_plan", "weekly_calendar"] as const;
 export type MaraDraftKind = (typeof DRAFT_KINDS)[number];
 export type MaraDraftStatus = "draft" | "approved" | "rejected";
 

@@ -51,8 +51,11 @@ export async function GET(request: Request) {
         .order("publish_at", { ascending: false })
         .limit(MAX_PER_GROUP),
       db.from("voom_campaigns")
-        .select("id,name,subject,content,kind,updated_at")
+        .select("id,name,subject,content,kind,is_automated,parent_campaign_id,updated_at")
         .eq("owner_user_id", user.id)
+        // Automated child email campaigns appear on the campaign timeline,
+        // not as standalone search results.
+        .is("parent_campaign_id", null)
         .or(`name.ilike.${like},subject.ilike.${like},content.ilike.${like}`)
         .order("updated_at", { ascending: false })
         .limit(MAX_PER_GROUP),
@@ -95,7 +98,7 @@ export async function GET(request: Request) {
     const campaignItems = (campaigns.data ?? []).filter((row) => UUID_RE.test(String(row.id))).map((row) => ({
       id: String(row.id),
       title: trim(row.name) || "Untitled campaign",
-      subtitle: `${String(row.kind) === "sms" ? "SMS" : "Email"} · ${trim(row.subject || row.content, 60) || "No content yet"}`,
+      subtitle: `${String(row.kind) === "sms" ? "Archived SMS" : String(row.kind) === "multi" ? "Campaign" : "Email"} · ${trim(row.subject || row.content, 60) || "No content yet"}`,
       href: "/app/campaigns",
     }));
     if (campaignItems.length) groups.push({ label: "Campaigns", href: "/app/campaigns", items: campaignItems });

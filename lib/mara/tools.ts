@@ -8,7 +8,6 @@ import { getResendAvailability } from "@/lib/email/config";
 import { readInstagramConfig } from "@/lib/instagram/config";
 import { getInstagramConnection } from "@/lib/instagram/data";
 import { classifyReelProduction } from "@/lib/mara/reel-production";
-import { getClickSendAvailability } from "@/lib/sms/config";
 import {
   createCalendarItem, createCampaign, deleteCalendarItem, getBrandProfile, getCalendarItem, getCampaign,
   getDraft, listCalendarItems, listCampaigns, listDrafts, updateCalendarItem, updateCampaign,
@@ -16,7 +15,8 @@ import {
 
 const uuid = z.string().uuid();
 const isoDate = z.string().datetime({ offset: true });
-const channel = z.enum(["Instagram", "Reel", "Feed", "Email", "SMS"]);
+// SMS is no longer creatable; the historical "SMS" value still lives in the DB constraint for old rows.
+const channel = z.enum(["Instagram", "Reel", "Story", "Feed", "Email"]);
 const empty = z.object({}).strict();
 
 const schemas = {
@@ -25,19 +25,19 @@ const schemas = {
   get_calendar_item: z.object({ itemId: uuid }).strict(),
   list_drafts: z.object({ status: z.enum(["draft", "approved", "rejected"]).optional() }).strict(),
   get_draft: z.object({ draftId: uuid }).strict(),
-  list_campaigns: z.object({ kind: z.enum(["email", "sms"]).optional() }).strict(),
+  list_campaigns: z.object({ kind: z.enum(["email"]).optional() }).strict(),
   get_campaign: z.object({ campaignId: uuid }).strict(),
   get_connected_channels: empty,
   get_instagram_connection_status: empty,
   get_subscription_and_feature_limits: empty,
-  create_content_draft: z.object({ kind: z.enum(["instagram_caption", "reel", "email", "sms", "campaign_plan", "weekly_calendar"]), channel: z.string().min(1).max(60), title: z.string().min(1).max(160), content: z.string().min(1).max(12000), proposedPublishAt: isoDate.nullable().optional() }).strict(),
+  create_content_draft: z.object({ kind: z.enum(["instagram_caption", "instagram_post", "story", "reel", "email", "campaign_plan", "weekly_calendar"]), channel: z.string().min(1).max(60), title: z.string().min(1).max(160), content: z.string().min(1).max(12000), proposedPublishAt: isoDate.nullable().optional() }).strict(),
   update_content_draft: z.object({ draftId: uuid, title: z.string().min(1).max(160).optional(), content: z.string().min(1).max(12000).optional(), proposedPublishAt: isoDate.nullable().optional() }).strict(),
   approve_draft: z.object({ draftId: uuid }).strict(),
   reject_draft: z.object({ draftId: uuid }).strict(),
   propose_calendar_item: z.object({ title: z.string().min(1).max(160), channel, content: z.string().max(12000).default(""), topic: z.string().max(500).default(""), publishAt: isoDate, sourceDraftId: uuid.nullable().optional(), reason: z.string().min(1).max(800).optional() }).strict(),
   update_calendar_item: z.object({ itemId: uuid, title: z.string().min(1).max(160).optional(), channel: channel.optional(), content: z.string().max(12000).optional(), topic: z.string().max(500).optional(), publishAt: isoDate.optional() }).strict(),
   delete_calendar_item: z.object({ itemIds: z.array(uuid).min(1).max(25) }).strict(),
-  create_campaign_draft: z.object({ kind: z.enum(["email", "sms"]), name: z.string().min(1).max(160), objective: z.string().max(1000).default(""), audience: z.string().max(1000).default(""), subject: z.string().max(300).nullable().optional(), previewText: z.string().max(500).nullable().optional(), content: z.string().max(12000).default(""), proposedSendAt: isoDate.nullable().optional() }).strict(),
+  create_campaign_draft: z.object({ kind: z.literal("email"), name: z.string().min(1).max(160), objective: z.string().max(1000).default(""), audience: z.string().max(1000).default(""), subject: z.string().max(300).nullable().optional(), previewText: z.string().max(500).nullable().optional(), content: z.string().max(12000).default(""), proposedSendAt: isoDate.nullable().optional() }).strict(),
   update_campaign_draft: z.object({ campaignId: uuid, name: z.string().min(1).max(160).optional(), objective: z.string().max(1000).optional(), audience: z.string().max(1000).optional(), subject: z.string().max(300).nullable().optional(), previewText: z.string().max(500).nullable().optional(), content: z.string().max(12000).optional(), proposedSendAt: isoDate.nullable().optional() }).strict(),
   choose_reel_production: z.object({ draftId: uuid, concept: z.string().min(1).max(500), script: z.string().min(1).max(4000), shotInstructions: z.array(z.string().min(1).max(500)).max(5).default([]) }).strict(),
 } satisfies Record<string, z.ZodType>;
@@ -49,7 +49,7 @@ const descriptions: Record<MaraToolName, string> = {
   list_content_calendar: "List the authenticated user's real saved calendar items in an ISO date range, optionally filtered by channel.",
   get_calendar_item: "Read one owned calendar item by ID.",
   list_drafts: "List the user's MARA content drafts.", get_draft: "Read one owned content draft.",
-  list_campaigns: "List the user's real email or SMS campaign drafts.", get_campaign: "Read one owned campaign draft.",
+  list_campaigns: "List the user's real email campaign drafts and MARA-built automated campaigns. SMS marketing is no longer available.", get_campaign: "Read one owned campaign draft.",
   get_connected_channels: "Read saved channel preferences and actual integration availability.",
   get_instagram_connection_status: "Check whether real Instagram execution is available.",
   get_subscription_and_feature_limits: "Read the current Voom plan and safe feature limits.",
@@ -58,7 +58,7 @@ const descriptions: Record<MaraToolName, string> = {
   reject_draft: "Reject an owned content draft without publishing.", propose_calendar_item: "Propose a calendar addition; always requires confirmation.",
   update_calendar_item: "Propose changing an owned calendar item; always requires confirmation.",
   delete_calendar_item: "Propose deleting the exact owned calendar items; always requires confirmation.",
-  create_campaign_draft: "Create an email or SMS campaign draft only. Never sends it.", update_campaign_draft: "Update an owned campaign draft only. Never sends it.",
+  create_campaign_draft: "Create an email campaign draft only. Never sends it. For a multi-step email and Instagram sequence, direct the user to Build campaign with MARA.", update_campaign_draft: "Update an owned email campaign draft only. Never sends it.",
   choose_reel_production: "Ask the user for a truthful Reel production method when video production is not complete.",
 };
 
@@ -120,17 +120,17 @@ async function runTool(c: ToolContext, name: MaraToolName, a: Record<string, unk
   if (name === "get_connected_channels") {
     const instagram = await getInstagramConnection(c.db, c.ownerId, Boolean(readInstagramConfig()));
     const email = getResendAvailability();
-    const sms = getClickSendAvailability();
     return success({
       selectedChannels: c.business.preferred_channels,
-      integrations: { instagram: instagram.connected, email: false, sms: false },
+      // SMS marketing is no longer a Voom channel; the active channels are
+      // Instagram and email.
+      integrations: { instagram: instagram.connected, email: false },
       providerConfig: {
         email: { configured: email.configured, sendConfigured: email.sendConfigured, webhookConfigured: email.webhookConfigured },
-        sms: { configured: sms.configured },
       },
       note: instagram.connected
-        ? "Instagram is connected. Publishing still requires the separate confirmed execution flow. Email and SMS provider configuration is reported separately and does not enable sending."
-        : "Instagram is not connected. Email and SMS provider configuration is reported separately and does not enable sending.",
+        ? "Instagram is connected. Publishing still requires the separate confirmed execution flow. Email provider configuration is reported separately and does not enable sending."
+        : "Instagram is not connected. Email provider configuration is reported separately and does not enable sending.",
     }, "Checked channel availability.");
   }
   if (name === "get_instagram_connection_status") {
@@ -144,7 +144,7 @@ async function runTool(c: ToolContext, name: MaraToolName, a: Record<string, unk
   }
   if (name === "update_content_draft") { const draftId = a.draftId as string; const patch = compact({ title: a.title, content: a.content, proposed_publish_at: a.proposedPublishAt }); const { data, error } = await c.db.from("mara_drafts").update(patch).eq("owner_user_id", c.ownerId).eq("id", draftId).select("id,title,status").maybeSingle(); if (error) throw new Error("draft_update_failed"); return success(data, data ? `Updated draft “${data.title}”.` : "That draft was not found."); }
   if (name === "reject_draft") { const { data, error } = await c.db.from("mara_drafts").update({ status: "rejected" }).eq("owner_user_id", c.ownerId).eq("id", a.draftId as string).select("id,title,status").maybeSingle(); if (error) throw new Error("draft_reject_failed"); return success(data, data ? `Rejected draft “${data.title}”. Nothing was published.` : "That draft was not found."); }
-  if (name === "create_campaign_draft") { const data = await createCampaign(c.db, c.ownerId, campaignPatch(a)); return success(data, `Created email/SMS campaign draft “${data.name}” (${data.id}). It was not sent.`); }
+  if (name === "create_campaign_draft") { const data = await createCampaign(c.db, c.ownerId, { ...campaignPatch(a), kind: "email" }); return success(data, `Created email campaign draft “${data.name}” (${data.id}). It was not sent. For a full Instagram + email sequence, use Build campaign with MARA.`); }
   if (name === "update_campaign_draft") { const data = await updateCampaign(c.db, c.ownerId, a.campaignId as string, campaignPatch(a)); return success(data, data ? `Updated campaign draft “${data.name}”. It was not sent.` : "That campaign was not found."); }
 
   if (name === "approve_draft") {

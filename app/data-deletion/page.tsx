@@ -100,7 +100,7 @@ export default function DataDeletionPage() {
           persist for a limited period until they are overwritten; we keep
           records where the law requires it (for example records needed to
           prevent fraud or abuse); and de-identified, aggregate statistics that
-          no longer point to you or your business. Emails and SMS messages
+          no longer point to you or your business. Emails (and, for older accounts, historical SMS records)
           already delivered on your behalf cannot be recalled, and Resend and
           ClickSend retain their own delivery logs under their own policies.
         </p>
@@ -108,7 +108,7 @@ export default function DataDeletionPage() {
 
       <LegalSection title="If you are a contact of a Voom customer">
         <p>
-          If you received an email or SMS sent through Voom by a business and
+          If you received an email (or, from an older Voom account, an SMS) sent through Voom by a business and
           want your details removed, email us at <LegalEmailLink /> with the
           sending business and the address or number contacted. We will forward
           your request to that business and remove your destination from the
