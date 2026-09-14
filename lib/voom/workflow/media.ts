@@ -307,21 +307,33 @@ export async function mediaAlreadyHandled(admin: AdminClient, ownerId: string, d
 }
 
 /**
- * The video-side effects of this module, behind one seam so the money-critical
- * policy is exercised with fakes (no OpenRouter call, no paid generation) —
- * the same ports pattern the durable video job service and the Instagram
- * publish flow already use. Production always uses `defaultWorkflowVideoDeps`.
+ * The provider-side effects of this module, behind one seam so the
+ * money-critical policy is exercised with fakes (no OpenRouter call, no paid
+ * generation) — the same ports pattern the durable video job service and the
+ * Instagram publish flow already use. Production always uses
+ * `defaultWorkflowMediaDeps`. `startVideo` and `generateImage` are the ONLY
+ * two members that can spend provider credits.
  */
-export interface WorkflowVideoDeps {
+export interface WorkflowMediaDeps {
   /** Re-checks ONE existing durable job. Never submits a provider job. */
   advance(admin: AdminClient, ownerId: string, draftId: string, generationId: string): Promise<"advanced" | "unavailable">;
   /** Persists the hard-timeout terminal state: a database write, no provider call. */
   enforceTimeout(admin: AdminClient, ownerId: string, generationId: string, now: Date): Promise<{ enforced: boolean }>;
-  /** The ONLY path that may submit a new paid provider job. */
+  /** The ONLY path that may submit a new paid provider VIDEO job. */
   startVideo(args: PostStudioVideoStartArgs): Promise<PostStudioVideoStartResult>;
+  /**
+   * The ONLY path that may submit a new paid provider IMAGE request (OpenRouter
+   * Seedream today). Returns the provider name for the generation row.
+   */
+  generateImage(input: { prompt: string; aspectRatio: "1:1" | "9:16" }): Promise<{ provider: string; bytes: Uint8Array }>;
 }
 
-export const defaultWorkflowVideoDeps: WorkflowVideoDeps = {
+export const defaultWorkflowMediaDeps: WorkflowMediaDeps = {
+  async generateImage(input) {
+    const config = getMediaConfig();
+    const result = await createMediaProvider(config).generateImage({ prompt: input.prompt, aspectRatio: input.aspectRatio });
+    return { provider: config.provider, bytes: result.bytes };
+  },
   async advance(admin, ownerId, draftId, generationId) {
     const service = await buildVideoService(admin, ownerId);
     // No provider stack means there is nothing to poll. The hard timeout does
@@ -350,10 +362,10 @@ export const defaultWorkflowVideoDeps: WorkflowVideoDeps = {
 export async function ensureWorkflowMedia(
   admin: AdminClient,
   request: MediaRequest,
-  options: { now?: Date; deps?: Partial<WorkflowVideoDeps> } = {},
+  options: { now?: Date; deps?: Partial<WorkflowMediaDeps> } = {},
 ): Promise<MediaOutcome> {
   const now = options.now ?? new Date();
-  const deps: WorkflowVideoDeps = { ...defaultWorkflowVideoDeps, ...options.deps };
+  const deps: WorkflowMediaDeps = { ...defaultWorkflowMediaDeps, ...options.deps };
   const latest = await getLatestGeneration(admin, request.ownerId, request.draftId);
   // A job beyond its hard timeout is stopped even here, so it cannot stay
   // 'generating' forever. This submits nothing: no provider call, no charge.
@@ -374,7 +386,7 @@ async function stopTimedOutGeneration(
   ownerId: string,
   generationId: string,
   now: Date,
-  deps: WorkflowVideoDeps,
+  deps: WorkflowMediaDeps,
 ): Promise<MediaOutcome> {
   await deps.enforceTimeout(admin, ownerId, generationId, now).catch(() => ({ enforced: false }));
   return { ok: true, state: "timed_out" };
@@ -397,10 +409,10 @@ async function stopTimedOutGeneration(
 export async function produceWorkflowMedia(
   admin: AdminClient,
   request: MediaRequest,
-  options: { idempotencyToken?: string; explicit?: boolean; now?: Date; deps?: Partial<WorkflowVideoDeps> } = {},
+  options: { idempotencyToken?: string; explicit?: boolean; now?: Date; deps?: Partial<WorkflowMediaDeps> } = {},
 ): Promise<MediaOutcome> {
   const now = options.now ?? new Date();
-  const deps: WorkflowVideoDeps = { ...defaultWorkflowVideoDeps, ...options.deps };
+  const deps: WorkflowMediaDeps = { ...defaultWorkflowMediaDeps, ...options.deps };
   const [latest, hasAsset] = await Promise.all([
     getLatestGeneration(admin, request.ownerId, request.draftId),
     hasStoredAsset(admin, request.ownerId, request.draftId),
@@ -468,7 +480,7 @@ export async function produceWorkflowMedia(
     return { ok: true, state: result.status === 202 ? "queued" : "exists" };
   }
 
-  const outcome = await generateWorkflowImage(admin, request);
+  const outcome = await generateWorkflowImage(admin, request, deps);
   // The visual arriving late must re-sync an approved item's schedule: the
   // queue row moves from 'waiting_for_media' to 'scheduled' and the worker
   // publishes it — the item never silently dies waiting for media.
@@ -478,7 +490,7 @@ export async function produceWorkflowMedia(
 
 
 /** Image generation through the existing provider abstraction. */
-async function generateWorkflowImage(admin: AdminClient, request: MediaRequest): Promise<MediaOutcome> {
+async function generateWorkflowImage(admin: AdminClient, request: MediaRequest, deps: WorkflowMediaDeps): Promise<MediaOutcome> {
   const format = request.contentType === "story" ? "9:16" : "1:1";
   const prompt = buildVisualPrompt(request);
   const generationId = randomUUID();
@@ -498,8 +510,7 @@ async function generateWorkflowImage(admin: AdminClient, request: MediaRequest):
   if (queueError) return { ok: false, code: "media_job_failed" };
 
   try {
-    const config = getMediaConfig();
-    const result = await createMediaProvider(config).generateImage({ prompt, aspectRatio: format });
+    const result = await deps.generateImage({ prompt, aspectRatio: format });
     if (!result.bytes.length || result.bytes.length > GENERATED_IMAGE_MAX_BYTES) throw new MediaError("malformed_response");
     const inspected = inspectImageBytes(result.bytes);
     if (!inspected || !aspectMatches(inspected.width, inspected.height, format)) throw new MediaError("malformed_response");
@@ -514,7 +525,7 @@ async function generateWorkflowImage(admin: AdminClient, request: MediaRequest):
       origin: "mara",
     });
     await admin.from("mara_media_generations").update({
-      provider: config.provider, storage_path: storagePath, mime_type: mimeType,
+      provider: result.provider, storage_path: storagePath, mime_type: mimeType,
       byte_size: result.bytes.length, status: "completed", completed_at: new Date().toISOString(), error_code: null,
     }).eq("id", generationId).eq("owner_user_id", request.ownerId);
     if (previousStoragePath && previousStoragePath !== storagePath) {

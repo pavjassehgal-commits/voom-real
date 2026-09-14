@@ -5,9 +5,10 @@ import { AiError, createAiProvider } from "@/lib/ai";
 import { evaluateAutopilotRecommendation } from "@/lib/mara/autopilot-safety";
 import { composePostCaption } from "@/lib/post/core";
 import { approvePostDraft, syncPostToCalendar, type AdminClient } from "@/lib/post/server-data";
+import { mayAutomaticallyGeneratePaidMedia, normalizeAutomationMode, type AutomationModeValue, type WorkflowTrigger } from "@/lib/voom/automation";
 import { CADENCE_LABELS, normalizeCadence, type Cadence } from "@/lib/voom/cadence";
 import { accountTimezone, formatLocalTime, localDate } from "@/lib/voom/timezone";
-import { ensureWorkflowMedia } from "./media";
+import { ensureWorkflowMedia, type WorkflowMediaDeps } from "./media";
 import { buildPlannedContentPayload, plannedContentJsonSchema, plannedContentSchema, PLANNED_CONTENT_SYSTEM_PROMPT } from "./prompt";
 import {
   ensureRollingPlan,
@@ -39,16 +40,34 @@ export interface WorkflowRunInput {
   ownerId: string;
   now?: Date;
   cadence?: Cadence;
-  mode?: "manual" | "assisted" | "autopilot";
+  /**
+   * What started the run. Defaults to "scheduled" (cron). The Marketing Plan
+   * route passes "replenish" for the owner's explicit Build/Replenish click.
+   */
+  trigger?: WorkflowTrigger;
   /**
    * "planning_only" runs the same cadence-aware rolling planner and persists
    * the same drafts/plan items, but stops before `ensureMedia` and
    * `autoApproveAndSchedule`: no provider call, no media job, no approval, no
-   * calendar scheduling, no queueing, no publishing. Defaults to "full".
+   * calendar scheduling, no queueing, no publishing. Defaults to "full" —
+   * except that the central paid-media policy forces Manual runs to
+   * planning-only regardless of what is requested.
    */
   stage?: WorkflowStage;
+  /**
+   * Test seam only: the provider-side effects of the media stage (see
+   * lib/voom/workflow/media.ts). Production callers never pass this, so the
+   * real Seedream/Seedance wiring is used.
+   */
+  mediaDeps?: Partial<WorkflowMediaDeps>;
 }
 
+/**
+ * Runs the rolling workflow for one owner under the account's SAVED automation
+ * mode. The mode is deliberately not a parameter: no caller can run a Manual
+ * account "as Assisted" (the production Replenish bug) — Manual stays Manual
+ * for the whole run, and the paid-media ports refuse accordingly.
+ */
 export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInput): Promise<RollingPlanResult> {
   const now = input.now ?? new Date();
   const { data: business } = await admin.from("businesses")
@@ -58,7 +77,8 @@ export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInp
 
   const timeZone = accountTimezone((business as { timezone?: string | null }).timezone);
   const cadence = input.cadence ?? normalizeCadence(business.content_frequency);
-  const mode = input.mode ?? normalizeMode(business.automation_level);
+  const mode = normalizeAutomationMode(business.automation_level);
+  const trigger: WorkflowTrigger = input.trigger === "replenish" ? "replenish" : "scheduled";
   const goal = String(business.main_goal ?? "Grow awareness");
 
   const ports = await buildWorkflowPorts(admin, {
@@ -69,12 +89,11 @@ export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInp
     cadence,
     goal,
     now,
+    mode,
+    trigger,
+    mediaDeps: input.mediaDeps,
   });
-  return ensureRollingPlan(ports, { now, timeZone, cadence, mode, goal, stage: input.stage });
-}
-
-function normalizeMode(value: string | null | undefined): "manual" | "assisted" | "autopilot" {
-  return value === "manual" || value === "autopilot" ? value : "assisted";
+  return ensureRollingPlan(ports, { now, timeZone, cadence, mode, goal, stage: input.stage, trigger });
 }
 
 interface PortContext {
@@ -85,7 +104,20 @@ interface PortContext {
   cadence: Cadence;
   goal: string;
   now: Date;
+  /** The account's saved mode and what started the run — the paid-media guard reads both. */
+  mode: AutomationModeValue;
+  trigger: WorkflowTrigger;
+  /** Test seam only; production uses the module defaults. */
+  mediaDeps?: Partial<WorkflowMediaDeps>;
 }
+
+/**
+ * Returned by the paid-media / approval ports when the central policy forbids
+ * automatic media for this (mode, trigger). The engine never reaches these
+ * ports for such a run, so seeing this code means a caller bypassed the
+ * engine — and it is refused here regardless. Server-side, not UI-side.
+ */
+export const AUTOMATIC_MEDIA_FORBIDDEN = "automatic_media_forbidden_for_mode";
 
 export async function buildWorkflowPorts(admin: AdminClient, context: PortContext): Promise<RollingPlanPorts> {
   const conversationId = await ensureWorkflowConversation(admin, context.ownerId);
@@ -167,6 +199,14 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
     },
 
     async ensureMedia(item) {
+      // Cost-safety invariant (server-side, independent of the engine and of
+      // any button): a run whose (mode, trigger) may not generate paid media
+      // automatically can never reach a provider submission through this
+      // port. Manual + Replenish returns here before any read, insert,
+      // Seedream or Seedance call.
+      if (!mayAutomaticallyGeneratePaidMedia(context.mode, context.trigger)) {
+        return { ok: false, code: AUTOMATIC_MEDIA_FORBIDDEN };
+      }
       const { data: draft } = await admin.from("mara_drafts").select("media_brief")
         .eq("owner_user_id", context.ownerId).eq("id", item.draftId).maybeSingle();
       return ensureWorkflowMedia(admin, {
@@ -176,7 +216,7 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
         contentType: item.contentType,
         concept: item.concept,
         visualBrief: String(draft?.media_brief ?? item.concept),
-      });
+      }, { deps: context.mediaDeps });
     },
 
     async requestApproval(item) {
@@ -186,6 +226,9 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
     },
 
     async autoApproveAndSchedule(item) {
+      // Auto-approval is Autopilot-only. A Manual run can never approve or
+      // schedule anything by itself, whatever drove the engine.
+      if (context.mode !== "autopilot") return { approved: false, reason: AUTOMATIC_MEDIA_FORBIDDEN };
       const safety = evaluateAutopilotRecommendation({
         title: item.concept, content: item.caption, publishAt: item.publishAt,
       }, context.now);

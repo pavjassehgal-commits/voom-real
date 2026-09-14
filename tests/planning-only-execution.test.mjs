@@ -403,7 +403,9 @@ test("POST /api/plan authenticates, honours planning_only, and never takes an ow
 
   // Only the exact "planning_only" value narrows the run; the default is full.
   assert.match(route, /body\.stage === "planning_only"/);
-  assert.match(route, /runOwnerWorkflow\(admin, \{ ownerId: user\.id, cadence, mode, stage \}\)/);
+  assert.match(route, /runOwnerWorkflow\(admin, \{ ownerId: user\.id, cadence, stage, trigger: "replenish" \}\)/);
+  // The route never chooses a mode: the saved automation_level governs the run.
+  assert.doesNotMatch(route, /\bmode\s*[:=]|automation_level/);
 
   // The route itself performs no writes and reaches for no provider, queue or
   // publishing system: every write flows through the workflow's own stages.
