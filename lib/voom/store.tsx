@@ -25,7 +25,8 @@ import type {
   OnboardingAnswers,
   Toast,
 } from "./types";
-import { saveOnboarding as saveOnboardingAction, saveBrandSettings as saveBrandSettingsAction, restartOnboarding as restartOnboardingAction } from "./mutations";
+import { saveOnboarding as saveOnboardingAction, saveBrandSettings as saveBrandSettingsAction, saveMediaSpendSettings as saveMediaSpendAction, restartOnboarding as restartOnboardingAction } from "./mutations";
+import { normalizeMediaSpendSettings, type MediaSpendSettings } from "@/lib/mara/media-spend";
 
 const NAV_PATHS: Record<string, string> = {
   dash: "/app/today",
@@ -137,6 +138,8 @@ interface VoomState {
   /** Billing is offline; every account is on the Free plan until Stripe exists. */
   plan: "free";
   brand: Brand;
+  /** AI Media Spending settings — the live value the settings screen edits. */
+  mediaSpend: MediaSpendSettings;
   onboard: OnboardingAnswers;
   onboardStep: number;
   onboardSaving: boolean;
@@ -157,6 +160,7 @@ function initialState(init: { displayName: string | null; email: string | null; 
     igConnected: false,
     plan: "free",
     brand: brandFromBusiness(init.business),
+    mediaSpend: normalizeMediaSpendSettings(init.business),
     onboard: { ...emptyOnboard(), displayName: init.displayName?.trim() ?? "" },
     onboardStep: 0,
     onboardSaving: false,
@@ -186,6 +190,7 @@ interface VoomActions {
 
   toggleTone: (t: string) => void;
   saveBrandSettings: (input: BusinessProfileInput) => Promise<boolean>;
+  saveMediaSpend: (input: MediaSpendSettings) => Promise<boolean>;
 
   setOnboardField: <K extends keyof OnboardingAnswers>(key: K, value: OnboardingAnswers[K]) => void;
   toggleOnboardArray: (key: "customer" | "tone" | "channels", value: string, max?: number) => boolean;
@@ -322,6 +327,30 @@ export function VoomProvider({
     [toast],
   );
 
+  const saveMediaSpend = useCallback<VoomActions["saveMediaSpend"]>(
+    async (input) => {
+      setState((s) => ({ ...s, settingsSaving: true, settingsError: null }));
+      const result = await saveMediaSpendAction(input);
+      if (!result.ok) {
+        setState((s) => ({ ...s, settingsSaving: false, settingsError: result.error }));
+        return false;
+      }
+      setState((s) => ({
+        ...s,
+        settingsSaving: false,
+        settingsError: null,
+        // The saved value is the normalized value the server enforces.
+        mediaSpend: normalizeMediaSpendSettings({
+          allow_automatic_paid_media: input.allowAutomaticPaidMedia,
+          monthly_media_budget_usd: input.monthlyMediaBudgetUsd,
+        }),
+      }));
+      toast("AI media spending saved");
+      return true;
+    },
+    [toast],
+  );
+
   const setOnboardField = useCallback<VoomActions["setOnboardField"]>((key, value) => {
     setState((s) => ({ ...s, onboard: { ...s.onboard, [key]: value } }));
   }, []);
@@ -421,6 +450,7 @@ export function VoomProvider({
       igDisconnect,
       toggleTone,
       saveBrandSettings,
+      saveMediaSpend,
       setOnboardField,
       toggleOnboardArray,
       setOnboardStep,
@@ -439,6 +469,7 @@ export function VoomProvider({
       igDisconnect,
       toggleTone,
       saveBrandSettings,
+      saveMediaSpend,
       setOnboardField,
       toggleOnboardArray,
       setOnboardStep,

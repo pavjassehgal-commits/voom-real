@@ -6,6 +6,7 @@ import { composePostCaption } from "@/lib/post/core";
 import { buildPostContextPayload, POST_COPY_SYSTEM_PROMPT, postDraftJsonSchema, postDraftSchema, STORY_VISUAL_SYSTEM_PROMPT, storyVisualJsonSchema, storyVisualSchema } from "@/lib/post/prompt";
 import { getPostDraft, loadPostBrandContext, loadPostPlanContext, normalizeMediaBrief, putPostAsset, removePostAssetObject, syncPostToCalendar } from "@/lib/post/server-data";
 import { startPostStudioVideo } from "@/lib/mara/video-service";
+import { estimateMediaCostUsd } from "@/lib/mara/media-spend";
 import { aspectMatches, inspectImageBytes } from "@/lib/media/media-inspect";
 import { applyPostOverlay } from "@/lib/media/image-overlay";
 import { createAdminClient } from "@/utils/supabase/admin";
@@ -192,6 +193,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     aspect_ratio: format,
     status: "processing",
     idempotency_key: `post-studio:${id}:${generationId}`,
+    // AI media spend control: this is an explicit user request ("Create with
+    // MARA"), so it is auditable as such and counted with the centralized
+    // estimate. It is allowed even when automatic generation is disabled.
+    spend_source: "user_request",
+    estimated_cost_usd: estimateMediaCostUsd({ mediaType: "image" }),
   });
   if (queuedError) return Response.json({ error: "Voom couldn't start that generation safely. Nothing changed." }, { status: 503 });
 

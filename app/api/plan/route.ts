@@ -1,4 +1,5 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
+import { mediaSpendRunNotice } from "@/lib/mara/media-spend";
 import { loadWorkflowSnapshot } from "@/lib/voom/workflow/read";
 import { runOwnerWorkflow } from "@/lib/voom/workflow/service";
 import { normalizeCadence, CADENCES } from "@/lib/voom/cadence";
@@ -69,7 +70,11 @@ export async function POST(request: Request) {
     // the account's saved mode itself; Manual stays Manual throughout.
     const run = await runOwnerWorkflow(admin, { ownerId: user.id, cadence, stage, trigger: "replenish" });
     const snapshot = await loadWorkflowSnapshot(admin, user.id);
-    return Response.json({ run, snapshot });
+    // AI Media Spend Control: a refused automatic generation is NOT a failed
+    // run — the plan, copy and drafts were created and only the media waits.
+    // The owner is told the truthful reason (disabled / budget reached).
+    const mediaSpendNotice = mediaSpendRunNotice(run.failures);
+    return Response.json({ run, snapshot, mediaSpendNotice });
   } catch {
     return Response.json({ error: "Voom couldn't build your plan right now. Your existing work is safe—please retry." }, { status: 503 });
   }

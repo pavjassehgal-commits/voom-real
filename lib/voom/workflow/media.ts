@@ -7,6 +7,8 @@ import { putPostAsset, removePostAssetObject, syncPostToCalendar, type AdminClie
 import { advanceVideoJob, buildVideoService, enforceVideoJobHardTimeout, startPostStudioVideo } from "@/lib/mara/video-service";
 import type { PostStudioVideoStartArgs, PostStudioVideoStartResult } from "@/lib/mara/video-service";
 import { isTimedOutVideoGeneration, staleDecision } from "@/lib/mara/video-job";
+import { guardMediaSpend } from "@/lib/mara/spend-control";
+import type { MediaSource } from "@/lib/mara/media-spend";
 import { isActiveMediaStatus, isStaleMediaGeneration, MEDIA_GENERATION_HARD_TIMEOUT_MINUTES } from "./state";
 import type { ContentType } from "@/lib/voom/cadence";
 
@@ -43,6 +45,19 @@ import type { ContentType } from "@/lib/voom/cadence";
  *   - the database keeps the final guard: one active generation per
  *     (owner, draft) partial unique index — so even two simultaneous clicks
  *     create at most one fresh provider job.
+ *
+ * AI MEDIA SPEND CONTROL (the one paid-media gate):
+ *   - `guardMediaSpend` (lib/mara/spend-control.ts) runs immediately before a
+ *     NEW paid submission, after the duplicate/spend-free decisions above.
+ *     A Manual account, an account whose owner turned automatic generation
+ *     off, or a month that has used its budget is refused there with a
+ *     truthful reason: nothing is submitted, no generation row is written and
+ *     nothing is charged,
+ *   - an explicit user click is always allowed and is recorded as
+ *     `user_request`; automatic work is recorded as `assisted` or `autopilot`,
+ *   - a refusal is NOT a workflow failure: the caller keeps the plan, the copy
+ *     and the draft, and only the media waits (the plan engine records it in
+ *     `run.failures` and the item stays a draft).
  */
 
 const GENERATED_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
@@ -54,6 +69,12 @@ export interface MediaRequest {
   contentType: ContentType;
   concept: string;
   visualBrief: string;
+  /**
+   * The account's automation mode for a run-driven generation. Only relevant
+   * to the automatic path (the AI media spend gate); an explicit click is
+   * always `user_request`. Defaults to Assisted when a caller omits it.
+   */
+  mode?: "manual" | "assisted" | "autopilot";
 }
 
 /**
@@ -409,7 +430,14 @@ async function stopTimedOutGeneration(
 export async function produceWorkflowMedia(
   admin: AdminClient,
   request: MediaRequest,
-  options: { idempotencyToken?: string; explicit?: boolean; now?: Date; deps?: Partial<WorkflowMediaDeps> } = {},
+  options: {
+    idempotencyToken?: string;
+    explicit?: boolean;
+    /** The account's mode for a run-driven generation; see MediaRequest.mode. */
+    mode?: "manual" | "assisted" | "autopilot";
+    now?: Date;
+    deps?: Partial<WorkflowMediaDeps>;
+  } = {},
 ): Promise<MediaOutcome> {
   const now = options.now ?? new Date();
   const deps: WorkflowMediaDeps = { ...defaultWorkflowMediaDeps, ...options.deps };
@@ -447,6 +475,22 @@ export async function produceWorkflowMedia(
     return stopTimedOutGeneration(admin, request.ownerId, decision.generationId, now, deps);
   }
 
+  // EVERYTHING BELOW MAY SUBMIT A NEW PAID GENERATION. The one AI media spend
+  // gate runs here — after the decisions that cost nothing (exists / advance /
+  // timeout) and before the first write or provider call. A refused attempt
+  // returns a truthful reason and leaves the account completely untouched: no
+  // generation row, no provider request, no charge.
+  const mode = options.mode ?? request.mode ?? "assisted";
+  const spend = await guardMediaSpend(admin, {
+    ownerId: request.ownerId,
+    mode,
+    explicit: options.explicit === true,
+    mediaType: request.contentType === "reel" ? "video" : "image",
+    durationSeconds: request.contentType === "reel" ? 8 : null,
+    now,
+  });
+  if (!spend.allow) return { ok: false, code: spend.reason };
+
   if (decision.kind === "start_after_timeout") {
     // The explicit "Retry as new generation": the dead job is stopped FIRST
     // (it keeps its provider job id as history), then exactly one fresh
@@ -471,6 +515,8 @@ export async function produceWorkflowMedia(
       post: { id: request.draftId, kind: "reel", conversationId: request.conversationId, concept: request.concept },
       brief: request.visualBrief,
       idempotencyToken: resolveGenerationToken(decision.token, request.draftId),
+      // The audited source of this paid job (user_request/assisted/autopilot).
+      source: spend.source,
     });
     if ("error" in result) {
       // 409 is the one-active-job guard refusing a second job: a repeated or
@@ -480,7 +526,7 @@ export async function produceWorkflowMedia(
     return { ok: true, state: result.status === 202 ? "queued" : "exists" };
   }
 
-  const outcome = await generateWorkflowImage(admin, request, deps);
+  const outcome = await generateWorkflowImage(admin, request, deps, { source: spend.source, estimatedCostUsd: spend.estimatedCostUsd });
   // The visual arriving late must re-sync an approved item's schedule: the
   // queue row moves from 'waiting_for_media' to 'scheduled' and the worker
   // publishes it — the item never silently dies waiting for media.
@@ -489,8 +535,19 @@ export async function produceWorkflowMedia(
 }
 
 
-/** Image generation through the existing provider abstraction. */
-async function generateWorkflowImage(admin: AdminClient, request: MediaRequest, deps: WorkflowMediaDeps): Promise<MediaOutcome> {
+/**
+ * Image generation through the existing provider abstraction.
+ *
+ * `spend` is the AI media spend decision for THIS submission: it carries the
+ * audited source and the estimated cost, so the generation row is both
+ * attributable and accounted for exactly like a video job row.
+ */
+async function generateWorkflowImage(
+  admin: AdminClient,
+  request: MediaRequest,
+  deps: WorkflowMediaDeps,
+  spend: { source: MediaSource; estimatedCostUsd: number },
+): Promise<MediaOutcome> {
   const format = request.contentType === "story" ? "9:16" : "1:1";
   const prompt = buildVisualPrompt(request);
   const generationId = randomUUID();
@@ -503,6 +560,10 @@ async function generateWorkflowImage(admin: AdminClient, request: MediaRequest, 
     prompt: prompt.slice(0, 4000),
     aspect_ratio: format,
     status: "processing",
+    // AI media spend control: what caused this generation, and Voom's
+    // conservative estimate of what the provider will charge for it.
+    spend_source: spend.source,
+    estimated_cost_usd: spend.estimatedCostUsd,
     // One generation identity per draft per attempt keeps the existing unique
     // (owner, idempotency_key) guard meaningful.
     idempotency_key: `workflow:${request.draftId}:${generationId}`,

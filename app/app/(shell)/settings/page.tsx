@@ -4,20 +4,25 @@ import { useState } from "react";
 import { useVoomActions, useVoomState } from "@/lib/voom/store";
 import { Q_INDUSTRY, OB_TONE } from "@/lib/voom/onboardingData";
 import type { BusinessProfileInput } from "@/lib/voom/types";
+import { MANUAL_NEVER_AUTO_SPENDS } from "@/lib/mara/media-spend";
 import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { AdSepNote } from "@/components/voom/ui/Notes";
 import { Btn, Card, Chip, Field, Input } from "@/components/voom/ui/primitives";
 
 export default function SettingsPage() {
-  const { brand, theme, displayName, email, settingsSaving, settingsError } = useVoomState();
-  const { toggleTone, setTheme, toast, restartOnboarding, saveBrandSettings } = useVoomActions();
+  const { brand, mediaSpend, theme, displayName, email, settingsSaving, settingsError } = useVoomState();
+  const { toggleTone, setTheme, toast, restartOnboarding, saveBrandSettings, saveMediaSpend } = useVoomActions();
 
   const [nameInput, setNameInput] = useState(displayName);
   const [brandNameInput, setBrandNameInput] = useState(brand.name);
   const [industryInput, setIndustryInput] = useState(brand.industry);
   const [audience, setAudience] = useState(brand.audience);
   const [restarting, setRestarting] = useState(false);
+  // AI Media Spending: the owner's own ceiling on MARA's automatic paid media.
+  const [allowAutomaticMedia, setAllowAutomaticMedia] = useState(mediaSpend.allowAutomaticPaidMedia);
+  const [mediaBudgetInput, setMediaBudgetInput] = useState(String(mediaSpend.monthlyMediaBudgetUsd));
+  const [savingSpend, setSavingSpend] = useState(false);
 
   const autonomyRows: [string, string, string][] = [
     ["Draft content", "Always", "t-green"],
@@ -50,6 +55,15 @@ export default function SettingsPage() {
     };
     const ok = await saveBrandSettings(payload);
     if (ok) toast("Brand profile saved");
+  }
+
+  async function handleSaveSpending() {
+    setSavingSpend(true);
+    await saveMediaSpend({
+      allowAutomaticPaidMedia: allowAutomaticMedia,
+      monthlyMediaBudgetUsd: Number(mediaBudgetInput.trim() || 0),
+    });
+    setSavingSpend(false);
   }
 
   async function handleRestart() {
@@ -148,6 +162,56 @@ export default function SettingsPage() {
             </button>
           </div>
         ))}
+      </Card>
+
+      <Card className="mb-3.5 p-4">
+        <h2 className="mb-1.5 font-display text-lg font-semibold">AI Media Spending</h2>
+        <p className="mb-3.5 text-[12.5px] text-text-3">
+          What MARA may spend on generated media (images and videos) without you asking for each one.
+        </p>
+        <div className="flex items-center justify-between gap-3 border-b border-line py-2.5">
+          <div>
+            <b className="text-[13.5px]">Allow MARA to generate paid media automatically</b>
+            <div className="text-[12.5px] text-text-3">
+              {allowAutomaticMedia ? "On" : "Off"} — used by Assisted and Autopilot runs, up to the budget below.
+            </div>
+          </div>
+          <div className="inline-flex shrink-0 gap-1 rounded-xl border border-line bg-surface-2 p-1">
+            <button
+              type="button"
+              aria-pressed={allowAutomaticMedia}
+              onClick={() => setAllowAutomaticMedia(true)}
+              className={`rounded-[10px] px-3.5 py-1.5 text-[13.5px] font-semibold transition ${allowAutomaticMedia ? "bg-surface shadow-[var(--shadow)]" : "text-text-2"}`}
+            >
+              On
+            </button>
+            <button
+              type="button"
+              aria-pressed={!allowAutomaticMedia}
+              onClick={() => setAllowAutomaticMedia(false)}
+              className={`rounded-[10px] px-3.5 py-1.5 text-[13.5px] font-semibold transition ${!allowAutomaticMedia ? "bg-surface shadow-[var(--shadow)]" : "text-text-2"}`}
+            >
+              Off
+            </button>
+          </div>
+        </div>
+        <div className="pt-3.5">
+          <Field
+            label="Monthly AI media budget (USD)"
+            hint="Voom stops automatic media generation once this month's estimated spend reaches it. Item planning, copy and drafts keep going."
+          >
+            <Input
+              inputMode="decimal"
+              value={mediaBudgetInput}
+              onChange={(e) => setMediaBudgetInput(e.target.value)}
+              placeholder="25"
+            />
+          </Field>
+        </div>
+        <p className="mb-3.5 text-[12.5px] text-text-3">{MANUAL_NEVER_AUTO_SPENDS}</p>
+        <Btn variant="outline" size="sm" onClick={handleSaveSpending} disabled={savingSpend || settingsSaving}>
+          {savingSpend ? "Saving…" : "Save spending settings"}
+        </Btn>
       </Card>
 
       <Card className="p-4">

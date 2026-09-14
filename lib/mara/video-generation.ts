@@ -142,6 +142,12 @@ export interface StartInput {
   supportsImageToVideo: boolean;
   estimatedCostUsd: number | null;
   monthlySpendLimitUsd: number | null;
+  /**
+   * AI media spend control: what caused this paid job. Persisted on the row so
+   * a user-requested generation is always distinguishable from one Voom
+   * submitted on its own (`assisted` / `autopilot`).
+   */
+  source?: "user_request" | "assisted" | "autopilot";
 }
 
 const MAX_CONCURRENT_WINDOW_JOBS = 4;
@@ -286,6 +292,8 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
     overlay: plan.overlayJson,
     duration_seconds: plan.durationSeconds,
     estimated_cost_usd: input.estimatedCostUsd,
+    // AI media spend control: the audited source of this paid job.
+    spend_source: input.source ?? null,
     provider_polling_url: null,
     provider_status: null,
     provider_retry_after_at: null,

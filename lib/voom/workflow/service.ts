@@ -209,6 +209,11 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
       }
       const { data: draft } = await admin.from("mara_drafts").select("media_brief")
         .eq("owner_user_id", context.ownerId).eq("id", item.draftId).maybeSingle();
+      // The mode travels with the request so the AI media budget gate can
+      // attribute the generation (assisted/autopilot) and refuse it truthfully
+      // when the owner turned automatic generation off or the month's budget
+      // is used. A refusal is a media-stage outcome, never a run failure: the
+      // item keeps its plan, copy and draft and only waits for media.
       return ensureWorkflowMedia(admin, {
         ownerId: context.ownerId,
         draftId: item.draftId,
@@ -216,6 +221,7 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
         contentType: item.contentType,
         concept: item.concept,
         visualBrief: String(draft?.media_brief ?? item.concept),
+        mode: context.mode,
       }, { deps: context.mediaDeps });
     },
 

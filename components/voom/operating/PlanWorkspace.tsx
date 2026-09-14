@@ -32,18 +32,22 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
   const [cadence, setCadence] = useState<Cadence>(initial.cadence);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // AI Media Spend Control: the truthful reason a run left items waiting for
+  // media (automatic generation off, or the month's budget reached).
+  const [spendNotice, setSpendNotice] = useState("");
 
   const refresh = useCallback((next: WorkflowSnapshot) => setSnapshot(next), []);
 
   async function build(next: Cadence) {
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setSpendNotice("");
     const response = await fetch("/api/plan", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cadence: next }),
     });
-    const body = await response.json() as { snapshot?: WorkflowSnapshot; error?: string };
+    const body = await response.json() as { snapshot?: WorkflowSnapshot; error?: string; mediaSpendNotice?: string | null };
     if (response.ok && body.snapshot) {
       setSnapshot(body.snapshot);
       setCadence(body.snapshot.cadence);
+      setSpendNotice(body.mediaSpendNotice ?? "");
       window.dispatchEvent(new Event("voom:data-changed"));
     } else setError(body.error ?? "Voom couldn't build your plan right now.");
     setBusy(false);
@@ -87,6 +91,10 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
     {SHOW_PLANNING_PREVIEW && <PlanningOnlyPreviewCard className="mb-4" />}
 
     {error && <p role="alert" className="mb-4 rounded-xl border border-red/35 bg-red/10 px-4 py-3 text-sm text-red">{error}</p>}
+
+    {/* A blocked automatic generation is not an error: the plan and its drafts
+        were created, and only the media waits for the owner's decision. */}
+    {spendNotice && <p role="status" className="mb-4 rounded-xl border border-amber/35 bg-amber/10 px-4 py-3 text-sm text-amber">{spendNotice}</p>}
 
     {snapshot.items.length ? <div className="space-y-3">
       {byDay.map(([day, items]) => <Card key={day} className="overflow-hidden">

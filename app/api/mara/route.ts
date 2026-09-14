@@ -5,6 +5,7 @@ import type { MaraAiResult, MaraDraftKind, MaraDraftRecord, MaraMessageRecord } 
 import type { MaraPendingActionRecord } from "@/lib/mara/tool-types";
 import { executeMaraTool, maraToolDefinitions } from "@/lib/mara/tools";
 import { inferMediaRequest, MEDIA_SELECT, toMediaView } from "@/lib/media/data";
+import { estimateMediaCostUsd } from "@/lib/mara/media-spend";
 import type { MediaGenerationRecord } from "@/lib/media/types";
 import { getBusinessRecord, getCurrentUser, getProfileRecord } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
@@ -261,16 +262,26 @@ async function createMediaRequest(input: {
     owner_user_id: input.userId, conversation_id: input.conversationId, message_id: assistantMessage.id,
     media_type: input.mediaRequest.mediaType, prompt, aspect_ratio: input.mediaRequest.aspectRatio,
     duration_seconds: input.mediaRequest.durationSeconds, status: isVideo ? "pending_confirmation" : "queued",
-    estimated_cost_usd: isVideo ? estimateVideoCost(input.mediaRequest.durationSeconds ?? 8) : null,
+    // Both estimates come from the ONE centralized model, and the audited
+    // source is recorded: this endpoint only ever runs because the owner asked
+    // for that exact media in chat.
+    estimated_cost_usd: isVideo
+      ? estimateVideoCost(input.mediaRequest.durationSeconds ?? 8)
+      : estimateMediaCostUsd({ mediaType: "image" }),
+    spend_source: "user_request",
     idempotency_key: idempotencyKey,
   }, { onConflict: "owner_user_id,idempotency_key" }).select(MEDIA_SELECT).single();
   if (error) return databaseUnavailable();
   return { assistantMessage: assistantMessage as MaraMessageRecord, media: await toMediaView(admin, media as Record<string, unknown>) };
 }
 
+/**
+ * The confirmation estimate shown before a video generation. Delegates to the
+ * ONE centralized cost model (lib/mara/media-spend.ts) — this route keeps no
+ * cost constant of its own.
+ */
 function estimateVideoCost(seconds: number) {
-  const configured = Number(process.env.MEDIA_VIDEO_ESTIMATED_COST_PER_SECOND_USD);
-  return Number((seconds * (Number.isFinite(configured) && configured >= 0 ? configured : 0.15)).toFixed(4));
+  return estimateMediaCostUsd({ mediaType: "video", durationSeconds: seconds });
 }
 
 function shouldUseTools(message: string, expectedKind: MaraDraftKind | null) {

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/utils/supabase/server";
 import { getCurrentUser } from "./server-data";
+import { normalizeMediaSpendSettings, type MediaSpendSettings } from "@/lib/mara/media-spend";
 import type { BusinessProfileInput } from "./types";
 
 export type SaveResult = { ok: true } | { ok: false; error: string };
@@ -80,6 +81,37 @@ export async function saveBrandSettings(input: BusinessProfileInput): Promise<Sa
     { onConflict: "owner_user_id" },
   );
   if (businessError) return { ok: false, error: saveError(businessError) };
+
+  revalidatePath("/app", "layout");
+  return { ok: true };
+}
+
+/**
+ * Saves the AI Media Spending settings (migration 0031).
+ *
+ * This is the ONLY switch that lets MARA spend provider credits without an
+ * explicit request. It is owner-scoped through the existing `businesses` RLS
+ * policy, and the values are normalized through the SAME pure helper the gate
+ * uses, so what the owner saves is exactly what the server enforces. Manual
+ * mode never spends automatically whatever this toggle says.
+ */
+export async function saveMediaSpendSettings(input: MediaSpendSettings): Promise<SaveResult> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Your session has expired. Please log in again." };
+
+  const supabase = await createClient();
+  const settings = normalizeMediaSpendSettings({
+    allow_automatic_paid_media: input.allowAutomaticPaidMedia,
+    monthly_media_budget_usd: input.monthlyMediaBudgetUsd,
+  });
+  const { error } = await supabase
+    .from("businesses")
+    .update({
+      allow_automatic_paid_media: settings.allowAutomaticPaidMedia,
+      monthly_media_budget_usd: settings.monthlyMediaBudgetUsd,
+    })
+    .eq("owner_user_id", user.id);
+  if (error) return { ok: false, error: saveError(error) };
 
   revalidatePath("/app", "layout");
   return { ok: true };
