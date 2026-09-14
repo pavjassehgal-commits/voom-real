@@ -17,6 +17,7 @@ import {
   videoIdempotencyKey,
 } from "./video-job";
 import { toClientGenerationView, type ClientGenerationView } from "./video-view";
+import { estimateMediaCostUsd, type MediaSource } from "./media-spend";
 
 export interface VideoService {
   admin: AdminClient;
@@ -90,12 +91,14 @@ function createNoImageProvider(video: VideoGenerationProvider) {
   };
 }
 
-export function estimatedCostUsdForDuration(durationSeconds: number, env: NodeJS.ProcessEnv = process.env): number | null {
-  const raw = env.MEDIA_VIDEO_ESTIMATED_COST_PER_SECOND_USD?.trim();
-  if (!raw) return null;
-  const rate = Number(raw);
-  if (!Number.isFinite(rate) || rate < 0) return null;
-  return Math.round(rate * durationSeconds * 10_000) / 10_000;
+/**
+ * The estimated provider cost of one video job, from the ONE centralized
+ * model (lib/mara/media-spend.ts). The deployment-level
+ * MEDIA_VIDEO_ESTIMATED_COST_PER_SECOND_USD override is honoured there, so no
+ * cost constant is duplicated in this module.
+ */
+export function estimatedCostUsdForDuration(durationSeconds: number, env: NodeJS.ProcessEnv = process.env): number {
+  return estimateMediaCostUsd({ mediaType: "video", durationSeconds, env });
 }
 
 export function monthlySpendLimitUsd(env: NodeJS.ProcessEnv = process.env): number | null {
@@ -215,6 +218,8 @@ export async function startVideoJob(service: VideoService, input: StartJobInput 
     // legacy providers retain the planner's requested duration.
     estimatedCostUsd: estimatedCostUsdForDuration(service.videoConfig.durationSeconds ?? durationTarget),
     monthlySpendLimitUsd: monthlySpendLimitUsd(),
+    // The audited source travels into the durable job row.
+    source: input.source ?? "user_request",
   });
   if (!result.ok) return { ...result, view: "generation" in result ? toClientGenerationView(result.generation, null) : null };
   const previewUrl = result.generation.status === "completed" && typeof result.generation.storage_path === "string" ? await service.ports.signPreview(result.generation.storage_path) : null;
@@ -242,6 +247,13 @@ export interface PostStudioVideoStartArgs {
   };
   brief: string;
   idempotencyToken: string;
+  /**
+   * AI media spend control: what caused this job. Defaults to `user_request`
+   * because every caller of this entry point is a user action ("Create with
+   * MARA" / "Regenerate"); the workflow media path passes the automatic
+   * source it resolved from the account's mode.
+   */
+  source?: MediaSource;
   /** MARA's plan script for plan-driven Reels (the Reel approval flow). */
   script?: string;
   /**
@@ -284,6 +296,9 @@ export async function startPostStudioVideo(args: PostStudioVideoStartArgs): Prom
     brief: args.brief,
     idempotencyKey,
     sourceAsset: resolvedSource,
+    // Explicit user entry point: recorded as user_request unless the caller
+    // (the workflow media path) already resolved an automatic source.
+    source: args.source ?? "user_request",
     durationTarget: 8,
   });
   if (!result.ok) {
