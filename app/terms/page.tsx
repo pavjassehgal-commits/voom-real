@@ -120,10 +120,13 @@ export default function TermsPage() {
       <LegalSection title="Third-party services">
         <p>
           The Service depends on third-party providers, including Supabase,
-          Vercel, Resend, ClickSend, Meta (Instagram), and AI providers. Their
-          availability and their own terms are outside our control, and where
-          they apply, those terms govern your use of their services. We are not
-          responsible for acts or failures of these providers.
+          Vercel, Resend, Meta (Instagram), and AI providers. SMS marketing is
+          no longer part of Voom and no SMS delivery provider is used; records
+          of SMS messages sent by older accounts remain stored as historical
+          data only. Their availability and their own terms are outside our
+          control, and where they apply, those terms govern your use of their
+          services. We are not responsible for acts or failures of these
+          providers.
         </p>
       </LegalSection>
 

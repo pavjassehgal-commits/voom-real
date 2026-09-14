@@ -130,6 +130,9 @@ test("Terms cover service scope, responsibilities, AI review, and honest billing
   assert.match(terms, /Disclaimers/);
   assert.match(terms, /Limitation of liability/);
   assert.match(terms, /Contact/);
+  // SMS is retired: ClickSend is no longer listed as an active processor.
+  assert.doesNotMatch(terms, /ClickSend|Twilio/);
+  assert.match(terms, /SMS marketing is\s*\n?\s*no longer part of Voom|no longer part of Voom/);
   // Billing must remain honest: currently free, demonstration pricing, nothing charged.
   assert.match(terms, /currently provided free of charge/);
   assert.match(terms, /no payment is taken/);

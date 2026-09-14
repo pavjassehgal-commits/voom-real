@@ -17,8 +17,9 @@ test("the eligibility preview route is auth-gated, channel-validated and masked"
   const route = await read("app/api/voom/audiences/[id]/eligibility/route.ts");
   assert.match(route, /getCurrentUser\(\)/);
   assert.match(route, /\{ status: 401 \}/);
-  // Channel must be explicitly email or sms — eligibility is never guessed.
-  assert.match(route, /kind !== "email" && kind !== "sms"/);
+  // Channel must be explicitly email — SMS was retired and is not a
+  // selectable eligibility channel; the kind is never guessed.
+  assert.match(route, /if \(kind !== "email"\)/);
   assert.match(route, /\{ status: 400 \}/);
   // Ownership is validated through the owner-scoped resolution helper.
   assert.match(route, /resolveAudienceChannelEligibility\(db, user\.id, id, kind\)/);
