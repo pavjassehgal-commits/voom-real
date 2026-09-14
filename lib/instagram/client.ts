@@ -17,6 +17,9 @@ export class InstagramApiError extends Error {
       | "media_container"
       | "media_status"
       | "media_publish"
+      // Read-only performance operations (never publish, never mutate).
+      | "media_details"
+      | "media_insights"
       | null = null,
     public readonly providerReason: "credentials" | "redirect" | "code" | "app_configuration" | "rejected" | null = null,
   ) {
@@ -88,6 +91,88 @@ export class InstagramClient {
     url.searchParams.set("access_token", accessToken);
     const value = await this.fetchJson(url, undefined, "profile");
     return Array.isArray(value.data) ? value.data.filter(isRecord) : [];
+  }
+
+  // -------------------------------------------------------------------------
+  // Performance reads (READ-ONLY)
+  //
+  // These calls only ever GET an already-published media item and its
+  // insights. They are used by the performance sync, which must never publish,
+  // never create a container and never modify a media item or a caption — so
+  // nothing in this section can mutate anything on Meta's side.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Documented media-node fields for ONE owned media id. `like_count` and
+   * `comments_count` are real Meta values available with the basic read
+   * permission, which is why they are the honest fallback when per-media
+   * insights are not exposed for the account.
+   *
+   * The richer field set is tried first; a version that rejects
+   * `media_product_type` still yields the minimal set instead of failing the
+   * whole read.
+   */
+  async getMediaDetails(accessToken: string, mediaId: string): Promise<Record<string, unknown> | null> {
+    const read = async (fields: string) => {
+      const url = new URL(`https://graph.instagram.com/${this.config.graphVersion}/${mediaId}`);
+      url.searchParams.set("fields", fields);
+      url.searchParams.set("access_token", accessToken);
+      return this.fetchJson(url, undefined, "media_details");
+    };
+    try {
+      return await read("id,media_type,media_product_type,like_count,comments_count,timestamp,permalink");
+    } catch (error) {
+      if (!(error instanceof InstagramApiError) || error.code !== "invalid_response") throw error;
+      return read("id,media_type,like_count,comments_count,timestamp");
+    }
+  }
+
+  /**
+   * Per-media insights for one media kind, tolerant of per-metric availability.
+   *
+   * Meta fails the WHOLE request when one requested metric is not supported for
+   * that media kind/account, so the batch is attempted first and — only if it
+   * is refused — each metric is retried on its own. Whatever Meta legitimately
+   * returns is passed through as raw entries (normalized in lib/performance);
+   * whatever it refuses is reported as unavailable and simply never stored.
+   *
+   * `rate_limited` and `unauthorized` are re-thrown: those are connection or
+   * quota conditions, not metric availability, and the caller must stop rather
+   * than hammer Meta.
+   */
+  async getMediaInsights(input: { accessToken: string; mediaId: string; metrics: string[] }): Promise<MediaInsightsRead> {
+    const request = async (metrics: string[]) => {
+      const url = new URL(`https://graph.instagram.com/${this.config.graphVersion}/${input.mediaId}/insights`);
+      url.searchParams.set("metric", metrics.join(","));
+      url.searchParams.set("access_token", input.accessToken);
+      return this.fetchJson(url, undefined, "media_insights");
+    };
+    if (!input.metrics.length) return { entries: [], unavailable: [], refused: false };
+    try {
+      const value = await request(input.metrics);
+      const entries = Array.isArray(value.data) ? value.data : [];
+      return { entries, unavailable: input.metrics.filter((metric) => !mentionsMetric(entries, metric)), refused: false };
+    } catch (error) {
+      if (!(error instanceof InstagramApiError)) throw error;
+      if (error.code === "rate_limited" || error.code === "unauthorized") throw error;
+    }
+    const entries: unknown[] = [];
+    const unavailable: string[] = [];
+    for (const metric of input.metrics) {
+      try {
+        const value = await request([metric]);
+        const data = Array.isArray(value.data) ? value.data : [];
+        if (data.length) entries.push(...data);
+        else unavailable.push(metric);
+      } catch (error) {
+        if (!(error instanceof InstagramApiError)) throw error;
+        if (error.code === "rate_limited" || error.code === "unauthorized") throw error;
+        // Unsupported for this media kind, expired (Stories), or absent: the
+        // metric is recorded as not exposed and nothing is stored for it.
+        unavailable.push(metric);
+      }
+    }
+    return { entries, unavailable, refused: entries.length === 0 };
   }
 
   // -------------------------------------------------------------------------
@@ -202,6 +287,23 @@ export class InstagramClient {
       throw new InstagramApiError("unavailable", operation);
     } finally { clearTimeout(timeout); }
   }
+}
+
+/**
+ * Result of a read-only per-media insights call. `entries` are RAW provider
+ * insight objects: the Instagram domain never normalizes them, lib/performance
+ * does, so MARA depends on Voom's own model and not on a Meta response shape.
+ */
+export interface MediaInsightsRead {
+  entries: unknown[];
+  /** Requested provider metrics Meta did not return for this media. */
+  unavailable: string[];
+  /** True when Meta refused every requested metric (permission/kind/expiry). */
+  refused: boolean;
+}
+
+function mentionsMetric(entries: unknown[], metric: string): boolean {
+  return entries.some((entry) => isRecord(entry) && entry.name === metric);
 }
 
 function stringField(value: Record<string, unknown>, key: string) { const field = value[key]; if (typeof field !== "string" && typeof field !== "number") throw new InstagramApiError("invalid_response"); return String(field); }

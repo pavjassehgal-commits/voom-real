@@ -68,6 +68,33 @@ reference/
 - No demo/sample data ships in the product: every screen renders real account
   data or an honest empty state
 
+### Performance Intelligence (v1)
+
+Voom reads Instagram performance metrics only for content it has already
+published and Meta has confirmed with a real media id
+(`instagram_publish_queue.status = 'published'`). Readings are normalized into
+`public.instagram_performance_snapshots` (migration
+`0032_instagram_performance_intelligence.sql` — additive, owner-scoped RLS) and
+drive the Performance page, the single Today insight, and the advisory
+performance evidence MARA receives when it plans the next rolling 7 days.
+
+To collect them in Production, add one Supabase Cron job that calls
+`/api/cron/instagram-performance` with `Authorization: Bearer <CRON_SECRET>`
+(a few times a day is enough; the collector is idempotent per hour-long window).
+This route is deliberately not in `vercel.json` and is not scheduled by the
+repository — the existing Instagram publishing worker keeps its five-minute
+cadence, unchanged. The collector only reads: it never publishes, never edits
+media or captions, and never starts a generation.
+
+Per-media insights (reach, views, plays, saves, shares, interactions) require
+Meta's `instagram_business_manage_insights` permission, which Voom now asks for
+at connect time alongside the existing permissions — enable it for the app's
+Instagram use case in the Meta dashboard, and note that connections made before
+this change must reconnect once to grant it. When the stored connection does not
+include it, the collector still stores the real media-node metrics (likes,
+comments) and reports every unread metric as unavailable — it never invents a
+value, and never stores a zero.
+
 ### Supabase Cron workers
 
 Configure the existing Supabase Cron job runner to call

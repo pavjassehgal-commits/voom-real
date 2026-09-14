@@ -41,7 +41,12 @@ test("0026 and the additive 0028 video metadata migration are bounded", async ()
   assert.deepEqual(files.filter((name) => /^0025_/.test(name)), ["0025_mara_media_video_generation.sql"]);
   assert.deepEqual(files.filter((name) => /^0027_/.test(name)), ["0027_mara_media_provider_diagnostics.sql"], "the only 0027 is provider diagnostics");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 31), "no migration beyond 0031 may exist");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 32), "no migration beyond 0032 may exist");
+  assert.deepEqual(
+    files.filter((name) => /^0032_/.test(name)),
+    ["0032_instagram_performance_intelligence.sql"],
+    "the only 0032 is the additive performance snapshots migration",
+  );
   assert.deepEqual(
     files.filter((name) => /^0031_/.test(name)),
     ["0031_ai_media_spend_control.sql"],

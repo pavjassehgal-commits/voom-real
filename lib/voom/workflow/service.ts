@@ -1,10 +1,12 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { AiError, createAiProvider } from "@/lib/ai";
+import { AiError, createAiProvider, type AiProvider } from "@/lib/ai";
 import { evaluateAutopilotRecommendation } from "@/lib/mara/autopilot-safety";
 import { composePostCaption } from "@/lib/post/core";
 import { approvePostDraft, syncPostToCalendar, type AdminClient } from "@/lib/post/server-data";
+import { loadPerformancePlanContext } from "@/lib/performance/data";
+import type { PerformancePlanContext } from "@/lib/performance/plan-context";
 import { mayAutomaticallyGeneratePaidMedia, normalizeAutomationMode, type AutomationModeValue, type WorkflowTrigger } from "@/lib/voom/automation";
 import { CADENCE_LABELS, normalizeCadence, type Cadence } from "@/lib/voom/cadence";
 import { accountTimezone, formatLocalTime, localDate } from "@/lib/voom/timezone";
@@ -60,6 +62,22 @@ export interface WorkflowRunInput {
    * real Seedream/Seedance wiring is used.
    */
   mediaDeps?: Partial<WorkflowMediaDeps>;
+  /**
+   * Test seam only: MARA's structured-output provider and the performance
+   * context loader. Production callers never pass this, so planning uses the
+   * real provider and the real stored performance snapshots.
+   */
+  planningDeps?: WorkflowPlanningDeps;
+}
+
+/**
+ * The two planning side inputs, injectable for tests. Both default to the
+ * production implementations, so a normal run reads real snapshots and calls
+ * the real model.
+ */
+export interface WorkflowPlanningDeps {
+  provider?: AiProvider;
+  performanceContext?: (db: AdminClient, ownerId: string) => Promise<PerformancePlanContext | null>;
 }
 
 /**
@@ -92,6 +110,7 @@ export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInp
     mode,
     trigger,
     mediaDeps: input.mediaDeps,
+    planningDeps: input.planningDeps,
   });
   return ensureRollingPlan(ports, { now, timeZone, cadence, mode, goal, stage: input.stage, trigger });
 }
@@ -109,6 +128,8 @@ interface PortContext {
   trigger: WorkflowTrigger;
   /** Test seam only; production uses the module defaults. */
   mediaDeps?: Partial<WorkflowMediaDeps>;
+  /** Test seam only; production uses the real provider and stored snapshots. */
+  planningDeps?: WorkflowPlanningDeps;
 }
 
 /**
@@ -122,6 +143,15 @@ export const AUTOMATIC_MEDIA_FORBIDDEN = "automatic_media_forbidden_for_mode";
 export async function buildWorkflowPorts(admin: AdminClient, context: PortContext): Promise<RollingPlanPorts> {
   const conversationId = await ensureWorkflowConversation(admin, context.ownerId);
   const plannedConcepts: string[] = [];
+  // Read the account's own measured results ONCE per run, lazily. Planning is
+  // never blocked by this: a read failure degrades to "no evidence yet", which
+  // is exactly how the planner behaved before this feature existed.
+  let performanceContext: Promise<PerformancePlanContext | null> | null = null;
+  const performanceContextForPlanning = () => {
+    performanceContext ??= (context.planningDeps?.performanceContext ?? loadPerformancePlanContext)(admin, context.ownerId)
+      .catch(() => null);
+    return performanceContext;
+  };
 
   return {
     async ensurePlan({ validFrom, validUntil, cadence, goal }) {
@@ -163,7 +193,16 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
     },
 
     async generateContent(slot) {
-      return generatePlannedContent({ context, slot, plannedConcepts });
+      return generateWorkflowPlannedContent({
+        business: context.business,
+        goal: context.goal,
+        cadence: context.cadence,
+        timeZone: context.timeZone,
+        slot,
+        plannedConcepts,
+        performance: await performanceContextForPlanning(),
+        ...(context.planningDeps?.provider ? { provider: context.planningDeps.provider } : {}),
+      });
     },
 
     async createDraft({ planId, slot, content }) {
@@ -404,11 +443,23 @@ async function recordAutoApproval(
     .in("status", ["pending", "failed"]).contains("sanitized_arguments", { sourceDraftId: input.item.draftId });
 }
 
-async function generatePlannedContent(
-  input: { context: PortContext; slot: PlanSlot; plannedConcepts: string[] },
-): Promise<GeneratedContent> {
-  const { context, slot } = input;
-  const business = context.business;
+/**
+ * MARA's content generation for ONE planned slot, isolated from the ports so
+ * the planning payload — including the performance context — is directly
+ * testable without a network call.
+ */
+export async function generateWorkflowPlannedContent(input: {
+  business: Record<string, unknown>;
+  goal: string;
+  cadence: Cadence;
+  timeZone: string;
+  slot: PlanSlot;
+  plannedConcepts: string[];
+  performance?: PerformancePlanContext | null;
+  /** Test seam only; production uses the configured AI provider. */
+  provider?: AiProvider;
+}): Promise<GeneratedContent> {
+  const { slot, business } = input;
   const payload = buildPlannedContentPayload({
     business: {
       name: String(business.brand_name ?? "Your business"),
@@ -418,16 +469,17 @@ async function generatePlannedContent(
       mainGoal: String(business.main_goal ?? ""),
       brandPersonality: arrayText(business.brand_personality),
     },
-    goal: context.goal,
-    cadenceLabel: CADENCE_LABELS[context.cadence],
+    goal: input.goal,
+    cadenceLabel: CADENCE_LABELS[input.cadence],
     contentType: slot.contentType,
     localDate: slot.date,
-    localTime: formatLocalTime(slot.publishAt, context.timeZone),
-    timezone: context.timeZone,
+    localTime: formatLocalTime(slot.publishAt, input.timeZone),
+    timezone: input.timeZone,
     recentConcepts: input.plannedConcepts,
+    performance: input.performance ?? null,
   });
   try {
-    const plan = await createAiProvider().structured({
+    const plan = await (input.provider ?? createAiProvider()).structured({
       messages: [
         { role: "system", content: PLANNED_CONTENT_SYSTEM_PROMPT },
         { role: "user", content: JSON.stringify(payload) },

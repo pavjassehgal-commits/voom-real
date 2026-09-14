@@ -4,7 +4,10 @@ import { Icon } from "@/components/voom/icons";
 import { Card, EmptyState, Tag } from "@/components/voom/ui/primitives";
 import { AutomationMode } from "@/components/voom/operating/AutomationMode";
 import { normalizeAutomationMode } from "@/lib/voom/automation";
+import { PerformanceIntelligenceCard } from "@/components/voom/performance/PerformanceIntelligence";
+import { loadPerformanceReport } from "@/lib/performance/data";
 import { getOperatingData } from "@/lib/voom/operating-data";
+import { createClient } from "@/utils/supabase/server";
 import type { WorkflowView } from "@/lib/voom/workflow/read";
 import { formatLocalDate } from "@/lib/voom/timezone";
 
@@ -20,6 +23,12 @@ export default async function TodayPage() {
   if (!data) return null;
   const { snapshot, summary } = data;
   const firstName = data.user.email?.split("@")[0] ?? "there";
+  // Measured results from the account's OWN published content, read through
+  // the session client so RLS is the isolation boundary. The card below
+  // renders nothing at all until there is enough real data for a statement
+  // (see lib/performance/insights.ts) — Today never shows a placeholder
+  // "MARA is learning..." message.
+  const performance = await loadPerformanceReport(await createClient(), data.user.id);
 
   return <div>
     <PageHead
@@ -46,6 +55,8 @@ export default async function TodayPage() {
         <Stat label="Needs attention" value={summary.failed.length} />
       </div>
     </Card>
+
+    <PerformanceIntelligenceCard report={performance} source="today" />
 
     <Section title="Publishing today" icon="clock" href="/app/calendar" action="Open Content Calendar" items={summary.publishingToday}
       empty="Nothing is due to publish today." />
