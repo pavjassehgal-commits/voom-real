@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { Icon } from "@/components/voom/icons";
 import { Btn, Card } from "@/components/voom/ui/primitives";
+import { replenishPlanDescription } from "@/lib/voom/automation";
 import { CADENCES, CADENCE_LABELS, type Cadence } from "@/lib/voom/cadence";
 import type { WorkflowSnapshot, WorkflowView } from "@/lib/voom/workflow/read";
 import { formatLocalDate } from "@/lib/voom/timezone";
@@ -63,6 +64,9 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
           <Icon name="spark" size={14} />{busy ? "Building…" : snapshot.items.length ? "Replenish plan" : "Build plan"}
         </Btn>
       </div>
+      {/* Truthful per-mode statement of what Replenish does. In Manual it
+          creates the plan only — media starts from Create with MARA. */}
+      <p className="mt-2 text-[12.5px] text-text-3">{replenishPlanDescription(snapshot.mode)}</p>
       <div className="mt-4">
         <span className="text-xs font-semibold uppercase tracking-wide text-text-3">Posting frequency</span>
         <div className="mt-2 flex flex-wrap gap-2">
@@ -105,6 +109,7 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
       <p className="mx-auto mt-2 max-w-xl text-sm leading-relaxed text-text-2">
         Voom creates one executable item per slot for the next 7 days, starting today, using your brand, goal and chosen posting frequency.
       </p>
+      <p className="mx-auto mt-2 max-w-xl text-[12.5px] leading-relaxed text-text-3">{replenishPlanDescription(snapshot.mode)}</p>
       <Btn className="mt-5" variant="primary" disabled={busy} onClick={() => void build(cadence)}>
         <Icon name="spark" size={15} />{busy ? "Building your plan…" : "Build plan"}
       </Btn>

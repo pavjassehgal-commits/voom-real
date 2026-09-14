@@ -10,15 +10,22 @@
  *   - one workflow item per (plan, local slot date); an existing item for a
  *     date is always reused, never duplicated, however often the cron runs,
  *   - the horizon is replenished forward only; past dates are never planned,
- *   - Manual creates nothing automatically, Assisted stops at Needs approval,
- *     Autopilot runs the existing deterministic safety evaluator and only then
- *     auto-approves and schedules,
+ *   - Manual creates nothing on a scheduled run; on an explicit Replenish it
+ *     plans (drafts + MARA copy) but NEVER generates paid media, approves or
+ *     schedules — Manual stays Manual throughout the run. Assisted stops at
+ *     Needs approval, Autopilot runs the existing deterministic safety
+ *     evaluator and only then auto-approves and schedules,
  *   - every stage failure is recorded on the item instead of aborting the run.
  *
  * It performs no I/O: everything is expressed against injected ports, so the
  * end-to-end acceptance test drives the real logic with mocked providers.
  */
 
+import {
+  mayAutomaticallyGeneratePaidMedia,
+  type AutomationModeValue,
+  type WorkflowTrigger,
+} from "../automation.ts";
 import {
   DEFAULT_HORIZON_DAYS,
   planContentTypes,
@@ -92,11 +99,38 @@ export interface RollingPlanInput {
   now: Date;
   timeZone: string;
   cadence: Cadence;
-  mode: "manual" | "assisted" | "autopilot";
+  mode: AutomationModeValue;
   goal: string;
   horizonDays?: number;
   /** Defaults to "full". Unknown values fall back to "full". */
   stage?: WorkflowStage;
+  /**
+   * What started this run. Defaults to "scheduled" (the cron worker), where a
+   * Manual account creates nothing at all. "replenish" is the owner's explicit
+   * Build/Replenish plan click: Manual then plans, but planning-only.
+   */
+  trigger?: WorkflowTrigger;
+}
+
+/**
+ * Resolves the effective stage for one (mode, trigger, requested stage).
+ *
+ * The requested stage can only ever NARROW a run (an explicit "planning_only"
+ * always wins). On top of that, the central paid-media policy decides whether
+ * the run may reach `ensureMedia` at all: when `mayAutomaticallyGeneratePaidMedia`
+ * says no, the run is forced to "planning_only" regardless of what was asked
+ * for. This is the engine-level half of the cost-safety invariant — the
+ * service ports hold the other half — so no caller can "opt in" a Manual
+ * Replenish to paid media by passing a different stage.
+ */
+export function resolveWorkflowStage(input: {
+  mode: AutomationModeValue;
+  trigger: WorkflowTrigger;
+  stage?: WorkflowStage | string;
+}): WorkflowStage {
+  if (input.stage === "planning_only") return "planning_only";
+  if (!mayAutomaticallyGeneratePaidMedia(input.mode, input.trigger)) return "planning_only";
+  return "full";
 }
 
 /** One resolved horizon slot, for the run summary. */
@@ -116,6 +150,9 @@ export interface PlanSummaryItem {
 
 export interface RollingPlanResult {
   planId: string | null;
+  /** The mode the run actually executed under — always the account's own mode. */
+  mode: AutomationModeValue;
+  trigger: WorkflowTrigger;
   stage: WorkflowStage;
   /** Resolved horizon summary. Null when nothing was planned (manual/empty). */
   plan: {
@@ -159,15 +196,21 @@ export function buildSlots(input: RollingPlanInput): PlanSlot[] {
 }
 
 export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingPlanInput): Promise<RollingPlanResult> {
-  // Only the explicit "planning_only" stage narrows the run. Anything else —
-  // including an unknown value — keeps the existing full behaviour.
-  const stage: WorkflowStage = input.stage === "planning_only" ? "planning_only" : "full";
+  const trigger: WorkflowTrigger = input.trigger === "replenish" ? "replenish" : "scheduled";
+  // The requested stage can only narrow the run (an explicit "planning_only"
+  // wins; anything else — including an unknown value — asks for "full"). The
+  // central paid-media policy then decides whether "full" is even permitted
+  // for this (mode, trigger): Manual + Replenish is forced to planning-only.
+  const stage = resolveWorkflowStage({ mode: input.mode, trigger, stage: input.stage });
   const horizonDays = input.horizonDays ?? DEFAULT_HORIZON_DAYS;
   const result: RollingPlanResult = {
-    planId: null, stage, plan: null, slots: 0, created: 0, reused: 0, mediaQueued: 0,
+    planId: null, mode: input.mode, trigger, stage, plan: null, slots: 0, created: 0, reused: 0, mediaQueued: 0,
     awaitingApproval: 0, autoApproved: 0, heldForReview: 0, failures: [],
   };
-  if (input.mode === "manual") return result;
+  // Manual never plans on a scheduled run: nothing runs for it on a timer.
+  // Only the owner's explicit Replenish click plans a Manual account — and
+  // then planning-only (see resolveWorkflowStage), never as Assisted.
+  if (input.mode === "manual" && trigger !== "replenish") return result;
 
   const slots = buildSlots(input);
   result.slots = slots.length;
@@ -217,6 +260,10 @@ export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingP
     // ports below are never invoked, so no provider, job or publish side
     // effect is even reachable.
     if (stage === "planning_only") continue;
+    // Belt and braces: the stage above is derived from this same policy, so
+    // this branch is unreachable for Manual — but the paid path is guarded by
+    // the policy itself, not by trusting the derivation.
+    if (!mayAutomaticallyGeneratePaidMedia(input.mode, trigger)) continue;
 
     // Media. A failure here must not kill the workflow: the item stays visible
     // with a failed media stage and can be retried without paying twice.

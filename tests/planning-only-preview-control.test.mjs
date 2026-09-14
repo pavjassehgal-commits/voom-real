@@ -462,7 +462,9 @@ test("backend planning-only idempotency is unchanged: a second run reuses every 
   // idempotently on (owner, plan, slot date).
   const [route, service] = await Promise.all([read("app/api/plan/route.ts"), read("lib/voom/workflow/service.ts")]);
   assert.match(route, /body\.stage === "planning_only"/);
-  assert.match(route, /runOwnerWorkflow\(admin, \{ ownerId: user\.id, cadence, mode, stage \}\)/);
+  assert.match(route, /runOwnerWorkflow\(admin, \{ ownerId: user\.id, cadence, stage, trigger: "replenish" \}\)/);
+  // The route never chooses a mode: the saved automation_level governs the run.
+  assert.doesNotMatch(route, /\bmode\s*[:=]|automation_level/);
   assert.match(service, /onConflict: "owner_user_id,source_plan_id,source_plan_item_key"/);
   assert.match(service, /ignoreDuplicates: true/);
 });

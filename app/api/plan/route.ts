@@ -20,7 +20,19 @@ export async function GET() {
   return Response.json({ snapshot }, { headers: { "Cache-Control": "no-store" } });
 }
 
-/** Builds or replenishes the rolling plan on demand. */
+/**
+ * Builds or replenishes the rolling plan on demand ("Build plan" /
+ * "Replenish plan" / a posting-frequency change).
+ *
+ * The run executes under the account's SAVED automation mode — the route never
+ * chooses a mode, so a Manual account is never coerced into an Assisted-style
+ * run. The central policy (`mayAutomaticallyGeneratePaidMedia`) then decides
+ * what an explicit Replenish may do:
+ *   Manual    → planning-only: drafts + copy, NO paid media, NO approval, NO
+ *               scheduling. Media starts only from Create with MARA.
+ *   Assisted  → unchanged: media, then Needs approval.
+ *   Autopilot → unchanged: media, then safety-checked auto-approval.
+ */
 export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
@@ -31,7 +43,9 @@ export async function POST(request: Request) {
   // planner and persists the upcoming drafts, but the run stops before paid
   // media generation, approval, scheduling and Instagram queueing. Only the
   // exact "planning_only" value narrows the run; anything else keeps the
-  // existing full behaviour. No owner identity is ever read from the body —
+  // existing full behaviour for Assisted/Autopilot (a Manual account is
+  // planning-only either way — the body can only narrow a run, never widen
+  // it past the mode's policy). No owner identity is ever read from the body —
   // the run always operates on the authenticated owner below.
   let stage: "planning_only" | undefined;
   try {
@@ -51,12 +65,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    // Manual accounts explicitly asking for a plan get an assisted-style run:
-    // drafts are created, and nothing leaves Voom without their approval.
-    const { data: business } = await admin.from("businesses").select("automation_level")
-      .eq("owner_user_id", user.id).maybeSingle();
-    const mode = business?.automation_level === "autopilot" ? "autopilot" as const : "assisted" as const;
-    const run = await runOwnerWorkflow(admin, { ownerId: user.id, cadence, mode, stage });
+    // An explicit owner request is the "replenish" trigger. The service reads
+    // the account's saved mode itself; Manual stays Manual throughout.
+    const run = await runOwnerWorkflow(admin, { ownerId: user.id, cadence, stage, trigger: "replenish" });
     const snapshot = await loadWorkflowSnapshot(admin, user.id);
     return Response.json({ run, snapshot });
   } catch {

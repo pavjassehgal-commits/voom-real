@@ -519,8 +519,11 @@ test("5c. the duplicate-generation guard also lives in the database", async () =
   const imageStart = media.indexOf("async function generateWorkflowImage");
   const imageBody = media.slice(imageStart, media.indexOf("export function buildVisualPrompt", imageStart));
   const insertAt = imageBody.indexOf(".insert(");
-  const providerAt = imageBody.indexOf("createMediaProvider");
+  // The paid image call goes through the module's one provider seam
+  // (`deps.generateImage`, wired to createMediaProvider in production).
+  const providerAt = imageBody.indexOf("deps.generateImage(");
   assert.ok(insertAt !== -1 && providerAt !== -1 && insertAt < providerAt, "row persisted before any paid provider call");
+  assert.match(media, /async generateImage\(input\) \{[\s\S]*?createMediaProvider\(config\)\.generateImage/, "the default seam is the real provider");
 });
 
 test("5d. the video token resolves to the same job identity on repeated first-run clicks", () => {

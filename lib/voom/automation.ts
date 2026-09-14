@@ -11,17 +11,24 @@
  * engine, not an intention —
  *   lib/voom/weekly-automation.ts      only `assisted`/`autopilot` accounts are
  *                                      picked up by the scheduled run,
- *   lib/voom/workflow/rolling-plan.ts  `manual` returns before any stage; for
- *                                      the automated modes `ensureMedia` runs
- *                                      before the approval split, so paid media
- *                                      generation happens without an approval,
+ *   lib/voom/workflow/rolling-plan.ts  `manual` plans ONLY on an explicit
+ *                                      Replenish, and then planning-only (no
+ *                                      `ensureMedia`, no approval, no
+ *                                      scheduling); for the automated modes
+ *                                      `ensureMedia` runs before the approval
+ *                                      split, so paid media generation happens
+ *                                      without an approval,
  *   lib/voom/workflow/service.ts       `autoApproveAndSchedule` is Autopilot
  *                                      only and is gated by the one safety
  *                                      evaluator (lib/mara/autopilot-safety.ts),
- *   app/api/plan/route.ts              a Manual account that explicitly builds
- *                                      its plan gets an assisted-style run,
+ *   app/api/plan/route.ts              Replenish runs the account's REAL mode
+ *                                      (Manual is never coerced into Assisted),
  *   lib/instagram/publishing.ts        publishing needs the connected
  *                                      account's own Instagram permission.
+ *
+ * `mayAutomaticallyGeneratePaidMedia(mode, trigger)` below is the ONE answer
+ * to "may this workflow run spend provider credits on media by itself?". The
+ * engine, the service ports and the Replenish copy all read it.
  *
  * Deliberately free of `server-only` and `@/` imports so the behaviour can be
  * executed directly by the Node test suite.
@@ -74,7 +81,7 @@ export const AUTOMATION_MODE_COPY: Record<AutomationModeValue, AutomationModeCop
     value: "manual",
     label: AUTOMATION_MODE_LABELS.manual,
     summary: "Nothing runs on a schedule. Voom plans, drafts and generates only when you ask it to.",
-    media: "No scheduled generation. Paid MARA media generation starts only from an explicit request — building your plan, Create with MARA, Regenerate or Post Studio.",
+    media: "No scheduled generation. Building or replenishing your plan creates drafts only. Paid MARA media generation starts only from an explicit request — Create with MARA, Regenerate or Post Studio.",
   },
   assisted: {
     value: "assisted",
@@ -142,6 +149,59 @@ export function activeAutomationModeCard(savedMode: AutomationModeValue): Automa
  */
 export function automationRunsAutomatically(mode: AutomationModeValue): boolean {
   return mode === "assisted" || mode === "autopilot";
+}
+
+/**
+ * What started a workflow run.
+ *
+ *   scheduled  — the timed worker (lib/voom/weekly-automation.ts). Nobody
+ *                clicked anything.
+ *   replenish  — the owner clicked "Build plan" / "Replenish plan" (or changed
+ *                the posting frequency) on the Marketing Plan: an explicit
+ *                request for a PLAN, not for media.
+ */
+export const WORKFLOW_TRIGGERS = ["scheduled", "replenish"] as const;
+export type WorkflowTrigger = (typeof WORKFLOW_TRIGGERS)[number];
+
+/**
+ * The ONE paid-media policy for a workflow run.
+ *
+ * Answers: may this run — started by `trigger` for an account in `mode` —
+ * submit a paid provider media generation (Seedream image, Seedance video)
+ * WITHOUT the owner explicitly asking for that specific media?
+ *
+ *   Manual    → never. Manual means the owner chooses when paid media
+ *               generation begins, per item, via Create with MARA. A Manual
+ *               Replenish therefore creates the plan and its drafts only.
+ *   Assisted  → yes (current behaviour, unchanged): media is generated before
+ *               the approval stop.
+ *   Autopilot → yes (current behaviour, unchanged).
+ *
+ * The explicit per-item click ("Create with MARA", "Regenerate", "Retry as new
+ * generation") is NOT a workflow run and is not governed here — it goes
+ * through `produceWorkflowMedia` with `explicit: true` and stays available in
+ * every mode, including Manual.
+ */
+export function mayAutomaticallyGeneratePaidMedia(mode: AutomationModeValue, trigger: WorkflowTrigger): boolean {
+  if (mode === "manual") return false;
+  // Both triggers are currently treated the same for the automated modes; the
+  // parameter exists so the answer is explicit per (mode, trigger) pair and a
+  // future narrowing can happen here, in one place.
+  return trigger === "scheduled" || trigger === "replenish";
+}
+
+/**
+ * The truthful Replenish helper line for one mode. Manual must never imply
+ * that Replenish creates finished media.
+ */
+export function replenishPlanDescription(mode: AutomationModeValue): string {
+  if (mode === "manual") {
+    return "Replenish plan creates your upcoming content plan. Media is generated only when you ask MARA to create it.";
+  }
+  if (mode === "autopilot") {
+    return "Replenish plan tops up your upcoming content plan. MARA generates media automatically and safe items are approved and scheduled for you.";
+  }
+  return "Replenish plan tops up your upcoming content plan. MARA generates media automatically, then each item waits for your approval.";
 }
 
 export interface AutomationModeChangeEffect {

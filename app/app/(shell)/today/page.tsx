@@ -52,7 +52,10 @@ export default async function TodayPage() {
     <Section title="Needs your approval" icon="warn" href="/app/approvals" action="Open Approvals" items={summary.needsApproval}
       empty="Nothing needs your decision right now." />
     <Section title="Being generated" icon="spark" href="/app/calendar" action="View schedule" items={summary.generating}
-      empty="No media is generating." />
+      empty="No media is generating."
+      reason={snapshot.mode === "manual"
+        ? "You're in Manual mode: MARA generates a visual only when you choose Create with MARA on an item. Items show up here while that work is in progress."
+        : undefined} />
     <Section title="Waiting for media" icon="film" href="/app/calendar" action="Review waiting items" items={summary.waitingForMedia}
       empty="Nothing is scheduled but waiting for its visual." />
     <Section title="Missed scheduled time" icon="clock" href="/app/calendar" action="Review missed items" items={summary.missed}
@@ -91,12 +94,12 @@ function Stat({ label, value }: { label: string; value: number }) {
 const emptyWhy: Record<string, string> = {
   "Open Content Calendar": "When an item's schedule reaches today it moves here — see the full rolling schedule in the Content Calendar.",
   "Open Approvals": "Voom prepares work and brings it here before it schedules anything, so you always decide what goes out.",
-  "View schedule": "MARA generates visuals on its own after a plan is built. Items show up here while that work is in progress.",
+  "View schedule": "In Assisted and Autopilot, MARA generates visuals on its own after a plan is built. Items show up here while that work is in progress.",
   "Review waiting items": "Approved items whose visual is still generating are held here with their schedule — they publish automatically once the media is ready.",
   "Review failures": "If publishing or media generation stops, the item waits here with what happened and a safe retry — nothing is published twice.",
 };
 
-function Section({ title, icon, href, action, items, empty }: { title: string; icon: string; href: string; action: string; items: WorkflowView[]; empty: string }) {
+function Section({ title, icon, href, action, items, empty, reason }: { title: string; icon: string; href: string; action: string; items: WorkflowView[]; empty: string; reason?: string }) {
   return <Card className="mb-4 p-5 sm:p-6">
     <div className="mb-4 flex items-center gap-2">
       <span className="grid h-9 w-9 place-items-center rounded-xl bg-[var(--brand-soft)] text-brand"><Icon name={icon} size={18} /></span>
@@ -105,7 +108,7 @@ function Section({ title, icon, href, action, items, empty }: { title: string; i
     </div>
     {items.length
       ? <div className="space-y-2">{items.map((item) => <WorkflowRow key={item.draftId} item={item} />)}</div>
-      : <EmptyState icon={icon} title={empty} reason={emptyWhy[action]} className="py-6" />}
+      : <EmptyState icon={icon} title={empty} reason={reason ?? emptyWhy[action]} className="py-6" />}
     <Link href={href} className="mt-1 inline-flex text-sm font-semibold text-brand hover:underline">{action} →</Link>
   </Card>;
 }
