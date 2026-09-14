@@ -71,9 +71,15 @@ export interface BusinessProfileInput {
 
 export type CampaignStatus = "draft" | "approved" | "rejected";
 
+/**
+ * 'multi' is the Automated Campaigns container (migration 0033); 'sms' remains
+ * readable for historical campaigns but can no longer be created.
+ */
+export type CampaignKind = "email" | "sms" | "multi";
+
 export interface CampaignRecord {
   id: string;
-  kind: "email" | "sms";
+  kind: CampaignKind;
   name: string;
   objective: string;
   /** Free-text audience description; display-only, never a recipient source. */
@@ -87,6 +93,15 @@ export interface CampaignRecord {
   proposed_send_at: string | null;
   status: CampaignStatus;
   approved_at?: string | null;
+  // Automated Campaigns (migration 0033) — null/absent for legacy campaigns.
+  is_automated?: boolean | null;
+  goal?: import("@/lib/campaign/types").CampaignGoal | null;
+  start_at?: string | null;
+  end_at?: string | null;
+  offer_details?: string | null;
+  campaign_notes?: string | null;
+  generated_summary?: string | null;
+  parent_campaign_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -128,7 +143,7 @@ export interface CampaignSendRecord {
 export type CampaignDeliveryState = "ready" | "sending" | "accepted" | "delivered" | "failed";
 
 export interface CampaignProviderAvailability {
-  provider: "resend" | "clicksend";
+  provider: "resend" | "retired";
   label: string;
   configured: boolean;
   deliveryTrackingConfigured: boolean;

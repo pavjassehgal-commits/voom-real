@@ -1,0 +1,119 @@
+import { z } from "zod";
+import { getCurrentUser } from "@/lib/voom/server-data";
+import { createClient } from "@/utils/supabase/server";
+import { createAdminClient } from "@/utils/supabase/admin";
+import { buildAutomatedCampaign, newBuildIdempotencyKey } from "@/lib/campaign/server";
+import {
+  CAMPAIGN_GOALS,
+  MAX_CAMPAIGN_DAYS,
+  isCampaignGoal,
+  type CampaignGoal,
+} from "@/lib/campaign/types";
+import { campaignSpanDays } from "@/lib/campaign/planner";
+
+export const runtime = "nodejs";
+
+const UUID_VALUE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+const buildSchema = z.object({
+  // Required minimum: a name OR a short campaign idea, a goal, and dates.
+  name: z.string().trim().min(1).max(160),
+  goal: z.string().refine((value): value is CampaignGoal => isCampaignGoal(value), {
+    message: "Choose one of the campaign goals.",
+  }),
+  startDate: z.string().trim().min(8).max(40),
+  endDate: z.string().trim().min(8).max(40),
+  offerDetails: z.string().trim().max(1000).optional().default(""),
+  targetAudience: z.string().trim().max(1000).optional().default(""),
+  notes: z.string().trim().max(2000).optional().default(""),
+  audienceId: z.string().trim().regex(UUID_VALUE_RE).nullable().optional(),
+  // Client-minted so a double-submitted form can never build twice.
+  idempotencyKey: z.string().trim().uuid().optional(),
+}).strict();
+
+export async function POST(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
+
+  let body: unknown;
+  try { body = await request.json(); } catch {
+    return Response.json({ error: "Tell Voom what the campaign is for first." }, { status: 400 });
+  }
+  const parsed = buildSchema.safeParse(body);
+  if (!parsed.success) {
+    return Response.json({ error: "Add a campaign idea, a goal, and start/end dates." }, { status: 400 });
+  }
+  const data = parsed.data;
+
+  // Date-only inputs are interpreted in the business's Dubai calendar.
+  const datesValid = (DATE_RE.test(data.startDate) || !Number.isNaN(Date.parse(data.startDate)))
+    && (DATE_RE.test(data.endDate) || !Number.isNaN(Date.parse(data.endDate)));
+  if (!datesValid) return Response.json({ error: "Choose valid start and end dates." }, { status: 400 });
+
+  const span = campaignSpanDays(dubaiDate(data.startDate), dubaiDate(data.endDate));
+  if (span < 1) return Response.json({ error: "The end date must be on or after the start date." }, { status: 400 });
+  if (span > MAX_CAMPAIGN_DAYS) {
+    return Response.json({ error: `Keep campaigns to ${MAX_CAMPAIGN_DAYS} days or fewer for v1.` }, { status: 400 });
+  }
+
+  try {
+    const db = await createClient();
+
+    // The saved automation mode decides what the build is allowed to approve
+    // internally. The build never sends or publishes in any mode.
+    const { data: business } = await db.from("businesses")
+      .select("automation_level")
+      .eq("owner_user_id", user.id)
+      .maybeSingle();
+
+    let admin;
+    try {
+      admin = createAdminClient();
+    } catch {
+      return Response.json({ error: "Campaign building is not fully configured on the server yet." }, { status: 503 });
+    }
+
+    let audienceId: string | null = null;
+    if (data.audienceId) {
+      const { data: audience, error: audienceError } = await db.from("audiences")
+        .select("id").eq("owner_id", user.id).eq("id", data.audienceId).maybeSingle();
+      if (audienceError) return Response.json({ error: "Voom couldn't verify that audience. Please retry." }, { status: 503 });
+      if (!audience) return Response.json({ error: "That audience was not found in your workspace." }, { status: 404 });
+      audienceId = audience.id;
+    }
+
+    const result = await buildAutomatedCampaign(db, admin, user.id, {
+      brief: {
+        name: data.name,
+        goal: data.goal,
+        startAt: dubaiDate(data.startDate),
+        endAt: dubaiDate(data.endDate),
+        offerDetails: data.offerDetails || undefined,
+        targetAudience: data.targetAudience || undefined,
+        notes: data.notes || undefined,
+        audienceId,
+      },
+      mode: (business as { automation_level?: string | null } | null)?.automation_level ?? null,
+      idempotencyKey: data.idempotencyKey ?? newBuildIdempotencyKey(),
+    });
+
+    return Response.json({
+      message: "MARA built your campaign. Nothing has been sent or published.",
+      ...result,
+      goals: CAMPAIGN_GOALS,
+    }, { status: 201 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message === "automated_campaign_build_failed") {
+      return Response.json({ error: "Voom couldn't save that campaign. Please retry." }, { status: 503 });
+    }
+    return Response.json({ error: "MARA couldn't build that campaign. Please retry." }, { status: 503 });
+  }
+}
+
+function dubaiDate(value: string): string {
+  if (DATE_RE.test(value)) return value;
+  const shifted = new Date(new Date(value).getTime() + 4 * 60 * 60_000);
+  return shifted.toISOString().slice(0, 10);
+}

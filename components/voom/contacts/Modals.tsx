@@ -63,7 +63,6 @@ function ContactEditorBody({
   const [phone, setPhone] = useState(contact?.phone ?? "");
   const [tagsText, setTagsText] = useState((contact?.tags ?? []).join(", "));
   const [emailConsent, setEmailConsent] = useState<Consent>(contact?.email_status ?? "default");
-  const [smsConsent, setSmsConsent] = useState<Consent>(contact?.sms_status ?? "default");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,7 +94,6 @@ function ContactEditorBody({
           email: email.trim().toLowerCase() || null,
           phone: phone.trim() || null,
           email_status: emailConsent === "default" ? undefined : emailConsent,
-          sms_status: smsConsent === "default" ? undefined : smsConsent,
           tags,
         })
       : await createContactAction({
@@ -104,7 +102,6 @@ function ContactEditorBody({
           email: email.trim().toLowerCase() || null,
           phone: phone.trim() || null,
           email_status: emailConsent,
-          sms_status: smsConsent,
           tags,
         });
     setBusy(false);
@@ -121,7 +118,7 @@ function ContactEditorBody({
     <ModalShell wide>
       <ModalHead
         title={isEdit ? "Edit contact" : "Add contact"}
-        sub="Voom never infers consent — defaults to Unknown unless you confirm. Real email or SMS is never sent from here."
+        sub="Voom never infers consent — defaults to Unknown unless you confirm. No email is ever sent from here."
         onClose={close}
       />
       <ModalBody>
@@ -164,12 +161,6 @@ function ContactEditorBody({
             value={emailConsent}
             disabled={!email.trim()}
             onChange={setEmailConsent}
-          />
-          <ConsentField
-            label="SMS consent"
-            value={smsConsent}
-            disabled={!phone.trim()}
-            onChange={setSmsConsent}
           />
         </div>
       </ModalBody>
@@ -368,8 +359,8 @@ export function CsvImportModal({
                   className="mt-[3px] h-4 w-4 accent-[var(--brand)]"
                 />
                 <span>
-                  I confirm the imported contacts have given <b>explicit consent</b> for both email and SMS where I
-                  check the box above. Without this, Voom will set both consent states to <b>Unknown</b>.
+                  I confirm the imported contacts have given <b>explicit consent</b> for email where I
+                  check the box above. Without this, Voom will set email consent to <b>Unknown</b>.
                 </span>
               </label>
             </div>
@@ -592,7 +583,7 @@ function AudienceEditorBody({
     <ModalShell wide>
       <ModalHead
         title={isEdit ? "Edit audience" : "New audience"}
-        sub="Voom computes the eligible contact list server-side. No contacts are emailed or SMS'd from this screen."
+        sub="Voom computes the eligible contact list server-side. No contacts are emailed from this screen."
         onClose={close}
       />
       <ModalBody>
@@ -613,7 +604,6 @@ function AudienceEditorBody({
               disabled={isEdit}
             >
               <option value="all_email_subscribers">All email subscribers</option>
-              <option value="all_sms_subscribers">All SMS subscribers</option>
               <option value="tag">Tag audience</option>
               <option value="manual">Manual audience</option>
             </select>

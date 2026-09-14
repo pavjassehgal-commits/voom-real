@@ -17,8 +17,9 @@ test("the eligibility preview route is auth-gated, channel-validated and masked"
   const route = await read("app/api/voom/audiences/[id]/eligibility/route.ts");
   assert.match(route, /getCurrentUser\(\)/);
   assert.match(route, /\{ status: 401 \}/);
-  // Channel must be explicitly email or sms — eligibility is never guessed.
-  assert.match(route, /kind !== "email" && kind !== "sms"/);
+  // Channel must be explicitly email — SMS was retired and is not a
+  // selectable eligibility channel; the kind is never guessed.
+  assert.match(route, /if \(kind !== "email"\)/);
   assert.match(route, /\{ status: 400 \}/);
   // Ownership is validated through the owner-scoped resolution helper.
   assert.match(route, /resolveAudienceChannelEligibility\(db, user\.id, id, kind\)/);
@@ -69,8 +70,11 @@ test("campaign PATCH can link or unlink an audience, always ownership-validated"
 test("campaign reads return the linked audience id", async () => {
   const data = await read("lib/mara/internal-data.ts");
   assert.match(data, /audience_id/);
-  const selects = data.match(/id,kind,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,created_at,updated_at/g) ?? [];
-  assert.ok(selects.length >= 6, `expected all campaign selects to include audience_id, got ${selects.length}`);
+  // One shared column list (which includes audience_id) is used by every
+  // campaign select/insert/update, so no read can silently drop it.
+  assert.match(data, /const CAMPAIGN_COLUMNS = "id,kind,is_automated,parent_campaign_id,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,goal,start_at,end_at,offer_details,campaign_notes,generated_summary,approved_at,created_at,updated_at";/);
+  const selects = data.match(/select\(CAMPAIGN_COLUMNS\)/g) ?? [];
+  assert.ok(selects.length >= 6, `expected all campaign selects to use CAMPAIGN_COLUMNS, got ${selects.length}`);
 });
 
 test("the send route distinguishes single-recipient and audience sends strictly", async () => {
@@ -153,11 +157,13 @@ test("audience sends over BULK_SEND_CAP are refused entirely — zero recipients
     'rpc("claim_campaign_send"',
     'rpc("record_campaign_send_provider_result"',
     "sendEmailCampaign(campaign, recipient)",
-    "sendSmsCampaign(campaign, recipient)",
   ]) {
     const callIndex = audienceFn.indexOf(call);
     assert.ok(callIndex > guard, `${call} must only run when NOT over cap — it must come after the over-cap guard that returns`);
   }
+  // SMS was removed: no SMS send call exists anywhere in the active path.
+  assert.doesNotMatch(route, /sendSmsCampaign/);
+  assert.doesNotMatch(route, /clicksend/i);
 });
 
 test("audience send results stay truthful and masked within the cap", async () => {
@@ -172,16 +178,21 @@ test("audience send results stay truthful and masked within the cap", async () =
   assert.match(route, /\$\{accepted\} accepted, \$\{failed\} failed, \$\{skipped\} skipped/);
 });
 
-test("SMS sends never claim Delivered without verified ClickSend tracking", async () => {
+test("SMS is retired: the delivery path refuses SMS/multi and no SMS provider call exists", async () => {
   const [route, helper] = await Promise.all([
     read("app/api/voom/campaigns/[id]/delivery/route.ts"),
     read("lib/voom/campaign-delivery.ts"),
   ]);
-  // ClickSend delivery tracking stays unconfigured — accepted is the ceiling.
-  assert.match(helper, /deliveryTrackingConfigured: false,/);
+  // Historical SMS rows stay readable, but execution is explicitly refused.
+  assert.match(route, /campaign\.kind === "sms" \|\| campaign\.kind === "multi"/);
+  assert.match(route, /\{ status: 410 \}/);
+  assert.doesNotMatch(route, /sendSmsCampaign/);
+  assert.doesNotMatch(route, /@\/lib\/sms/);
+  assert.doesNotMatch(helper, /@\/lib\/sms/);
+  assert.doesNotMatch(helper, /createClickSendClient/);
+  // Resend delivery tracking truthfulness is unchanged: Delivered requires
+  // the verified provider callback.
   assert.match(route, /Delivered is only ever set by a verified provider callback/);
-  // No audience path writes a delivered state or message.
-  assert.doesNotMatch(route, /internal_status: "delivered"|"sms"[^\n]*delivered|delivered[^\n]*"sms"/i);
   assert.doesNotMatch(helper, /mark.*Delivered.*provider API success/i);
 });
 
@@ -200,10 +211,12 @@ test("the editor offers single-recipient or audience mode with a live eligibilit
   assert.match(modal, /the send is refused entirely/);
   assert.match(modal, /send blocked until the audience is narrowed/);
   assert.match(modal, /Sending is refused while more than/);
-  // The existing single-recipient flow is preserved.
+  // The existing single-recipient email flow is preserved.
   assert.match(modal, /Recipient email/);
-  assert.match(modal, /Recipient phone number/);
   assert.match(modal, /One recipient for this MVP/);
+  // SMS is retired: no phone field or SMS channel language in the editor.
+  assert.doesNotMatch(modal, /Recipient phone number/);
+  assert.doesNotMatch(modal, /SMS/);
   assert.match(modal, /Send approved/);
   assert.match(modal, /delivery\?\.canSend/);
 });

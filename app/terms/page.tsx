@@ -24,10 +24,10 @@ export default function TermsPage() {
         <p>
           Voom is a marketing platform for small businesses. MARA, its AI
           marketing manager, helps plan marketing, draft content (such as
-          Instagram captions, Reel concepts and scripts, emails, and SMS
+          Instagram captions, Reel concepts and scripts, and emails
           messages), build weekly content calendars, and report on results.
           The Service also includes contacts and audience management, campaign
-          delivery by email and SMS where configured, Instagram account
+          delivery by email where configured, Instagram account
           connection, and Reel production tools.
         </p>
         <LegalNote>
@@ -112,7 +112,7 @@ export default function TermsPage() {
           contacts, assets, and content you provide or approve. You grant Voom
           a limited license to host, process, and transmit that content solely
           to operate the Service for you, which includes sending it to the AI,
-          email, SMS, and infrastructure providers described in our Privacy
+          email and infrastructure providers described in our Privacy
           Policy. We do not train our own models on your content.
         </p>
       </LegalSection>
@@ -120,10 +120,13 @@ export default function TermsPage() {
       <LegalSection title="Third-party services">
         <p>
           The Service depends on third-party providers, including Supabase,
-          Vercel, Resend, ClickSend, Meta (Instagram), and AI providers. Their
-          availability and their own terms are outside our control, and where
-          they apply, those terms govern your use of their services. We are not
-          responsible for acts or failures of these providers.
+          Vercel, Resend, Meta (Instagram), and AI providers. SMS marketing is
+          no longer part of Voom and no SMS delivery provider is used; records
+          of SMS messages sent by older accounts remain stored as historical
+          data only. Their availability and their own terms are outside our
+          control, and where they apply, those terms govern your use of their
+          services. We are not responsible for acts or failures of these
+          providers.
         </p>
       </LegalSection>
 

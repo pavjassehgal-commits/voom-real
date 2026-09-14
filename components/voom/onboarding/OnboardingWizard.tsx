@@ -449,7 +449,6 @@ function StepConnect({ igConnected, onConnect }: { igConnected: boolean; onConne
   const rows: [string, string, string, boolean][] = [
     ["ig", "Instagram", "Professional account connection", igConnected],
     ["mail", "Email", "Campaigns, flows & subscriber lists", false],
-    ["msg", "SMS", "Broadcasts and reply handling", false],
   ];
   return (
     <div>

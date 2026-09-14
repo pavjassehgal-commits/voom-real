@@ -1,40 +1,47 @@
-import assert from "node:assert/strict";
-import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import assert from "node:assert/strict";
 
 const root = new URL("../", import.meta.url);
 const read = (path) => readFile(new URL(path, root), "utf8");
 
-test("Email and SMS provider secrets remain server-only", async () => {
+test("Email provider secrets remain server-only and SMS secrets are gone", async () => {
   const env = await read(".env.example");
   for (const name of [
     "EMAIL_PROVIDER_API_KEY",
     "EMAIL_FROM_ADDRESS",
     "EMAIL_FROM_NAME",
     "EMAIL_WEBHOOK_SECRET",
-    "CLICKSEND_USERNAME",
-    "CLICKSEND_API_KEY",
   ]) {
     assert.match(env, new RegExp(`^${name}=$`, "m"));
     assert.doesNotMatch(env, new RegExp(`NEXT_PUBLIC_${name}`));
   }
+  // SMS (ClickSend) was removed from the product: no env vars are documented.
+  assert.doesNotMatch(env, /CLICKSEND_/);
 
-  const [emailConfig, emailClient, emailIndex, smsConfig, smsClient, smsIndex, campaigns] = await Promise.all([
+  const [emailConfig, emailClient, emailIndex, campaigns] = await Promise.all([
     read("lib/email/config.ts"),
     read("lib/email/client.ts"),
     read("lib/email/index.ts"),
-    read("lib/sms/config.ts"),
-    read("lib/sms/client.ts"),
-    read("lib/sms/index.ts"),
     read("app/app/(shell)/campaigns/page.tsx"),
   ]);
 
-  for (const source of [emailConfig, emailClient, emailIndex, smsConfig, smsClient, smsIndex]) {
+  for (const source of [emailConfig, emailClient, emailIndex]) {
     assert.match(source, /import "server-only"/);
   }
 
   assert.doesNotMatch(campaigns, /EMAIL_PROVIDER_API_KEY|EMAIL_FROM_ADDRESS|EMAIL_FROM_NAME|EMAIL_WEBHOOK_SECRET|CLICKSEND_USERNAME|CLICKSEND_API_KEY/);
+});
+
+test("the SMS provider module is fully removed and no SMS client is importable", async () => {
+  // lib/sms (ClickSend config/client/sender) was deleted wholesale; the
+  // retired channel keeps its historical database rows only.
+  await Promise.all([
+    "lib/sms/config.ts",
+    "lib/sms/client.ts",
+    "lib/sms/core.ts",
+    "lib/sms/index.ts",
+  ].map((path) => assert.rejects(read(path), undefined, `${path} must not exist`)));
 });
 
 test("Resend configuration validates required server env and exposes truthful availability", async () => {
@@ -121,122 +128,29 @@ test("Resend client uses injected fetch with server auth headers", async () => {
   assert.equal(headers.get("Accept"), "application/json");
 });
 
-test("ClickSend configuration validates required server env and exposes truthful availability", async () => {
-  const { SmsProviderConfigurationError, getClickSendAvailability, readClickSendConfig, requireClickSendConfig } = await import("../lib/sms/core.ts");
-
-  const partial = getClickSendAvailability({
-    CLICKSEND_USERNAME: "voom_founder",
-  });
-  assert.equal(partial.provider, "clicksend");
-  assert.equal(partial.configured, false);
-  assert.deepEqual(partial.missingEnv, ["CLICKSEND_API_KEY"]);
-  assert.equal(readClickSendConfig({
-    CLICKSEND_USERNAME: "",
-    CLICKSEND_API_KEY: "clicksend_key",
-  }), null);
-
-  const fullEnv = {
-    CLICKSEND_USERNAME: "  voom_founder  ",
-    CLICKSEND_API_KEY: "clicksend_key",
-  };
-  const availability = getClickSendAvailability(fullEnv);
-  assert.equal(availability.configured, true);
-  assert.deepEqual(availability.missingEnv, []);
-
-  assert.deepEqual(readClickSendConfig(fullEnv), {
-    provider: "clicksend",
-    username: "voom_founder",
-    apiKey: "clicksend_key",
-    apiBaseUrl: "https://rest.clicksend.com",
-  });
-
-  assert.throws(() => requireClickSendConfig({}), (error) => {
-    assert.ok(error instanceof SmsProviderConfigurationError);
-    assert.equal(error.message, "sms_provider_not_configured");
-    assert.equal(error.availability.configured, false);
-    assert.match(error.availability.missingEnv.join(","), /CLICKSEND_USERNAME/);
-    return true;
-  });
-});
-
-test("ClickSend client posts to v3 sms/send with basic auth and a JSON body", async () => {
-  const { createClickSendApiClient } = await import("../lib/sms/core.ts");
-
-  let call = null;
-  const client = createClickSendApiClient({
-    provider: "clicksend",
-    username: "voom_founder",
-    apiKey: "clicksend_key",
-    apiBaseUrl: "https://rest.clicksend.com",
-  }, {
-    timeoutMs: 4321,
-    fetch: async (input, init) => {
-      call = { url: String(input), init };
-      return new Response(JSON.stringify({
-        http_code: 200,
-        response_code: "SUCCESS",
-        response_msg: "Message has been successfully sent.",
-        data: { messages: [{ message_id: "D6D16B28-46AC-484A-AB0A-A08CD08EF75C" }] },
-      }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    },
-  });
-
-  const response = await client.postJson("/v3/sms/send", {
-    messages: [{ to: "+15551234567", body: "Hello from Voom" }],
-  });
-  assert.equal(response.status, 200);
-  assert.equal(call?.url, "https://rest.clicksend.com/v3/sms/send");
-  assert.equal(call?.init?.method, "POST");
-  assert.equal(call?.init?.cache, "no-store");
-  assert.ok(call?.init?.signal instanceof AbortSignal);
-
-  const headers = new Headers(call?.init?.headers);
-  // ClickSend v3 uses HTTP Basic auth with the username and the API key.
-  assert.equal(headers.get("Authorization"), `Basic ${Buffer.from("voom_founder:clicksend_key", "utf8").toString("base64")}`);
-  assert.equal(headers.get("Content-Type"), "application/json");
-  assert.equal(headers.get("Accept"), "application/json");
-
-  const payload = JSON.parse(String(call?.init?.body));
-  assert.ok(Array.isArray(payload.messages));
-  assert.equal(payload.messages.length, 1);
-  assert.deepEqual(payload.messages[0], { to: "+15551234567", body: "Hello from Voom" });
-});
-
-test("SMS send is explicit-send only, invents no sender, and never fakes Delivered", async () => {
+test("SMS execution is gone: no sender, no invented provider, retired availability", async () => {
   const [helper, route] = await Promise.all([
     read("lib/voom/campaign-delivery.ts"),
     read("app/api/voom/campaigns/[id]/delivery/route.ts"),
   ]);
 
-  // The runtime SMS provider is ClickSend, posted to the documented v3 endpoint.
-  assert.match(helper, /provider: "clicksend"/);
-  assert.match(helper, /label: "ClickSend"/);
-  assert.match(helper, /clickSendSmsSendPath\(\)/);
+  // No SMS send function or ClickSend client exists in the delivery helper.
+  assert.doesNotMatch(helper, /sendSmsCampaign|createClickSend|clickSendSmsSendPath|provider: "clicksend"/);
+  assert.doesNotMatch(helper, /@\/lib\/sms/);
 
-  // sendSmsCampaign is the only SMS path: slice exactly that function (comments
-  // stripped) so the email `from` header and unrelated `db.from()` calls can't
-  // mask an invented SMS sender.
-  const start = helper.indexOf("export async function sendSmsCampaign");
-  const end = helper.indexOf("export function verifyResendWebhook", start);
-  const smsFn = helper
-    .slice(start, end > start ? end : undefined)
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^\s*\/\/.*$/gm, "");
-  assert.match(smsFn, /messages:\s*\[\s*\{\s*to:\s*recipient\.contact,\s*body:\s*campaign\.content,?\s*\},?\s*\],?/);
-  assert.doesNotMatch(smsFn, /\bfrom\b|sender|StatusCallback|callbackUrl/i);
+  // The retired availability branch is explicitly unconfigured.
+  assert.match(helper, /provider: "retired"/);
+  assert.match(helper, /label: kind === "multi" \? "Automated campaign" : "SMS \(retired\)"/);
 
-  // No verified ClickSend delivery callback exists, so tracking must be
-  // reported as unconfigured and acceptance must never imply delivery.
-  assert.match(helper, /deliveryTrackingConfigured: false/);
-  assert.match(route, /sendSmsCampaign\(campaign, recipient\)/);
+  // The delivery route refuses SMS/multi campaigns with 410 and never
+  // invokes an SMS sender. Email truthfulness is unchanged.
+  assert.doesNotMatch(route, /sendSmsCampaign/);
+  assert.match(route, /campaign\.kind === "sms" \|\| campaign\.kind === "multi"/);
+  assert.match(route, /\{ status: 410 \}/);
   assert.match(route, /Delivered will appear only after a verified provider callback confirms it/);
   assert.doesNotMatch(route, /mark.*Delivered.*provider API success/i);
 
-  // The Twilio webhook was removed with the swap, and no ClickSend webhook is
-  // faked without a safe verified callback path.
+  // No SMS webhook was ever faked.
   await assert.rejects(read("app/api/webhooks/twilio/status/route.ts"));
   assert.doesNotMatch(helper, /verifyTwilioSignature|createHmac\("sha1"|timingSafeEqual|webhooks\/twilio|webhooks\/clicksend/);
 });
@@ -251,9 +165,9 @@ test("provider configuration is surfaced truthfully without enabling sending", a
   assert.match(tools, /does not enable sending/);
   assert.match(tools, /sendingAvailable: false/);
   assert.match(connections, /Configured on server/);
-  assert.match(connections, /Approved campaigns can send to one real recipient/);
+  assert.match(connections, /Approved campaign emails send only through an explicit send action/);
   assert.match(connections, /Delivered requires the verified webhook/);
-  assert.match(connections, /Delivered requires verified status callbacks/);
-  assert.match(connections, /ClickSend/);
-  assert.doesNotMatch(connections, /Twilio/);
+  // The active product is Instagram + email only; SMS is named as removed.
+  assert.match(connections, /campaigns run on Instagram and email/);
+  assert.doesNotMatch(connections, /ClickSend|Twilio/);
 });

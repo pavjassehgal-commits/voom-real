@@ -12,8 +12,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /**
  * Channel-aware audience eligibility preview for the campaign editor.
  *
- * Eligibility is computed on the server from live contacts (email requires
- * subscribed + valid email; SMS requires subscribed + valid phone; unknown /
+ * Only email is an active Voom channel. Eligibility is computed on the
+ * server from live contacts (subscribed + valid email; unknown /
  * unsubscribed are excluded; duplicate destinations are deduped). The
  * response contains masked destinations only — the browser never receives a
  * raw recipient list. No sending happens here.
@@ -26,8 +26,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
   if (!UUID_RE.test(id)) return NextResponse.json({ error: "Audience not found." }, { status: 404 });
 
   const kind = new URL(request.url).searchParams.get("kind");
-  if (kind !== "email" && kind !== "sms") {
-    return NextResponse.json({ error: "Choose a valid channel (email or sms) for the eligibility preview." }, { status: 400 });
+  if (kind !== "email") {
+    return NextResponse.json({ error: "Choose email as the channel for the eligibility preview." }, { status: 400 });
   }
 
   try {

@@ -8,7 +8,6 @@ import {
   normalizeCampaignContact,
   readCampaignDelivery,
   sendEmailCampaign,
-  sendSmsCampaign,
 } from "@/lib/voom/campaign-delivery";
 import { planAudienceSend } from "@/lib/voom/audience-send-plan";
 import { resolveAudienceChannelEligibility } from "@/lib/contacts/server-data";
@@ -69,6 +68,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     // Explicit approval is always required before any send — single recipient
     // or audience.
     if (campaign.status !== "approved") return Response.json({ error: "Approve the campaign before sending it." }, { status: 409 });
+    // SMS was removed from the active product. Historical SMS rows remain
+    // readable, but there is no execution path for them any more.
+    if (campaign.kind === "sms" || campaign.kind === "multi") {
+      return Response.json({ error: "SMS marketing is no longer active in Voom. Historical SMS campaigns are read-only." }, { status: 410 });
+    }
 
     if (campaign.audience_id) {
       if (!("audienceSend" in parsed.data)) {
@@ -81,8 +85,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return Response.json({ error: "No audience is linked to this campaign. Link an audience in the campaign editor, or send to a single recipient." }, { status: 400 });
     }
 
-    const contact = normalizeCampaignContact(campaign.kind, parsed.data.contact);
-    if (!isValidContact(campaign.kind, contact)) return Response.json({ error: campaign.kind === "email" ? "Enter a valid recipient email address." : "Enter a valid phone number in international format." }, { status: 400 });
+    const contact = normalizeCampaignContact(parsed.data.contact);
+    if (!isValidEmailContact(contact)) return Response.json({ error: "Enter a valid recipient email address." }, { status: 400 });
 
     const delivery = await readCampaignDelivery(db, user.id, campaign);
     const provider = getCampaignProviderAvailability(campaign.kind);
@@ -92,7 +96,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!delivery.schemaReady) {
       return Response.json({ error: "Campaign delivery is not available until the delivery migration is applied.", delivery }, { status: 503 });
     }
-    if (delivery.recipient && normalizeCampaignContact(campaign.kind, delivery.recipient.contact) !== contact) {
+    if (delivery.recipient && normalizeCampaignContact(delivery.recipient.contact) !== contact) {
       return Response.json({ error: "This MVP supports one recipient per campaign. Keep the same recipient or create a new campaign.", delivery }, { status: 409 });
     }
     if (delivery.send && ["sending", "accepted", "delivered"].includes(delivery.send.internal_status)) {
@@ -139,9 +143,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return Response.json({ message: "This campaign already has an active or completed send for its saved recipient.", delivery: latest }, { status: 200 });
     }
 
-    const providerResult = campaign.kind === "email"
-      ? await sendEmailCampaign(campaign, recipient)
-      : await sendSmsCampaign(campaign, recipient);
+    const providerResult = await sendEmailCampaign(campaign, recipient);
 
     const recorded = await admin.rpc("record_campaign_send_provider_result", {
       p_owner_user_id: user.id,
@@ -178,9 +180,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
  *   explicit send request — nothing is ever sent automatically.
  * - The audience is re-resolved server-side at send time from live contacts;
  *   the client never supplies recipients.
- * - Eligibility: email needs subscribed + valid email, SMS needs subscribed +
- *   valid E.164 phone; unknown/unsubscribed are excluded and duplicate
- *   destinations are deduped.
+ * - Eligibility: email needs subscribed + valid email; unknown/unsubscribed
+ *   contacts are excluded and duplicate destinations are deduped.
  * - STRICT cap: if the audience resolves to more than BULK_SEND_CAP eligible
  *   destinations, the entire send is REFUSED — zero recipients are contacted
  *   and zero provider calls are made. The eligible list is never sliced and
@@ -193,6 +194,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
  *   only ever set by a verified provider callback.
  */
 async function sendToLinkedAudience(db: SupabaseClient, ownerId: string, campaign: CampaignRecord) {
+  if (campaign.kind !== "email") {
+    return Response.json({ error: "Only email campaigns can be delivered. SMS marketing is retired in Voom." }, { status: 410 });
+  }
   const audienceId = campaign.audience_id as string;
   const delivery = await readCampaignDelivery(db, ownerId, campaign);
   const provider = getCampaignProviderAvailability(campaign.kind);
@@ -224,8 +228,8 @@ async function sendToLinkedAudience(db: SupabaseClient, ownerId: string, campaig
 
   // STRICT over-cap gate: more than BULK_SEND_CAP eligible destinations
   // refuses the ENTIRE send. This returns before the admin client is created
-  // and before any add_campaign_recipient, claim_campaign_send, Resend or
-  // ClickSend call — zero recipients are contacted and zero provider calls
+  // and before any add_campaign_recipient, claim_campaign_send or Resend
+  // call — zero recipients are contacted and zero provider calls
   // are made. A refused plan exposes no batch to iterate, so a partial or
   // sliced send is impossible.
   const plan = planAudienceSend(eligible, BULK_SEND_CAP);
@@ -304,9 +308,7 @@ async function sendToLinkedAudience(db: SupabaseClient, ownerId: string, campaig
       continue;
     }
 
-    const providerResult = campaign.kind === "email"
-      ? await sendEmailCampaign(campaign, recipient)
-      : await sendSmsCampaign(campaign, recipient);
+    const providerResult = await sendEmailCampaign(campaign, recipient);
 
     const recorded = await admin.rpc("record_campaign_send_provider_result", {
       p_owner_user_id: ownerId,
@@ -352,10 +354,8 @@ async function sendToLinkedAudience(db: SupabaseClient, ownerId: string, campaig
   );
 }
 
-function isValidContact(kind: "email" | "sms", contact: string) {
-  return kind === "email"
-    ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact)
-    : /^\+[1-9][0-9]{7,14}$/.test(contact);
+function isValidEmailContact(contact: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact);
 }
 
 function statusConflictMessage(send: CampaignSendRecord) {
@@ -377,7 +377,6 @@ function rpcErrorMessage(error: unknown, fallback: string) {
   if (/campaign_not_approved/.test(text)) return "Approve the campaign before sending it.";
   if (/recipient_opted_out/.test(text)) return "That recipient has opted out and cannot be messaged.";
   if (/invalid_email_contact/.test(text)) return "Enter a valid recipient email address.";
-  if (/invalid_sms_contact/.test(text)) return "Enter a valid phone number in international format.";
   if (/delivery migration|PGRST202|relation .* does not exist|schema cache/i.test(text)) return "Campaign delivery is not available until the delivery migration is applied.";
   return fallback;
 }

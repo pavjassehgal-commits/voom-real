@@ -8,7 +8,6 @@ import type { AudienceRecord, ContactRecord } from "./types";
 export interface ContactsSummary {
   total: number;
   emailSubscribers: number;
-  smsSubscribers: number;
   unsubscribed: number;
   unknownConsent: number;
 }
@@ -24,7 +23,6 @@ export interface ContactsLoadResult {
 const EMPTY_SUMMARY: ContactsSummary = {
   total: 0,
   emailSubscribers: 0,
-  smsSubscribers: 0,
   unsubscribed: 0,
   unknownConsent: 0,
 };
@@ -80,15 +78,16 @@ function computeSummary(contacts: ContactRecord[]): ContactsSummary {
   const s: ContactsSummary = {
     total: contacts.length,
     emailSubscribers: 0,
-    smsSubscribers: 0,
     unsubscribed: 0,
     unknownConsent: 0,
   };
   for (const c of contacts) {
+    // SMS marketing was removed from the active product; the workspace KPIs
+    // describe the active email channel only. The historical sms_status
+    // column stays stored on contact rows and is never counted or deleted.
     if (c.email_status === "subscribed") s.emailSubscribers++;
-    if (c.sms_status === "subscribed") s.smsSubscribers++;
-    if (c.email_status === "unsubscribed" || c.sms_status === "unsubscribed") s.unsubscribed++;
-    if (c.email_status === "unknown" || c.sms_status === "unknown") s.unknownConsent++;
+    if (c.email_status === "unsubscribed") s.unsubscribed++;
+    if (c.email_status === "unknown") s.unknownConsent++;
   }
   return s;
 }

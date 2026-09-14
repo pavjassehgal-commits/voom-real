@@ -133,7 +133,6 @@ interface VoomState {
   theme: "light" | "dark";
   sideOpen: boolean;
   menuOpen: boolean;
-  campTab: "email" | "sms";
   igConnected: boolean;
   /** Billing is offline; every account is on the Free plan until Stripe exists. */
   plan: "free";
@@ -156,7 +155,6 @@ function initialState(init: { displayName: string | null; email: string | null; 
     theme: "dark",
     sideOpen: false,
     menuOpen: false,
-    campTab: "email",
     igConnected: false,
     plan: "free",
     brand: brandFromBusiness(init.business),
@@ -173,8 +171,6 @@ function initialState(init: { displayName: string | null; email: string | null; 
 
 let toastId = 0;
 
-export type CampaignTab = "email" | "sms";
-
 interface VoomActions {
   goTo: (id: string) => void;
   toggleSidebar: (open?: boolean) => void;
@@ -183,8 +179,6 @@ interface VoomActions {
   setTheme: (t: "light" | "dark") => void;
   toast: (msg: string, kind?: Toast["kind"], proto?: boolean) => void;
   dismissToast: (id: number) => void;
-
-  setCampTab: (t: CampaignTab) => void;
 
   igDisconnect: () => void;
 
@@ -276,10 +270,6 @@ export function VoomProvider({
       document.documentElement.dataset.theme = t;
       window.localStorage.setItem("voom-theme", t);
     }
-  }, []);
-
-  const setCampTab = useCallback<VoomActions["setCampTab"]>((t) => {
-    setState((s) => ({ ...s, campTab: t }));
   }, []);
 
   const igDisconnect = useCallback<VoomActions["igDisconnect"]>(() => {
@@ -446,7 +436,6 @@ export function VoomProvider({
       setTheme,
       toast,
       dismissToast,
-      setCampTab,
       igDisconnect,
       toggleTone,
       saveBrandSettings,
@@ -465,7 +454,6 @@ export function VoomProvider({
       setTheme,
       toast,
       dismissToast,
-      setCampTab,
       igDisconnect,
       toggleTone,
       saveBrandSettings,

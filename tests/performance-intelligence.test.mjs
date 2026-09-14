@@ -211,7 +211,7 @@ function connectionRow(overrides = {}) {
   };
 }
 
-function syncDeps({ tables, secrets, port, config = true, now = NOW, limit } = {}) {
+function syncDeps({ tables, secrets, port, config = true, now = NOW, limit, budgetMs } = {}) {
   return {
     db: createFakeAdmin(tables, secrets),
     config: config === false ? null : {
@@ -220,6 +220,12 @@ function syncDeps({ tables, secrets, port, config = true, now = NOW, limit } = {
     },
     client: port,
     now,
+    // The injected fixed `now` represents the collection instant, so the
+    // real wall-clock budget must be anchored to real time, not the fixed
+    // fixture; otherwise the deadline expires as soon as the real clock
+    // passes the fixture. A huge explicit budget keeps these tests
+    // deterministic at any hour.
+    budgetMs: budgetMs ?? 10_000_000_000,
     ...(limit ? { limit } : {}),
   };
 }

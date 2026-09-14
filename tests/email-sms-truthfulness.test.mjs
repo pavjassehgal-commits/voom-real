@@ -66,13 +66,13 @@ test("email/SMS campaign drafts stay a separate, send-free surface", async () =>
     read("app/app/(shell)/campaigns/page.tsx"),
     read("components/voom/operating/PlanWorkspace.tsx"),
   ]);
-  // The content workflow never sends or schedules an email/SMS campaign, and
+  // The content workflow never sends or schedules an email campaign, and
   // the Marketing Plan only renders executable content items.
   assert.doesNotMatch(workflow, /send_campaign|send_email|send_sms|spend/);
   assert.doesNotMatch(workspace, /send|Send/);
   // The empty state explains purpose + next actions without inventing data.
   assert.match(page, /EmptyState/);
-  assert.match(page, /let Voom prepare campaign drafts for you/);
+  assert.match(page, /it will build the full Instagram and email sequence for you to approve/);
 });
 
 test("content creation goes through the real persisted workflow, not a demo composer", async () => {

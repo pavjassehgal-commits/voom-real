@@ -106,10 +106,6 @@ export async function createContactAction(input: {
     input.email_status === "default" || input.email_status === undefined
       ? "unknown"
       : asConsent(input.email_status) ?? "unknown";
-  const smsStatus =
-    input.sms_status === "default" || input.sms_status === undefined
-      ? "unknown"
-      : asConsent(input.sms_status) ?? "unknown";
 
   const payload: CreateContactInput = {
     owner_id: owner.id,
@@ -118,7 +114,10 @@ export async function createContactAction(input: {
     email: asOptionalString(input.email) ?? null,
     phone: asOptionalString(input.phone) ?? null,
     email_status: emailStatus,
-    sms_status: smsStatus,
+    // SMS marketing was retired: a new contact can never be created as
+    // SMS-subscribed through the active product. Historical rows are never
+    // rewritten (the update path ignores the field entirely).
+    sms_status: "unknown",
     tags: asStringArray(input.tags),
     source: "manual",
   };
@@ -167,10 +166,7 @@ export async function updateContactAction(
     const v = asConsent(input.email_status);
     if (v) update.email_status = v;
   }
-  if (input.sms_status !== undefined) {
-    const v = asConsent(input.sms_status);
-    if (v) update.sms_status = v;
-  }
+  // SMS marketing is retired: edits never change the historical sms_status.
   if (input.tags !== undefined) update.tags = asStringArray(input.tags);
 
   const result = await updateContact(owner.db, owner.id, contactId, update);
@@ -244,7 +240,10 @@ export async function importContactsAction(input: {
       email: row.email ?? null,
       phone: row.phone ?? null,
       email_status: row.email ? defaultStatus : "unknown",
-      sms_status: row.phone ? defaultStatus : "unknown",
+      // SMS marketing was removed from Voom; imported phone numbers are never
+      // marked SMS-subscribed automatically. The historical column stays
+      // "unknown" so old data and schema semantics are preserved.
+      sms_status: "unknown",
       tags: Array.isArray(row.tags) ? row.tags.map((t) => String(t).trim()).filter(Boolean) : [],
       source: "csv",
     };

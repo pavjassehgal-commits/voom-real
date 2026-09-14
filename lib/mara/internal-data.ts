@@ -73,9 +73,11 @@ export async function getDraft(db: ServerSupabase, ownerId: string, id: string) 
   return data;
 }
 
+const CAMPAIGN_COLUMNS = "id,kind,is_automated,parent_campaign_id,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,goal,start_at,end_at,offer_details,campaign_notes,generated_summary,approved_at,created_at,updated_at";
+
 export async function listCampaigns(db: ServerSupabase, ownerId: string, kind?: string) {
-  let query = db.from("voom_campaigns").select("id,kind,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,created_at,updated_at")
-    .eq("owner_user_id", ownerId).order("updated_at", { ascending: false }).limit(50);
+  let query = db.from("voom_campaigns").select(CAMPAIGN_COLUMNS)
+    .eq("owner_user_id", ownerId).order("updated_at", { ascending: false }).limit(200);
   if (kind) query = query.eq("kind", kind);
   const { data, error } = await query;
   if (error) throw new Error("campaigns_unavailable");
@@ -83,7 +85,7 @@ export async function listCampaigns(db: ServerSupabase, ownerId: string, kind?: 
 }
 
 export async function getCampaign(db: ServerSupabase, ownerId: string, id: string) {
-  const { data, error } = await db.from("voom_campaigns").select("id,kind,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,created_at,updated_at")
+  const { data, error } = await db.from("voom_campaigns").select(CAMPAIGN_COLUMNS)
     .eq("owner_user_id", ownerId).eq("id", id).maybeSingle();
   if (error) throw new Error("campaign_unavailable");
   return data;
@@ -91,28 +93,37 @@ export async function getCampaign(db: ServerSupabase, ownerId: string, id: strin
 
 export async function createCampaign(db: ServerSupabase, ownerId: string, input: Record<string, unknown>) {
   const { data, error } = await db.from("voom_campaigns").insert({ ...input, owner_user_id: ownerId, status: "draft" })
-    .select("id,kind,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,created_at,updated_at").single();
+    .select(CAMPAIGN_COLUMNS).single();
   if (error) throw new Error("campaign_create_failed");
   return data;
 }
 
 export async function updateCampaign(db: ServerSupabase, ownerId: string, id: string, input: Record<string, unknown>) {
   const { data, error } = await db.from("voom_campaigns").update({ ...input, status: "draft" }).eq("owner_user_id", ownerId).eq("id", id)
-    .select("id,kind,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,created_at,updated_at").maybeSingle();
+    .select(CAMPAIGN_COLUMNS).maybeSingle();
   if (error) throw new Error("campaign_update_failed");
   return data;
 }
 
 export async function approveCampaign(db: ServerSupabase, ownerId: string, id: string) {
   const { data, error } = await db.from("voom_campaigns").update({ status: "approved" }).eq("owner_user_id", ownerId).eq("id", id)
-    .select("id,kind,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,created_at,updated_at").maybeSingle();
+    .select(CAMPAIGN_COLUMNS).maybeSingle();
   if (error) throw new Error("campaign_approve_failed");
   return data;
 }
 
 export async function rejectCampaign(db: ServerSupabase, ownerId: string, id: string) {
   const { data, error } = await db.from("voom_campaigns").update({ status: "rejected" }).eq("owner_user_id", ownerId).eq("id", id)
-    .select("id,kind,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,created_at,updated_at").maybeSingle();
+    .select(CAMPAIGN_COLUMNS).maybeSingle();
   if (error) throw new Error("campaign_reject_failed");
   return data;
+}
+
+/** The automated-campaign timeline actions for one container, slot ordered. */
+export async function listCampaignActions(db: ServerSupabase, ownerId: string, campaignId: string) {
+  const { data, error } = await db.from("voom_campaign_actions")
+    .select("id,campaign_id,slot,channel,stage,title,purpose,scheduled_for,status,email_campaign_id,draft_id,safety_blockers,created_at,updated_at")
+    .eq("owner_user_id", ownerId).eq("campaign_id", campaignId).order("slot", { ascending: true });
+  if (error) throw new Error("campaign_actions_unavailable");
+  return (data ?? []) as Array<Record<string, unknown>>;
 }
