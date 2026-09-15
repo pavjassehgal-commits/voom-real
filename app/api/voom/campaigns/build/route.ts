@@ -2,7 +2,11 @@ import { z } from "zod";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
-import { buildAutomatedCampaign, newBuildIdempotencyKey } from "@/lib/campaign/server";
+import {
+  AutomatedCampaignBuildError,
+  buildAutomatedCampaign,
+  newBuildIdempotencyKey,
+} from "@/lib/campaign/server";
 import {
   CAMPAIGN_GOALS,
   MAX_CAMPAIGN_DAYS,
@@ -104,12 +108,58 @@ export async function POST(request: Request) {
       goals: CAMPAIGN_GOALS,
     }, { status: 201 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    if (message === "automated_campaign_build_failed") {
-      return Response.json({ error: "Voom couldn't save that campaign. Please retry." }, { status: 503 });
-    }
-    return Response.json({ error: "MARA couldn't build that campaign. Please retry." }, { status: 503 });
+    return buildFailureResponse(error);
   }
+}
+
+/**
+ * Maps a build failure to a truthful, non-sensitive client response.
+ *
+ * The raw Postgres error never reaches the client — only its SQLSTATE
+ * category selects a canned message and a stable machine-readable `code`:
+ *   - missing migration/schema (42883 undefined function, 42P01 undefined
+ *     table, 42703 undefined column, PGRST202 stale PostgREST schema
+ *     cache): the service is not available on this deployment yet;
+ *   - integrity errors (23xxx): a database constraint refused the write;
+ *   - any other RPC failure / server error: a general failure to retry.
+ */
+function buildFailureResponse(error: unknown): Response {
+  const code = error instanceof AutomatedCampaignBuildError ? error.code : null;
+
+  if (code === "42883" || code === "42P01" || code === "42703" || code === "PGRST202") {
+    return Response.json(
+      {
+        code: "campaigns_schema_missing",
+        error: "Campaign building is not available on this deployment yet — the latest database changes have not been applied.",
+      },
+      { status: 503 },
+    );
+  }
+
+  if (code !== null && /^23\d{3}$/.test(code)) {
+    return Response.json(
+      {
+        code: "campaign_save_refused",
+        error: "Voom couldn't save that campaign because a data safety check refused it. Please retry.",
+      },
+      { status: 422 },
+    );
+  }
+
+  if (error instanceof AutomatedCampaignBuildError) {
+    return Response.json(
+      {
+        code: "campaign_save_failed",
+        error: "Voom couldn't save that campaign. Please retry.",
+      },
+      { status: 503 },
+    );
+  }
+
+  return Response.json(
+    { code: "campaign_build_failed", error: "MARA couldn't build that campaign. Please retry." },
+    { status: 503 },
+  );
 }
 
 function dubaiDate(value: string): string {

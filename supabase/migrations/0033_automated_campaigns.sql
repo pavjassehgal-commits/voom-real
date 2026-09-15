@@ -73,7 +73,7 @@ alter table public.voom_campaigns
       or (kind = 'multi' and goal is not null and start_at is not null and end_at is not null and end_at >= start_at)
     ))
     -- An automated child action campaign is email-only (never SMS).
-    and (parent_campaign_id is null or (is_automated = true and kind = 'email'))
+    or (parent_campaign_id is not null and is_automated = true and kind = 'email')
   );
 
 alter table public.voom_campaigns
