@@ -10,46 +10,25 @@ import {
   type MediaSpendBlockReason,
   type MediaSpendSettings,
 } from "./media-spend";
-
-/**
- * Server-side, database-backed half of AI Media Spend Control.
- *
- * The policy itself is pure (`lib/mara/media-spend.ts`); this module is the
- * only place that reads the owner's saved settings and the month's estimated
- * spend, so cost logic and gate logic are never duplicated across routes.
- *
- * Accounting reuses the EXISTING `mara_media_generations.estimated_cost_usd`
- * column (migration 0008) — no new spend table. Rows created before the
- * estimate model existed carry NULL and contribute 0; the estimate is written
- * on every new generation row instead.
- *
- * Statuses counted as spend: anything that reached the provider, including a
- * failed attempt (a provider request may still have been billed). `cancelled`
- * and `pending_confirmation` rows were never submitted and are not counted.
- */
+import { normalizePlan, type PlanId } from "@/lib/billing/plans";
+import { getCreditSummary } from "@/lib/billing/ledger";
+import { creditCostForMedia } from "@/lib/billing/credits";
 
 export const MEDIA_SPEND_COUNTED_STATUSES = ["queued", "generating", "processing", "completed", "failed"] as const;
 
 export type MediaSpendGateResult =
-  | { allow: true; source: MediaSource; reason: null; message: null; estimatedCostUsd: number; budgetReached: boolean }
-  | { allow: false; source: MediaSource; reason: MediaSpendBlockReason; message: string; estimatedCostUsd: number; budgetReached: boolean };
+  | { allow: true; source: MediaSource; reason: null; message: null; estimatedCostUsd: number; budgetReached: boolean; credits?: number }
+  | { allow: false; source: MediaSource; reason: MediaSpendBlockReason; message: string; estimatedCostUsd: number; budgetReached: boolean; credits?: number };
 
 export interface MediaSpendGateInput {
   ownerId: string;
   mode: "manual" | "assisted" | "autopilot";
-  /** True for a user click ("Create with MARA", "Regenerate", plan item retry). */
   explicit: boolean;
   mediaType: "image" | "video";
   durationSeconds?: number | null;
   now?: Date;
 }
 
-/**
- * The owner's saved settings. A missing/absent value (or a database that has
- * not had migration 0031 applied yet) resolves to the shipped defaults, so an
- * unreadable setting can never invent a LOWER budget than the product's
- * documented default.
- */
 export async function loadMediaSpendSettings(admin: AdminClient, ownerId: string): Promise<MediaSpendSettings> {
   const { data } = await admin.from("businesses")
     .select("allow_automatic_paid_media,monthly_media_budget_usd")
@@ -58,7 +37,15 @@ export async function loadMediaSpendSettings(admin: AdminClient, ownerId: string
   return normalizeMediaSpendSettings(data as Record<string, unknown> | null);
 }
 
-/** Estimated media spend for the current UTC month, in USD. */
+export async function loadBusinessPlan(admin: AdminClient, ownerId: string): Promise<PlanId> {
+  try {
+    const { data } = await admin.from("businesses").select("plan").eq("owner_user_id", ownerId).maybeSingle();
+    return normalizePlan((data as any)?.plan);
+  } catch {
+    return "free";
+  }
+}
+
 export async function loadMonthlyMediaSpendUsd(admin: AdminClient, ownerId: string, now: Date = new Date()): Promise<number> {
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
   const { data, error } = await admin.from("mara_media_generations")
@@ -66,7 +53,6 @@ export async function loadMonthlyMediaSpendUsd(admin: AdminClient, ownerId: stri
     .eq("owner_user_id", ownerId)
     .gte("created_at", monthStart)
     .in("status", [...MEDIA_SPEND_COUNTED_STATUSES]);
-  // Unreadable accounting never silently authorises a new automatic charge.
   if (error) throw new Error("media_spend_read_failed");
   const spent = (data ?? []).reduce(
     (total: number, row: { estimated_cost_usd?: unknown }) => total + Number(row.estimated_cost_usd ?? 0),
@@ -76,38 +62,99 @@ export async function loadMonthlyMediaSpendUsd(admin: AdminClient, ownerId: stri
 }
 
 /**
- * The ONE server-side gate, called immediately before a paid provider
- * submission.
- *
- * An explicit user request is allowed without any read: the owner's own click
- * is the authorisation, and it is recorded as `user_request`.
- *
- * Everything else is automatic and needs the owner's settings plus the month's
- * accounting. A failing accounting read throws instead of returning "allow",
- * so a database problem can never turn into an unaccounted charge — the
- * caller records the failure and the workflow continues without media.
+ * Server-side gate, now aligned with v1 Plans + Credits.
+ * Explicit requests are allowed only if plan includes AI media and enough credits.
+ * Automatic requests are allowed only for Autopilot + Max + toggle true + enough credits.
  */
 export async function guardMediaSpend(admin: AdminClient, input: MediaSpendGateInput): Promise<MediaSpendGateResult> {
   const source = mediaSourceForRun(input.mode, input.explicit);
   const estimatedCostUsd = estimateMediaCostUsd({ mediaType: input.mediaType, durationSeconds: input.durationSeconds ?? null });
+  const credits = creditCostForMedia({ mediaType: input.mediaType, durationSeconds: input.durationSeconds });
 
   if (source === "user_request") {
-    return evaluateMediaSpendGate({
-      mode: input.mode,
-      explicit: true,
-      allowAutomaticPaidMedia: true,
-      monthlyMediaBudgetUsd: Number.POSITIVE_INFINITY,
-      spentThisMonthUsd: 0,
+    // For explicit, still check plan and credits via new ledger (but don't reserve here — caller reserves)
+    const planId = await loadBusinessPlan(admin, input.ownerId);
+    const summary = await getCreditSummary(admin, input.ownerId, planId, input.now ?? new Date());
+    // Free plan cannot generate
+    if (planId === "free") {
+      return {
+        allow: false,
+        source: "user_request",
+        reason: "plan_not_allowed" as any,
+        message: `Your Free plan does not include AI media generation. Upgrade to Pro or Max.`,
+        estimatedCostUsd,
+        budgetReached: false,
+        credits,
+      };
+    }
+    if (summary.remaining < credits) {
+      return {
+        allow: false,
+        source: "user_request",
+        reason: "insufficient_credits" as any,
+        message: `You need ${credits} credits. You have ${summary.remaining} remaining.`,
+        estimatedCostUsd,
+        budgetReached: false,
+        credits,
+      };
+    }
+    return {
+      allow: true,
+      source: "user_request",
+      reason: null,
+      message: null,
       estimatedCostUsd,
+      budgetReached: false,
+      credits,
+    };
+  }
+
+  // Automatic path: v1 only Autopilot may auto-generate
+  if (input.mode !== "autopilot") {
+    return {
+      allow: false,
       source,
-    });
+      reason: "automatic_media_disabled",
+      message: "Automatic media generation is available in Autopilot only. Create each visual with Create with MARA.",
+      estimatedCostUsd,
+      budgetReached: false,
+      credits,
+    };
   }
 
   const now = input.now ?? new Date();
-  const [settings, spentThisMonthUsd] = await Promise.all([
+  const [settings, spentThisMonthUsd, planId] = await Promise.all([
     loadMediaSpendSettings(admin, input.ownerId),
     loadMonthlyMediaSpendUsd(admin, input.ownerId, now),
+    loadBusinessPlan(admin, input.ownerId),
   ]);
+
+  // Plan must be Max for automatic
+  if (planId !== "max") {
+    return {
+      allow: false,
+      source,
+      reason: "plan_not_allowed" as any,
+      message: `Automatic media generation is available on Max plan only.`,
+      estimatedCostUsd,
+      budgetReached: false,
+      credits,
+    };
+  }
+
+  const summary = await getCreditSummary(admin, input.ownerId, planId, now);
+  if (summary.remaining < credits) {
+    return {
+      allow: false,
+      source,
+      reason: "insufficient_credits" as any,
+      message: `You need ${credits} credits. You have ${summary.remaining} remaining.`,
+      estimatedCostUsd,
+      budgetReached: false,
+      credits,
+    };
+  }
+
   return evaluateMediaSpendGate({
     mode: input.mode,
     explicit: false,
@@ -116,5 +163,5 @@ export async function guardMediaSpend(admin: AdminClient, input: MediaSpendGateI
     spentThisMonthUsd,
     estimatedCostUsd,
     source,
-  });
+  }) as MediaSpendGateResult;
 }

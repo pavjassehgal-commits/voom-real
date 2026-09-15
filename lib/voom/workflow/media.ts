@@ -7,57 +7,26 @@ import { putPostAsset, removePostAssetObject, syncPostToCalendar, type AdminClie
 import { advanceVideoJob, buildVideoService, enforceVideoJobHardTimeout, startPostStudioVideo } from "@/lib/mara/video-service";
 import type { PostStudioVideoStartArgs, PostStudioVideoStartResult } from "@/lib/mara/video-service";
 import { isTimedOutVideoGeneration, staleDecision } from "@/lib/mara/video-job";
-import { guardMediaSpend } from "@/lib/mara/spend-control";
 import type { MediaSource } from "@/lib/mara/media-spend";
 import { isActiveMediaStatus, isStaleMediaGeneration, MEDIA_GENERATION_HARD_TIMEOUT_MINUTES } from "./state";
 import type { ContentType } from "@/lib/voom/cadence";
+import { normalizePlan, type PlanId } from "@/lib/billing/plans";
+import { creditCostForMedia } from "@/lib/billing/credits";
+import { guardAndReserveMedia, releaseReservationOnFailure, confirmReservation } from "@/lib/billing/entitlement-guard";
+import { normalizeAllowAutomaticPaidMedia, estimateMediaCostUsd } from "@/lib/mara/media-spend";
 
 /**
  * Media generation for one workflow item, reusing the EXISTING durable MARA
- * media systems only:
+ * media systems only.
  *
- *   Image Post / image Story -> lib/media provider abstraction (OpenRouter
- *     Seedream today) + the same byte-level validation and private storage
- *     Post Studio uses.
- *   Reel / video Story       -> the existing durable video job service
- *     (OpenRouter Seedance, Magic Hour fallback) via startPostStudioVideo.
- *
- * No new provider implementation is introduced here.
- *
- * Duplicate-charge protection (explicit + idempotent):
- *   - a FRESH in-flight generation always resolves to "exists": repeated
- *     clicks (or a second tab) can never start, let alone pay for, a second
- *     generation — `decideMediaStart` encodes the whole policy so it is
- *     unit tested,
- *   - a STALE in-flight VIDEO job that is still INSIDE its hard timeout is
- *     re-advanced (polled) instead of replaced: the provider job may still be
- *     running, so a second one is never submitted,
- *   - a VIDEO job BEYOND its hard timeout can never complete: it is stopped
- *     with a terminal provider_timeout state (a database write only — no
- *     provider call, no charge) and the ONLY way to a new paid generation is
- *     the user's explicit "Retry as new generation" click. Merely viewing,
- *     polling or re-advancing never submits one,
- *   - a STALE in-flight IMAGE row is a dead synchronous attempt: the explicit
- *     retry retires it (cancelled) and starts exactly one fresh attempt,
- *   - video retries after a FINISHED attempt get a fresh token only because
- *     the finished row can never complete; a first run keeps the stable
- *     per-draft token, so repeated clicks resolve to the same job,
- *   - the database keeps the final guard: one active generation per
- *     (owner, draft) partial unique index — so even two simultaneous clicks
- *     create at most one fresh provider job.
- *
- * AI MEDIA SPEND CONTROL (the one paid-media gate):
- *   - `guardMediaSpend` (lib/mara/spend-control.ts) runs immediately before a
- *     NEW paid submission, after the duplicate/spend-free decisions above.
- *     A Manual account, an account whose owner turned automatic generation
- *     off, or a month that has used its budget is refused there with a
- *     truthful reason: nothing is submitted, no generation row is written and
- *     nothing is charged,
- *   - an explicit user click is always allowed and is recorded as
- *     `user_request`; automatic work is recorded as `assisted` or `autopilot`,
- *   - a refusal is NOT a workflow failure: the caller keeps the plan, the copy
- *     and the draft, and only the media waits (the plan engine records it in
- *     `run.failures` and the item stays a draft).
+ * V1 Plans + Credits guarantees:
+ * - Reservation before provider submission (never call Seedream/Seedance first and deduct later)
+ * - Atomic reservation prevents concurrent overspend
+ * - Refund on provider failure before real paid job
+ * - No double-charge via unique generation_id
+ * - Polling/reconciliation consumes zero additional credits
+ * - Manual and Assisted never auto-generate paid media (deliberate product change)
+ * - Autopilot auto-generates only if plan=Max, toggle true, enough credits, safety allows
  */
 
 const GENERATED_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
@@ -69,35 +38,15 @@ export interface MediaRequest {
   contentType: ContentType;
   concept: string;
   visualBrief: string;
-  /**
-   * The account's automation mode for a run-driven generation. Only relevant
-   * to the automatic path (the AI media spend gate); an explicit click is
-   * always `user_request`. Defaults to Assisted when a caller omits it.
-   */
   mode?: "manual" | "assisted" | "autopilot";
+  /** Optional billing context to avoid extra DB read in tests. */
+  planId?: PlanId;
+  allowAutomaticPaidMedia?: boolean;
 }
 
-/**
- * What actually happened, so the UI can only tell the truth:
- *
- *   exists    — nothing was started (a stored asset or a live generation
- *               already owns this item); nothing was charged,
- *   advanced  — an EXISTING in-flight job was re-checked with the provider;
- *               no new job was submitted and nothing new was charged,
- *   timed_out — an in-flight job beyond its hard timeout was stopped with a
- *               terminal provider_timeout state; no new job, no charge,
- *   queued    — a NEW generation was submitted (the only paid outcome here),
- *   completed — an image generation finished synchronously and is stored.
- */
 export type MediaOutcomeState = "exists" | "advanced" | "timed_out" | "queued" | "completed";
-
 export type MediaOutcome = { ok: true; state: MediaOutcomeState } | { ok: false; code: string };
 
-/**
- * The truthful user-facing sentence for one outcome. A retry that only
- * re-checked an existing job must never claim a new video was started, and a
- * retry that DID submit a new paid generation must say so plainly.
- */
 export function mediaOutcomeMessage(state: MediaOutcomeState): string {
   switch (state) {
     case "exists":
@@ -113,55 +62,21 @@ export function mediaOutcomeMessage(state: MediaOutcomeState): string {
   }
 }
 
-/** The latest generation row for a draft (any media type, any status). */
 export interface LatestGeneration {
   id: string;
   status: string;
-  /** 'image' | 'video' — the hard timeout is an asynchronous-video rule. */
   mediaType: string | null;
-  /** Terminal reason, e.g. 'provider_timeout'. */
   errorCode: string | null;
-  /** Job lifetime anchor: the hard timeout is measured from creation. */
   createdAt: string | null;
   updatedAt: string | null;
 }
 
-/** True when this row is a terminal hard-timeout video generation. */
 export function isTimedOutGeneration(latest: LatestGeneration | null): boolean {
   if (!latest) return false;
   if (latest.mediaType === "image") return false;
   return isTimedOutVideoGeneration(latest.status, latest.errorCode ?? null);
 }
 
-/**
- * The one explicit/idempotent media start policy (pure — unit tested).
- *
- *   exists             — something already owns this item's visual (a stored
- *                        asset, a fresh in-flight generation, or a timed-out
- *                        generation nobody explicitly retried): do NOTHING.
- *                        This is what makes a repeated retry click a no-op
- *                        instead of a second charge.
- *   advance            — a STALE in-flight video job still INSIDE its hard
- *                        timeout: re-check the SAME job. No second provider
- *                        job is ever submitted for an in-flight one.
- *   timeout            — an in-flight video job BEYOND its hard timeout: stop
- *                        it with a terminal provider_timeout state. Database
- *                        write only — no provider call, no new job, no charge.
- *   start_after_timeout— the SAME terminal transition, followed by exactly one
- *                        fresh generation. This is "Retry as new generation"
- *                        and the ONLY decision that may submit a new provider
- *                        job after a timeout — so it requires `explicit`.
- *   start              — actually (re)start. `token` decides the paid identity:
- *                        "stable"  = the per-draft token (first runs; repeats
- *                                     resolve to the same job),
- *                        "fresh"   = a brand-new token (an explicit retry after
- *                                     a FINISHED attempt — the old row is
- *                                     terminal and can never complete, so
- *                                     nothing is duplicated),
- *                        <string>  = an explicit caller token (e.g. "Regenerate").
- *                        `retireGenerationId` = a dead synchronous attempt that
- *                        the explicit retry replaces (cancelled first).
- */
 export type MediaStartDecision =
   | { kind: "exists" }
   | { kind: "advance"; generationId: string }
@@ -169,11 +84,6 @@ export type MediaStartDecision =
   | { kind: "start_after_timeout"; generationId: string; token: "fresh" | string }
   | { kind: "start"; token: "stable" | "fresh" | string; retireGenerationId: string | null };
 
-/**
- * `explicit` is the user's click. It is the ONLY thing that can turn a
- * timed-out generation into a new paid one: viewing, polling, the rolling-plan
- * run and any other automatic path leave it terminal.
- */
 export function decideMediaStart(input: {
   contentType: ContentType;
   latest: LatestGeneration | null;
@@ -186,60 +96,34 @@ export function decideMediaStart(input: {
   const now = input.now ?? new Date();
   const latest = input.latest;
   const explicit = input.explicit === true || Boolean(input.explicitToken);
-  // The hard timeout is the asynchronous VIDEO job rule; images are
-  // synchronous and keep their existing dead-attempt handling.
   const videoJob = input.contentType === "reel" && (latest?.mediaType ?? "video") !== "image";
 
   if (latest && isActiveMediaStatus(latest.status)) {
-    // A generation is genuinely in flight.
     if (!isStaleMediaGeneration(latest.status, latest.updatedAt, now, input.staleMinutes)) {
       return { kind: "exists" };
     }
     if (mustStopVideoJob(latest, input.contentType, now, input.staleMinutes)) {
-      // Beyond the hard timeout this job can never complete. It is stopped;
-      // only an explicit click may then pay for a new generation.
       return explicit
         ? { kind: "start_after_timeout", generationId: latest.id, token: input.explicitToken ?? "fresh" }
         : { kind: "timeout", generationId: latest.id };
     }
     if (videoJob) {
-      // Stale but still inside the hard timeout: the provider job may be alive
-      // (OpenRouter pending). Re-check it — never submit a second paid job.
       return { kind: "advance", generationId: latest.id };
     }
-    // A stale image row is a dead synchronous attempt: the explicit retry
-    // retires it and starts one fresh attempt.
     return { kind: "start", token: "fresh", retireGenerationId: latest.id };
   }
 
-  // No in-flight generation.
   if (input.explicitToken) return { kind: "start", token: input.explicitToken, retireGenerationId: null };
-  // A timed-out generation is terminal work only the USER may repeat: nothing
-  // automatic ever silently submits a fresh paid generation for it.
   if (videoJob && !explicit && isTimedOutGeneration(latest)) return { kind: "exists" };
   if (input.contentType !== "reel") return { kind: "start", token: "fresh", retireGenerationId: null };
-  // Video, no explicit token:
   if (!latest) return { kind: "start", token: "stable", retireGenerationId: null };
-  // A stored asset already satisfies a plain retry — only an explicit
-  // "Regenerate" (fresh token) may pay for a second generation.
   if (latest.status === "completed" && input.hasAsset) return { kind: "exists" };
-  // An explicit retry after a TERMINAL TIMEOUT: the timed-out row is stopped
-  // (if it is not already) and exactly one fresh generation is submitted.
   if (videoJob && explicit && isTimedOutGeneration(latest)) {
     return { kind: "start_after_timeout", generationId: latest.id, token: "fresh" };
   }
-  // The latest attempt is finished (failed / cancelled / orphaned completed):
-  // an explicit retry is a NEW attempt — a fresh identity, never a duplicate
-  // of anything still running.
   return { kind: "start", token: "fresh", retireGenerationId: null };
 }
 
-/**
- * True when an in-flight video generation is stale AND beyond the durable
- * job's hard timeout — the one condition under which Voom stops a job instead
- * of waiting on it. Both the explicit retry path and the automatic path use
- * this same predicate, so they can never disagree.
- */
 export function mustStopVideoJob(
   latest: LatestGeneration | null,
   contentType: ContentType,
@@ -247,19 +131,15 @@ export function mustStopVideoJob(
   staleMinutes?: number,
 ): boolean {
   if (!latest || !isActiveMediaStatus(latest.status)) return false;
-  // The hard timeout is the asynchronous VIDEO job rule.
   if (contentType !== "reel" || latest.mediaType === "image") return false;
   if (!isStaleMediaGeneration(latest.status, latest.updatedAt, now, staleMinutes)) return false;
   return videoJobDecision(latest, now) === "timeout";
 }
 
-/** The durable job's own lifetime rule for one generation row. */
 function videoJobDecision(latest: LatestGeneration, now: Date): "timeout" | "reclaim" | "ok" {
   const nowMs = now.getTime();
   return staleDecision(latest.status, {
     nowMs,
-    // Missing/invalid timestamps age the job zero seconds: never a timeout
-    // decision on bad data.
     createdAtMs: parseInstantOr(latest.createdAt ?? latest.updatedAt, nowMs),
     updatedAtMs: parseInstantOr(latest.updatedAt ?? latest.createdAt, nowMs),
   });
@@ -271,14 +151,12 @@ function parseInstantOr(value: string | null | undefined, fallback: number): num
   return Number.isFinite(at) ? at : fallback;
 }
 
-/** Resolves the decision's token kind into the durable idempotency token. */
 export function resolveGenerationToken(token: string | "stable" | "fresh", draftId: string): string {
   if (token === "stable") return `workflow-${draftId}`;
   if (token === "fresh") return `workflow-${draftId}:${randomUUID()}`;
   return token;
 }
 
-/** The newest generation row for a draft (any media type), owner-scoped. */
 export async function getLatestGeneration(admin: AdminClient, ownerId: string, draftId: string): Promise<LatestGeneration | null> {
   const { data } = await admin.from("mara_media_generations")
     .select("id,status,media_type,error_code,created_at,updated_at")
@@ -300,13 +178,6 @@ async function hasStoredAsset(admin: AdminClient, ownerId: string, draftId: stri
   return Boolean(data?.id);
 }
 
-/**
- * True when the AUTOMATIC path (the rolling-plan run) must leave this draft's
- * media alone: Voom already owns the bytes, a generation is still in flight,
- * or the latest video generation ended in a hard timeout. After a timeout only
- * an explicit user click ("Retry as new generation") may pay for a new job —
- * automation never repeats a paid generation by itself.
- */
 export function blocksAutomaticMedia(input: {
   hasAsset: boolean;
   hasActiveGeneration: boolean;
@@ -316,7 +187,6 @@ export function blocksAutomaticMedia(input: {
   return isTimedOutGeneration(input.latest);
 }
 
-/** True when the draft already owns stored bytes, has a live generation, or timed out. */
 export async function mediaAlreadyHandled(admin: AdminClient, ownerId: string, draftId: string): Promise<boolean> {
   const [{ data: asset }, { data: live }, latest] = await Promise.all([
     admin.from("post_draft_assets").select("id").eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle(),
@@ -327,25 +197,10 @@ export async function mediaAlreadyHandled(admin: AdminClient, ownerId: string, d
   return blocksAutomaticMedia({ hasAsset: Boolean(asset?.id), hasActiveGeneration: Boolean(live?.id), latest });
 }
 
-/**
- * The provider-side effects of this module, behind one seam so the
- * money-critical policy is exercised with fakes (no OpenRouter call, no paid
- * generation) — the same ports pattern the durable video job service and the
- * Instagram publish flow already use. Production always uses
- * `defaultWorkflowMediaDeps`. `startVideo` and `generateImage` are the ONLY
- * two members that can spend provider credits.
- */
 export interface WorkflowMediaDeps {
-  /** Re-checks ONE existing durable job. Never submits a provider job. */
   advance(admin: AdminClient, ownerId: string, draftId: string, generationId: string): Promise<"advanced" | "unavailable">;
-  /** Persists the hard-timeout terminal state: a database write, no provider call. */
   enforceTimeout(admin: AdminClient, ownerId: string, generationId: string, now: Date): Promise<{ enforced: boolean }>;
-  /** The ONLY path that may submit a new paid provider VIDEO job. */
   startVideo(args: PostStudioVideoStartArgs): Promise<PostStudioVideoStartResult>;
-  /**
-   * The ONLY path that may submit a new paid provider IMAGE request (OpenRouter
-   * Seedream today). Returns the provider name for the generation row.
-   */
   generateImage(input: { prompt: string; aspectRatio: "1:1" | "9:16" }): Promise<{ provider: string; bytes: Uint8Array }>;
 }
 
@@ -357,9 +212,6 @@ export const defaultWorkflowMediaDeps: WorkflowMediaDeps = {
   },
   async advance(admin, ownerId, draftId, generationId) {
     const service = await buildVideoService(admin, ownerId);
-    // No provider stack means there is nothing to poll. The hard timeout does
-    // NOT depend on this stack (see enforceTimeout), so a job can never stay
-    // stuck in flight just because the provider is unconfigured.
     if (!service) return "unavailable";
     await advanceVideoJob(service, draftId, generationId, "reel").catch(() => null);
     return "advanced";
@@ -371,15 +223,6 @@ export const defaultWorkflowMediaDeps: WorkflowMediaDeps = {
   startVideo: startPostStudioVideo,
 };
 
-/**
- * The AUTOMATIC media path (the rolling-plan run / a plan rebuild).
- *
- * It never submits a provider job for anything already in flight, and it never
- * repeats a timed-out generation — but it DOES stop a job that is beyond its
- * hard timeout, because leaving it 'generating' forever is exactly the
- * production bug. Stopping is a guarded database write: no provider call, no
- * new job, no charge. Only an explicit user click can then start a new one.
- */
 export async function ensureWorkflowMedia(
   admin: AdminClient,
   request: MediaRequest,
@@ -388,8 +231,6 @@ export async function ensureWorkflowMedia(
   const now = options.now ?? new Date();
   const deps: WorkflowMediaDeps = { ...defaultWorkflowMediaDeps, ...options.deps };
   const latest = await getLatestGeneration(admin, request.ownerId, request.draftId);
-  // A job beyond its hard timeout is stopped even here, so it cannot stay
-  // 'generating' forever. This submits nothing: no provider call, no charge.
   if (latest && mustStopVideoJob(latest, request.contentType, now)) {
     return stopTimedOutGeneration(admin, request.ownerId, latest.id, now, deps);
   }
@@ -397,11 +238,6 @@ export async function ensureWorkflowMedia(
   return produceWorkflowMedia(admin, request, { now, deps });
 }
 
-/**
- * Persists the terminal timeout state of one dead video job. Database write
- * only — this is the whole reason a job beyond its hard timeout can no longer
- * stay 'generating/pending' indefinitely.
- */
 async function stopTimedOutGeneration(
   admin: AdminClient,
   ownerId: string,
@@ -413,27 +249,23 @@ async function stopTimedOutGeneration(
   return { ok: true, state: "timed_out" };
 }
 
-/**
- * Produces media for one workflow item WITHOUT the "already handled" guard.
- *
- * Used by the in-place Marketing Plan actions ("Create with MARA" /
- * "Regenerate" / "Retry generation" / "Retry as new generation") so a user can
- * (re)generate the visual of the SAME workflow item on demand. The
- * duplicate-charge policy lives in `decideMediaStart` (see module docs):
- * nothing starts unless the policy says so, a repeated click while a
- * generation is in flight is a no-op, and a job beyond its hard timeout is
- * stopped instead of being left `generating` forever.
- *
- * `options.explicit` is the user's click. Without it a timed-out generation is
- * only ever stopped — never replaced by a new paid one.
- */
+async function loadBusinessBilling(admin: AdminClient, ownerId: string): Promise<{ planId: PlanId; allowAutomatic: boolean }> {
+  try {
+    const { data } = await admin.from("businesses").select("plan,allow_automatic_paid_media").eq("owner_user_id", ownerId).maybeSingle();
+    const planId = normalizePlan((data as any)?.plan);
+    const allowAutomatic = normalizeAllowAutomaticPaidMedia((data as any)?.allow_automatic_paid_media);
+    return { planId, allowAutomatic };
+  } catch {
+    return { planId: "free", allowAutomatic: false };
+  }
+}
+
 export async function produceWorkflowMedia(
   admin: AdminClient,
   request: MediaRequest,
   options: {
     idempotencyToken?: string;
     explicit?: boolean;
-    /** The account's mode for a run-driven generation; see MediaRequest.mode. */
     mode?: "manual" | "assisted" | "autopilot";
     now?: Date;
     deps?: Partial<WorkflowMediaDeps>;
@@ -457,102 +289,116 @@ export async function produceWorkflowMedia(
   if (decision.kind === "exists") return { ok: true, state: "exists" };
 
   if (decision.kind === "advance") {
-    // Stale but INSIDE the hard timeout: re-check the SAME durable job. This
-    // either completes it (asset attached + held schedule re-synced) or keeps
-    // waiting on the provider. No second provider job is ever submitted here,
-    // so the outcome never claims a new generation was started.
     const advanced = await deps.advance(admin, request.ownerId, request.draftId, decision.generationId)
       .catch(() => "unavailable" as const);
-    // Without the provider stack there was nothing to re-check: say so instead
-    // of implying a poll happened. Still nothing started and nothing charged.
     if (advanced === "unavailable") return { ok: false, code: "video_provider_unavailable" };
     return { ok: true, state: "advanced" };
   }
 
   if (decision.kind === "timeout") {
-    // Beyond the hard timeout: persist the terminal state — a guarded database
-    // write only, no provider call, no new job, no charge.
     return stopTimedOutGeneration(admin, request.ownerId, decision.generationId, now, deps);
   }
 
-  // EVERYTHING BELOW MAY SUBMIT A NEW PAID GENERATION. The one AI media spend
-  // gate runs here — after the decisions that cost nothing (exists / advance /
-  // timeout) and before the first write or provider call. A refused attempt
-  // returns a truthful reason and leaves the account completely untouched: no
-  // generation row, no provider request, no charge.
+  // Billing context: prefer explicit passed in request, else load from DB
+  const billing = request.planId !== undefined && request.allowAutomaticPaidMedia !== undefined
+    ? { planId: request.planId, allowAutomatic: request.allowAutomaticPaidMedia }
+    : await loadBusinessBilling(admin, request.ownerId);
+
   const mode = options.mode ?? request.mode ?? "assisted";
-  const spend = await guardMediaSpend(admin, {
+  const isExplicit = options.explicit === true;
+  const mediaType = request.contentType === "reel" ? "video" : "image";
+  const source = isExplicit ? "user_request" : (mode === "autopilot" ? "autopilot" : "user_request" as const);
+  // For automatic path, source is autopilot only if mode is autopilot and not explicit
+  const effectiveSource = isExplicit ? "user_request" : "autopilot";
+
+  // For automatic (non-explicit) we must be in autopilot mode per new product rules
+  if (!isExplicit && mode !== "autopilot") {
+    return { ok: false, code: "automatic_media_disabled" };
+  }
+
+  const generationIdForLedger = randomUUID();
+  const requiredCredits = creditCostForMedia({ mediaType, durationSeconds: mediaType === "video" ? 8 : null });
+
+  // Central guard + atomic reservation BEFORE provider
+  const guard = await guardAndReserveMedia(admin, {
     ownerId: request.ownerId,
+    planId: billing.planId,
     mode,
-    explicit: options.explicit === true,
-    mediaType: request.contentType === "reel" ? "video" : "image",
-    durationSeconds: request.contentType === "reel" ? 8 : null,
+    allowAutomaticPaidMedia: billing.allowAutomatic,
+    mediaType,
+    durationSeconds: mediaType === "video" ? 8 : null,
+    source: effectiveSource as any,
+    generationId: generationIdForLedger,
     now,
   });
-  if (!spend.allow) return { ok: false, code: spend.reason };
+
+  if (!guard.allow) {
+    // Map guard codes to legacy block reasons for workflow failures
+    const codeMap: Record<string, string> = {
+      plan_not_allowed: "plan_not_allowed",
+      mode_not_allowed: "automatic_media_disabled",
+      automatic_disabled: "automatic_media_disabled",
+      insufficient_credits: "insufficient_credits",
+      safety_blocked: "safety_blocked",
+      autopilot_not_allowed: "autopilot_not_allowed",
+    };
+    return { ok: false, code: codeMap[guard.code] ?? guard.code };
+  }
+
+  // If already reserved (idempotent), treat as exists — no second provider call
+  if (guard.reservation.already) {
+    return { ok: true, state: "exists" };
+  }
 
   if (decision.kind === "start_after_timeout") {
-    // The explicit "Retry as new generation": the dead job is stopped FIRST
-    // (it keeps its provider job id as history), then exactly one fresh
-    // generation may be submitted below.
     await stopTimedOutGeneration(admin, request.ownerId, decision.generationId, now, deps);
   }
 
   if (decision.kind === "start" && decision.retireGenerationId) {
-    // Retire the dead synchronous attempt the explicit retry replaces.
     try {
       await admin.from("mara_media_generations")
         .update({ status: "cancelled", error_code: "superseded_by_retry" })
         .eq("id", decision.retireGenerationId).eq("owner_user_id", request.ownerId)
         .eq("status", "processing");
-    } catch { /* best effort — the fresh attempt below is the real state */ }
+    } catch { /* best effort */ }
   }
 
   if (request.contentType === "reel") {
-    const result = await deps.startVideo({
-      admin,
-      ownerId: request.ownerId,
-      post: { id: request.draftId, kind: "reel", conversationId: request.conversationId, concept: request.concept },
-      brief: request.visualBrief,
-      idempotencyToken: resolveGenerationToken(decision.token, request.draftId),
-      // The audited source of this paid job (user_request/assisted/autopilot).
-      source: spend.source,
-    });
+    // For video, we already reserved with generationIdForLedger. Pass same id to startVideo
+    // so its internal guard uses same ledger row and does not double-charge.
+    let result: PostStudioVideoStartResult;
+    try {
+      result = await deps.startVideo({
+        admin,
+        ownerId: request.ownerId,
+        post: { id: request.draftId, kind: "reel", conversationId: request.conversationId, concept: request.concept },
+        brief: request.visualBrief,
+        idempotencyToken: resolveGenerationToken(decision.token, request.draftId),
+        source: isExplicit ? "user_request" : "autopilot",
+        generationId: generationIdForLedger,
+      });
+    } catch {
+      await releaseReservationOnFailure(admin, request.ownerId, generationIdForLedger).catch(() => null);
+      return { ok: false, code: "video_start_failed" };
+    }
+
     if ("error" in result) {
-      // 409 is the one-active-job guard refusing a second job: a repeated or
-      // racing click is a no-op, not a failure, and nothing was charged.
+      if (result.status !== 409) {
+        await releaseReservationOnFailure(admin, request.ownerId, generationIdForLedger).catch(() => null);
+      }
       return { ok: false, code: result.status === 409 ? "video_start_conflict" : "video_start_failed" };
     }
+
+    await confirmReservation(admin, request.ownerId, generationIdForLedger).catch(() => null);
     return { ok: true, state: result.status === 202 ? "queued" : "exists" };
   }
 
-  const outcome = await generateWorkflowImage(admin, request, deps, { source: spend.source, estimatedCostUsd: spend.estimatedCostUsd });
-  // The visual arriving late must re-sync an approved item's schedule: the
-  // queue row moves from 'waiting_for_media' to 'scheduled' and the worker
-  // publishes it — the item never silently dies waiting for media.
-  if (outcome.ok) await syncPostToCalendar(admin, request.ownerId, request.draftId).catch(() => null);
-  return outcome;
-}
-
-
-/**
- * Image generation through the existing provider abstraction.
- *
- * `spend` is the AI media spend decision for THIS submission: it carries the
- * audited source and the estimated cost, so the generation row is both
- * attributable and accounted for exactly like a video job row.
- */
-async function generateWorkflowImage(
-  admin: AdminClient,
-  request: MediaRequest,
-  deps: WorkflowMediaDeps,
-  spend: { source: MediaSource; estimatedCostUsd: number },
-): Promise<MediaOutcome> {
+  // Image path — use same ledger generationId as mara row id for traceability
+  const imageGenId = generationIdForLedger;
   const format = request.contentType === "story" ? "9:16" : "1:1";
   const prompt = buildVisualPrompt(request);
-  const generationId = randomUUID();
   const { error: queueError } = await admin.from("mara_media_generations").insert({
-    id: generationId,
+    id: imageGenId,
     owner_user_id: request.ownerId,
     conversation_id: request.conversationId,
     draft_id: request.draftId,
@@ -560,15 +406,14 @@ async function generateWorkflowImage(
     prompt: prompt.slice(0, 4000),
     aspect_ratio: format,
     status: "processing",
-    // AI media spend control: what caused this generation, and Voom's
-    // conservative estimate of what the provider will charge for it.
-    spend_source: spend.source,
-    estimated_cost_usd: spend.estimatedCostUsd,
-    // One generation identity per draft per attempt keeps the existing unique
-    // (owner, idempotency_key) guard meaningful.
-    idempotency_key: `workflow:${request.draftId}:${generationId}`,
+    spend_source: isExplicit ? "user_request" : "autopilot",
+    estimated_cost_usd: estimateMediaCostUsd({ mediaType: "image" }),
+    idempotency_key: `workflow:${request.draftId}:${imageGenId}`,
   });
-  if (queueError) return { ok: false, code: "media_job_failed" };
+  if (queueError) {
+    await releaseReservationOnFailure(admin, request.ownerId, generationIdForLedger).catch(() => null);
+    return { ok: false, code: "media_job_failed" };
+  }
 
   try {
     const result = await deps.generateImage({ prompt, aspectRatio: format });
@@ -588,26 +433,24 @@ async function generateWorkflowImage(
     await admin.from("mara_media_generations").update({
       provider: result.provider, storage_path: storagePath, mime_type: mimeType,
       byte_size: result.bytes.length, status: "completed", completed_at: new Date().toISOString(), error_code: null,
-    }).eq("id", generationId).eq("owner_user_id", request.ownerId);
+    }).eq("id", imageGenId).eq("owner_user_id", request.ownerId);
     if (previousStoragePath && previousStoragePath !== storagePath) {
       await removePostAssetObject(admin, request.ownerId, previousStoragePath).catch(() => undefined);
     }
+    await confirmReservation(admin, request.ownerId, generationIdForLedger).catch(() => null);
+    await syncPostToCalendar(admin, request.ownerId, request.draftId).catch(() => null);
     return { ok: true, state: "completed" };
   } catch (reason) {
     const code = reason instanceof MediaError ? reason.code : "unavailable";
     await admin.from("mara_media_generations").update({
       status: "failed", error_code: code,
       provider_diagnostic: reason instanceof MediaError ? reason.diagnostic : null,
-    }).eq("id", generationId).eq("owner_user_id", request.ownerId);
+    }).eq("id", imageGenId).eq("owner_user_id", request.ownerId);
+    await releaseReservationOnFailure(admin, request.ownerId, generationIdForLedger).catch(() => null);
     return { ok: false, code };
   }
 }
 
-/**
- * The visual brief MARA wrote for this planned item becomes the provider
- * prompt. Readable text, logos and watermarks are never requested, matching
- * the existing Post Studio prompt rules.
- */
 export function buildVisualPrompt(request: MediaRequest): string {
   const surface = request.contentType === "story" ? "9:16 full-screen Instagram Story frame" : "clean, brandable Instagram feed image";
   return [

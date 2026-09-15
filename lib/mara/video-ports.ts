@@ -23,6 +23,10 @@ import type {
 } from "./video-generation";
 import { VIDEO_JOB_SELECT } from "./video-generation";
 import type { CreatedVideoJob, ReferenceImage, VideoJobPoll, VideoGenerationProvider } from "@/lib/media/video-provider";
+import { normalizePlan } from "@/lib/billing/plans";
+import { normalizeAllowAutomaticPaidMedia } from "@/lib/mara/media-spend";
+import { guardAndReserveMedia, releaseReservationOnFailure, confirmReservation } from "@/lib/billing/entitlement-guard";
+import { normalizeAutomationMode } from "@/lib/voom/automation";
 
 export const MEDIA_GENERATIONS_TABLE = "mara_media_generations";
 const POST_ASSET_BUCKET = "mara-media";
@@ -44,11 +48,19 @@ export interface VideoPortDependencies {
   plan: { businessGoal: string; weeklyStrategy: string; topics: string[] } | null;
 }
 
-/**
- * Wires the durable Supabase records, the AI planner and the media providers
- * into the port interface. Everything owner-scoped; every query carries the
- * owner id so RLS and application checks agree.
- */
+async function loadBillingForVideo(admin: SupabaseClient, ownerId: string) {
+  try {
+    const { data } = await admin.from("businesses").select("plan,allow_automatic_paid_media,automation_level").eq("owner_user_id", ownerId).maybeSingle();
+    return {
+      planId: normalizePlan((data as any)?.plan),
+      allowAutomatic: normalizeAllowAutomaticPaidMedia((data as any)?.allow_automatic_paid_media),
+      mode: normalizeAutomationMode((data as any)?.automation_level),
+    };
+  } catch {
+    return { planId: "free" as const, allowAutomatic: false, mode: "assisted" as const };
+  }
+}
+
 export function buildVideoGenerationPorts(deps: VideoPortDependencies): VideoGenerationPorts {
   const { admin, provider, imageProvider, brand, plan } = deps;
 
@@ -137,10 +149,6 @@ export function buildVideoGenerationPorts(deps: VideoPortDependencies): VideoGen
     },
 
     async claimGenerationForPoll(ownerId, id, _nowIso, eligibleBeforeIso) {
-      // The update is both the lease and the status claim. The existing
-      // updated_at trigger stamps the claim, so a second browser/cron
-      // invocation cannot poll the same provider job until the two-minute
-      // lease has expired. No schema change is needed for this lease.
       const { data, error } = await admin.from(MEDIA_GENERATIONS_TABLE)
         .update({ status: "processing" })
         .eq("owner_user_id", ownerId)
@@ -151,6 +159,31 @@ export function buildVideoGenerationPorts(deps: VideoPortDependencies): VideoGen
         .maybeSingle();
       if (error) throw new Error("video_job_claim_failed");
       return readRow((data as Record<string, unknown> | null) ?? null);
+    },
+
+    async reserveCredits(input) {
+      const billing = await loadBillingForVideo(admin, input.ownerId);
+      const guard = await guardAndReserveMedia(admin, {
+        ownerId: input.ownerId,
+        planId: billing.planId,
+        mode: billing.mode,
+        allowAutomaticPaidMedia: billing.allowAutomatic,
+        mediaType: input.mediaType,
+        source: input.source,
+        generationId: input.generationId,
+      });
+      if (!guard.allow) {
+        return { ok: false, reason: guard.code, message: guard.message };
+      }
+      return { ok: true };
+    },
+
+    async refundCredits(ownerId, generationId) {
+      await releaseReservationOnFailure(admin, ownerId, generationId).catch(() => null);
+    },
+
+    async settleCredits(ownerId, generationId) {
+      await confirmReservation(admin, ownerId, generationId).catch(() => null);
     },
 
     async planMedia(input): Promise<VideoPlanResult> {
@@ -264,11 +297,6 @@ export function buildVideoGenerationPorts(deps: VideoPortDependencies): VideoGen
   };
 }
 
-/**
- * Poll-only wiring for the scheduled worker. It deliberately does not load
- * brand/plan context or expose a planning path: an active row already has its
- * provider handle and the worker may only poll, validate and attach it.
- */
 export function buildVideoPollingPorts(deps: { admin: SupabaseClient; provider: VideoGenerationProvider }): VideoGenerationPorts {
   const imageProvider: MediaProvider = {
     generateImage: async () => { throw new Error("poller_image_generation_disabled"); },

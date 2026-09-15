@@ -5,6 +5,10 @@ import type { GeneratedMedia } from "@/lib/media/types";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
+import { normalizePlan } from "@/lib/billing/plans";
+import { normalizeAllowAutomaticPaidMedia } from "@/lib/mara/media-spend";
+import { normalizeAutomationMode } from "@/lib/voom/automation";
+import { guardAndReserveMedia, releaseReservationOnFailure, confirmReservation } from "@/lib/billing/entitlement-guard";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -59,6 +63,19 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   return runGeneration(admin, row, owned.userId);
 }
 
+async function loadBilling(admin: ReturnType<typeof createAdminClient>, ownerId: string) {
+  try {
+    const { data } = await admin.from("businesses").select("plan,allow_automatic_paid_media,automation_level").eq("owner_user_id", ownerId).maybeSingle();
+    return {
+      planId: normalizePlan((data as any)?.plan),
+      allowAutomatic: normalizeAllowAutomaticPaidMedia((data as any)?.allow_automatic_paid_media),
+      mode: normalizeAutomationMode((data as any)?.automation_level),
+    };
+  } catch {
+    return { planId: "free" as const, allowAutomatic: false, mode: "assisted" as const };
+  }
+}
+
 async function runGeneration(admin: ReturnType<typeof createAdminClient>, row: Record<string, unknown>, ownerId: string) {
   const since = new Date(Date.now() - 60_000).toISOString();
   const { count } = await admin.from("mara_media_generations").select("id", { count: "exact", head: true }).eq("owner_user_id", ownerId).gte("updated_at", since).in("status", ["processing", "completed"]);
@@ -66,9 +83,36 @@ async function runGeneration(admin: ReturnType<typeof createAdminClient>, row: R
   if (row.media_type === "video" && !await withinMonthlySpendLimit(admin, ownerId, Number(row.estimated_cost_usd ?? 0))) {
     return Response.json({ error: "This video would exceed your configured monthly media limit. No generation was started." }, { status: 402 });
   }
+
+  // V1 credit boundary: reserve BEFORE provider
+  const billing = await loadBilling(admin, ownerId);
+  const mediaType = row.media_type === "video" ? "video" as const : "image" as const;
+  const durationSeconds = mediaType === "video" ? Number(row.duration_seconds ?? 8) : undefined;
+  const generationId = String(row.id);
+  const source = (row.spend_source as string) === "autopilot" ? "autopilot" as const : "user_request" as const;
+
+  const guard = await guardAndReserveMedia(admin, {
+    ownerId,
+    planId: billing.planId,
+    mode: billing.mode,
+    allowAutomaticPaidMedia: billing.allowAutomatic,
+    mediaType,
+    durationSeconds,
+    source,
+    generationId,
+  });
+  if (!guard.allow) {
+    const status = guard.code === "insufficient_credits" || guard.code === "plan_not_allowed" ? 402 : 403;
+    return Response.json({ error: guard.message, code: guard.code, creditsNeeded: guard.credits }, { status });
+  }
+
   const { data: processing, error } = await admin.from("mara_media_generations").update({ status: "processing", error_code: null }).eq("id", row.id).eq("owner_user_id", ownerId).in("status", ["queued", "pending_confirmation", "failed"]).select(MEDIA_SELECT).maybeSingle();
-  if (error) return mediaDatabaseError();
+  if (error) {
+    await releaseReservationOnFailure(admin, ownerId, generationId).catch(() => null);
+    return mediaDatabaseError();
+  }
   if (!processing) {
+    await releaseReservationOnFailure(admin, ownerId, generationId).catch(() => null);
     const { data } = await admin.from("mara_media_generations").select(MEDIA_SELECT).eq("id", row.id).eq("owner_user_id", ownerId).single();
     if (!data) return mediaDatabaseError();
     return Response.json({ media: await toMediaView(admin, data) });
@@ -80,11 +124,17 @@ async function runGeneration(admin: ReturnType<typeof createAdminClient>, row: R
       : await provider.generateVideo({ prompt: String(processing.prompt), aspectRatio: processing.aspect_ratio, durationSeconds: Number(processing.duration_seconds ?? 8) });
     if (result.kind === "pending") {
       const { data } = await admin.from("mara_media_generations").update({ provider: config.provider, provider_job_id: result.providerJobId }).eq("id", processing.id).select(MEDIA_SELECT).single();
-      if (!data) return mediaDatabaseError();
+      if (!data) {
+        await releaseReservationOnFailure(admin, ownerId, generationId).catch(() => null);
+        return mediaDatabaseError();
+      }
+      // Pending video: reservation stays, will settle on completion
       return Response.json({ media: await toMediaView(admin, data) }, { status: 202 });
     }
+    await confirmReservation(admin, ownerId, generationId).catch(() => null);
     return completeGeneration(admin, processing, ownerId, config.provider, result);
   } catch (reason) {
+    await releaseReservationOnFailure(admin, ownerId, generationId).catch(() => null);
     const code = reason instanceof MediaError ? reason.code : "unavailable";
     const { data } = await admin.from("mara_media_generations").update({ status: "failed", error_code: code, provider_diagnostic: reason instanceof MediaError ? reason.diagnostic : null }).eq("id", processing.id).eq("owner_user_id", ownerId).select(MEDIA_SELECT).single();
     if (!data) return mediaDatabaseError();

@@ -6,10 +6,13 @@ import { composePostCaption } from "@/lib/post/core";
 import { buildPostContextPayload, POST_COPY_SYSTEM_PROMPT, postDraftJsonSchema, postDraftSchema, STORY_VISUAL_SYSTEM_PROMPT, storyVisualJsonSchema, storyVisualSchema } from "@/lib/post/prompt";
 import { getPostDraft, loadPostBrandContext, loadPostPlanContext, normalizeMediaBrief, putPostAsset, removePostAssetObject, syncPostToCalendar } from "@/lib/post/server-data";
 import { startPostStudioVideo } from "@/lib/mara/video-service";
-import { estimateMediaCostUsd } from "@/lib/mara/media-spend";
+import { estimateMediaCostUsd, normalizeAllowAutomaticPaidMedia } from "@/lib/mara/media-spend";
 import { aspectMatches, inspectImageBytes } from "@/lib/media/media-inspect";
 import { applyPostOverlay } from "@/lib/media/image-overlay";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { normalizePlan } from "@/lib/billing/plans";
+import { creditCostForMedia } from "@/lib/billing/credits";
+import { guardAndReserveMedia, releaseReservationOnFailure, confirmReservation } from "@/lib/billing/entitlement-guard";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -17,24 +20,29 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const GENERATED_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 
 /**
- * "Create with MARA" for an Instagram Post, Reel or Story.
+ * "Create with MARA" for an Instagram Post, Reel or Story — now with Voom credit reservation.
  *
- * Images (Post 1:1/4:5, Story 9:16): MARA writes the concept, caption, CTA and
- * hashtags from the brand profile and the active marketing plan, then the
- * visual is produced through the existing media provider abstraction, and the
- * bytes are stored privately in Voom storage BEFORE the draft may show a
- * visual — content can never claim a visual Voom does not own.
- *
- * Video (Reel 9:16, Story 9:16, body { "media": "video" }): MARA plans the
- * video (concept, visual prompt, motion direction, overlay copy), generates a
- * clean 9:16 base frame when the user has no image, and hands it to the video
- * provider as an asynchronous job. The job is durable (provider job id
- * persisted), polled from /generation, and its output is only attached to the
- * draft after byte-level validation. Nothing here is published anywhere.
- *
- * The user's free-form `brief` ("What should MARA create?") is persisted on
- * the draft as `media_brief` so it survives reloads and regenerations.
+ * Before any provider call:
+ * 1. calculate required Voom credits
+ * 2. verify plan entitlement (Free has no AI generation)
+ * 3. verify enough credits remain
+ * 4. atomically reserve/deduct credits
+ * 5. only then submit provider job
+ * If provider fails before real paid job, refund reservation.
  */
+
+async function loadBillingContext(admin: any, ownerId: string) {
+  try {
+    const { data } = await admin.from("businesses").select("plan,allow_automatic_paid_media,automation_level").eq("owner_user_id", ownerId).maybeSingle();
+    const plan = normalizePlan((data as any)?.plan);
+    const allowAutomatic = normalizeAllowAutomaticPaidMedia((data as any)?.allow_automatic_paid_media);
+    const mode = (data as any)?.automation_level === "manual" || (data as any)?.automation_level === "autopilot" ? (data as any).automation_level : "assisted";
+    return { plan, allowAutomatic, mode };
+  } catch {
+    return { plan: "free" as const, allowAutomatic: false, mode: "assisted" as const };
+  }
+}
+
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
@@ -58,32 +66,37 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const post = await getPostDraft(admin, user.id, id);
   if (!post) return Response.json({ error: "That post was not found." }, { status: 404 });
 
-  // Resolve the effective brief: explicit input wins, otherwise the persisted
-  // draft brief is reused, so "Create with MARA" keeps the user's direction.
   let effectiveBrief = "";
   if (briefInput !== undefined) {
     effectiveBrief = briefInput ?? "";
-    // Persist the brief (null clears it) before any generation starts.
     const normalized = normalizeMediaBrief(briefInput);
     await admin.from("mara_drafts").update({ media_brief: normalized }).eq("owner_user_id", user.id).eq("id", id);
   } else {
     effectiveBrief = post.mediaBrief ?? "";
   }
 
+  const billing = await loadBillingContext(admin, user.id);
+
   if (wantsVideo) {
     if (post.kind !== "reel" && post.kind !== "story") {
       return Response.json({ error: "MARA generates video for Reels and Stories. Use the Post flow for feed images." }, { status: 400 });
     }
+    // Video path reserves credits inside video-ports → guardAndReserveMedia BEFORE provider submit.
+    // We pass a stable generationId so ledger id == mara row id for traceability.
+    const generationIdForLedger = randomUUID();
     const result = await startPostStudioVideo({
       admin,
       ownerId: user.id,
       post: { id, kind: post.kind, conversationId: post.conversationId, concept: post.concept },
       brief: effectiveBrief,
       idempotencyToken,
+      generationId: generationIdForLedger,
     });
+
     if ("error" in result) {
       return Response.json({ generation: result.generation, error: result.error }, { status: result.status });
     }
+
     return Response.json(
       { generation: result.generation, post: await getPostDraft(admin, user.id, id), message: result.message },
       { status: result.status },
@@ -103,13 +116,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const [brand, planContext] = await Promise.all([loadPostBrandContext(admin, user.id), loadPostPlanContext(admin, user.id)]);
   if (!brand) return Response.json({ error: "Complete your brand profile before creating posts with MARA." }, { status: 409 });
 
-  // 1) Copy first. Text-only: no media bytes are ever sent to the provider.
-  //    A Story gets a concept + 9:16 visual prompt only — no caption, because
-  //    Instagram does not support captions on Stories.
   let concept: string;
   let visualPrompt: string;
-  // The CTA for the deterministic Voom overlay (feed posts only — Stories
-  // stay full-bleed, and Reel copy lives in the composition preview).
   let overlayCta = "";
   if (post.kind === "story") {
     let storyPlan;
@@ -121,9 +129,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         ],
         temperature: 0.6,
         maxTokens: 600,
-        // Groq json_schema structured output (strict where supported); the zod
-        // parse below stays the second safety layer and any failure still
-        // returns truthfully BEFORE any media generation row or request.
         jsonSchema: storyVisualJsonSchema,
         parse: (value) => storyVisualSchema.parse(value),
       });
@@ -152,9 +157,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         ],
         temperature: 0.6,
         maxTokens: 1200,
-        // Groq json_schema structured output (strict where supported); the zod
-        // parse below stays the second safety layer and any failure still
-        // returns truthfully BEFORE any media generation row or request.
         jsonSchema: postDraftJsonSchema,
         parse: (value) => postDraftSchema.parse(value),
       });
@@ -178,11 +180,38 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     overlayCta = copy.cta;
   }
 
-  // 2) Then the visual, through the existing provider abstraction. The format
-  // is read from the draft, so generating cannot change the user's choice.
-  // A Story draft always carries 9:16.
   const format = post.kind === "story" ? "9:16" : post.format;
   const generationId = randomUUID();
+
+  // Reserve credits BEFORE provider submission
+  const requiredCredits = creditCostForMedia({ mediaType: "image" });
+  const guard = await guardAndReserveMedia(admin, {
+    ownerId: user.id,
+    planId: billing.plan,
+    mode: billing.mode,
+    allowAutomaticPaidMedia: billing.allowAutomatic,
+    mediaType: "image",
+    source: "user_request",
+    generationId,
+  });
+
+  if (!guard.allow) {
+    if (guard.code === "plan_not_allowed") {
+      return Response.json({
+        error: guard.message,
+        code: guard.code,
+        creditsNeeded: guard.credits,
+        upgradeRequired: true,
+      }, { status: 402 });
+    }
+    return Response.json({
+      error: guard.message,
+      code: guard.code,
+      creditsNeeded: guard.credits,
+      remaining: 0,
+    }, { status: 402 });
+  }
+
   const { error: queuedError } = await admin.from("mara_media_generations").insert({
     id: generationId,
     owner_user_id: user.id,
@@ -193,29 +222,23 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     aspect_ratio: format,
     status: "processing",
     idempotency_key: `post-studio:${id}:${generationId}`,
-    // AI media spend control: this is an explicit user request ("Create with
-    // MARA"), so it is auditable as such and counted with the centralized
-    // estimate. It is allowed even when automatic generation is disabled.
     spend_source: "user_request",
     estimated_cost_usd: estimateMediaCostUsd({ mediaType: "image" }),
   });
-  if (queuedError) return Response.json({ error: "Voom couldn't start that generation safely. Nothing changed." }, { status: 503 });
+  if (queuedError) {
+    await releaseReservationOnFailure(admin, user.id, generationId).catch(() => null);
+    return Response.json({ error: "Voom couldn't start that generation safely. Nothing changed." }, { status: 503 });
+  }
 
   try {
     const config = getMediaConfig();
     const result = await createMediaProvider(config).generateImage({ prompt: visualPrompt, aspectRatio: format });
     if (!result.bytes.length || result.bytes.length > GENERATED_IMAGE_MAX_BYTES) throw new MediaError("malformed_response");
 
-    // Byte-level validation — the provider's declared metadata is never
-    // trusted: sniff the signature and measure the real dimensions.
     const inspected = inspectImageBytes(result.bytes);
     if (!inspected || !aspectMatches(inspected.width, inspected.height, format)) throw new MediaError("malformed_response");
     result.mimeType = inspected.mimeType;
 
-    // Deterministic Voom overlay (feed posts only): the business name and CTA
-    // are composited by Voom, never rendered by the model. Best-effort: if the
-    // overlay cannot be applied, the valid base media is kept and the CTA
-    // stays true in the caption that is published.
     if (post.kind === "instagram_post" && overlayCta.trim()) {
       try {
         const overlaid = await applyPostOverlay({ bytes: result.bytes, mimeType: result.mimeType }, { brandName: brand.brandName, cta: overlayCta });
@@ -224,7 +247,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       } catch { /* keep the valid base media */ }
     }
 
-    // The bytes are stored BEFORE the post is allowed to show a visual.
     const extension = result.mimeType === "image/png" ? "png" : result.mimeType === "image/webp" ? "webp" : "jpg";
     const { storagePath, previousStoragePath } = await putPostAsset(admin, user.id, id, {
       bytes: result.bytes,
@@ -247,6 +269,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (previousStoragePath && previousStoragePath !== storagePath) {
       await removePostAssetObject(admin, user.id, previousStoragePath);
     }
+    await confirmReservation(admin, user.id, generationId).catch(() => null);
     await syncPostToCalendar(admin, user.id, id).catch(() => null);
     const updated = await getPostDraft(admin, user.id, id);
     return Response.json({
@@ -257,6 +280,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const code = reason instanceof MediaError ? reason.code : "unavailable";
     await admin.from("mara_media_generations").update({ status: "failed", error_code: code, provider_diagnostic: reason instanceof MediaError ? reason.diagnostic : null })
       .eq("id", generationId).eq("owner_user_id", user.id);
+    await releaseReservationOnFailure(admin, user.id, generationId).catch(() => null);
     if (code === "not_configured") {
       return Response.json({
         post: await getPostDraft(admin, user.id, id),
@@ -270,4 +294,3 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }, { status: 503 });
   }
 }
-

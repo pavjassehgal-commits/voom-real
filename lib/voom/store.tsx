@@ -134,8 +134,7 @@ interface VoomState {
   sideOpen: boolean;
   menuOpen: boolean;
   igConnected: boolean;
-  /** Billing is offline; every account is on the Free plan until Stripe exists. */
-  plan: "free";
+  plan: "free" | "pro" | "max";
   brand: Brand;
   /** AI Media Spending settings — the live value the settings screen edits. */
   mediaSpend: MediaSpendSettings;
@@ -148,6 +147,11 @@ interface VoomState {
   toasts: Toast[];
 }
 
+function normalizePlan(value: string | null | undefined): "free" | "pro" | "max" {
+  if (value === "pro" || value === "max") return value;
+  return "free";
+}
+
 function initialState(init: { displayName: string | null; email: string | null; business: BusinessRecord | null }): VoomState {
   return {
     displayName: init.displayName?.trim() ?? "",
@@ -156,7 +160,7 @@ function initialState(init: { displayName: string | null; email: string | null; 
     sideOpen: false,
     menuOpen: false,
     igConnected: false,
-    plan: "free",
+    plan: normalizePlan((init.business as any)?.plan),
     brand: brandFromBusiness(init.business),
     mediaSpend: normalizeMediaSpendSettings(init.business),
     onboard: { ...emptyOnboard(), displayName: init.displayName?.trim() ?? "" },

@@ -49,6 +49,8 @@ export interface BusinessRecord {
   /** AI Media Spending (migration 0031). Absent = shipped default. */
   allow_automatic_paid_media?: boolean | null;
   monthly_media_budget_usd?: number | string | null;
+  /** Plan (migration 0035). free | pro | max */
+  plan?: string | null;
   onboarding_completed: boolean;
   created_at: string;
   updated_at: string;

@@ -9,12 +9,20 @@ import { AD_SEPARATION, AdSepNote } from "@/components/voom/ui/Notes";
 
 const FAQS: [string, string][] = [
   [
+    "What are Voom credits?",
+    "Credits are used only when Voom generates AI images or videos. An image is 5 credits, a short video is 40 credits. Polling, retries that don't create a new job, planning, copy and scheduling use zero credits.",
+  ],
+  [
+    "What happens when I run out of credits?",
+    "You see 'You need 40 credits. You have 22 remaining.' No provider call happens when you're blocked, so you are never charged after the message. Planning continues even when media is blocked.",
+  ],
+  [
     "Can Voom spend my ad budget without asking?",
     "No. Voom can never start a campaign, increase a total budget or exceed an approved limit without your explicit permission — and paid advertising isn't connected yet, so nothing can spend today.",
   ],
   [
     "Is billing active?",
-    "No. Stripe isn't connected and no card is charged. Every account is on the Free plan while billing is offline; when billing activates you'll be able to choose a plan explicitly before any payment.",
+    "Billing UI is live for credits visibility, but Stripe isn't connected and no card is charged yet. Every account starts on Free while billing is offline; when billing activates you'll choose a plan explicitly before any payment.",
   ],
   [
     "What happens to my content if plans change?",
@@ -23,10 +31,6 @@ const FAQS: [string, string][] = [
   ["Does my subscription pay for my advertising?", "No. " + AD_SEPARATION],
 ];
 
-/**
- * Plans & billing. Billing is not active: this page is honest information
- * only. Buttons never pretend to upgrade — there is no pretend checkout.
- */
 export default function PricingPage() {
   const { plan } = useVoomState();
   const [openFaq, setOpenFaq] = useState<number | null>(null);
@@ -35,7 +39,7 @@ export default function PricingPage() {
     <div>
       <div className="mx-auto mb-6.5 max-w-[620px] text-center">
         <Tag tone="t-brand">
-          <Icon name="crown" size={12} /> Plans
+          <Icon name="crown" size={12} /> Plans & Credits
         </Tag>
         <h1 className="my-3 font-display text-[26px] font-bold sm:text-[32px]">Plans & billing</h1>
         <p className="text-[15px] text-text-2">Where Voom is heading — and what you pay today.</p>
@@ -54,7 +58,7 @@ export default function PricingPage() {
         <div className="flex items-center gap-2.5">
           <Icon name="info" className="text-brand" />
           <span className="text-[13.5px]">
-            Billing isn’t active yet. Your account is on the <b>Free</b> plan and every feature you can see today works without a card.
+            Billing isn’t active yet. Your account is on the <b>Free</b> plan and every feature you can see today works without a card. Credits are used only when Voom generates AI images or videos.
           </span>
         </div>
       </Card>
