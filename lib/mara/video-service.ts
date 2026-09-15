@@ -26,12 +26,6 @@ export interface VideoService {
   videoConfig: VideoConfig;
 }
 
-/**
- * Resolves the server-side video generation stack for one owner. Returns null
- * (never throws) when the video provider is not configured — the UI then
- * shows the truthful "temporarily unavailable" state while everything else
- * keeps working.
- */
 export async function buildVideoService(admin: AdminClient, ownerId: string): Promise<VideoService | null> {
   let videoConfig: VideoConfig;
   let provider: VideoGenerationProvider;
@@ -45,8 +39,6 @@ export async function buildVideoService(admin: AdminClient, ownerId: string): Pr
   try {
     imageProvider = createMediaProvider(getMediaConfig());
   } catch {
-    // Video-only deployments: image-to-video is still possible from the
-    // user's own asset; generated-base-image mode will fail safely per job.
     imageProvider = createNoImageProvider(provider);
   }
   const [brand, plan] = await Promise.all([loadPostBrandContext(admin, ownerId), loadPostPlanContext(admin, ownerId)]);
@@ -85,18 +77,10 @@ function createNoImageProvider(video: VideoGenerationProvider) {
     pollVideo: async () => {
       throw new Error("use the video provider");
     },
-    // The orchestrator only calls generateImage; the rest exist so the
-    // MediaProvider type stays satisfied without a second config.
     name: video.name,
   };
 }
 
-/**
- * The estimated provider cost of one video job, from the ONE centralized
- * model (lib/mara/media-spend.ts). The deployment-level
- * MEDIA_VIDEO_ESTIMATED_COST_PER_SECOND_USD override is honoured there, so no
- * cost constant is duplicated in this module.
- */
 export function estimatedCostUsdForDuration(durationSeconds: number, env: NodeJS.ProcessEnv = process.env): number {
   return estimateMediaCostUsd({ mediaType: "video", durationSeconds, env });
 }
@@ -108,7 +92,6 @@ export function monthlySpendLimitUsd(env: NodeJS.ProcessEnv = process.env): numb
   return Number.isFinite(limit) && limit > 0 ? limit : null;
 }
 
-/** The newest generation job for a draft (any status), owner-scoped. */
 export async function latestVideoGeneration(admin: AdminClient, ownerId: string, draftId: string): Promise<VideoJobRow | null> {
   const { data, error } = await admin.from("mara_media_generations")
     .select(VIDEO_JOB_SELECT)
@@ -122,7 +105,6 @@ export async function latestVideoGeneration(admin: AdminClient, ownerId: string,
   return (data as Record<string, unknown> | null) ? (data as unknown as VideoJobRow) : null;
 }
 
-/** One generation job by id (any status), owner-scoped. */
 export async function findVideoGeneration(admin: AdminClient, ownerId: string, generationId: string): Promise<VideoJobRow | null> {
   const { data, error } = await admin.from("mara_media_generations")
     .select(VIDEO_JOB_SELECT)
@@ -134,29 +116,10 @@ export async function findVideoGeneration(admin: AdminClient, ownerId: string, g
 }
 
 export interface HardTimeoutEnforcement {
-  /** True when THIS call moved the row into its terminal timeout state. */
   enforced: boolean;
-  /** The row as it is now (terminal), or null when it does not exist. */
   row: VideoJobRow | null;
 }
 
-/**
- * Enforces the durable video job's hard timeout with a DATABASE write only —
- * no provider call, no new job, no charge.
- *
- * Why this exists separately from `advanceVideoGeneration`: advancing needs the
- * whole provider stack (video config, brand context, polling), so a job that
- * outlived its hard timeout while that stack was unavailable stayed
- * `generating/pending` forever — the production incident behind this helper.
- * The hard timeout is a Voom-side lifetime rule, so Voom can always persist it.
- *
- * Guarantees:
- *   - only an ACTIVE row that `staleDecision` calls a timeout is touched (the
- *     status guard means concurrent callers cannot both transition it),
- *   - the row keeps its provider job id, its provider metadata and its history:
- *     it becomes terminal, it is never deleted or rewritten,
- *   - the draft's stored asset (if any) is untouched, and nothing is published.
- */
 export async function enforceVideoJobHardTimeout(
   admin: AdminClient,
   ownerId: string,
@@ -179,8 +142,6 @@ export async function enforceVideoJobHardTimeout(
     .update({
       status: "failed",
       error_code: VIDEO_JOB_TIMEOUT_ERROR_CODE,
-      // Bounded, server-only diagnostic: our own enforcement facts, never
-      // credentials and never a raw provider payload.
       provider_diagnostic: {
         code: VIDEO_JOB_TIMEOUT_ERROR_CODE,
         reason: "hard_timeout_exceeded",
@@ -198,9 +159,6 @@ export async function enforceVideoJobHardTimeout(
   if (error) throw new Error("video_job_update_failed");
   const updated = (data as Record<string, unknown> | null) ? (data as unknown as VideoJobRow) : null;
   if (updated) return { enforced: true, row: updated };
-  // The status guard matched nothing: another caller moved the row first (it
-  // may even have completed while we were writing). Report the row as it
-  // actually is now — never a synthesised guess.
   const current = await findVideoGeneration(admin, ownerId, generationId);
   return { enforced: false, row: current ?? row };
 }
@@ -214,11 +172,8 @@ export async function startVideoJob(service: VideoService, input: StartJobInput 
     ownerId: service.ownerId,
     providerName: service.videoConfig.provider,
     supportsImageToVideo: service.videoConfig.supportsImageToVideo,
-    // OpenRouter V1 pins the billable request to its six-second default;
-    // legacy providers retain the planner's requested duration.
     estimatedCostUsd: estimatedCostUsdForDuration(service.videoConfig.durationSeconds ?? durationTarget),
     monthlySpendLimitUsd: monthlySpendLimitUsd(),
-    // The audited source travels into the durable job row.
     source: input.source ?? "user_request",
   });
   if (!result.ok) return { ...result, view: "generation" in result ? toClientGenerationView(result.generation, null) : null };
@@ -229,9 +184,6 @@ export async function startVideoJob(service: VideoService, input: StartJobInput 
 export async function advanceVideoJob(service: VideoService, draftId: string, generationId: string, kind: "reel" | "story"): Promise<AdvanceResult & { view: ClientGenerationView | null }> {
   const result = await advanceVideoGeneration(service.ports, service.ownerId, generationId, kind);
   if (!result.ok) return { ...result, view: null };
-  // The validated video arriving late must re-sync an approved item's
-  // schedule: its queue row moves from 'waiting_for_media' to 'scheduled' so
-  // the item publishes instead of silently dying with a dead schedule.
   if (result.attached) await syncPostToCalendar(service.admin, service.ownerId, draftId).catch(() => null);
   return { ...result, view: toClientGenerationView(result.generation, result.previewUrl) };
 }
@@ -247,32 +199,17 @@ export interface PostStudioVideoStartArgs {
   };
   brief: string;
   idempotencyToken: string;
-  /**
-   * AI media spend control: what caused this job. Defaults to `user_request`
-   * because every caller of this entry point is a user action ("Create with
-   * MARA" / "Regenerate"); the workflow media path passes the automatic
-   * source it resolved from the account's mode.
-   */
   source?: MediaSource;
-  /** MARA's plan script for plan-driven Reels (the Reel approval flow). */
   script?: string;
-  /**
-   * Explicit source image (plan-Reel asset packs live in a different table
-   * than the draft's own asset). `undefined` = auto-resolve the draft's own
-   * image asset; `null` = force no source image; a value = use exactly it.
-   */
   sourceAsset?: { storagePath: string; assetId: string | null } | null;
+  /** Optional pre-generated ledger id to avoid double reservation (used by Post Studio route). */
+  generationId?: string;
 }
 
 export type PostStudioVideoStartResult =
   | { status: 200 | 202; generation: ClientGenerationView; message: string }
   | { status: number; error: string; generation: ClientGenerationView | null };
 
-/**
- * One entry point for "Create with MARA" (and regenerate) video jobs from
- * Post Studio: Post Studio video drafts are Reel or Story 9:16 videos.
- * Repeated clicks with the same token resolve to the same job.
- */
 export async function startPostStudioVideo(args: PostStudioVideoStartArgs): Promise<PostStudioVideoStartResult> {
   const { admin, ownerId, post } = args;
   const service = await buildVideoService(admin, ownerId);
@@ -296,10 +233,9 @@ export async function startPostStudioVideo(args: PostStudioVideoStartArgs): Prom
     brief: args.brief,
     idempotencyKey,
     sourceAsset: resolvedSource,
-    // Explicit user entry point: recorded as user_request unless the caller
-    // (the workflow media path) already resolved an automatic source.
     source: args.source ?? "user_request",
     durationTarget: 8,
+    generationId: args.generationId,
   });
   if (!result.ok) {
     return {
@@ -317,10 +253,6 @@ export async function startPostStudioVideo(args: PostStudioVideoStartArgs): Prom
   };
 }
 
-/**
- * The draft's own image asset is the source for asset-assisted (image-to-
- * video) generation. A video visual never seeds a video job.
- */
 export async function findSourceImageAsset(admin: AdminClient, ownerId: string, draftId: string): Promise<{ storagePath: string; assetId: string | null } | null> {
   const { data } = await admin.from("post_draft_assets")
     .select("id,storage_path,mime_type,status")

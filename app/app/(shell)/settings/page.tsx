@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useVoomActions, useVoomState } from "@/lib/voom/store";
 import { Q_INDUSTRY, OB_TONE } from "@/lib/voom/onboardingData";
 import type { BusinessProfileInput } from "@/lib/voom/types";
@@ -8,10 +8,12 @@ import { MANUAL_NEVER_AUTO_SPENDS } from "@/lib/mara/media-spend";
 import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { AdSepNote } from "@/components/voom/ui/Notes";
-import { Btn, Card, Chip, Field, Input } from "@/components/voom/ui/primitives";
+import { Btn, Card, Chip, Field, Input, Tag } from "@/components/voom/ui/primitives";
+import { getPlanConfig } from "@/lib/billing/plans";
+import type { CreditSummary } from "@/lib/billing/ledger";
 
 export default function SettingsPage() {
-  const { brand, mediaSpend, theme, displayName, email, settingsSaving, settingsError } = useVoomState();
+  const { brand, mediaSpend, theme, displayName, email, settingsSaving, settingsError, plan } = useVoomState();
   const { toggleTone, setTheme, toast, restartOnboarding, saveBrandSettings, saveMediaSpend } = useVoomActions();
 
   const [nameInput, setNameInput] = useState(displayName);
@@ -19,10 +21,29 @@ export default function SettingsPage() {
   const [industryInput, setIndustryInput] = useState(brand.industry);
   const [audience, setAudience] = useState(brand.audience);
   const [restarting, setRestarting] = useState(false);
-  // AI Media Spending: the owner's own ceiling on MARA's automatic paid media.
   const [allowAutomaticMedia, setAllowAutomaticMedia] = useState(mediaSpend.allowAutomaticPaidMedia);
   const [mediaBudgetInput, setMediaBudgetInput] = useState(String(mediaSpend.monthlyMediaBudgetUsd));
   const [savingSpend, setSavingSpend] = useState(false);
+  const [creditSummary, setCreditSummary] = useState<CreditSummary | null>(null);
+  const [creditLoading, setCreditLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    void fetch("/api/billing/summary", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((body: { summary?: CreditSummary }) => {
+        if (active && body.summary) setCreditSummary(body.summary);
+      })
+      .catch(() => null)
+      .finally(() => {
+        if (active) setCreditLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const planConfig = getPlanConfig(plan);
 
   const autonomyRows: [string, string, string][] = [
     ["Draft content", "Always", "t-green"],
@@ -89,6 +110,43 @@ export default function SettingsPage() {
           {settingsError}
         </div>
       )}
+
+      <Card className="mb-3.5 p-4">
+        <h2 className="mb-3.5 font-display text-lg font-semibold">Billing & Credits</h2>
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <Tag tone="t-brand">{planConfig.name} plan</Tag>
+          <Tag>${planConfig.priceUsd}/month</Tag>
+          <Tag>{planConfig.allowedModes.join(", ")} modes</Tag>
+        </div>
+        {creditLoading ? (
+          <p className="text-sm text-text-3">Loading credits…</p>
+        ) : creditSummary ? (
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-3 text-sm">
+              <span><b>{creditSummary.remaining}</b> remaining</span>
+              <span className="text-text-3">· {creditSummary.used} used</span>
+              <span className="text-text-3">· {creditSummary.allowance + creditSummary.additional} total this month</span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-surface-2 overflow-hidden">
+              <div
+                className="h-full bg-brand"
+                style={{ width: `${Math.min(100, ((creditSummary.used / Math.max(1, creditSummary.allowance + creditSummary.additional)) * 100))}%` }}
+              />
+            </div>
+            <p className="text-[12.5px] text-text-3">
+              Resets {new Date(creditSummary.resetAt).toLocaleDateString("en-US", { month: "long", day: "numeric" })} · Period from {new Date(creditSummary.periodStart).toLocaleDateString()} · {creditSummary.label}
+            </p>
+          </div>
+        ) : (
+          <p className="text-sm text-text-3">Credits unavailable — migration pending.</p>
+        )}
+        <p className="mt-3 text-[12.5px] leading-relaxed text-text-2">
+          Credits are used only when Voom generates AI images or videos. An image costs 5 credits, a short video costs 40 credits. Polling, planning, copy and scheduling use zero credits. No provider call happens when you are blocked for insufficient credits.
+        </p>
+        <div className="mt-3">
+          <Btn variant="outline" size="sm" onClick={() => window.location.assign("/app/pricing")}>View plans</Btn>
+        </div>
+      </Card>
 
       <Card className="mb-3.5 p-4">
         <h2 className="mb-3.5 font-display text-lg font-semibold">Your name</h2>
@@ -167,13 +225,13 @@ export default function SettingsPage() {
       <Card className="mb-3.5 p-4">
         <h2 className="mb-1.5 font-display text-lg font-semibold">AI Media Spending</h2>
         <p className="mb-3.5 text-[12.5px] text-text-3">
-          What MARA may spend on generated media (images and videos) without you asking for each one.
+          What MARA may spend on generated media (images and videos) without you asking for each one. Only Max plan + Autopilot mode can use automatic paid media, and only when this toggle is ON and you have enough credits.
         </p>
         <div className="flex items-center justify-between gap-3 border-b border-line py-2.5">
           <div>
             <b className="text-[13.5px]">Allow MARA to generate paid media automatically</b>
             <div className="text-[12.5px] text-text-3">
-              {allowAutomaticMedia ? "On" : "Off"} — used by Assisted and Autopilot runs, up to the budget below.
+              {allowAutomaticMedia ? "On" : "Off"} — used by Autopilot runs only, within your credit limits. Assisted never auto-generates paid media.
             </div>
           </div>
           <div className="inline-flex shrink-0 gap-1 rounded-xl border border-line bg-surface-2 p-1">
@@ -197,8 +255,8 @@ export default function SettingsPage() {
         </div>
         <div className="pt-3.5">
           <Field
-            label="Monthly AI media budget (USD)"
-            hint="Voom stops automatic media generation once this month's estimated spend reaches it. Item planning, copy and drafts keep going."
+            label="Monthly AI media budget (USD) — legacy"
+            hint="Voom stops automatic media generation once this month's estimated spend reaches it. Item planning, copy and drafts keep going. Credits are the primary limit in v1."
           >
             <Input
               inputMode="decimal"

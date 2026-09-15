@@ -10,6 +10,7 @@ import { formatIngestionClientError } from "@/lib/media/ingestion-error";
 import { checkSchedule, minScheduleDate, minScheduleTime } from "@/lib/voom/schedule-guard";
 import { DEFAULT_TIMEZONE, formatLocalTime, isoToLocalDate } from "@/lib/voom/timezone";
 import { GenerationPanel, type ClientGeneration } from "./GenerationPanel";
+import { CREDIT_COSTS } from "@/lib/billing/credits";
 
 interface PostVisual {
   displayName: string;
@@ -45,10 +46,8 @@ const STATE_TONE: Record<Post["internalState"], string> = {
   ready_to_publish: "t-green",
 };
 
-/** Meta's Story canvas is 9:16 (1080x1920). Accept a working tolerance around it. */
 const STORY_ASPECT = 9 / 16;
 const STORY_ASPECT_TOLERANCE = 0.34;
-/** Meta's current video Story length limit. */
 const STORY_MAX_VIDEO_SECONDS = 60;
 
 export function PostEditorModal({ postId, onChanged }: { postId: string; onChanged?: () => void }) {
@@ -77,8 +76,6 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
     setHashtags(view.hashtags.join(" "));
     setFormat(view.format);
     setMediaBrief(view.mediaBrief ?? "");
-    // Dates are always read and written in the business timezone, never the
-    // viewer's device timezone, so the stored instant cannot drift.
     const when = view.scheduledAt ? new Date(view.scheduledAt) : null;
     setDate(when ? isoToLocalDate(view.scheduledAt!, DEFAULT_TIMEZONE) : "");
     setTime(when ? toTimeInput(view.scheduledAt!) : "");
@@ -87,7 +84,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
   const load = useCallback(async () => {
     try {
       const response = await fetch(`/api/posts/${encodeURIComponent(postId)}`, { cache: "no-store" });
-      const body = await response.json() as { post?: Post; error?: string };
+      const body = (await response.json()) as { post?: Post; error?: string };
       if (!response.ok || !body.post) throw new Error(body.error ?? "That post couldn't load.");
       applyPost(body.post);
       setError("");
@@ -96,24 +93,25 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
     }
   }, [postId, applyPost]);
 
-  // Deferred so the fetch callback is not a synchronous setState in the effect.
-  useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
 
-  // Restore an in-flight or finished MARA video job when the editor opens.
   useEffect(() => {
     if (!post || (post.kind !== "reel" && post.kind !== "story")) return;
     let active = true;
-    void fetch(`/api/posts/${encodeURIComponent(postId)}/generation`, { cache: "no-store" }).then((response) => response.json()).then((body: { generation?: ClientGeneration | null }) => {
-      if (active && body.generation) setVideoJob((current) => current ?? { preparing: false, generation: body.generation! });
-    }).catch(() => undefined);
-    return () => { active = false; };
+    void fetch(`/api/posts/${encodeURIComponent(postId)}/generation`, { cache: "no-store" })
+      .then((response) => response.json())
+      .then((body: { generation?: ClientGeneration | null }) => {
+        if (active && body.generation) setVideoJob((current) => current ?? { preparing: false, generation: body.generation! });
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
   }, [post, postId]);
 
-  /**
-   * "Create/Regenerate video with MARA": starts the durable asynchronous
-   * video job (MARA plan -> base frame or uploaded image -> provider job).
-   * The job's real states then drive the panel; no fake progress.
-   */
   async function startVideoJob() {
     if (!post) return;
     setVideoJob({ preparing: true, generation: null });
@@ -125,8 +123,21 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ media: "video", brief: mediaBrief, idempotencyKey: crypto.randomUUID() }),
       });
-      const body = await response.json() as { generation?: ClientGeneration | null; post?: Post; error?: string; message?: string };
-      if (!response.ok || !body.generation) throw new Error(body.error ?? "Voom couldn't start that video safely.");
+      const body = (await response.json()) as {
+        generation?: ClientGeneration | null;
+        post?: Post;
+        error?: string;
+        code?: string;
+        creditsNeeded?: number;
+        message?: string;
+      };
+      if (!response.ok || !body.generation) {
+        // Handle 402 insufficient credits with specific message
+        if (response.status === 402) {
+          throw new Error(body.error ?? `You need ${body.creditsNeeded ?? CREDIT_COSTS.video} credits.`);
+        }
+        throw new Error(body.error ?? "Voom couldn't start that video safely.");
+      }
       if (body.post) applyPost(body.post);
       setVideoJob({ preparing: false, generation: body.generation });
       setNotice(body.message ?? "MARA started generating this video. This can take a few minutes.");
@@ -137,18 +148,58 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
     }
   }
 
-  const videoJobActive = Boolean(videoJob && (videoJob.preparing || videoJob.generation?.phase === "generating" || videoJob.generation?.phase === "processing" || videoJob.generation?.phase === "preparing"));
+  const videoJobActive = Boolean(
+    videoJob && (videoJob.preparing || videoJob.generation?.phase === "generating" || videoJob.generation?.phase === "processing" || videoJob.generation?.phase === "preparing"),
+  );
+
+  async function generateImage() {
+    setBusy("mara");
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`${endpoint}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ brief: mediaBrief, idempotencyKey: crypto.randomUUID() }),
+      });
+      const body = (await response.json()) as {
+        post?: Post;
+        error?: string;
+        code?: string;
+        creditsNeeded?: number;
+        message?: string;
+      };
+      if (!response.ok) {
+        if (response.status === 402) {
+          throw new Error(body.error ?? `You need ${body.creditsNeeded ?? CREDIT_COSTS.image} credits.`);
+        }
+        throw new Error(body.error ?? "MARA couldn't create that visual.");
+      }
+      if (body.post) applyPost(body.post);
+      setNotice(body.message ?? "MARA created this visual. It is stored privately in Voom. Nothing was published.");
+      onChanged?.();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "MARA couldn't create that visual.");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function send(url: string, init: RequestInit | undefined, action: string, okMessage: string) {
-    setBusy(action); setError(""); setNotice("");
+    setBusy(action);
+    setError("");
+    setNotice("");
     try {
       const response = await fetch(url, init);
-      const body = await response.json() as { post?: Post; error?: string; code?: string; requestId?: string; message?: string; disclosure?: string };
+      const body = (await response.json()) as { post?: Post; error?: string; code?: string; requestId?: string; message?: string; disclosure?: string };
       if (!response.ok) throw new Error(formatIngestionClientError({ error: body.error, code: body.code }, "That didn't work. Please retry."));
       if (body.post) {
         setPost(body.post);
-        setConcept(body.post.concept); setCaption(body.post.caption); setCta(body.post.cta);
-        setHashtags(body.post.hashtags.join(" ")); setFormat(body.post.format);
+        setConcept(body.post.concept);
+        setCaption(body.post.caption);
+        setCta(body.post.cta);
+        setHashtags(body.post.hashtags.join(" "));
+        setFormat(body.post.format);
         setMediaBrief(body.post.mediaBrief ?? "");
         const when = body.post.scheduledAt ? new Date(body.post.scheduledAt) : null;
         setDate(when ? isoToLocalDate(body.post.scheduledAt!, DEFAULT_TIMEZONE) : "");
@@ -165,11 +216,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
 
   const endpoint = `/api/posts/${encodeURIComponent(postId)}`;
   const isStory = post?.kind === "story";
-  /**
-   * Schedule validation happens here, before anything is sent: past dates,
-   * same-day past times and malformed values are rejected with an actionable
-   * message. The server re-runs the same shared guard.
-   */
+
   function validatedSchedule(): { body: string; ok: true } | { body: null; ok: false } {
     if (!date) return { ok: true, body: JSON.stringify(savePayload(null)) };
     const check = checkSchedule({ date, time });
@@ -184,13 +231,13 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
     return JSON.stringify({
       action: "save",
       concept,
-      // Instagram does not support captions on Stories, so caption copy is
-      // never part of a Story save.
-      ...(isStory ? {} : {
-        caption,
-        cta,
-        hashtags: hashtags.split(/[\s,]+/).filter(Boolean),
-      }),
+      ...(isStory
+        ? {}
+        : {
+            caption,
+            cta,
+            hashtags: hashtags.split(/[\s,]+/).filter(Boolean),
+          }),
       format,
       scheduledAt,
       brief: mediaBrief,
@@ -198,7 +245,8 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
   }
 
   function submitSave() {
-    setError(""); setNotice("");
+    setError("");
+    setNotice("");
     const attempt = validatedSchedule();
     if (!attempt.ok) return;
     void send(endpoint, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: attempt.body }, "save", "Saved as a draft.");
@@ -207,35 +255,35 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
   async function uploadFile(file: File, origin: "own_asset" | "existing_content") {
     if (isStory) {
       const problem = await checkStoryFile(file);
-      if (problem) { setError(problem); return; }
+      if (problem) {
+        setError(problem);
+        return;
+      }
     }
     const form = new FormData();
     form.set("file", file);
     form.set("origin", origin);
-    // No format is sent: the draft's persisted format wins, so an upload can
-    // never change the framing the user chose.
     await send(`${endpoint}/asset`, { method: "POST", body: form }, "upload", "Stored privately in Voom.");
   }
 
-  /**
-   * The format is persisted on the draft immediately, so it survives a reload
-   * even when this post has no visual yet.
-   */
   async function chooseFormat(value: PostFormat) {
     setFormat(value);
-    await send(endpoint, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "save", format: value }),
-    }, "format", `Format set to ${value}.`);
+    await send(
+      endpoint,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "save", format: value }),
+      },
+      "format",
+      `Format set to ${value}.`,
+    );
   }
 
   const isPost = post?.kind === "instagram_post";
   const isReel = post?.kind === "reel";
   const videoKind: "reel" | "story" | null = isReel ? "reel" : isStory ? "story" : null;
-  const formatChoices = post?.kind === "story"
-    ? (["9:16"] as PostFormat[])
-    : (POST_FORMATS as readonly PostFormat[]).filter((value) => value !== "9:16");
+  const formatChoices = post?.kind === "story" ? (["9:16"] as PostFormat[]) : (POST_FORMATS as readonly PostFormat[]).filter((value) => value !== "9:16");
 
   return (
     <ModalShell wide maxWidth={760}>
@@ -255,8 +303,23 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
         onClose={close}
       />
       <ModalBody>
-        {error ? <div role="alert" className="mb-3.5 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-sm text-red">{error}</div> : null}
-        {notice ? <div role="status" className="mb-3.5 rounded-xl border border-green/35 bg-green/10 px-3.5 py-2.5 text-sm text-green">{notice}</div> : null}
+        {error ? (
+          <div role="alert" className="mb-3.5 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-sm text-red">
+            {error}
+            {error.includes("credits") && (
+              <div className="mt-2">
+                <Btn variant="outline" size="sm" onClick={() => window.location.assign("/app/pricing")}>
+                  View plans & credits
+                </Btn>
+              </div>
+            )}
+          </div>
+        ) : null}
+        {notice ? (
+          <div role="status" className="mb-3.5 rounded-xl border border-green/35 bg-green/10 px-3.5 py-2.5 text-sm text-green">
+            {notice}
+          </div>
+        ) : null}
         {!post && !error ? <div className="py-10 text-center text-sm text-text-3">Loading this post…</div> : null}
 
         {post ? (
@@ -273,9 +336,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                       <img src={post.visual.previewUrl} alt={post.visual.displayName} className="h-full w-full object-cover" />
                     )
                   ) : (
-                    <span className="px-4 text-center text-xs text-text-3">
-                      No visual yet. Nothing shows here until Voom stores the bytes.
-                    </span>
+                    <span className="px-4 text-center text-xs text-text-3">No visual yet. Nothing shows here until Voom stores the bytes.</span>
                   )}
                 </div>
               </div>
@@ -290,31 +351,30 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
               <div className="mt-3.5">
                 <h3 className="mb-1.5 text-xs font-semibold text-text-2">Format</h3>
                 {isStory ? (
-                  <p className="mb-1.5 text-[11px] leading-relaxed text-text-3">
-                    Instagram Stories are 9:16 full screen. Voom keeps this format locked.
-                  </p>
+                  <p className="mb-1.5 text-[11px] leading-relaxed text-text-3">Instagram Stories are 9:16 full screen. Voom keeps this format locked.</p>
                 ) : (
-                  <p className="mb-1.5 text-[11px] leading-relaxed text-text-3">
-                    Saved with the draft, so it is still {format} when you come back — even before a visual exists.
-                  </p>
+                  <p className="mb-1.5 text-[11px] leading-relaxed text-text-3">Saved with the draft, so it is still {format} when you come back — even before a visual exists.</p>
                 )}
                 <div className="flex flex-wrap gap-1.5">
                   {formatChoices.map((value) => (
-                    <Chip key={value} active={format === value} onClick={() => void chooseFormat(value)}>{value}</Chip>
+                    <Chip key={value} active={format === value} onClick={() => void chooseFormat(value)}>
+                      {value}
+                    </Chip>
                   ))}
                 </div>
               </div>
 
               <div className="mt-3.5 space-y-2">
                 {(isPost || isStory) && !post.visualReady ? (
-                  <Btn variant="primary" size="sm" block disabled={busy === "mara" || videoJobActive} onClick={() => void send(`${endpoint}/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ brief: mediaBrief }) }, "mara", "MARA created this visual.")}>
-                    <Icon name="spark" size={14} /> {busy === "mara" ? "MARA is working…" : isStory ? "Create Story visual with MARA" : "Create with MARA"}
+                  <Btn variant="primary" size="sm" block disabled={busy === "mara" || videoJobActive} onClick={() => void generateImage()}>
+                    <Icon name="spark" size={14} /> {busy === "mara" ? "MARA is working…" : `Generate image with MARA · ${CREDIT_COSTS.image} credits`}
                   </Btn>
                 ) : null}
 
                 {(isReel || isStory) && !videoJobActive ? (
                   <Btn variant="primary" size="sm" block disabled={busy !== null} onClick={() => void startVideoJob()}>
-                    <Icon name="spark" size={14} /> {post.visual?.mimeType.startsWith("video/") ? "Regenerate video with MARA" : isReel ? "Create Reel video with MARA" : "Create Story video with MARA"}
+                    <Icon name="spark" size={14} />{" "}
+                    {post.visual?.mimeType.startsWith("video/") ? `Regenerate video with MARA · ${CREDIT_COSTS.video} credits` : `Generate video with MARA · ${CREDIT_COSTS.video} credits`}
                   </Btn>
                 ) : null}
 
@@ -330,31 +390,44 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                   }}
                 />
                 <Btn variant="outline" size="sm" block disabled={busy === "upload"} onClick={() => fileRef.current?.click()}>
-                  <Icon name="img" size={14} /> {busy === "upload" ? "Storing…" : post.visualReady ? "Replace visual" : isStory ? "Upload image or video" : isReel ? "Import an existing video or image" : "Use my own asset"}
+                  <Icon name="img" size={14} />{" "}
+                  {busy === "upload" ? "Storing…" : post.visualReady ? "Replace visual" : isStory ? "Upload image or video" : isReel ? "Import an existing video or image" : "Use my own asset"}
                 </Btn>
 
                 {post.origin === "existing_content" && !isStory ? (
-                  <Btn variant="outline" size="sm" block disabled={busy === "suggest"} onClick={async () => {
-                    setBusy("suggest"); setError(""); setNotice("");
-                    try {
-                      const response = await fetch(`${endpoint}/suggest`, { method: "POST" });
-                      const body = await response.json() as { suggestion?: { caption: string; cta: string; hashtags: string[]; suggestedPublishAt: string | null }; error?: string; disclosure?: string };
-                      if (!response.ok || !body.suggestion) throw new Error(body.error ?? "MARA couldn't suggest copy.");
-                      setCaption(body.suggestion.caption);
-                      setCta(body.suggestion.cta);
-                      setHashtags(body.suggestion.hashtags.join(" "));
-                      if (body.suggestion.suggestedPublishAt) {
-                        const when = body.suggestion.suggestedPublishAt;
-                        setDate(isoToLocalDate(when, DEFAULT_TIMEZONE));
-                        setTime(toTimeInput(when));
+                  <Btn
+                    variant="outline"
+                    size="sm"
+                    block
+                    disabled={busy === "suggest"}
+                    onClick={async () => {
+                      setBusy("suggest");
+                      setError("");
+                      setNotice("");
+                      try {
+                        const response = await fetch(`${endpoint}/suggest`, { method: "POST" });
+                        const body = (await response.json()) as {
+                          suggestion?: { caption: string; cta: string; hashtags: string[]; suggestedPublishAt: string | null };
+                          error?: string;
+                          disclosure?: string;
+                        };
+                        if (!response.ok || !body.suggestion) throw new Error(body.error ?? "MARA couldn't suggest copy.");
+                        setCaption(body.suggestion.caption);
+                        setCta(body.suggestion.cta);
+                        setHashtags(body.suggestion.hashtags.join(" "));
+                        if (body.suggestion.suggestedPublishAt) {
+                          const when = body.suggestion.suggestedPublishAt;
+                          setDate(isoToLocalDate(when, DEFAULT_TIMEZONE));
+                          setTime(toTimeInput(when));
+                        }
+                        setNotice(body.disclosure ?? "MARA suggested copy. Review it before saving.");
+                      } catch (reason) {
+                        setError(reason instanceof Error ? reason.message : "MARA couldn't suggest copy.");
+                      } finally {
+                        setBusy(null);
                       }
-                      setNotice(body.disclosure ?? "MARA suggested copy. Review it before saving.");
-                    } catch (reason) {
-                      setError(reason instanceof Error ? reason.message : "MARA couldn't suggest copy.");
-                    } finally {
-                      setBusy(null);
-                    }
-                  }}>
+                    }}
+                  >
                     <Icon name="spark" size={14} /> {busy === "suggest" ? "MARA is writing…" : "Suggest caption, CTA and timing"}
                   </Btn>
                 ) : null}
@@ -367,7 +440,9 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                         <Btn variant="danger" size="sm" disabled={busy === "remove"} onClick={() => void send(`${endpoint}/asset`, { method: "DELETE" }, "remove", "Visual removed.")}>
                           {busy === "remove" ? "Removing…" : "Yes, remove it"}
                         </Btn>
-                        <Btn variant="ghost" size="sm" onClick={() => setConfirmRemove(false)}>Keep it</Btn>
+                        <Btn variant="ghost" size="sm" onClick={() => setConfirmRemove(false)}>
+                          Keep it
+                        </Btn>
                       </div>
                     </div>
                   ) : (
@@ -385,24 +460,29 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                     kind={videoKind}
                     initial={videoJob.generation}
                     preparing={videoJob.preparing}
-                    onSettled={() => { void load(); onChanged?.(); }}
+                    onSettled={() => {
+                      void load();
+                      onChanged?.();
+                    }}
                   />
                 </div>
               ) : null}
 
               {post.origin === "existing_content" && !isStory ? (
                 <p className="mt-3 rounded-xl bg-surface-2 px-3 py-2.5 text-[11.5px] leading-relaxed text-text-3">
-                  MARA has not seen this file. Suggestions come from the file name, file type and your brand and plan
-                  context only.
+                  MARA has not seen this file. Suggestions come from the file name, file type and your brand and plan context only.
                 </p>
               ) : null}
 
               {isStory ? (
                 <p className="mt-3 rounded-xl bg-surface-2 px-3 py-2.5 text-[11.5px] leading-relaxed text-text-3">
-                  Instagram does not support captions on Stories, so no caption is written or sent — the image or video
-                  is published exactly as stored.
+                  Instagram does not support captions on Stories, so no caption is written or sent — the image or video is published exactly as stored.
                 </p>
               ) : null}
+
+              <p className="mt-3 rounded-xl bg-surface-2 px-3 py-2.5 text-[11.5px] leading-relaxed text-text-3">
+                Credits are used only when Voom generates AI images or videos. Image {CREDIT_COSTS.image} credits, video {CREDIT_COSTS.video} credits.
+              </p>
             </div>
 
             <div>
@@ -415,9 +495,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
               {isStory ? (
                 <Card className="border-line bg-surface-2 p-3">
                   <p className="text-[11.5px] leading-relaxed text-text-3">
-                    <b className="text-text-2">Instagram Story:</b> a 9:16 image (JPEG or PNG) or video (MP4, up to 60
-                    seconds). Voom checks the file before storing it, schedules it once approved, and publishes it
-                    automatically at the scheduled time.
+                    <b className="text-text-2">Instagram Story:</b> a 9:16 image (JPEG or PNG) or video (MP4, up to 60 seconds). Voom checks the file before storing it, schedules it once approved, and publishes it automatically at the scheduled time.
                   </p>
                 </Card>
               ) : (
@@ -435,28 +513,16 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
               )}
               <div className="grid gap-2.5 sm:grid-cols-2">
                 <Field label="Schedule date" hint={date === minScheduleDate() ? "Today — pick a time later than now." : undefined}>
-                  <Input
-                    type="date"
-                    value={date}
-                    min={minScheduleDate()}
-                    onChange={(event) => { setDate(event.target.value); setError(""); }}
-                  />
+                  <Input type="date" value={date} min={minScheduleDate()} onChange={(event) => { setDate(event.target.value); setError(""); }} />
                 </Field>
                 <Field label="Time">
-                  <Input
-                    type="time"
-                    value={time}
-                    min={date ? minScheduleTime(date) ?? undefined : undefined}
-                    onChange={(event) => { setTime(event.target.value); setError(""); }}
-                  />
+                  <Input type="time" value={time} min={date ? (minScheduleTime(date) ?? undefined) : undefined} onChange={(event) => { setTime(event.target.value); setError(""); }} />
                 </Field>
               </div>
 
               <Card className="border-line bg-surface-2 p-3">
                 <p className="text-[11.5px] leading-relaxed text-text-3">
-                  <b className="text-text-2">How Voom labels this:</b> Draft → Approved → Scheduled → Publishing →
-                  Published. With a schedule set and a visual stored, approving lets Voom publish to your connected
-                  Instagram account automatically at that time — never before you approve.
+                  <b className="text-text-2">How Voom labels this:</b> Draft → Approved → Scheduled → Publishing → Published. With a schedule set and a visual stored, approving lets Voom publish to your connected Instagram account automatically at that time — never before you approve.
                 </p>
               </Card>
             </div>
@@ -464,13 +530,26 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
         ) : null}
       </ModalBody>
       <ModalFoot>
-        <Btn variant="ghost" onClick={close}>Close</Btn>
+        <Btn variant="ghost" onClick={close}>
+          Close
+        </Btn>
         {post ? (
           <>
             <Btn variant="outline" disabled={busy !== null} onClick={submitSave}>
               {busy === "save" ? "Saving…" : "Save Draft"}
             </Btn>
-            <Btn variant="primary" disabled={busy !== null} onClick={() => void send(endpoint, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "approve" }) }, "approve", "Approved inside Voom.")}>
+            <Btn
+              variant="primary"
+              disabled={busy !== null}
+              onClick={() =>
+                void send(
+                  endpoint,
+                  { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "approve" }) },
+                  "approve",
+                  "Approved inside Voom.",
+                )
+              }
+            >
               {busy === "approve" ? "Approving…" : "Approve"}
             </Btn>
           </>
@@ -480,12 +559,6 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
   );
 }
 
-/**
- * Client-side Story checks against Meta's current requirements: 9:16 aspect
- * (within a working tolerance — Instagram centre-crops anything far off it)
- * and, for videos, a 60-second maximum. The server still re-checks file type
- * and size on upload.
- */
 async function checkStoryFile(file: File): Promise<string | null> {
   const isVideo = file.type.startsWith("video/");
   try {
@@ -494,9 +567,15 @@ async function checkStoryFile(file: File): Promise<string | null> {
         const url = URL.createObjectURL(file);
         const video = document.createElement("video");
         video.preload = "metadata";
-        const done = (value: { width: number; height: number; duration: number }) => { URL.revokeObjectURL(url); resolve(value); };
+        const done = (value: { width: number; height: number; duration: number }) => {
+          URL.revokeObjectURL(url);
+          resolve(value);
+        };
         video.onloadedmetadata = () => done({ width: video.videoWidth, height: video.videoHeight, duration: video.duration });
-        video.onerror = () => { URL.revokeObjectURL(url); reject(new Error("metadata")); };
+        video.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error("metadata"));
+        };
         video.src = url;
       });
       if (meta.duration > STORY_MAX_VIDEO_SECONDS) {
@@ -510,9 +589,15 @@ async function checkStoryFile(file: File): Promise<string | null> {
     const meta = await new Promise<{ width: number; height: number }>((resolve, reject) => {
       const url = URL.createObjectURL(file);
       const image = new Image();
-      const done = (value: { width: number; height: number }) => { URL.revokeObjectURL(url); resolve(value); };
+      const done = (value: { width: number; height: number }) => {
+        URL.revokeObjectURL(url);
+        resolve(value);
+      };
       image.onload = () => done({ width: image.naturalWidth, height: image.naturalHeight });
-      image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("metadata")); };
+      image.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("metadata"));
+      };
       image.src = url;
     });
     if (!aspectLooksLikeStory(meta.width, meta.height)) {
@@ -520,8 +605,6 @@ async function checkStoryFile(file: File): Promise<string | null> {
     }
     return null;
   } catch {
-    // Metadata could not be read in this browser; the server-side type/size
-    // checks still apply, so let the upload through rather than block it.
     return null;
   }
 }
@@ -538,7 +621,6 @@ function ratioLabel(width: number, height: number): string {
   return `${Math.round(width / divisor)}:${Math.round(height / divisor)}`;
 }
 
-/** HH:MM in the business timezone for an absolute instant (for <input type="time">). */
 function toTimeInput(iso: string): string {
   const label = formatLocalTime(iso, DEFAULT_TIMEZONE);
   const match = label.match(/^(\d{1,2}):(\d{2})\s?(AM|PM)?$/i);
