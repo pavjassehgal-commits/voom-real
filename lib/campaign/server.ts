@@ -54,6 +54,45 @@ export interface BuildResult {
 }
 
 /**
+ * A failed create_automated_campaign RPC.
+ *
+ * `code` preserves the originating Postgres SQLSTATE (e.g. "23514" check
+ * constraint violation, "42P01" undefined table) or PostgREST code (e.g.
+ * "PGRST202" stale schema cache), so the API layer can distinguish
+ * missing-migration errors from integrity errors from general failures.
+ * The message is fixed and non-sensitive: the actual Postgres message,
+ * details and hint are logged server-side only and never reach the client.
+ */
+export class AutomatedCampaignBuildError extends Error {
+  readonly code: string | null;
+
+  constructor(code: string | null, cause?: unknown) {
+    super("automated_campaign_build_failed", { cause });
+    this.name = "AutomatedCampaignBuildError";
+    this.code = code;
+  }
+}
+
+/**
+ * Logs the real Postgres failure (code, message, details, hint) for
+ * server-side diagnosis only. None of it is returned to the client: the
+ * API layer maps the SQLSTATE to a fixed, non-sensitive message.
+ */
+function logAutomatedBuildFailure(error: {
+  code?: string | null;
+  message?: string | null;
+  details?: string | null;
+  hint?: string | null;
+} | null): void {
+  console.error("[voom][campaign-build] create_automated_campaign RPC failed", {
+    code: error?.code ?? null,
+    message: error?.message ?? null,
+    details: error?.details ?? null,
+    hint: error?.hint ?? null,
+  });
+}
+
+/**
  * Build an Automated Campaign from the guided brief.
  *
  * The build is planning-only: it writes drafts, child email campaigns, the
@@ -175,7 +214,12 @@ export async function buildAutomatedCampaign(
     },
   }).single();
 
-  if (error || !data) throw new Error("automated_campaign_build_failed");
+  if (error || !data) {
+    // Log the actual Postgres failure (code/message/details/hint)
+    // server-side; the client only ever sees a fixed, safe message.
+    logAutomatedBuildFailure(error);
+    throw new AutomatedCampaignBuildError(error?.code ?? null, error);
+  }
   const container = data as CampaignContainerRecord;
 
   return {
