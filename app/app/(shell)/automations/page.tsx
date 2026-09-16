@@ -14,7 +14,12 @@ export default async function AutomationsPage() {
   return <div>
     <PageHead title="Automations" description="Choose how proactively Voom prepares your marketing." />
     <Card className="p-5 sm:p-6">
-      <h2 className="font-display text-lg font-semibold">Automation mode</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-display text-lg font-semibold">Automation mode</h2>
+        {data.coordinator?.summaryMessage && (
+          <Tag tone="t-blue">{data.coordinator.summaryMessage}</Tag>
+        )}
+      </div>
       <p className="mt-1 max-w-2xl text-sm leading-relaxed text-text-2">
         Your saved mode is highlighted below, and the card that matches it is marked Active. Each card says what that
         mode does — including whether paid MARA media generation can start on its own.

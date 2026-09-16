@@ -38,7 +38,12 @@ export default async function TodayPage() {
     />
 
     <Card className="mb-4 p-5 sm:p-6">
-      <h2 className="font-display text-lg font-semibold">What Voom is doing today, {firstName}</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-display text-lg font-semibold">What Voom is doing today, {firstName}</h2>
+        {data.coordinator?.summaryMessage && (
+          <Tag tone="t-blue">{data.coordinator.summaryMessage}</Tag>
+        )}
+      </div>
       <p className="mt-1 text-sm leading-relaxed text-text-2">
         {snapshot.items.length
           ? `${summary.publishingToday.length} item${summary.publishingToday.length === 1 ? "" : "s"} due today · ${summary.needsApproval.length} waiting for you · ${summary.generating.length} generating · ${summary.waitingForMedia.length} waiting for media · ${summary.failed.length} needing attention.`

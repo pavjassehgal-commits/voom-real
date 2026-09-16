@@ -8,6 +8,8 @@ import {
   todaySummary,
   type WorkflowSnapshot,
 } from "@/lib/voom/workflow/read";
+import { runCoordinatorForOwner } from "@/lib/coordinator/service";
+import type { CoordinatorEvaluation } from "@/lib/coordinator/types";
 import { getCurrentUser, getBusinessRecord } from "./server-data";
 
 /**
@@ -21,8 +23,17 @@ export async function getOperatingData() {
   const [user, business] = await Promise.all([getCurrentUser(), getBusinessRecord()]);
   if (!user || !business) return null;
   const db = await createClient();
-  const snapshot: WorkflowSnapshot = await loadWorkflowSnapshot(createAdminClient(), user.id);
+  const admin = createAdminClient();
+  const snapshot: WorkflowSnapshot = await loadWorkflowSnapshot(admin, user.id);
   const summary = todaySummary(snapshot);
+
+  let coordinator: CoordinatorEvaluation | null = null;
+  try {
+    const res = await runCoordinatorForOwner(admin, user.id, business.id, { trigger: "ui_read" });
+    coordinator = res.evaluation;
+  } catch {
+    // Graceful degradation
+  }
 
   const { data: actions } = await db.from("mara_pending_actions")
     .select("id,tool_name,summary,old_value,new_value,status,result_summary,error_summary,created_at,updated_at,executed_at")
@@ -39,6 +50,7 @@ export async function getOperatingData() {
     business,
     snapshot,
     summary,
+    coordinator,
     // Approvals only ever counts items that genuinely still need a decision.
     pendingApprovalCount: summary.needsApproval.length,
     reelTaskCount,
