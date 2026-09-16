@@ -5,17 +5,22 @@ import Link from "next/link";
 import { useModal } from "@/lib/voom/modal";
 import { ACTION_CHANNEL_LABELS, CAMPAIGN_GOAL_LABELS, type AutomatedCampaignView, type CampaignActionView } from "@/lib/campaign/types";
 import { actionStateTone } from "@/lib/campaign/status";
+import { formatLocalTimeInput, isoToLocalDate, localToUtcIso } from "@/lib/voom/timezone";
 import type { CampaignDeliveryView } from "@/lib/voom/types";
 import { Icon } from "../icons";
 import { ModalBody, ModalFoot, ModalHead, ModalShell } from "../ui/Modal";
 import { Btn, Card, Field, Input, Tag, Textarea } from "../ui/primitives";
 
 /**
- * The campaign workspace: ONE timeline containing every planned email and
- * Instagram action, with derived status and per-action approvals. It never
- * edits the generated structure itself, and it can never auto-send — emails
- * keep the explicit send action, Instagram items link into Create Content
- * for the visual + schedule.
+ * The campaign workspace: MARA's approach, then ONE timeline containing every
+ * planned email and Instagram action with derived status, per-action approvals,
+ * inline editing of the generated draft, and a single-action "Regenerate draft
+ * with MARA".
+ *
+ * It never edits the generated STRUCTURE (dates, channels and action count come
+ * from the deterministic planner), and it can never auto-send — emails keep the
+ * explicit send action, Instagram items link into Create Content for the visual
+ * + schedule.
  */
 export function AutomatedCampaignModal({ campaignId, initial }: { campaignId: string; initial?: AutomatedCampaignView }) {
   const { close } = useModal();
@@ -74,6 +79,31 @@ export function AutomatedCampaignModal({ campaignId, initial }: { campaignId: st
     }
   }
 
+  /** One action only: MARA rewrites that draft, nothing else is touched. */
+  async function regenerate(action: CampaignActionView) {
+    setBusyAction(action.id);
+    setError("");
+    try {
+      const response = await fetch(
+        `/api/voom/campaigns/${encodeURIComponent(campaignId)}/actions/${encodeURIComponent(action.id)}/regenerate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // Client-minted so a double click or a retried request cannot apply twice.
+          body: JSON.stringify({ idempotencyKey: crypto.randomUUID() }),
+        },
+      );
+      const data = await response.json() as { automated?: AutomatedCampaignView; error?: string };
+      if (data.automated) setView(data.automated);
+      if (!response.ok) setError(data.error ?? "MARA couldn't rewrite that draft.");
+      window.dispatchEvent(new Event("voom:data-changed"));
+    } catch {
+      setError("MARA couldn't rewrite that draft.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   if (!view) {
     return (
       <ModalShell wide>
@@ -102,14 +132,7 @@ export function AutomatedCampaignModal({ campaignId, initial }: { campaignId: st
           {view.counts.executed > 0 && <Tag tone="t-green">{view.counts.executed} done</Tag>}
         </div>
 
-        {campaign.generated_summary && (
-          <Card className="mb-4 border-line-2 bg-surface-2 p-3.5">
-            <div className="flex items-start gap-2.5">
-              <Icon name="spark" size={16} className="mt-0.5 flex-none text-brand" />
-              <p className="text-[13px] leading-[1.6] text-text-2">{campaign.generated_summary}</p>
-            </div>
-          </Card>
-        )}
+        <StrategyBlock view={view} />
 
         {campaign.offer_details && (
           <p className="mb-3 text-[12.5px] text-text-3">Offer on file: <b className="text-text-2">{campaign.offer_details}</b></p>
@@ -117,7 +140,15 @@ export function AutomatedCampaignModal({ campaignId, initial }: { campaignId: st
 
         <ol className="relative space-y-3 border-l border-line pl-4">
           {view.actions.map((action) => (
-            <TimelineRow key={action.id} action={action} busy={busyAction === action.id} onDecide={decide} onChanged={() => void load()} />
+            <TimelineRow
+              key={action.id}
+              campaignId={campaignId}
+              action={action}
+              busy={busyAction === action.id}
+              onDecide={decide}
+              onRegenerate={regenerate}
+              onChanged={() => void load()}
+            />
           ))}
         </ol>
 
@@ -127,7 +158,7 @@ export function AutomatedCampaignModal({ campaignId, initial }: { campaignId: st
             <p className="text-[12.5px] leading-[1.6] text-text-2">
               Building approved drafts only. Email still sends through an explicit Send action below, and Instagram
               items need a visual and schedule in Create Content before they can publish. Nothing is sent or
-              published automatically from this screen.
+              published automatically from this screen, and campaign generation never spends AI media credits.
             </p>
           </div>
         </Card>
@@ -139,16 +170,63 @@ export function AutomatedCampaignModal({ campaignId, initial }: { campaignId: st
   );
 }
 
-function TimelineRow({ action, busy, onDecide, onChanged }: {
+/**
+ * "MARA's approach" — a compact, human-readable strategy block. The full
+ * strategy stays short by design: no AI essays are surfaced here.
+ */
+function StrategyBlock({ view }: { view: AutomatedCampaignView }) {
+  const strategy = view.strategy;
+  const summary = strategy?.summary || view.campaign.generated_summary;
+  if (!summary) return null;
+
+  const rows: [string, string][] = strategy
+    ? [
+        ["Objective", strategy.objective],
+        ["Core message", strategy.coreMessage],
+        ["Audience angle", strategy.audienceAngle],
+        ["CTA strategy", strategy.ctaStrategy],
+      ].filter(([, value]) => Boolean(value)) as [string, string][]
+    : [];
+
+  return (
+    <Card className="mb-4 border-line-2 bg-surface-2 p-3.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <Icon name="spark" size={16} className="flex-none text-brand" />
+        <b className="text-[13.5px]">MARA&apos;s approach</b>
+        <Tag tone={strategy?.source === "mara" ? "t-brand" : "t-grey"}>
+          {strategy?.source === "mara" ? "Written by MARA" : "Deterministic plan"}
+        </Tag>
+      </div>
+      <p className="mt-2 text-[13px] leading-[1.6] text-text-2">{summary}</p>
+      {rows.length > 0 && (
+        <dl className="mt-2.5 grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
+          {rows.map(([label, value]) => (
+            <div key={label} className="min-w-0">
+              <dt className="font-mono text-[10px] uppercase tracking-[.07em] text-text-3">{label}</dt>
+              <dd className="text-[12.5px] leading-[1.5] text-text-2">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {strategy?.performanceNote && (
+        <p className="mt-2.5 border-t border-line pt-2 text-[11.5px] leading-[1.55] text-text-3">{strategy.performanceNote}</p>
+      )}
+    </Card>
+  );
+}
+
+function TimelineRow({ campaignId, action, busy, onDecide, onRegenerate, onChanged }: {
+  campaignId: string;
   action: CampaignActionView;
   busy: boolean;
   onDecide: (action: CampaignActionView, decision: "approve" | "reject") => void;
+  onRegenerate: (action: CampaignActionView) => void;
   onChanged: () => void;
 }) {
   const when = new Date(action.scheduled_for);
   const isEmail = action.channel === "email";
   const pending = action.executionState === "proposed" || action.executionState === "needs_approval";
-  const [showDetails, setShowDetails] = useState(false);
+  const [panel, setPanel] = useState<"none" | "details" | "edit">("none");
 
   return (
     <li className="relative">
@@ -163,11 +241,14 @@ function TimelineRow({ action, busy, onDecide, onChanged }: {
               <b className="text-[13.5px]">{when.toLocaleDateString("en-AE", { timeZone: "Asia/Dubai", weekday: "short", month: "short", day: "numeric" })}</b>
               <span className="text-[11.5px] text-text-3">{when.toLocaleTimeString("en-AE", { timeZone: "Asia/Dubai", hour: "numeric", minute: "2-digit" })}</span>
               <Tag tone="t-grey">{ACTION_CHANNEL_LABELS[action.channel]}</Tag>
+              {action.instagram?.format && action.channel !== "email" && <Tag tone="t-grey">{labelForFormat(action.instagram.format)}</Tag>}
+              {action.contentSource === "mara" && <Tag tone="t-brand">MARA</Tag>}
             </div>
             <b className="mt-0.5 block truncate text-[13.5px]">{action.title}</b>
           </div>
           <Tag tone={actionStateTone(action.executionState)}>{action.executionLabel}</Tag>
         </div>
+        {/* Why this action exists, in one line. */}
         <p className="mt-1.5 text-[12px] leading-[1.55] text-text-3">{action.purpose}</p>
 
         {action.safety_blockers?.length > 0 && action.executionState === "needs_approval" && (
@@ -175,9 +256,19 @@ function TimelineRow({ action, busy, onDecide, onChanged }: {
         )}
 
         <div className="mt-2.5 flex flex-wrap gap-2">
-          <Btn size="sm" variant="plain" onClick={() => setShowDetails((v) => !v)}>
-            {showDetails ? "Hide details" : "Review content"}
+          <Btn size="sm" variant="plain" onClick={() => setPanel((v) => (v === "details" ? "none" : "details"))}>
+            {panel === "details" ? "Hide details" : "Review content"}
           </Btn>
+          {action.canEditContent && (
+            <Btn size="sm" variant="plain" onClick={() => setPanel((v) => (v === "edit" ? "none" : "edit"))}>
+              {panel === "edit" ? "Close editor" : "Edit draft"}
+            </Btn>
+          )}
+          {action.canEditContent && (
+            <Btn size="sm" variant="plain" disabled={busy} onClick={() => onRegenerate(action)}>
+              <Icon name="spark" size={13} /> {busy ? "Working…" : "Regenerate draft with MARA"}
+            </Btn>
+          )}
           {pending && !isEmail && (
             <Link href="/app/studio" className="ml-auto inline-flex items-center gap-1 self-center text-[12px] font-semibold text-brand hover:underline">
               Open in Create Content →
@@ -193,13 +284,110 @@ function TimelineRow({ action, busy, onDecide, onChanged }: {
           )}
         </div>
 
-        {showDetails && (
+        {!action.canEditContent && (
+          <p className="mt-2 text-[11.5px] text-text-3">
+            This action has already been {isEmail ? "sent" : "published or is publishing"}, so its content is locked.
+          </p>
+        )}
+
+        {panel === "details" && (
           <div className="mt-3">
             {action.email ? <EmailDetails action={action} onChanged={onChanged} /> : <InstagramDetails action={action} />}
           </div>
         )}
+        {panel === "edit" && (
+          <div className="mt-3">
+            <ActionEditor campaignId={campaignId} action={action} onSaved={onChanged} />
+          </div>
+        )}
       </Card>
     </li>
+  );
+}
+
+function labelForFormat(format: string) {
+  if (format === "reel") return "Reel";
+  if (format === "story") return "Story";
+  return "Post";
+}
+
+/**
+ * Edits the generated draft in place: email subject/preview/body/CTA/time, or
+ * Instagram concept/hook/caption/time. The campaign is never rebuilt and no
+ * other action changes. Saving never sends or publishes.
+ */
+function ActionEditor({ campaignId, action, onSaved }: {
+  campaignId: string;
+  action: CampaignActionView;
+  onSaved: () => void;
+}) {
+  const isEmail = action.channel === "email";
+  const [subject, setSubject] = useState(action.email?.subject ?? "");
+  const [previewText, setPreviewText] = useState(action.email?.previewText ?? "");
+  const [body, setBody] = useState(action.email?.body ?? "");
+  const [cta, setCta] = useState(action.email?.cta ?? action.instagram?.cta ?? "");
+  const [caption, setCaption] = useState(action.instagram?.caption ?? "");
+  const [concept, setConcept] = useState(action.instagram?.concept ?? action.title);
+  const [hook, setHook] = useState(action.instagram?.hook ?? "");
+  const [date, setDate] = useState(isoToLocalDate(action.scheduled_for));
+  const [time, setTime] = useState(formatLocalTimeInput(action.scheduled_for));
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState("");
+
+  async function save() {
+    setBusy(true); setErr(""); setNote("");
+    const minutes = Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+    const payload: Record<string, unknown> = { scheduledFor: localToUtcIso(date, Number.isFinite(minutes) ? minutes : 0) };
+    if (isEmail) {
+      payload.subject = subject; payload.previewText = previewText; payload.body = body; payload.cta = cta;
+    } else {
+      payload.caption = caption; payload.concept = concept; payload.hook = hook; payload.cta = cta;
+    }
+    try {
+      const response = await fetch(`/api/voom/campaigns/${encodeURIComponent(campaignId)}/actions/${encodeURIComponent(action.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json() as { error?: string; message?: string };
+      if (!response.ok) setErr(data.error ?? "That draft couldn't be saved.");
+      else { setNote(data.message ?? "Draft saved."); onSaved(); window.dispatchEvent(new Event("voom:data-changed")); }
+    } catch {
+      setErr("That draft couldn't be saved.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2.5 rounded-xl border border-line bg-surface-2 p-3">
+      {isEmail ? (
+        <>
+          <Field label="Subject"><Input value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={300} /></Field>
+          <Field label="Preview text"><Input value={previewText} onChange={(e) => setPreviewText(e.target.value)} maxLength={500} /></Field>
+          <Field label="Body"><Textarea rows={8} value={body} onChange={(e) => setBody(e.target.value)} maxLength={12000} /></Field>
+          <Field label="CTA"><Input value={cta} onChange={(e) => setCta(e.target.value)} maxLength={160} /></Field>
+        </>
+      ) : (
+        <>
+          <Field label="Concept"><Input value={concept} onChange={(e) => setConcept(e.target.value)} maxLength={160} /></Field>
+          <Field label="Hook"><Input value={hook} onChange={(e) => setHook(e.target.value)} maxLength={300} /></Field>
+          <Field label="Caption"><Textarea rows={6} value={caption} onChange={(e) => setCaption(e.target.value)} maxLength={2200} /></Field>
+          <Field label="CTA"><Input value={cta} onChange={(e) => setCta(e.target.value)} maxLength={160} /></Field>
+        </>
+      )}
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Field label="Proposed date"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+        <Field label="Proposed time"><Input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></Field>
+      </div>
+      <p className="text-[11.5px] text-text-3">Times are the business timezone (Asia/Dubai). Saving changes this draft only — nothing is sent or published.</p>
+      <div className="flex flex-wrap gap-2">
+        <Btn size="sm" variant="primary" disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save draft"}</Btn>
+      </div>
+      {note && <p role="status" className="text-[12px] text-green">{note}</p>}
+      {err && <p role="alert" className="text-[12px] text-red">{err}</p>}
+    </div>
   );
 }
 
@@ -213,8 +401,15 @@ function InstagramDetails({ action }: { action: CampaignActionView }) {
         {ig.queueStatus ? <Tag tone="t-blue">Queue: {ig.queueStatus}</Tag> : null}
         {ig.needsVisual ? <Tag tone="t-amber">Needs a visual before publishing</Tag> : null}
       </div>
+      {ig.hook ? <p className="text-[12.5px] font-semibold text-text-2">Hook: {ig.hook}</p> : null}
       <p className="whitespace-pre-wrap text-[12.5px] leading-[1.6] text-text-2">{ig.caption}</p>
-      <p className="text-[11.5px] text-text-3">Add the visual and schedule it in <Link href="/app/studio" className="font-semibold text-brand hover:underline">Create Content</Link>. Nothing publishes without that.</p>
+      {ig.script?.length > 0 && (
+        <ol className="list-decimal space-y-1 pl-4 text-[12px] leading-[1.55] text-text-2">
+          {ig.script.map((line, index) => <li key={index}>{line}</li>)}
+        </ol>
+      )}
+      {ig.visualDirection ? <p className="text-[11.5px] leading-[1.55] text-text-3">Visual direction: {ig.visualDirection}</p> : null}
+      <p className="text-[11.5px] text-text-3">Add the visual and schedule it in <Link href="/app/studio" className="font-semibold text-brand hover:underline">Create Content</Link>. Nothing publishes without that, and no paid visual is generated by this campaign.</p>
     </div>
   );
 }
@@ -320,6 +515,7 @@ function EmailDetails({ action, onChanged }: { action: CampaignActionView; onCha
         <Textarea rows={6} value={email.body} readOnly />
       </Field>
       {email.cta ? <p className="text-[12px] font-semibold text-text-2">CTA: {email.cta}</p> : null}
+      {email.audienceNote ? <p className="text-[11.5px] text-text-3">Written for: {email.audienceNote}</p> : null}
       <p className="text-[11.5px] text-text-3">
         Proposed send time: {new Date(action.scheduled_for).toLocaleString("en-AE", { timeZone: "Asia/Dubai", dateStyle: "medium", timeStyle: "short" })}
       </p>
