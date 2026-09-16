@@ -17,6 +17,7 @@ interface CampaignsResponse {
   legacy: CampaignRecord[];
   automated: AutomatedCampaignView[];
   deliveries: Record<string, CampaignDeliveryView>;
+  timeZone?: string;
   error?: string;
 }
 
@@ -27,6 +28,7 @@ export default function CampaignsPage() {
   const [automated, setAutomated] = useState<AutomatedCampaignView[]>([]);
   const [legacy, setLegacy] = useState<CampaignRecord[]>([]);
   const [deliveries, setDeliveries] = useState<Record<string, CampaignDeliveryView>>({});
+  const [timeZone, setTimeZone] = useState("Asia/Dubai");
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -37,6 +39,7 @@ export default function CampaignsPage() {
       setAutomated(body.automated ?? []);
       setLegacy((body.legacy ?? []).filter((row) => row.kind !== "sms"));
       setDeliveries(body.deliveries ?? {});
+      setTimeZone(body.timeZone ?? "Asia/Dubai");
       setError(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Campaigns couldn't load.");
@@ -152,7 +155,7 @@ export default function CampaignsPage() {
                       <td className="py-3 pr-3"><b className="block max-w-[200px] truncate">{campaign.name}</b></td>
                       <td className="py-3 pr-3 text-text-2"><span className="block max-w-[180px] truncate">{campaign.audience || "Audience not set"}</span></td>
                       <td className="py-3 pr-3 text-text-2"><span className="block max-w-[240px] truncate">{campaign.subject || campaign.content || "No content yet"}</span></td>
-                      <td className="py-3 pr-3 whitespace-nowrap text-[12.5px] text-text-2">{campaign.proposed_send_at ? formatWhen(campaign.proposed_send_at) : "Not scheduled"}</td>
+                      <td className="py-3 pr-3 whitespace-nowrap text-[12.5px] text-text-2">{campaign.proposed_send_at ? formatWhen(campaign.proposed_send_at, timeZone) : "Not scheduled"}</td>
                       <td className="py-3 pr-3 whitespace-nowrap">
                         <div className="flex flex-wrap gap-1.5">
                           <Tag tone={campaign.status === "approved" ? "t-green" : campaign.status === "rejected" ? "t-red" : "t-grey"}>{statusLabel(campaign.status)}</Tag>
@@ -187,7 +190,7 @@ export default function CampaignsPage() {
               <li key={campaign.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-line px-3 py-2">
                 <Icon name="msg" size={14} className="text-text-3" />
                 <b className="truncate">{campaign.name}</b>
-                <span className="text-text-3">{campaign.proposed_send_at ? formatWhen(campaign.proposed_send_at) : "No date"}</span>
+                <span className="text-text-3">{campaign.proposed_send_at ? formatWhen(campaign.proposed_send_at, timeZone) : "No date"}</span>
                 <Tag tone={campaign.status === "approved" ? "t-green" : campaign.status === "rejected" ? "t-red" : "t-grey"}>{statusLabel(campaign.status)}</Tag>
               </li>
             ))}
@@ -232,9 +235,9 @@ function AutomatedCampaignCard({ view, onOpen }: { view: AutomatedCampaignView; 
         {campaign.generated_summary ?? "MARA is preparing this campaign."}
       </p>
       <p className="mt-2 text-[11.5px] text-text-3">
-        {campaign.start_at ? new Date(campaign.start_at).toLocaleDateString("en-AE", { timeZone: "Asia/Dubai", month: "short", day: "numeric" }) : "—"}
+        {campaign.start_at ? new Date(campaign.start_at).toLocaleDateString("en-AE", { timeZone: view.timeZone, month: "short", day: "numeric" }) : "—"}
         {" → "}
-        {campaign.end_at ? new Date(campaign.end_at).toLocaleDateString("en-AE", { timeZone: "Asia/Dubai", month: "short", day: "numeric" }) : "—"}
+        {campaign.end_at ? new Date(campaign.end_at).toLocaleDateString("en-AE", { timeZone: view.timeZone, month: "short", day: "numeric" }) : "—"}
         <span className="float-right font-semibold text-brand">Open timeline →</span>
       </p>
     </button>
@@ -293,8 +296,8 @@ function deliveryLabel(state: string) {
   return "Ready";
 }
 
-function formatWhen(value: string) {
+function formatWhen(value: string, timeZone = "Asia/Dubai") {
   return new Date(value).toLocaleString("en-AE", {
-    timeZone: "Asia/Dubai", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+    timeZone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
   });
 }

@@ -22,6 +22,15 @@
 
 import { evaluateAutopilotRecommendation } from "@/lib/mara/autopilot-safety";
 import {
+  accountTimezone,
+  addDays,
+  DEFAULT_TIMEZONE,
+  isoToLocalDate,
+  localDate,
+  localMinutes,
+  localToUtcIso,
+} from "@/lib/voom/timezone";
+import {
   CAMPAIGN_GOAL_LABELS,
   MAX_CAMPAIGN_ACTIONS,
   MAX_CAMPAIGN_DAYS,
@@ -36,8 +45,10 @@ import {
   type PlannerPerformanceInput,
 } from "./types";
 
-/** Voom runs all scheduling in the business timezone (UTC+4, no DST). */
-const TIMEZONE_OFFSET_MINUTES = 240;
+/** Minimum lead before a same-day campaign action can be proposed. */
+export const CAMPAIGN_MIN_LEAD_MINUTES = 10;
+/** Minimum spacing used when a same-day window needs to be compacted. */
+export const CAMPAIGN_MIN_SPACING_MINUTES = 60;
 
 type DraftSpec = Omit<PlannedAction, "slot" | "autopilotSafe" | "autopilotBlockers">;
 
@@ -47,14 +58,17 @@ export interface PlanCampaignInput {
   audiences?: PlannerAudience[];
   /** Real advisory performance context, or null when none exists. */
   performance?: PlannerPerformanceInput | null;
+  /** Workspace/business timezone. Unknown values fall back to the account default. */
+  timeZone?: string | null;
   /** Current instant; injectable for tests. */
   now?: Date;
 }
 
 export function planCampaign(input: PlanCampaignInput): PlannedCampaign {
   const now = input.now ?? new Date();
+  const timeZone = accountTimezone(input.timeZone);
   const brief = normalizeBrief(input.brief);
-  const span = campaignSpanDays(brief.startAt, brief.endAt);
+  const span = campaignSpanDays(brief.startAt, brief.endAt, timeZone);
   const days = Math.min(Math.max(span, 1), MAX_CAMPAIGN_DAYS);
   const last = days - 1;
 
@@ -72,23 +86,25 @@ export function planCampaign(input: PlanCampaignInput): PlannedCampaign {
   const specs: DraftSpec[] = [];
 
   for (const day of emailDays) {
-    specs.push(buildEmailSpec({ brief, brand: input.brand ?? {}, audienceId: audience?.id ?? null, day, days, index: emailDays.indexOf(day), total: emailDays.length }));
+    specs.push(buildEmailSpec({ brief, brand: input.brand ?? {}, audienceId: audience?.id ?? null, day, days, index: emailDays.indexOf(day), total: emailDays.length, timeZone }));
   }
 
   postDays.forEach((day, index) => {
-    specs.push(buildInstagramPostSpec({ brief, brand: input.brand ?? {}, day, days, index, total: postDays.length }));
+    specs.push(buildInstagramPostSpec({ brief, brand: input.brand ?? {}, day, days, index, total: postDays.length, timeZone }));
   });
   reelDays.forEach((day, index) => {
-    specs.push(buildReelSpec({ brief, brand: input.brand ?? {}, day, days, index, total: reelDays.length }));
+    specs.push(buildReelSpec({ brief, brand: input.brand ?? {}, day, days, index, total: reelDays.length, timeZone }));
   });
   storyDays.forEach((day, index) => {
-    specs.push(buildStorySpec({ brief, brand: input.brand ?? {}, day, days, index, total: storyDays.length, lastDay: last }));
+    specs.push(buildStorySpec({ brief, brand: input.brand ?? {}, day, days, index, total: storyDays.length, lastDay: last, timeZone }));
   });
 
   // One ordered timeline, earliest first; same-day order follows the channel
-  // times set below (story → email → reel → post).
-  specs.sort((a, b) => Date.parse(a.scheduledFor) - Date.parse(b.scheduledFor));
-  const capped = specs.slice(0, MAX_CAMPAIGN_ACTIONS);
+  // times set below (story → email → reel → post). The timing pass happens
+  // before MARA sees the skeleton, so the model never receives a past slot.
+  const timedSpecs = enforceCampaignTiming(specs, brief, now, timeZone);
+  timedSpecs.sort((a, b) => Date.parse(a.scheduledFor) - Date.parse(b.scheduledFor));
+  const capped = timedSpecs.slice(0, MAX_CAMPAIGN_ACTIONS);
 
   const actions: PlannedAction[] = capped.map((spec, slot) => {
     const content = [spec.subject, spec.previewText, spec.body, spec.caption, spec.concept].filter(Boolean).join("\n");
@@ -139,29 +155,116 @@ function normalizeBrief(brief: CampaignBrief): CampaignBrief {
   };
 }
 
-/** Whole inclusive day count between the brief dates, measured in UTC+4. */
-export function campaignSpanDays(startAt: string, endAt: string): number {
-  const start = dubaiDay(startAt);
-  const end = dubaiDay(endAt);
+/** Whole inclusive day count between the brief dates in the supplied timezone. */
+export function campaignSpanDays(startAt: string, endAt: string, timeZone = DEFAULT_TIMEZONE): number {
+  const start = campaignDate(startAt, timeZone);
+  const end = campaignDate(endAt, timeZone);
   if (!start || !end) return 1;
-  const ms = Date.UTC(end.y, end.m - 1, end.d) - Date.UTC(start.y, start.m - 1, start.d);
+  const ms = Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`);
   return Math.round(ms / 86_400_000) + 1;
 }
 
-function dubaiDay(value: string): { y: number; m: number; d: number } | null {
-  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  if (dateMatch) return { y: Number(dateMatch[1]), m: Number(dateMatch[2]), d: Number(dateMatch[3]) };
+/** Resolves a brief value to the workspace's local calendar date. */
+export function campaignDate(value: string, timeZone = DEFAULT_TIMEZONE): string | null {
+  const dateMatch = /^(\d{4}-\d{2}-\d{2})$/.exec(value);
+  if (dateMatch) {
+    const parsed = Date.parse(`${dateMatch[1]}T00:00:00Z`);
+    return Number.isFinite(parsed) && new Date(parsed).toISOString().slice(0, 10) === dateMatch[1] ? dateMatch[1] : null;
+  }
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  const shifted = new Date(parsed.getTime() + TIMEZONE_OFFSET_MINUTES * 60_000);
-  return { y: shifted.getUTCFullYear(), m: shifted.getUTCMonth() + 1, d: shifted.getUTCDate() };
+  return Number.isNaN(parsed.getTime()) ? null : isoToLocalDate(parsed.toISOString(), timeZone);
 }
 
-function scheduledFor(startAt: string, dayOffset: number, hour: number, minute = 0): string {
-  const start = dubaiDay(startAt);
+function scheduledFor(startAt: string, dayOffset: number, hour: number, minute = 0, timeZone = DEFAULT_TIMEZONE): string {
+  const start = campaignDate(startAt, timeZone);
   if (!start) return new Date(startAt).toISOString();
-  // UTC+4 local wall-clock → UTC instant.
-  return new Date(Date.UTC(start.y, start.m - 1, start.d + dayOffset, hour - 4, minute)).toISOString();
+  // Resolve the local wall-clock through Intl so DST and workspace zones are correct.
+  return localToUtcIso(addDays(start, dayOffset), hour * 60 + minute, timeZone);
+}
+
+/**
+ * Enforces the non-negotiable time bounds after every scheduling decision.
+ * This is deliberately exported so the MARA merge path can run the exact same
+ * guard as the deterministic skeleton before it is persisted.
+ */
+export function enforceCampaignTiming<T extends { channel: string; dayOffset: number; scheduledFor: string }>(
+  items: T[],
+  brief: CampaignBrief,
+  now: Date,
+  timeZone = DEFAULT_TIMEZONE,
+): T[] {
+  const zone = accountTimezone(timeZone);
+  const startDate = campaignDate(brief.startAt, zone);
+  const endDate = campaignDate(brief.endAt, zone);
+  if (!startDate || !endDate) return [];
+  const today = localDate(now, zone);
+  const earliestToday = ceilMinute(now.getTime() + CAMPAIGN_MIN_LEAD_MINUTES * 60_000);
+  const endOfDay = (date: string) => Date.parse(localToUtcIso(date, 23 * 60 + 59, zone));
+  const desiredMinutes: Record<string, number> = {
+    email: 9 * 60,
+    instagram_story: 10 * 60 + 30,
+    instagram_reel: 17 * 60,
+    instagram_post: 19 * 60,
+  };
+  const groups = new Map<string, Array<{ item: T; index: number; desired: number }>>();
+
+  items.forEach((item, index) => {
+    const allowedDate = addDays(startDate, item.dayOffset);
+    if (allowedDate < startDate || allowedDate > endDate || allowedDate < today) return;
+    const proposedMs = Date.parse(item.scheduledFor);
+    const proposedDate = Number.isFinite(proposedMs) ? isoToLocalDate(new Date(proposedMs).toISOString(), zone) : "";
+    const minutes = proposedDate === allowedDate && Number.isFinite(proposedMs)
+      ? localMinutes(new Date(proposedMs), zone)
+      : desiredMinutes[item.channel] ?? 12 * 60;
+    const desired = Number.isFinite(proposedMs) && proposedDate === allowedDate
+      ? proposedMs
+      : Date.parse(localToUtcIso(allowedDate, minutes, zone));
+    const group = groups.get(allowedDate) ?? [];
+    group.push({ item, index, desired });
+    groups.set(allowedDate, group);
+  });
+
+  const output: Array<{ item: T; index: number; scheduledMs: number }> = [];
+  for (const [date, group] of groups) {
+    const isToday = date === today;
+    const floor = isToday ? earliestToday : Date.parse(localToUtcIso(date, 0, zone));
+    const ceiling = endOfDay(date);
+    if (isToday && floor > ceiling) continue;
+
+    // A late same-day request gets fewer, higher-value actions rather than a
+    // fake two-hour bundle. Email and feed posts carry more conversion value
+    // than Stories/Reels when the remaining day cannot fit the full mix.
+    const capacity = Math.max(0, Math.floor((ceiling - floor) / (CAMPAIGN_MIN_SPACING_MINUTES * 60_000)) + 1);
+    const selected = isToday && group.length > capacity
+      ? [...group].sort((a, b) => actionPriority(b.item.channel) - actionPriority(a.item.channel) || a.index - b.index).slice(0, capacity)
+      : group;
+    selected.sort((a, b) => a.desired - b.desired || a.index - b.index);
+
+    let cursor = floor;
+    for (const candidate of selected) {
+      const scheduledMs = Math.max(candidate.desired, cursor);
+      if (scheduledMs > ceiling) continue;
+      output.push({ item: candidate.item, index: candidate.index, scheduledMs });
+      cursor = scheduledMs + CAMPAIGN_MIN_SPACING_MINUTES * 60_000;
+    }
+  }
+
+  const byIndex = new Map(output.map((entry) => [entry.index, entry]));
+  return items.flatMap((item, index) => {
+    const entry = byIndex.get(index);
+    return entry ? [{ ...item, scheduledFor: new Date(entry.scheduledMs).toISOString() }] : [];
+  });
+}
+
+function ceilMinute(milliseconds: number): number {
+  return Math.ceil(milliseconds / 60_000) * 60_000;
+}
+
+function actionPriority(channel: string): number {
+  if (channel === "email") return 4;
+  if (channel === "instagram_post") return 3;
+  if (channel === "instagram_reel") return 2;
+  return 1;
 }
 
 // ─── Channel mix (dynamic by goal + timeframe) ─────────────────────────────
@@ -314,6 +417,7 @@ interface BuildContext {
   days: number;
   index: number;
   total: number;
+  timeZone: string;
 }
 
 function brandName(brand: CampaignBrandContext): string {
@@ -414,7 +518,7 @@ function buildEmailSpec(ctx: BuildContext & { audienceId: string | null }): Draf
   return {
     channel: "email",
     dayOffset: day,
-    scheduledFor: scheduledFor(brief.startAt, day, isFinal ? 16 : index === 0 ? 9 : 11, 0),
+    scheduledFor: scheduledFor(brief.startAt, day, isFinal ? 16 : index === 0 ? 9 : 11, 0, ctx.timeZone),
     stage,
     title: `${subject}`.slice(0, 160),
     purpose: `${STAGE_PURPOSE[stage]} Email ${index + 1} of ${total} in the ${CAMPAIGN_GOAL_LABELS[brief.goal].toLowerCase()} sequence.`,
@@ -481,7 +585,7 @@ function buildInstagramPostSpec(ctx: BuildContext): DraftSpec {
   return {
     channel: "instagram_post",
     dayOffset: day,
-    scheduledFor: scheduledFor(brief.startAt, day, 19, 0),
+    scheduledFor: scheduledFor(brief.startAt, day, 19, 0, ctx.timeZone),
     stage,
     title: title.slice(0, 160),
     purpose: `${STAGE_PURPOSE[stage]} Instagram post ${index + 1} of ${total}.`,
@@ -511,7 +615,7 @@ function buildReelSpec(ctx: BuildContext): DraftSpec {
   return {
     channel: "instagram_reel",
     dayOffset: day,
-    scheduledFor: scheduledFor(brief.startAt, day, 17, 0),
+    scheduledFor: scheduledFor(brief.startAt, day, 17, 0, ctx.timeZone),
     stage,
     title: `${name} Reel: ${brief.goal === "awareness" ? "behind the scenes" : offer ? "offer highlight" : "why customers choose us"}`.slice(0, 160),
     purpose: `${STAGE_PURPOSE[stage]} Reel ${index + 1} of ${total}; short-form video tends to reach new viewers.`,
@@ -539,7 +643,7 @@ function buildStorySpec(ctx: BuildContext & { lastDay: number }): DraftSpec {
   return {
     channel: "instagram_story",
     dayOffset: day,
-    scheduledFor: scheduledFor(brief.startAt, day, 10, 30),
+    scheduledFor: scheduledFor(brief.startAt, day, 10, 30, ctx.timeZone),
     stage,
     title: `${name} Story: ${isClosing ? "closing reminder" : "campaign moment"}`.slice(0, 160),
     purpose: `${STAGE_PURPOSE[stage]} Story ${index + 1} of ${total}; Stories keep the campaign present between feed posts.`,

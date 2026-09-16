@@ -1,7 +1,7 @@
 /**
  * MARA Campaign Intelligence (Automated Campaigns v2) — real-database coverage.
  *
- * Applies the repository's actual migrations (0001..0036) to an embedded
+ * Applies the repository's actual migrations (0001..0038) to an embedded
  * PostgreSQL and exercises the REAL RPCs Production calls:
  * `create_automated_campaign` and `update_campaign_action_content`.
  *

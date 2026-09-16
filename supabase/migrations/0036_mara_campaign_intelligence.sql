@@ -393,6 +393,9 @@ declare
   v_key text := nullif(trim(coalesce(p_idempotency_key, '')), '');
   v_scheduled timestamptz;
   v_content jsonb;
+  v_new_channel text;
+  v_new_kind text;
+  v_new_calendar_channel text;
 begin
   if v_key is not null and char_length(v_key) not between 16 and 200 then
     raise exception 'invalid_generation_idempotency_key';
@@ -406,6 +409,9 @@ begin
   if not found then
     raise exception 'campaign_action_not_found';
   end if;
+
+  v_content := coalesce(v_action.mara_content, '{}'::jsonb)
+    || coalesce(nullif(p_patch -> 'content', 'null'::jsonb), '{}'::jsonb);
 
   -- Idempotent replay: this key already produced a generation. Return the row
   -- exactly as it stands; nothing is written a second time.
@@ -440,6 +446,86 @@ begin
   else
     if v_action.draft_id is null then
       raise exception 'campaign_action_not_found';
+    end if;
+
+    -- A campaign Instagram format can be changed in place before media or
+    -- publishing. Keep the action, Studio draft, calendar mirror and future
+    -- generation path on the same format; never leave a Post-labelled action
+    -- backed by a Reel draft (or vice versa).
+    if nullif(p_patch ->> 'format', '') is not null then
+      if (p_patch ->> 'format') not in ('post', 'reel', 'story') then
+        raise exception 'instagram_format_invalid';
+      end if;
+      v_content := jsonb_set(v_content, '{format}', to_jsonb(p_patch ->> 'format'), true);
+      if (p_patch ->> 'format') = 'reel' then
+        if coalesce(jsonb_typeof(v_content -> 'script'), '') <> 'array' then
+          raise exception 'instagram_reel_script_required';
+        end if;
+        if jsonb_array_length(v_content -> 'script') = 0 then
+          raise exception 'instagram_reel_script_required';
+        end if;
+      else
+        if p_patch ? 'content'
+          and jsonb_typeof(p_patch -> 'content' -> 'script') = 'array'
+          and jsonb_array_length(p_patch -> 'content' -> 'script') > 0 then
+          raise exception 'instagram_non_reel_script_forbidden';
+        end if;
+        -- A format change away from Reel must not leave stale Reel-only data.
+        v_content := v_content - 'script';
+      end if;
+      v_new_channel := case p_patch ->> 'format'
+        when 'reel' then 'instagram_reel'
+        when 'story' then 'instagram_story'
+        else 'instagram_post'
+      end;
+      if v_new_channel <> v_action.channel then
+        if exists (
+          select 1 from public.post_draft_assets
+          where owner_user_id = p_owner_user_id and draft_id = v_action.draft_id
+        ) then
+          raise exception 'instagram_format_locked';
+        end if;
+        if exists (
+          select 1 from public.instagram_publish_queue
+          where owner_user_id = p_owner_user_id
+            and draft_id = v_action.draft_id
+            and status in ('publishing', 'published')
+        ) then
+          raise exception 'campaign_action_locked';
+        end if;
+        v_new_kind := case v_new_channel
+          when 'instagram_reel' then 'reel'
+          when 'instagram_story' then 'story'
+          else 'instagram_post'
+        end;
+        v_new_calendar_channel := case v_new_channel
+          when 'instagram_reel' then 'Reel'
+          when 'instagram_story' then 'Story'
+          else 'Instagram'
+        end;
+        update public.mara_drafts
+        set kind = v_new_kind,
+            channel = case v_new_kind
+              when 'reel' then 'Reel · 9:16'
+              when 'story' then 'Instagram Story · 9:16'
+              else 'Instagram Post · 4:5'
+            end
+        where id = v_action.draft_id and owner_user_id = p_owner_user_id;
+        update public.content_calendar_items
+        set channel = v_new_calendar_channel
+        where owner_user_id = p_owner_user_id
+          and source_draft_id = v_action.draft_id
+          and status in ('draft', 'approved');
+        update public.instagram_publish_queue
+        set media_kind = case v_new_channel
+          when 'instagram_reel' then 'reel'
+          when 'instagram_story' then 'story'
+          else 'image'
+        end
+        where owner_user_id = p_owner_user_id
+          and draft_id = v_action.draft_id
+          and status in ('scheduled', 'waiting_for_media');
+      end if;
     end if;
 
     -- Instagram's own caption limit, enforced here so a rewritten draft can
@@ -499,13 +585,13 @@ begin
     end if;
   end if;
 
-  -- Merge the structured content and refresh the action row itself.
-  v_content := coalesce(v_action.mara_content, '{}'::jsonb)
-    || coalesce(nullif(p_patch -> 'content', 'null'::jsonb), '{}'::jsonb);
+  -- The structured content was merged before the guarded format checks;
+  -- refresh the action row itself with that validated shape.
   v_scheduled := coalesce((nullif(p_patch ->> 'scheduledFor', ''))::timestamptz, v_action.scheduled_for);
 
   update public.voom_campaign_actions
-  set title = coalesce(nullif(left(p_patch ->> 'title', 160), ''), title),
+  set channel = coalesce(v_new_channel, channel),
+      title = coalesce(nullif(left(p_patch ->> 'title', 160), ''), title),
       purpose = coalesce(nullif(left(p_patch ->> 'purpose', 1000), ''), purpose),
       scheduled_for = v_scheduled,
       mara_content = v_content,

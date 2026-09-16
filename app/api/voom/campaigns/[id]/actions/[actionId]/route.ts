@@ -2,13 +2,22 @@ import { z } from "zod";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
-import { decideCampaignAction, editCampaignActionContent, readAutomatedCampaign } from "@/lib/campaign/server";
+import {
+  chooseCampaignReelProduction,
+  decideCampaignAction,
+  editCampaignActionContent,
+  readAutomatedCampaign,
+} from "@/lib/campaign/server";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // Approving/rejecting a timeline action changes approval STATE only. It never
 // sends an email and never publishes to Instagram.
 const decisionSchema = z.object({ action: z.enum(["approve", "reject"]) }).strict();
+const productionSchema = z.object({
+  action: z.literal("production"),
+  method: z.enum(["create_with_mara", "upload_asset", "film_yourself"]),
+}).strict();
 
 /**
  * Editing ONE action's draft content before approval. The limits mirror the
@@ -17,6 +26,7 @@ const decisionSchema = z.object({ action: z.enum(["approve", "reject"]) }).stric
  * campaign — the guarded RPC refuses an action that is already sent/published.
  */
 const editSchema = z.object({
+  purpose: z.string().trim().max(1000).optional(),
   subject: z.string().trim().max(300).optional(),
   previewText: z.string().trim().max(500).optional(),
   body: z.string().trim().max(12000).optional(),
@@ -24,6 +34,8 @@ const editSchema = z.object({
   concept: z.string().trim().max(160).optional(),
   hook: z.string().trim().max(300).optional(),
   visualDirection: z.string().trim().max(1200).optional(),
+  script: z.array(z.string().trim().max(300)).max(8).optional(),
+  format: z.enum(["post", "reel", "story"]).optional(),
   cta: z.string().trim().max(160).optional(),
   ctaUrl: z.string().trim().max(500).nullable().optional(),
   audienceNote: z.string().trim().max(500).optional(),
@@ -46,7 +58,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return Response.json({ error: "Choose approve or reject." }, { status: 400 });
   }
   const parsed = decisionSchema.safeParse(body);
-  if (!parsed.success) return Response.json({ error: "Choose approve or reject." }, { status: 400 });
+  const productionParsed = productionSchema.safeParse(body);
+  if (!parsed.success && !productionParsed.success) return Response.json({ error: "Choose approve, reject, or a Reel production method." }, { status: 400 });
 
   try {
     const db = await createClient();
@@ -56,6 +69,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     } catch {
       return Response.json({ error: "Campaign approvals are not fully configured on the server yet." }, { status: 503 });
     }
+
+    if (productionParsed.success) {
+      const result = await chooseCampaignReelProduction(admin, user.id, id, actionId, productionParsed.data.method);
+      if (!result.ok) {
+        return Response.json({ error: (result.blockers ?? []).join(" ") || "That production method could not be recorded." }, { status: 409 });
+      }
+      const automated = await readAutomatedCampaign(db, user.id, id);
+      return Response.json({
+        message: "Production choice saved in this campaign. Nothing has been generated, uploaded, sent, or published.",
+        pendingActionId: result.pendingActionId,
+        automated,
+      });
+    }
+    if (!parsed.success) return Response.json({ error: "Choose approve or reject." }, { status: 400 });
 
     const result = await decideCampaignAction(admin, user.id, id, actionId, parsed.data.action);
     if (!result.ok) {

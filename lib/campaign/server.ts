@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createAdminClient } from "@/utils/supabase/admin";
 
 import { getBrandProfile } from "@/lib/mara/internal-data";
 import { listAudiences } from "@/lib/contacts/server-data";
@@ -15,6 +16,14 @@ import { getPostDraft, approvePostDraft } from "@/lib/post/server-data";
 import { postApprovalBlockers, composePostCaption } from "@/lib/post/core";
 import { cancelPublishItem } from "@/lib/instagram/publish-queue";
 import { evaluateAutopilotRecommendation } from "@/lib/mara/autopilot-safety";
+import {
+  classifyReelProduction,
+  productionStatusFor,
+  type ReelProductionMethod,
+} from "@/lib/mara/reel-production";
+import { checkScheduleInstant } from "@/lib/voom/schedule-guard";
+import { canUseAutopilot, normalizePlan, type PlanId } from "@/lib/billing/plans";
+import { accountTimezone, daysBetween, isoToLocalDate, localToUtcIso } from "@/lib/voom/timezone";
 import { generateCampaignIntelligence, type CampaignIntelligenceDeps } from "./intelligence";
 import { planCampaign } from "./planner";
 import {
@@ -53,6 +62,11 @@ export interface BuildAutomatedCampaignInput {
   mode: string | null | undefined;
   /** Build idempotency key minted by the client; same key never duplicates. */
   idempotencyKey: string;
+  /** Workspace/business timezone resolved by the build route. */
+  timeZone?: string | null;
+  /** Billing context is explicit in production; omitted in legacy/test seams. */
+  planId?: PlanId | string | null;
+  allowAutomaticPaidMedia?: boolean | null;
   now?: Date;
   /**
    * Test seam for the text-AI provider. Production omits it and the existing
@@ -144,6 +158,13 @@ export async function buildAutomatedCampaign(
 ): Promise<BuildResult> {
   const mode = normalizeAutomationMode(input.mode);
   const now = input.now ?? new Date();
+  const timeZone = accountTimezone(input.timeZone);
+  // Direct unit/test seams may omit billing context; production routes pass it
+  // explicitly, including null for an unconfigured plan. An explicit null must
+  // fail closed rather than being mistaken for the legacy omission.
+  const hasBillingContext = input.planId !== undefined || input.allowAutomaticPaidMedia !== undefined;
+  const autopilotEntitled = !hasBillingContext
+    || (input.planId != null && canUseAutopilot(normalizePlan(input.planId)) && input.allowAutomaticPaidMedia === true);
 
   const [brand, audiencesResult, performance] = await Promise.all([
     getBrandProfile(db, ownerId),
@@ -182,6 +203,7 @@ export async function buildAutomatedCampaign(
     brand: brandContext,
     audiences,
     performance: plannerPerformance,
+    timeZone,
     now,
   });
 
@@ -202,6 +224,7 @@ export async function buildAutomatedCampaign(
     skeleton: plan.actions,
     summary: plan.summary,
     performance: plannerPerformance,
+    timeZone,
     now,
   });
   const generated = await generateCampaignIntelligence(context, input.deps ?? {});
@@ -215,6 +238,7 @@ export async function buildAutomatedCampaign(
     brand: brandContext,
     goalLabel,
     intelligence: generated.ok ? generated.intelligence : null,
+    timeZone,
     now,
   });
 
@@ -227,7 +251,11 @@ export async function buildAutomatedCampaign(
   //               never sent in any mode (no send call exists here), and paid
   //               media is never submitted in any mode (no media call exists
   //               here either — that stays behind the central credit guard).
-  const actionsPayload = merged.actions.map((action) => {
+  const actionsPayload = merged.actions.map((rawAction) => {
+    // Keep the historical three-way gating expression as the final persisted
+    // decision. Billing entitlement only changes the safety bit feeding it, so
+    // a Free/Pro account can never turn an Autopilot request into approval.
+    const action = autopilotEntitled ? rawAction : { ...rawAction, autopilotSafe: false };
     const status = mode === "autopilot" && action.autopilotSafe
       ? "approved"
       : mode === "manual"
@@ -283,8 +311,8 @@ export async function buildAutomatedCampaign(
         idempotencyKey: input.idempotencyKey,
         name: input.brief.name,
         goal: input.brief.goal,
-        startAt: toUtcStart(input.brief.startAt),
-        endAt: toUtcEnd(input.brief.endAt),
+        startAt: toUtcStart(input.brief.startAt, timeZone),
+        endAt: toUtcEnd(input.brief.endAt, timeZone),
         offerDetails: input.brief.offerDetails ?? "",
         audience: input.brief.targetAudience ?? "",
         audienceId,
@@ -326,13 +354,15 @@ export async function buildAutomatedCampaign(
 // ─── Read model ────────────────────────────────────────────────────────────
 
 export async function readAutomatedCampaign(db: Db, ownerId: string, id: string): Promise<AutomatedCampaignView | null> {
-  const [{ data: campaign }, { data: actionRows }] = await Promise.all([
+  const [{ data: campaign }, { data: actionRows }, { data: business }] = await Promise.all([
     db.from("voom_campaigns").select(CONTAINER_SELECT)
       .eq("owner_user_id", ownerId).eq("id", id).maybeSingle(),
     db.from("voom_campaign_actions")
       .select(ACTION_SELECT)
       .eq("owner_user_id", ownerId).eq("campaign_id", id).order("slot", { ascending: true }),
+    db.from("businesses").select("timezone").eq("owner_user_id", ownerId).maybeSingle(),
   ]);
+  const timeZone = accountTimezone((business as { timezone?: string | null } | null)?.timezone);
   const container = campaign as CampaignContainerRecord | null;
   if (!container || container.kind !== "multi") return null;
 
@@ -340,33 +370,56 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
   const emailIds = actions.map((a) => a.email_campaign_id).filter((x): x is string => Boolean(x));
   const draftIds = actions.map((a) => a.draft_id).filter((x): x is string => Boolean(x));
 
-  const [childrenResult, sendsResult, draftsResult, queueResult, assetsResult] = await Promise.all([
+  const [childrenResult, sendsResult, draftsResult, queueResult, assetsResult, productionResult] = await Promise.all([
     emailIds.length
-      ? db.from("voom_campaigns").select("id,status,subject,preview_text,content,audience_id").in("id", emailIds)
+      ? db.from("voom_campaigns").select("id,status,subject,preview_text,content,audience_id").eq("owner_user_id", ownerId).in("id", emailIds)
       : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
     emailIds.length
-      ? db.from("campaign_sends").select("campaign_id,internal_status,updated_at").in("campaign_id", emailIds)
+      ? db.from("campaign_sends").select("campaign_id,internal_status,updated_at").eq("owner_user_id", ownerId).in("campaign_id", emailIds)
       : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
     draftIds.length
-      ? db.from("mara_drafts").select("id,kind,status,title,content,proposed_publish_at").in("id", draftIds)
+      ? db.from("mara_drafts").select("id,kind,status,title,content,proposed_publish_at").eq("owner_user_id", ownerId).in("id", draftIds)
       : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
     draftIds.length
-      ? db.from("instagram_publish_queue").select("draft_id,status").in("draft_id", draftIds)
+      ? db.from("instagram_publish_queue").select("draft_id,status").eq("owner_user_id", ownerId).in("draft_id", draftIds)
       : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
     draftIds.length
-      ? db.from("post_draft_assets").select("draft_id").in("draft_id", draftIds)
+      ? db.from("post_draft_assets").select("draft_id").eq("owner_user_id", ownerId).in("draft_id", draftIds)
+      : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
+    draftIds.length
+      ? db.from("mara_pending_actions").select("id,status,sanitized_arguments,new_value,created_at").eq("owner_user_id", ownerId).eq("tool_name", "choose_reel_production").in("status", ["pending", "confirmed", "executing", "failed"])
       : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
   ]);
 
   const children = new Map<string, Record<string, unknown>>((childrenResult.data ?? []).map((row) => [String(row.id), row]));
   const drafts = new Map<string, Record<string, unknown>>((draftsResult.data ?? []).map((row) => [String(row.id), row]));
   const assets = new Set<string>((assetsResult.data ?? []).map((row) => String(row.draft_id)));
+  const productionByDraft = new Map<string, { method: "create_with_mara" | "upload_asset" | "film_yourself" | null; status: string | null }>();
+  const productionRows = [...(productionResult.data ?? [])].sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+  for (const row of productionRows) {
+    const args = (row.sanitized_arguments ?? {}) as Record<string, unknown>;
+    const value = (row.new_value ?? {}) as Record<string, unknown>;
+    const draftId = typeof args.draftId === "string" ? args.draftId : null;
+    if (!draftId || productionByDraft.has(draftId)) continue;
+    const method = value.selectedProductionMethod;
+    productionByDraft.set(draftId, {
+      method: method === "create_with_mara" || method === "upload_asset" || method === "film_yourself" ? method : null,
+      status: typeof value.productionStatus === "string" ? value.productionStatus : null,
+    });
+  }
+  const postViews = new Map<string, Awaited<ReturnType<typeof getPostDraft>>>();
+  let assetDb: Admin = db;
+  try { assetDb = createAdminClient(); } catch { /* authenticated read remains a safe fallback */ }
+  await Promise.all(draftIds.map(async (draftId) => {
+    const post = await getPostDraft(assetDb, ownerId, draftId).catch(() => null);
+    postViews.set(draftId, post);
+  }));
 
   const latestSend = new Map<string, string>();
-  for (const row of sendsResult.data ?? []) {
+  const sendRows = [...(sendsResult.data ?? [])].sort((a, b) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")));
+  for (const row of sendRows) {
     const campaignId = String(row.campaign_id);
-    const current = latestSend.get(campaignId);
-    if (!current) latestSend.set(campaignId, String(row.internal_status));
+    if (!latestSend.has(campaignId)) latestSend.set(campaignId, String(row.internal_status));
   }
   const queueByDraft = new Map<string, string>();
   for (const row of queueResult.data ?? []) queueByDraft.set(String(row.draft_id), String(row.status));
@@ -413,19 +466,22 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
         sendTimeNote: content?.sendTimeNote ?? null,
         childCampaignId: action.email_campaign_id,
         childStatus,
-        canSendExplicitly: childStatus === "approved",
+        canSendExplicitly: childStatus === "approved" && (sendStatus === null || sendStatus === "skipped"),
       };
       return base;
     }
 
     if (action.draft_id) {
       const draft = drafts.get(action.draft_id);
+      const postView = postViews.get(action.draft_id);
       const queueStatus = queueByDraft.get(action.draft_id) ?? null;
       const draftStatus = String(draft?.status ?? "draft") as "draft" | "approved" | "rejected";
+      const hasVisual = postView?.visualReady ?? assets.has(action.draft_id);
       const state = deriveActionState({
         kind: "instagram",
         planStatus: action.status,
         draftStatus: draft ? draftStatus : null,
+        hasVisual,
         queueStatus: queueStatus as never,
         scheduledFor: action.scheduled_for,
       });
@@ -445,11 +501,32 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
         cta: content?.cta ?? null,
         draftStatus,
         queueStatus,
-        needsVisual: !assets.has(action.draft_id),
+        needsVisual: !(postView?.visualReady ?? assets.has(action.draft_id)),
+        media: postView?.visual
+          ? {
+              previewUrl: postView.visual.previewUrl,
+              mimeType: postView.visual.mimeType,
+              displayName: postView.visual.displayName,
+              origin: postView.visual.origin,
+            }
+          : null,
+        availableProductionMethods: action.channel === "instagram_reel"
+          ? classifyReelProduction({
+              concept: content?.concept ?? action.title,
+              script: (content?.script ?? []).join(" "),
+            }).availableMethods
+          : ["create_with_mara", "upload_asset"],
+        selectedProductionMethod: productionByDraft.get(action.draft_id)?.method ?? null,
+        productionStatus: productionByDraft.get(action.draft_id)?.status ?? null,
       };
     }
     return base;
   });
+
+  // Slot edits must not leave the detail workspace in an order different from
+  // the actual schedule. Keep the durable slot untouched for idempotency, but
+  // present the read model chronologically with slot as the deterministic tie-breaker.
+  views.sort((a, b) => Date.parse(a.scheduled_for) - Date.parse(b.scheduled_for) || a.slot - b.slot);
 
   const lifecycle = deriveCampaignLifecycle({
     actions: views.map(toFacts),
@@ -458,6 +535,7 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
   });
 
   return {
+    timeZone,
     campaign: container,
     strategy: toStrategyRecord(container),
     actions: views,
@@ -500,9 +578,108 @@ function toFacts(view: CampaignActionView): import("./status").ActionFacts {
     kind: "instagram",
     planStatus: view.status,
     draftStatus: view.instagram?.draftStatus ?? null,
+    hasVisual: view.instagram ? !view.instagram.needsVisual : false,
     queueStatus: (view.instagram?.queueStatus ?? null) as import("./status").InstagramActionFacts["queueStatus"],
     scheduledFor: view.scheduled_for,
   };
+}
+
+// ─── Campaign-contained Instagram production ───────────────────────────────
+
+/**
+ * Records a Reel production choice beside the campaign action while reusing
+ * the existing `choose_reel_production` approval/upload bridge. This creates
+ * no media, makes no provider call, and is idempotent per campaign action.
+ */
+export async function chooseCampaignReelProduction(
+  admin: Admin,
+  ownerId: string,
+  campaignId: string,
+  actionId: string,
+  method: ReelProductionMethod,
+): Promise<{ ok: boolean; pendingActionId?: string; blockers?: string[] }> {
+  const action = await loadCampaignAction(admin, ownerId, campaignId, actionId);
+  if (!action || action.channel !== "instagram_reel" || !action.draft_id) {
+    return { ok: false, blockers: ["That Reel action was not found."] };
+  }
+  const locked = await actionContentLock(admin, ownerId, action);
+  if (locked) return { ok: false, blockers: [locked] };
+  const post = await getPostDraft(admin, ownerId, action.draft_id);
+  if (!post) return { ok: false, blockers: ["That Reel draft was not found."] };
+
+  const capability = classifyReelProduction({
+    concept: post.concept || action.title,
+    script: post.composedCaption || action.purpose,
+  });
+  if (!capability.availableMethods.includes(method)) {
+    return { ok: false, blockers: ["That production method is not available for this Reel concept."] };
+  }
+
+  const idempotencyKey = `campaign-reel-production:${action.id}`;
+  const proposal = {
+    draftId: action.draft_id,
+    concept: (post.concept || action.title).slice(0, 500),
+    script: (post.composedCaption || action.purpose).slice(0, 4000),
+    shotInstructions: capability.shotInstructions,
+    availableMethods: capability.availableMethods,
+    recommendedMethod: capability.recommendedMethod,
+    missingAssetRequest: capability.missingAssetRequest,
+    allowedAssetKinds: capability.allowedAssetKinds,
+    selectedProductionMethod: method,
+    productionStatus: productionStatusFor(method),
+    assetReceived: post.visualReady,
+  };
+  const sanitizedArguments = {
+    draftId: action.draft_id,
+    concept: proposal.concept,
+    script: proposal.script,
+    shotInstructions: proposal.shotInstructions,
+    selectedProductionMethod: method,
+    productionStatus: proposal.productionStatus,
+  };
+  const summary = method === "film_yourself"
+    ? "Film this Reel yourself, then upload the finished clip through the campaign workspace."
+    : method === "upload_asset"
+      ? "Upload an existing Reel asset through the campaign workspace."
+      : "Create this Reel with MARA after the explicit production request.";
+
+  const { data: existingRows } = await admin.from("mara_pending_actions")
+    .select("id,new_value,status,sanitized_arguments,idempotency_key")
+    .eq("owner_user_id", ownerId)
+    .eq("tool_name", "choose_reel_production")
+    .in("status", ["pending", "confirmed", "executing", "failed"])
+    .order("created_at", { ascending: false });
+  const existing = (existingRows ?? []).find((row) => {
+    const args = (row.sanitized_arguments ?? {}) as Record<string, unknown>;
+    return row.idempotency_key === idempotencyKey || args.draftId === action.draft_id;
+  });
+  if (existing?.id) {
+    if (existing.status !== "pending" && existing.status !== "failed") return { ok: true, pendingActionId: String(existing.id) };
+    const { error: updateError } = await admin.from("mara_pending_actions")
+      .update({ status: "pending", sanitized_arguments: sanitizedArguments, new_value: proposal, summary, idempotency_key: idempotencyKey, error_summary: null, result_summary: null, executed_at: null })
+      .eq("owner_user_id", ownerId).eq("id", existing.id).in("status", ["pending", "failed"]);
+    if (updateError) throw new Error("reel_production_choice_failed");
+    return { ok: true, pendingActionId: String(existing.id) };
+  }
+
+  const { data, error } = await admin.from("mara_pending_actions").insert({
+    owner_user_id: ownerId,
+    conversation_id: post.conversationId,
+    tool_name: "choose_reel_production",
+    sanitized_arguments: sanitizedArguments,
+    summary,
+    new_value: proposal,
+    idempotency_key: idempotencyKey,
+  }).select("id").single();
+  if (error || !data?.id) {
+    // Two campaign-detail clicks can race before either sees the row. The
+    // owner/key uniqueness constraint is the arbiter; replay its winner.
+    const { data: replay } = await admin.from("mara_pending_actions")
+      .select("id").eq("owner_user_id", ownerId).eq("idempotency_key", idempotencyKey).maybeSingle();
+    if (replay?.id) return { ok: true, pendingActionId: String(replay.id) };
+    throw new Error("reel_production_choice_failed");
+  }
+  return { ok: true, pendingActionId: String(data.id) };
 }
 
 // ─── Per-action approvals (approval state only; nothing external) ──────────
@@ -578,7 +755,10 @@ export interface CampaignActionEdit {
   concept?: string;
   hook?: string;
   visualDirection?: string;
+  script?: string[];
+  format?: "post" | "reel" | "story";
   // Shared
+  purpose?: string;
   cta?: string;
   ctaUrl?: string | null;
   scheduledFor?: string | null;
@@ -612,8 +792,14 @@ export async function editCampaignActionContent(
   if (locked) return { ok: false, blockers: [locked] };
 
   const content = normalizeActionContent(action.mara_content) ?? {};
+  const isEmail = action.channel === "email";
   const patch: Record<string, unknown> = {};
   const nextContent: CampaignActionContentRecord = { ...content };
+  if (edit.purpose !== undefined) {
+    const purpose = edit.purpose.trim();
+    if (!purpose || purpose.length > 1000) return { ok: false, blockers: ["Add a purpose between 1 and 1000 characters."] };
+    patch.purpose = purpose;
+  }
 
   if (action.channel === "email") {
     if (edit.subject !== undefined) {
@@ -639,6 +825,7 @@ export async function editCampaignActionContent(
     }
     if (edit.ctaUrl !== undefined) nextContent.ctaUrl = edit.ctaUrl ? edit.ctaUrl.slice(0, 500) : null;
   } else {
+    if (edit.format !== undefined) nextContent.format = edit.format;
     const composed = composePostCaption({
       caption: (edit.caption ?? action.title).slice(0, 2200),
       cta: edit.cta ?? content.cta ?? "",
@@ -654,6 +841,21 @@ export async function editCampaignActionContent(
     }
     if (edit.hook !== undefined) nextContent.hook = edit.hook.slice(0, 300);
     if (edit.visualDirection !== undefined) nextContent.visualDirection = edit.visualDirection.slice(0, 1200);
+    const targetFormat = edit.format ?? formatForChannel(action.channel);
+    const script = edit.script !== undefined
+      ? edit.script.map((line) => line.trim()).filter(Boolean).slice(0, 8)
+      : (content.script ?? []);
+    if (targetFormat === "reel") {
+      if (!script.length) return { ok: false, blockers: ["A Reel needs at least one shot instruction."] };
+      if (script.some((line) => line.length > 300)) return { ok: false, blockers: ["Keep each Reel shot under 300 characters."] };
+      nextContent.script = script;
+    } else {
+      if (edit.script !== undefined && script.length) {
+        return { ok: false, blockers: ["Posts and Stories do not use a Reel shot script."] };
+      }
+      // A Post/Story must not retain Reel-only structure after a format edit.
+      nextContent.script = [];
+    }
     if (edit.cta !== undefined) {
       if (edit.cta.length > 160) return { ok: false, blockers: ["Keep the CTA under 160 characters."] };
       nextContent.cta = edit.cta.trim();
@@ -661,13 +863,21 @@ export async function editCampaignActionContent(
     patch.queueCaption = composed.slice(0, 2200);
   }
 
-  const scheduledFor = normalizeScheduledFor(edit.scheduledFor, action);
+  let scheduledFor = normalizeScheduledFor(edit.scheduledFor, action);
   if (edit.scheduledFor !== undefined && !scheduledFor) {
     return { ok: false, blockers: ["Choose a valid proposed time."] };
+  }
+  if (edit.scheduledFor !== undefined && scheduledFor && edit.scheduledFor !== null && edit.scheduledFor !== "") {
+    const { data: business } = await admin.from("businesses").select("timezone").eq("owner_user_id", ownerId).maybeSingle();
+    const timeZone = accountTimezone((business as { timezone?: string | null } | null)?.timezone);
+    const guard = checkScheduleInstant(scheduledFor, new Date(), timeZone, 10);
+    if (!guard.ok) return { ok: false, blockers: [guard.error] };
+    scheduledFor = guard.publishAt;
   }
   if (scheduledFor) patch.scheduledFor = scheduledFor;
 
   patch.content = nextContent;
+  if (!isEmail && edit.format !== undefined) patch.format = edit.format;
   patch.contentSource = "edited";
   patch.safetyBlockers = evaluateContentSafety(action, patch, scheduledFor ?? action.scheduled_for);
 
@@ -705,12 +915,14 @@ export async function regenerateCampaignAction(
   const locked = await actionContentLock(admin, ownerId, action);
   if (locked) return { ok: false, blockers: [locked] };
 
-  const [{ data: container }, brand, performance] = await Promise.all([
+  const [{ data: container }, brand, performance, { data: business }] = await Promise.all([
     admin.from("voom_campaigns").select(CONTAINER_SELECT)
       .eq("owner_user_id", ownerId).eq("id", campaignId).maybeSingle(),
     getBrandProfile(db, ownerId).catch(() => null),
     loadPerformancePlanContext(db, ownerId).catch(() => null),
+    admin.from("businesses").select("timezone").eq("owner_user_id", ownerId).maybeSingle(),
   ]);
+  const timeZone = accountTimezone((business as { timezone?: string | null } | null)?.timezone);
   const campaign = container as CampaignContainerRecord | null;
   if (!campaign) return { ok: false, blockers: ["That campaign was not found."] };
 
@@ -739,7 +951,7 @@ export async function regenerateCampaignAction(
   const skeleton: EnrichedCampaignAction[] = [{
     slot: 0,
     channel: action.channel,
-    dayOffset: dayOffsetOf(action.scheduled_for, campaign.start_at),
+    dayOffset: dayOffsetOf(action.scheduled_for, campaign.start_at, timeZone),
     scheduledFor: action.scheduled_for,
     stage: action.stage,
     title: action.title,
@@ -766,7 +978,7 @@ export async function regenerateCampaignAction(
     automationMode: "manual",
     skeleton,
     summary: {
-      days: Math.max(1, dayOffsetOf(campaign.end_at ?? campaign.start_at ?? now.toISOString(), campaign.start_at) + 1),
+      days: Math.max(1, dayOffsetOf(campaign.end_at ?? campaign.start_at ?? now.toISOString(), campaign.start_at, timeZone) + 1),
       emailCount: 0,
       postCount: 0,
       reelCount: 0,
@@ -777,6 +989,7 @@ export async function regenerateCampaignAction(
       performanceNote: null,
     },
     performance: plannerPerformance,
+    timeZone,
     now,
     focus: {
       slot: 0,
@@ -798,6 +1011,7 @@ export async function regenerateCampaignAction(
     brand: brandContext,
     goalLabel: CAMPAIGN_GOAL_LABELS[goal] ?? "Campaign",
     intelligence: generated.ok ? generated.intelligence : null,
+    timeZone,
     now,
   });
   const next = merged.actions[0];
@@ -923,7 +1137,7 @@ function evaluateContentSafety(
     ? [patch.subject, patch.previewText, patch.body].filter((v): v is string => typeof v === "string").join("\n")
     : String(patch.caption ?? action.title);
   const evaluation = evaluateAutopilotRecommendation(
-    { title: String(patch.title ?? action.title), content, topic: action.purpose, publishAt: scheduledFor },
+      { title: String(patch.title ?? action.title), content, topic: String(patch.purpose ?? action.purpose), publishAt: scheduledFor },
   );
   return evaluation.blockers;
 }
@@ -936,13 +1150,11 @@ function normalizeScheduledFor(value: string | null | undefined, action: Campaig
   return new Date(parsed).toISOString();
 }
 
-/** Whole-day offset of an instant from the campaign start (Dubai calendar). */
-function dayOffsetOf(instant: string, startAt: string | null): number {
+/** Whole-day offset of an instant from the campaign start in the business calendar. */
+function dayOffsetOf(instant: string, startAt: string | null, timeZone = "Asia/Dubai"): number {
   if (!startAt) return 0;
-  const offset = 240 * 60_000;
-  const day = (value: string) => new Date(Date.parse(value) + offset).toISOString().slice(0, 10);
-  const ms = Date.parse(`${day(instant)}T00:00:00Z`) - Date.parse(`${day(startAt)}T00:00:00Z`);
-  return Math.max(0, Math.round(ms / 86_400_000));
+  const zone = accountTimezone(timeZone);
+  return Math.max(0, daysBetween(isoToLocalDate(startAt, zone), isoToLocalDate(instant, zone)));
 }
 
 /** Hashtags stored inside a v1 composed caption, preserved across edits. */
@@ -969,14 +1181,15 @@ export function newBuildIdempotencyKey(): string {
   return randomUUID();
 }
 
-// Date-only inputs are the business's Dubai calendar (UTC+4, no DST).
-function toUtcStart(value: string): string {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date(`${value}T00:00+04:00`).toISOString();
+// Date-only inputs are the business's local calendar, resolved through the
+// same timezone source as the planner. Full instants retain their instant.
+function toUtcStart(value: string, timeZone = "Asia/Dubai"): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return localToUtcIso(value, 0, accountTimezone(timeZone));
   return new Date(value).toISOString();
 }
 
-function toUtcEnd(value: string): string {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date(`${value}T23:59+04:00`).toISOString();
+function toUtcEnd(value: string, timeZone = "Asia/Dubai"): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return localToUtcIso(value, 23 * 60 + 59, accountTimezone(timeZone));
   return new Date(value).toISOString();
 }
 
