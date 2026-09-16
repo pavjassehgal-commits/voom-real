@@ -5,6 +5,7 @@ import { readAutomatedCampaign } from "@/lib/campaign/server";
 import type { AutomatedCampaignView, CampaignContainerRecord } from "@/lib/campaign/types";
 import type { CampaignRecord } from "@/lib/voom/types";
 import { createClient } from "@/utils/supabase/server";
+import { accountTimezone } from "@/lib/voom/timezone";
 import { z } from "zod";
 
 const UUID_VALUE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -40,6 +41,8 @@ export async function GET(request: Request) {
     const db = await createClient();
     const rows = await listCampaigns(db, user.id);
     const all = rows as unknown as CampaignRecord[];
+    const { data: business } = await db.from("businesses").select("timezone").eq("owner_user_id", user.id).maybeSingle();
+    const timeZone = accountTimezone((business as { timezone?: string | null } | null)?.timezone);
 
     // Automated timeline campaigns (MARA-built containers).
     const containers = all.filter((row) => isAutomatedContainer(row) && !row.parent_campaign_id);
@@ -66,6 +69,7 @@ export async function GET(request: Request) {
       legacy,
       automated,
       deliveries,
+      timeZone,
     });
   } catch {
     return Response.json({ error: "Campaigns couldn't load. Please retry." }, { status: 503 });

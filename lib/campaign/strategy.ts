@@ -29,6 +29,13 @@ import { z } from "zod";
 
 import { evaluateAutopilotRecommendation } from "@/lib/mara/autopilot-safety";
 import {
+  accountTimezone,
+  isoToLocalDate,
+  localDate,
+  localToUtcIso,
+} from "@/lib/voom/timezone";
+import { CAMPAIGN_MIN_LEAD_MINUTES, enforceCampaignTiming } from "./planner";
+import {
   MAX_CAMPAIGN_ACTIONS,
   type CampaignBrandContext,
   type CampaignBrief,
@@ -273,6 +280,8 @@ export interface CampaignIntelligenceContextInput {
   skeleton: PlannedAction[];
   summary: PlannedCampaignSummary;
   performance: PlannerPerformanceInput | null;
+  /** Workspace/business timezone used for every proposed instant. */
+  timeZone?: string | null;
   now: Date;
   /**
    * Present only for a single-action "Regenerate draft with MARA": the action
@@ -294,10 +303,19 @@ export interface CampaignIntelligenceContextInput {
 export function buildCampaignIntelligenceContext(input: CampaignIntelligenceContextInput) {
   const performance = buildCampaignPerformanceContext(input.performance);
   const brandVoice = (input.brand.brandPersonality ?? []).filter(Boolean).slice(0, 8);
+  const timeZone = accountTimezone(input.timeZone);
+  const today = localDate(input.now, timeZone);
 
   return {
     task: "fill_campaign_skeleton",
     currentTime: input.now.toISOString(),
+    timeZone,
+    schedulingRules: {
+      earliestSameDay: `${today} at least ${CAMPAIGN_MIN_LEAD_MINUTES} minutes after currentTime, rounded up to the next minute`,
+      latestSameDay: `${today} 23:59 in the business timezone`,
+      neverPast: true,
+      preserveSpacing: true,
+    },
     business: {
       name: (input.businessName ?? input.brand.brandName ?? "").slice(0, 160),
       description: (input.brand.brandDescription ?? "").slice(0, 800),
@@ -315,6 +333,7 @@ export function buildCampaignIntelligenceContext(input: CampaignIntelligenceCont
       notes: (input.brief.notes ?? "").slice(0, 2000) || null,
       startsOn: input.brief.startAt,
       endsOn: input.brief.endAt,
+      timeZone,
       days: input.summary.days,
       selectedAudience: input.selectedAudience
         ? { name: input.selectedAudience.name.slice(0, 120), eligibleEmailCount: input.selectedAudience.eligibleEmailCount ?? null }
@@ -379,6 +398,8 @@ export interface ApplyIntelligenceInput {
   goalLabel: string;
   /** null when MARA failed, was not configured, or returned nothing usable. */
   intelligence: MaraCampaignIntelligence | null;
+  /** Workspace/business timezone; defaults to the account timezone. */
+  timeZone?: string | null;
   now?: Date;
 }
 
@@ -427,7 +448,7 @@ export function applyCampaignIntelligence(input: ApplyIntelligenceInput): ApplyI
 
   const merged: EnrichedCampaignAction[] = skeleton.map((base) => {
     const candidate = bySlot.get(base.slot);
-    const deterministic = enrichDeterministic(base);
+    const deterministic = withSafety(enrichDeterministic(base), now);
 
     // A missing slot, a channel MARA changed, or a payload for the wrong
     // channel: the deterministic draft stands.
@@ -439,6 +460,8 @@ export function applyCampaignIntelligence(input: ApplyIntelligenceInput): ApplyI
     const scheduledFor = resolveProposedTime(
       base.channel === "email" ? candidate.email?.proposedSendAt : candidate.instagram?.proposedSendAt,
       base,
+      now,
+      input.timeZone,
     );
 
     if (base.channel === "email") {
@@ -509,10 +532,14 @@ export function applyCampaignIntelligence(input: ApplyIntelligenceInput): ApplyI
     }, now);
   });
 
-  // The timeline is one ordered list: re-sort by the final proposed time and
-  // re-slot contiguously, exactly as the deterministic planner does.
-  merged.sort((a, b) => Date.parse(a.scheduledFor) - Date.parse(b.scheduledFor));
-  merged.forEach((action, index) => { action.slot = index; });
+  // The timeline is one ordered list: run the same time guard after MARA's
+  // content merge, then re-sort and re-slot contiguously. This is the second
+  // line of defence if a caller supplies an unsafe skeleton or MARA returns a
+  // boundary value the per-slot resolver refused.
+  const timed = enforceCampaignTiming(merged, input.brief, now, input.timeZone ?? undefined);
+  timed.sort((a, b) => Date.parse(a.scheduledFor) - Date.parse(b.scheduledFor));
+  timed.forEach((action, index) => { action.slot = index; });
+  const finalActions = timed;
 
   const source: "mara" | "deterministic" = intelligence ? "mara" : "deterministic";
   const strategy = intelligence ? intelligence.strategy : deterministicStrategy(input);
@@ -521,7 +548,7 @@ export function applyCampaignIntelligence(input: ApplyIntelligenceInput): ApplyI
     : input.summary.performanceNote;
 
   return {
-    actions: merged,
+    actions: finalActions,
     strategy,
     strategySummary: campaignStrategySummary(strategy),
     source,
@@ -550,24 +577,27 @@ function withSafety(action: EnrichedCampaignAction, now: Date): EnrichedCampaign
 
 /**
  * A proposed time is accepted only when it stays inside the skeleton slot's
- * own campaign day (measured in the business timezone, UTC+4). Anything else
- * keeps the deterministic time, so MARA can never collapse a sequence onto one
- * day or push an action outside the campaign window.
+ * own campaign day and is at least now plus ten minutes in the business
+ * timezone. Anything else keeps the deterministic time.
  */
-function resolveProposedTime(proposed: string | null | undefined, base: PlannedAction): string {
+function resolveProposedTime(
+  proposed: string | null | undefined,
+  base: PlannedAction,
+  now: Date,
+  timeZone?: string | null,
+): string {
   if (!proposed) return base.scheduledFor;
   const parsed = Date.parse(proposed);
-  if (!Number.isNaN(parsed) && dubaiDayKey(proposed) === dubaiDayKey(base.scheduledFor)) {
+  if (!Number.isFinite(parsed)) return base.scheduledFor;
+  const zone = accountTimezone(timeZone);
+  const proposedDate = isoToLocalDate(new Date(parsed).toISOString(), zone);
+  const baseDate = isoToLocalDate(base.scheduledFor, zone);
+  const earliest = now.getTime() + CAMPAIGN_MIN_LEAD_MINUTES * 60_000;
+  const end = Date.parse(localToUtcIso(proposedDate, 23 * 60 + 59, zone));
+  if (proposedDate === baseDate && parsed >= earliest && parsed <= end) {
     return new Date(parsed).toISOString();
   }
   return base.scheduledFor;
-}
-
-const TIMEZONE_OFFSET_MINUTES = 240;
-
-function dubaiDayKey(value: string): string {
-  const shifted = new Date(Date.parse(value) + TIMEZONE_OFFSET_MINUTES * 60_000);
-  return shifted.toISOString().slice(0, 10);
 }
 
 function normalizeCopy(text: string): string {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
+import Image from "next/image";
 import { useModal } from "@/lib/voom/modal";
 import { ACTION_CHANNEL_LABELS, CAMPAIGN_GOAL_LABELS, type AutomatedCampaignView, type CampaignActionView } from "@/lib/campaign/types";
 import { actionStateTone } from "@/lib/campaign/status";
@@ -19,8 +19,8 @@ import { Btn, Card, Field, Input, Tag, Textarea } from "../ui/primitives";
  *
  * It never edits the generated STRUCTURE (dates, channels and action count come
  * from the deterministic planner), and it can never auto-send — emails keep the
- * explicit send action, Instagram items link into Create Content for the visual
- * + schedule.
+ * explicit send action, while Instagram production stays editable and actionable
+ * inside this campaign workspace.
  */
 export function AutomatedCampaignModal({ campaignId, initial }: { campaignId: string; initial?: AutomatedCampaignView }) {
   const { close } = useModal();
@@ -118,7 +118,7 @@ export function AutomatedCampaignModal({ campaignId, initial }: { campaignId: st
     <ModalShell wide>
       <ModalHead
         title={campaign.name}
-        sub={`${campaign.goal ? CAMPAIGN_GOAL_LABELS[campaign.goal] : "Campaign"} · ${dateRange(campaign.start_at, campaign.end_at)}`}
+        sub={`${campaign.goal ? CAMPAIGN_GOAL_LABELS[campaign.goal] : "Campaign"} · ${dateRange(campaign.start_at, campaign.end_at, view.timeZone)} · ${view.timeZone.replace("_", " ")}`}
         onClose={close}
       />
       <ModalBody>
@@ -144,6 +144,7 @@ export function AutomatedCampaignModal({ campaignId, initial }: { campaignId: st
               key={action.id}
               campaignId={campaignId}
               action={action}
+              timeZone={view.timeZone}
               busy={busyAction === action.id}
               onDecide={decide}
               onRegenerate={regenerate}
@@ -156,9 +157,9 @@ export function AutomatedCampaignModal({ campaignId, initial }: { campaignId: st
           <div className="flex items-start gap-2.5">
             <Icon name="warn" className="mt-0.5 flex-none text-amber" size={16} />
             <p className="text-[12.5px] leading-[1.6] text-text-2">
-              Building approved drafts only. Email still sends through an explicit Send action below, and Instagram
-              items need a visual and schedule in Create Content before they can publish. Nothing is sent or
-              published automatically from this screen, and campaign generation never spends AI media credits.
+              Building creates drafts only. Email still sends through an explicit Send action below. Instagram
+              production, media and proposed time stay in this campaign workspace; nothing is sent or published
+              automatically from this screen, and campaign generation never spends AI media credits.
             </p>
           </div>
         </Card>
@@ -215,9 +216,10 @@ function StrategyBlock({ view }: { view: AutomatedCampaignView }) {
   );
 }
 
-function TimelineRow({ campaignId, action, busy, onDecide, onRegenerate, onChanged }: {
+function TimelineRow({ campaignId, action, timeZone, busy, onDecide, onRegenerate, onChanged }: {
   campaignId: string;
   action: CampaignActionView;
+  timeZone: string;
   busy: boolean;
   onDecide: (action: CampaignActionView, decision: "approve" | "reject") => void;
   onRegenerate: (action: CampaignActionView) => void;
@@ -238,8 +240,8 @@ function TimelineRow({ campaignId, action, busy, onDecide, onRegenerate, onChang
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <b className="text-[13.5px]">{when.toLocaleDateString("en-AE", { timeZone: "Asia/Dubai", weekday: "short", month: "short", day: "numeric" })}</b>
-              <span className="text-[11.5px] text-text-3">{when.toLocaleTimeString("en-AE", { timeZone: "Asia/Dubai", hour: "numeric", minute: "2-digit" })}</span>
+              <b className="text-[13.5px]">{when.toLocaleDateString("en-AE", { timeZone, weekday: "short", month: "short", day: "numeric" })}</b>
+              <span className="text-[11.5px] text-text-3">{when.toLocaleTimeString("en-AE", { timeZone, hour: "numeric", minute: "2-digit" })}</span>
               <Tag tone="t-grey">{ACTION_CHANNEL_LABELS[action.channel]}</Tag>
               {action.instagram?.format && action.channel !== "email" && <Tag tone="t-grey">{labelForFormat(action.instagram.format)}</Tag>}
               {action.contentSource === "mara" && <Tag tone="t-brand">MARA</Tag>}
@@ -269,16 +271,16 @@ function TimelineRow({ campaignId, action, busy, onDecide, onRegenerate, onChang
               <Icon name="spark" size={13} /> {busy ? "Working…" : "Regenerate draft with MARA"}
             </Btn>
           )}
-          {pending && !isEmail && (
-            <Link href="/app/studio" className="ml-auto inline-flex items-center gap-1 self-center text-[12px] font-semibold text-brand hover:underline">
-              Open in Create Content →
-            </Link>
-          )}
           {pending && (
             <div className="ml-auto flex flex-wrap gap-2">
               <Btn size="sm" variant="outline" disabled={busy} onClick={() => onDecide(action, "reject")}>Reject</Btn>
-              <Btn size="sm" variant="primary" disabled={busy} onClick={() => onDecide(action, "approve")}>
-                {busy ? "Working…" : isEmail ? "Approve email" : "Approve"}
+              <Btn
+                size="sm"
+                variant="primary"
+                disabled={busy || (!isEmail && Boolean(action.instagram?.needsVisual))}
+                onClick={() => onDecide(action, "approve")}
+              >
+                {busy ? "Working…" : isEmail ? "Approve email" : action.instagram?.needsVisual ? "Add media first" : "Approve"}
               </Btn>
             </div>
           )}
@@ -292,12 +294,12 @@ function TimelineRow({ campaignId, action, busy, onDecide, onRegenerate, onChang
 
         {panel === "details" && (
           <div className="mt-3">
-            {action.email ? <EmailDetails action={action} onChanged={onChanged} /> : <InstagramDetails action={action} />}
+            {action.email ? <EmailDetails action={action} timeZone={timeZone} onChanged={onChanged} /> : <InstagramDetails key={`${action.id}:${action.updated_at}:${action.instagram?.format ?? ""}`} campaignId={campaignId} action={action} timeZone={timeZone} onChanged={onChanged} />}
           </div>
         )}
         {panel === "edit" && (
           <div className="mt-3">
-            <ActionEditor campaignId={campaignId} action={action} onSaved={onChanged} />
+            <ActionEditor key={`${action.id}:${action.updated_at}:${action.instagram?.format ?? ""}`} campaignId={campaignId} action={action} timeZone={timeZone} onSaved={onChanged} />
           </div>
         )}
       </Card>
@@ -311,38 +313,58 @@ function labelForFormat(format: string) {
   return "Post";
 }
 
+function productionLabel(status: string) {
+  if (status === "waiting_for_filming") return "Film it myself selected";
+  if (status === "waiting_for_asset_upload") return "Waiting for upload";
+  if (status === "ready_for_mara_production") return "Ready for MARA";
+  return status.replaceAll("_", " ");
+}
+
 /**
  * Edits the generated draft in place: email subject/preview/body/CTA/time, or
  * Instagram concept/hook/caption/time. The campaign is never rebuilt and no
  * other action changes. Saving never sends or publishes.
  */
-function ActionEditor({ campaignId, action, onSaved }: {
+function ActionEditor({ campaignId, action, timeZone, onSaved }: {
   campaignId: string;
   action: CampaignActionView;
+  timeZone: string;
   onSaved: () => void;
 }) {
   const isEmail = action.channel === "email";
   const [subject, setSubject] = useState(action.email?.subject ?? "");
   const [previewText, setPreviewText] = useState(action.email?.previewText ?? "");
   const [body, setBody] = useState(action.email?.body ?? "");
+  const [purpose, setPurpose] = useState(action.purpose);
   const [cta, setCta] = useState(action.email?.cta ?? action.instagram?.cta ?? "");
   const [caption, setCaption] = useState(action.instagram?.caption ?? "");
   const [concept, setConcept] = useState(action.instagram?.concept ?? action.title);
   const [hook, setHook] = useState(action.instagram?.hook ?? "");
-  const [date, setDate] = useState(isoToLocalDate(action.scheduled_for));
-  const [time, setTime] = useState(formatLocalTimeInput(action.scheduled_for));
+  const [visualDirection, setVisualDirection] = useState(action.instagram?.visualDirection ?? "");
+  const [script, setScript] = useState((action.instagram?.script ?? []).join("\n"));
+  const [format, setFormat] = useState<"post" | "reel" | "story">(action.instagram?.format ?? "post");
+  const [date, setDate] = useState(isoToLocalDate(action.scheduled_for, timeZone));
+  const [time, setTime] = useState(formatLocalTimeInput(action.scheduled_for, timeZone));
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
 
   async function save() {
     setBusy(true); setErr(""); setNote("");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+      setErr("Choose a valid proposed date and time.");
+      setBusy(false);
+      return;
+    }
     const minutes = Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
-    const payload: Record<string, unknown> = { scheduledFor: localToUtcIso(date, Number.isFinite(minutes) ? minutes : 0) };
+    const payload: Record<string, unknown> = { scheduledFor: localToUtcIso(date, Number.isFinite(minutes) ? minutes : 0, timeZone), purpose };
     if (isEmail) {
       payload.subject = subject; payload.previewText = previewText; payload.body = body; payload.cta = cta;
     } else {
       payload.caption = caption; payload.concept = concept; payload.hook = hook; payload.cta = cta;
+      payload.visualDirection = visualDirection;
+      payload.script = script.split("\n").map((line) => line.trim()).filter(Boolean);
+      payload.format = format;
     }
     try {
       const response = await fetch(`/api/voom/campaigns/${encodeURIComponent(campaignId)}/actions/${encodeURIComponent(action.id)}`, {
@@ -364,6 +386,7 @@ function ActionEditor({ campaignId, action, onSaved }: {
     <div className="space-y-2.5 rounded-xl border border-line bg-surface-2 p-3">
       {isEmail ? (
         <>
+          <Field label="Purpose"><Textarea rows={2} value={purpose} onChange={(e) => setPurpose(e.target.value)} maxLength={1000} /></Field>
           <Field label="Subject"><Input value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={300} /></Field>
           <Field label="Preview text"><Input value={previewText} onChange={(e) => setPreviewText(e.target.value)} maxLength={500} /></Field>
           <Field label="Body"><Textarea rows={8} value={body} onChange={(e) => setBody(e.target.value)} maxLength={12000} /></Field>
@@ -371,9 +394,19 @@ function ActionEditor({ campaignId, action, onSaved }: {
         </>
       ) : (
         <>
+          <Field label="Purpose"><Textarea rows={2} value={purpose} onChange={(e) => setPurpose(e.target.value)} maxLength={1000} /></Field>
+          <Field label="Format">
+            <select className="h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px] text-text outline-none focus:border-brand" value={format} onChange={(e) => setFormat(e.target.value as "post" | "reel" | "story")}>
+              <option value="post">Instagram Post</option>
+              <option value="reel">Reel</option>
+              <option value="story">Instagram Story</option>
+            </select>
+          </Field>
           <Field label="Concept"><Input value={concept} onChange={(e) => setConcept(e.target.value)} maxLength={160} /></Field>
           <Field label="Hook"><Input value={hook} onChange={(e) => setHook(e.target.value)} maxLength={300} /></Field>
           <Field label="Caption"><Textarea rows={6} value={caption} onChange={(e) => setCaption(e.target.value)} maxLength={2200} /></Field>
+          <Field label="Visual direction"><Textarea rows={3} value={visualDirection} onChange={(e) => setVisualDirection(e.target.value)} maxLength={1200} placeholder="What should the visual show?" /></Field>
+          {format === "reel" && <Field label="Reel shot script" hint="One shot or line per row"><Textarea rows={4} value={script} onChange={(e) => setScript(e.target.value)} maxLength={2400} placeholder="Hook shot\nBenefit shot\nCTA shot" /></Field>}
           <Field label="CTA"><Input value={cta} onChange={(e) => setCta(e.target.value)} maxLength={160} /></Field>
         </>
       )}
@@ -381,7 +414,7 @@ function ActionEditor({ campaignId, action, onSaved }: {
         <Field label="Proposed date"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
         <Field label="Proposed time"><Input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></Field>
       </div>
-      <p className="text-[11.5px] text-text-3">Times are the business timezone (Asia/Dubai). Saving changes this draft only — nothing is sent or published.</p>
+      <p className="text-[11.5px] text-text-3">Times use your business timezone ({timeZone.replace("_", " ")}). Past times are rejected. Saving changes this draft only — nothing is sent or published.</p>
       <div className="flex flex-wrap gap-2">
         <Btn size="sm" variant="primary" disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save draft"}</Btn>
       </div>
@@ -391,30 +424,164 @@ function ActionEditor({ campaignId, action, onSaved }: {
   );
 }
 
-function InstagramDetails({ action }: { action: CampaignActionView }) {
+function InstagramDetails({ campaignId, action, timeZone, onChanged }: {
+  campaignId: string;
+  action: CampaignActionView;
+  timeZone: string;
+  onChanged: () => void;
+}) {
   const ig = action.instagram;
+  const [busy, setBusy] = useState<"production" | "generation" | "upload" | null>(null);
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState("");
+  // Fail closed while the billing summary is loading: only an explicit Pro/Max
+  // response should reveal the paid-media generation control.
+  const [plan, setPlan] = useState<string | null>("free");
+  const [remaining, setRemaining] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/billing/summary", { cache: "no-store" })
+      .then((response) => response.json() as Promise<{ summary?: { plan?: string; remaining?: number } }>)
+      .then((data) => {
+        if (!cancelled && data.summary) {
+          setPlan(data.summary.plan ?? "free");
+          setRemaining(typeof data.summary.remaining === "number" ? data.summary.remaining : null);
+        }
+      })
+      .catch(() => { if (!cancelled) setPlan("free"); });
+    return () => { cancelled = true; };
+  }, []);
+
   if (!ig) return null;
+  const instagram = ig;
+  const methods = instagram.availableProductionMethods ?? ["create_with_mara", "upload_asset"];
+  const generationLocked = plan === "free";
+  const productionLocked = !action.canEditContent;
+
+  async function choose(method: "create_with_mara" | "upload_asset" | "film_yourself") {
+    setBusy("production"); setErr(""); setNote("");
+    try {
+      const response = await fetch(`/api/voom/campaigns/${encodeURIComponent(campaignId)}/actions/${encodeURIComponent(action.id)}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "production", method }),
+      });
+      const data = await response.json() as { automated?: AutomatedCampaignView; error?: string; message?: string };
+      if (data.automated) onChanged();
+      if (!response.ok) setErr(data.error ?? "That production choice could not be saved.");
+      else setNote(data.message ?? "Production choice saved in this campaign.");
+    } catch {
+      setErr("That production choice could not be saved.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function generateWithMara() {
+    if (generationLocked) {
+      setErr("AI media generation is locked on Free. Upgrade to Pro or Max, then retry here.");
+      return;
+    }
+    setBusy("generation"); setErr(""); setNote("");
+    try {
+      const isVideo = action.channel === "instagram_reel";
+      // The shared generate route owns the guarded image/video credit path;
+      // `/generation` is the status/action endpoint and would reject this
+      // campaign request as an unknown generation action.
+      const endpoint = `/api/posts/${encodeURIComponent(instagram.draftId)}/generate`;
+      const response = await fetch(endpoint, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          brief: instagram.visualDirection || instagram.concept,
+          ...(isVideo ? { media: "video" } : {}),
+          idempotencyKey: crypto.randomUUID(),
+        }),
+      });
+      const data = await response.json() as { error?: string; message?: string };
+      if (!response.ok) setErr(data.error ?? "MARA couldn't generate this visual.");
+      else { setNote(data.message ?? "MARA started this visual. The campaign will update when it is ready."); onChanged(); }
+    } catch {
+      setErr("MARA couldn't generate this visual.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function upload(file: File | null) {
+    if (!file) return;
+    setBusy("upload"); setErr(""); setNote("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("origin", action.channel === "instagram_reel" ? "existing_content" : "own_asset");
+      const response = await fetch(`/api/posts/${encodeURIComponent(instagram.draftId)}/asset`, { method: "POST", body: form });
+      const data = await response.json() as { error?: string; message?: string };
+      if (!response.ok) setErr(data.error ?? "That media could not be uploaded.");
+      else { setNote(data.message ?? "Media stored privately in this campaign."); onChanged(); }
+    } catch {
+      setErr("That media could not be uploaded.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const media = instagram.media;
   return (
-    <div className="space-y-2 rounded-xl border border-line bg-surface-2 p-3">
+    <div className="space-y-2.5 rounded-xl border border-line bg-surface-2 p-3">
       <div className="flex flex-wrap gap-1.5">
-        <Tag tone={ig.draftStatus === "approved" ? "t-green" : ig.draftStatus === "rejected" ? "t-red" : "t-amber"}>Draft {ig.draftStatus}</Tag>
-        {ig.queueStatus ? <Tag tone="t-blue">Queue: {ig.queueStatus}</Tag> : null}
-        {ig.needsVisual ? <Tag tone="t-amber">Needs a visual before publishing</Tag> : null}
+        <Tag tone={instagram.draftStatus === "approved" ? "t-green" : instagram.draftStatus === "rejected" ? "t-red" : "t-amber"}>Draft {instagram.draftStatus}</Tag>
+        {instagram.queueStatus ? <Tag tone="t-blue">Queue: {instagram.queueStatus}</Tag> : null}
+        {instagram.needsVisual ? <Tag tone="t-amber">Needs media before publishing</Tag> : <Tag tone="t-green">Media attached</Tag>}
+        {instagram.productionStatus && <Tag tone="t-blue">{productionLabel(instagram.productionStatus)}</Tag>}
+        {plan && <Tag tone="t-grey">{plan === "free" ? "Free · upload only" : `${plan[0].toUpperCase()}${plan.slice(1)} · ${remaining ?? "—"} credits`}</Tag>}
       </div>
-      {ig.hook ? <p className="text-[12.5px] font-semibold text-text-2">Hook: {ig.hook}</p> : null}
-      <p className="whitespace-pre-wrap text-[12.5px] leading-[1.6] text-text-2">{ig.caption}</p>
-      {ig.script?.length > 0 && (
+      {media?.previewUrl && (
+        media.mimeType.startsWith("video/")
+          ? <video controls className="max-h-64 w-full rounded-lg bg-black object-contain" src={media.previewUrl} />
+          : <div className="relative h-64 w-full rounded-lg bg-surface">
+              <Image unoptimized fill sizes="(max-width: 768px) 100vw, 640px" className="rounded-lg object-contain" src={media.previewUrl} alt={media.displayName} />
+            </div>
+      )}
+      {instagram.hook ? <p className="text-[12.5px] font-semibold text-text-2">Hook: {instagram.hook}</p> : null}
+      <p className="whitespace-pre-wrap text-[12.5px] leading-[1.6] text-text-2">{instagram.caption}</p>
+      {instagram.script?.length > 0 && (
         <ol className="list-decimal space-y-1 pl-4 text-[12px] leading-[1.55] text-text-2">
-          {ig.script.map((line, index) => <li key={index}>{line}</li>)}
+          {instagram.script.map((line, index) => <li key={index}>{line}</li>)}
         </ol>
       )}
-      {ig.visualDirection ? <p className="text-[11.5px] leading-[1.55] text-text-3">Visual direction: {ig.visualDirection}</p> : null}
-      <p className="text-[11.5px] text-text-3">Add the visual and schedule it in <Link href="/app/studio" className="font-semibold text-brand hover:underline">Create Content</Link>. Nothing publishes without that, and no paid visual is generated by this campaign.</p>
+      {instagram.visualDirection ? <p className="text-[11.5px] leading-[1.55] text-text-3">Visual direction: {instagram.visualDirection}</p> : null}
+
+      <div className="rounded-xl border border-line bg-bg p-3">
+        <p className="mb-2 text-[12.5px] font-semibold text-text-2">Produce this {labelForFormat(instagram.format)} here</p>
+        <div className="flex flex-wrap gap-2">
+          {methods.includes("create_with_mara") && (
+            <Btn size="sm" variant="primary" disabled={Boolean(busy) || generationLocked || productionLocked} onClick={() => void generateWithMara()}>
+              <Icon name="spark" size={13} /> {productionLocked ? "Locked" : busy === "generation" ? "Starting…" : generationLocked ? "Upgrade to generate" : "Create with MARA"}
+            </Btn>
+          )}
+          {methods.includes("film_yourself") && (
+            <Btn size="sm" variant="outline" disabled={Boolean(busy) || productionLocked} onClick={() => void choose("film_yourself")}>
+              <Icon name="film" size={13} /> {busy === "production" ? "Saving…" : "Film it myself"}
+            </Btn>
+          )}
+          {methods.includes("upload_asset") && (
+            <label className="inline-flex h-[34px] cursor-pointer items-center justify-center gap-1.5 rounded-[9px] border border-line-2 px-3.5 text-[13px] font-semibold text-text transition hover:bg-surface-2 has-[:disabled]:pointer-events-none has-[:disabled]:opacity-45">
+              {busy === "upload" ? "Uploading…" : "Upload media"}
+              <input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime" disabled={Boolean(busy) || productionLocked} onChange={(event) => void upload(event.target.files?.[0] ?? null)} />
+            </label>
+          )}
+        </div>
+        {generationLocked && methods.includes("create_with_mara") && <p className="mt-2 text-[11.5px] text-text-3">Campaign generation is free; explicit paid media generation is a Pro/Max action and the server checks credits before any provider call.</p>}
+        <p className="mt-2 text-[11.5px] text-text-3">All production choices and media stay attached to this campaign action. Uploads are private until the normal approval and publish gates pass.</p>
+      </div>
+      {note && <p role="status" className="text-[12px] text-green">{note}</p>}
+      {err && <p role="alert" className="text-[12px] text-red">{err}</p>}
+      <p className="text-[11.5px] text-text-3">Proposed time: {new Date(action.scheduled_for).toLocaleString("en-AE", { timeZone, dateStyle: "medium", timeStyle: "short" })}</p>
     </div>
   );
 }
 
-function EmailDetails({ action, onChanged }: { action: CampaignActionView; onChanged: () => void }) {
+function EmailDetails({ action, timeZone, onChanged }: { action: CampaignActionView; timeZone: string; onChanged: () => void }) {
   const email = action.email;
   const childId = email?.childCampaignId;
   const [delivery, setDelivery] = useState<CampaignDeliveryView | null>(null);
@@ -517,10 +684,10 @@ function EmailDetails({ action, onChanged }: { action: CampaignActionView; onCha
       {email.cta ? <p className="text-[12px] font-semibold text-text-2">CTA: {email.cta}</p> : null}
       {email.audienceNote ? <p className="text-[11.5px] text-text-3">Written for: {email.audienceNote}</p> : null}
       <p className="text-[11.5px] text-text-3">
-        Proposed send time: {new Date(action.scheduled_for).toLocaleString("en-AE", { timeZone: "Asia/Dubai", dateStyle: "medium", timeStyle: "short" })}
+        Proposed send time: {new Date(action.scheduled_for).toLocaleString("en-AE", { timeZone, dateStyle: "medium", timeStyle: "short" })}
       </p>
 
-      {email.childStatus === "approved" && (
+      {email.canSendExplicitly && (
         <div className="rounded-xl border border-line bg-bg p-3">
           <p className="mb-2 text-[12.5px] font-semibold text-text-2">Send this approved email</p>
           {delivery?.audience ? (
@@ -574,8 +741,8 @@ function deliveryStateLabel(state: string) {
   return "Ready to send";
 }
 
-function dateRange(start: string | null, end: string | null) {
+function dateRange(start: string | null, end: string | null, timeZone = "Asia/Dubai") {
   if (!start || !end) return "";
-  const fmt = (value: string) => new Date(value).toLocaleDateString("en-AE", { timeZone: "Asia/Dubai", month: "short", day: "numeric" });
+  const fmt = (value: string) => new Date(value).toLocaleDateString("en-AE", { timeZone, month: "short", day: "numeric" });
   return `${fmt(start)} – ${fmt(end)}`;
 }

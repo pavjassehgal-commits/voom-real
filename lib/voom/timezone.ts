@@ -12,12 +12,10 @@
 
 export const DEFAULT_TIMEZONE = "Asia/Dubai";
 
-const SUPPORTED = /^[A-Za-z_]+\/[A-Za-z_+\-0-9]+$/;
-
 /** Resolves the account timezone. Unknown/blank values fall back to Asia/Dubai. */
 export function accountTimezone(value?: string | null): string {
   const trimmed = (value ?? "").trim();
-  if (!trimmed || !SUPPORTED.test(trimmed)) return DEFAULT_TIMEZONE;
+  if (!trimmed || trimmed.length > 100 || /[\r\n]/.test(trimmed)) return DEFAULT_TIMEZONE;
   try {
     new Intl.DateTimeFormat("en-CA", { timeZone: trimmed });
     return trimmed;

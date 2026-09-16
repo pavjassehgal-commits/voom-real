@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useModal } from "@/lib/voom/modal";
+import { addDays, daysBetween } from "@/lib/voom/timezone";
 import type { AudienceRecord } from "@/lib/contacts/types";
 import {
   CAMPAIGN_GOALS,
@@ -22,14 +23,12 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
   const { close } = useModal();
   const [name, setName] = useState("");
   const [goal, setGoal] = useState<CampaignGoal>("drive_sales");
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
-  const defaultEnd = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 9);
-    return d.toISOString().slice(0, 10);
-  }, []);
-  const [startDate, setStartDate] = useState(today);
-  const [endDate, setEndDate] = useState(defaultEnd);
+  // The server's workflow snapshot is the source of truth for the business
+  // calendar. Do not derive these values from the browser or UTC clock.
+  const [timeZone, setTimeZone] = useState("Asia/Dubai");
+  const [today, setToday] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [offerDetails, setOfferDetails] = useState("");
   const [targetAudience, setTargetAudience] = useState("");
   const [notes, setNotes] = useState("");
@@ -37,6 +36,27 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
   const [audiences, setAudiences] = useState<AudienceRecord[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("/api/voom/workflow", { cache: "no-store" });
+        const data = await response.json() as { snapshot?: { today?: string; timeZone?: string } };
+        const snapshotToday = data.snapshot?.today;
+        if (!cancelled && response.ok && snapshotToday) {
+          const zone = data.snapshot?.timeZone || "Asia/Dubai";
+          setTimeZone(zone);
+          setToday(snapshotToday);
+          setStartDate((current) => current || snapshotToday);
+          setEndDate((current) => current || addDays(snapshotToday, 9));
+        }
+      } catch {
+        // Keep the date fields empty rather than guessing in the viewer's timezone.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,13 +74,13 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
 
   const span = useMemo(() => {
     if (!startDate || !endDate) return 0;
-    const ms = new Date(`${endDate}T00:00`).getTime() - new Date(`${startDate}T00:00`).getTime();
-    return Math.round(ms / 86_400_000) + 1;
+    return daysBetween(startDate, endDate) + 1;
   }, [startDate, endDate]);
 
   async function build() {
     setError("");
     if (!name.trim()) { setError("Give the campaign a name or a short idea first."); return; }
+    if (!today) { setError("Your business calendar is still loading. Please retry in a moment."); return; }
     if (!startDate || !endDate) { setError("Choose a start and end date."); return; }
     if (span < 1) { setError("The end date must be on or after the start date."); return; }
     if (span > 60) { setError("Keep the campaign to 60 days or fewer for v1."); return; }
@@ -134,11 +154,11 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
         </Field>
 
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Start date">
-            <Input type="date" value={startDate} min={today} onChange={(e) => setStartDate(e.target.value)} />
+          <Field label="Start date" hint={today ? `Business timezone: ${timeZone.replace("_", " ")}` : "Loading your business calendar…"}>
+            <Input type="date" value={startDate} min={today || undefined} onChange={(e) => setStartDate(e.target.value)} disabled={!today} />
           </Field>
           <Field label="End date">
-            <Input type="date" value={endDate} min={startDate || today} onChange={(e) => setEndDate(e.target.value)} />
+            <Input type="date" value={endDate} min={startDate || today || undefined} onChange={(e) => setEndDate(e.target.value)} disabled={!today} />
           </Field>
           <div className="flex items-end pb-2">
             <Tag tone="t-blue">{span > 0 ? `${span}-day campaign` : "Pick dates"}</Tag>
@@ -186,7 +206,7 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
       </ModalBody>
       <ModalFoot className="justify-between">
         <Btn variant="ghost" onClick={close}>Cancel</Btn>
-        <Btn variant="primary" disabled={busy} onClick={() => void build()}>
+        <Btn variant="primary" disabled={busy || !today} onClick={() => void build()}>
           <Icon name="spark" size={14} /> {busy ? "MARA is building…" : "Build campaign with MARA"}
         </Btn>
       </ModalFoot>

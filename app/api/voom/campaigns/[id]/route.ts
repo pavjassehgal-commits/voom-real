@@ -3,6 +3,8 @@ import { getCurrentUser } from "@/lib/voom/server-data";
 import { readAutomatedCampaign } from "@/lib/campaign/server";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
+import { checkScheduleInstant } from "@/lib/voom/schedule-guard";
+import { accountTimezone } from "@/lib/voom/timezone";
 import { z } from "zod";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -74,6 +76,15 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       }
     }
 
+    let proposedSendAt = parsed.data.proposedSendAt;
+    if (proposedSendAt) {
+      const { data: business } = await db.from("businesses").select("timezone").eq("owner_user_id", user.id).maybeSingle();
+      const timeZone = accountTimezone((business as { timezone?: string | null } | null)?.timezone);
+      const guard = checkScheduleInstant(proposedSendAt, new Date(), timeZone, 10);
+      if (!guard.ok) return Response.json({ error: guard.error }, { status: 422 });
+      proposedSendAt = guard.publishAt;
+    }
+
     const campaign = await updateCampaign(db, user.id, id, {
       name: parsed.data.name,
       objective: parsed.data.objective,
@@ -82,7 +93,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       subject: parsed.data.subject,
       preview_text: parsed.data.previewText,
       content: parsed.data.content,
-      proposed_send_at: parsed.data.proposedSendAt,
+      proposed_send_at: proposedSendAt,
     });
     if (!campaign) return Response.json({ error: "That campaign was not found." }, { status: 404 });
     return Response.json({ campaign, message: "Draft saved. Nothing has been sent." });

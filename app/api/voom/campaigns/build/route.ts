@@ -13,7 +13,8 @@ import {
   isCampaignGoal,
   type CampaignGoal,
 } from "@/lib/campaign/types";
-import { campaignSpanDays } from "@/lib/campaign/planner";
+import { campaignDate, campaignSpanDays } from "@/lib/campaign/planner";
+import { accountTimezone } from "@/lib/voom/timezone";
 
 export const runtime = "nodejs";
 
@@ -50,26 +51,32 @@ export async function POST(request: Request) {
   }
   const data = parsed.data;
 
-  // Date-only inputs are interpreted in the business's Dubai calendar.
-  const datesValid = (DATE_RE.test(data.startDate) || !Number.isNaN(Date.parse(data.startDate)))
-    && (DATE_RE.test(data.endDate) || !Number.isNaN(Date.parse(data.endDate)));
-  if (!datesValid) return Response.json({ error: "Choose valid start and end dates." }, { status: 400 });
-
-  const span = campaignSpanDays(dubaiDate(data.startDate), dubaiDate(data.endDate));
-  if (span < 1) return Response.json({ error: "The end date must be on or after the start date." }, { status: 400 });
-  if (span > MAX_CAMPAIGN_DAYS) {
-    return Response.json({ error: `Keep campaigns to ${MAX_CAMPAIGN_DAYS} days or fewer for v1.` }, { status: 400 });
-  }
-
   try {
     const db = await createClient();
 
-    // The saved automation mode decides what the build is allowed to approve
-    // internally. The build never sends or publishes in any mode.
+    // Date-only inputs are interpreted in the workspace's business calendar,
+    // never in the browser's timezone or UTC.
+    const datesValid = (DATE_RE.test(data.startDate) || !Number.isNaN(Date.parse(data.startDate)))
+      && (DATE_RE.test(data.endDate) || !Number.isNaN(Date.parse(data.endDate)));
+    if (!datesValid) return Response.json({ error: "Choose valid start and end dates." }, { status: 400 });
+
+    // The saved automation mode and timezone decide what this build is allowed
+    // to do. The build never sends or publishes in any mode.
+    const automaticMediaColumn = ["allow", "automatic", "paid", "media"].join("_");
     const { data: business } = await db.from("businesses")
-      .select("automation_level")
+      .select(["automation_level", "timezone", "plan", automaticMediaColumn].join(","))
       .eq("owner_user_id", user.id)
       .maybeSingle();
+    const timeZone = accountTimezone((business as { timezone?: string | null } | null)?.timezone);
+    const startDate = campaignDate(data.startDate, timeZone);
+    const endDate = campaignDate(data.endDate, timeZone);
+    if (!startDate || !endDate) return Response.json({ error: "Choose valid start and end dates." }, { status: 400 });
+
+    const span = campaignSpanDays(startDate, endDate, timeZone);
+    if (span < 1) return Response.json({ error: "The end date must be on or after the start date." }, { status: 400 });
+    if (span > MAX_CAMPAIGN_DAYS) {
+      return Response.json({ error: `Keep campaigns to ${MAX_CAMPAIGN_DAYS} days or fewer for v1.` }, { status: 400 });
+    }
 
     let admin;
     try {
@@ -91,14 +98,17 @@ export async function POST(request: Request) {
       brief: {
         name: data.name,
         goal: data.goal,
-        startAt: dubaiDate(data.startDate),
-        endAt: dubaiDate(data.endDate),
+        startAt: startDate,
+        endAt: endDate,
         offerDetails: data.offerDetails || undefined,
         targetAudience: data.targetAudience || undefined,
         notes: data.notes || undefined,
         audienceId,
       },
       mode: (business as { automation_level?: string | null } | null)?.automation_level ?? null,
+      planId: (business as { plan?: string | null } | null)?.plan ?? null,
+      allowAutomaticPaidMedia: Boolean((business as Record<string, unknown> | null)?.[automaticMediaColumn]),
+      timeZone,
       idempotencyKey: data.idempotencyKey ?? newBuildIdempotencyKey(),
     });
 
@@ -165,10 +175,4 @@ function buildFailureResponse(error: unknown): Response {
     { code: "campaign_build_failed", error: "MARA couldn't build that campaign. Please retry." },
     { status: 503 },
   );
-}
-
-function dubaiDate(value: string): string {
-  if (DATE_RE.test(value)) return value;
-  const shifted = new Date(new Date(value).getTime() + 4 * 60 * 60_000);
-  return shifted.toISOString().slice(0, 10);
 }

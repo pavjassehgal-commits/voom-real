@@ -55,6 +55,8 @@ export interface InstagramActionFacts {
   planStatus: CampaignActionStatus;
   /** mara_drafts.status, or null when the draft is missing. */
   draftStatus: "draft" | "approved" | "rejected" | null;
+  /** Whether the draft has the required visual/media asset. */
+  hasVisual?: boolean;
   /** instagram_publish_queue.status for the draft, if any. */
   queueStatus:
     | "scheduled"
@@ -100,6 +102,10 @@ function deriveEmailState(facts: EmailActionFacts): ActionExecutionState {
 
 function deriveInstagramState(facts: InstagramActionFacts): ActionExecutionState {
   if (!facts.draftStatus) return "failed";
+  // An approved draft without its required visual is not publish-ready and
+  // must not appear as Approved in Campaigns. A real queue row remains the
+  // truthful source for in-flight/waiting-media states.
+  if (facts.hasVisual === false && facts.queueStatus === null && facts.draftStatus === "approved") return "needs_approval";
   switch (facts.queueStatus) {
     case "published": return "executed";
     case "publishing": return "executing";
@@ -149,7 +155,10 @@ export function deriveCampaignLifecycle(facts: CampaignLifecycleFacts): Campaign
 
   const anyExecuted = states.includes("executed") || states.includes("executing");
   const beforeStart = facts.startAt ? now.getTime() < Date.parse(facts.startAt) - ACTION_MISSED_GRACE_MINUTES * 60_000 : true;
-  const afterEnd = facts.endAt ? now.getTime() > Date.parse(facts.endAt) + 24 * 60 * 60_000 : false;
+  // `endAt` is persisted as the local campaign day's end, not the start of a
+  // grace day. Waiting until +24h made a finished campaign report the wrong
+  // lifecycle for an entire extra day.
+  const afterEnd = facts.endAt ? now.getTime() > Date.parse(facts.endAt) : false;
 
   if (anyExecuted) return afterEnd && states.every((s) => TERMINAL.has(s) || s === "failed") ? "completed" : "active";
 

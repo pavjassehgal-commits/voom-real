@@ -339,6 +339,16 @@ export interface CampaignActionView extends CampaignActionRecord {
     draftStatus: "draft" | "approved" | "rejected";
     queueStatus: string | null;
     needsVisual: boolean;
+    media: {
+      previewUrl: string | null;
+      mimeType: string;
+      displayName: string;
+      origin: string;
+    } | null;
+    /** Supported campaign-contained production choices for this format. */
+    availableProductionMethods: ("create_with_mara" | "upload_asset" | "film_yourself")[];
+    selectedProductionMethod: "create_with_mara" | "upload_asset" | "film_yourself" | null;
+    productionStatus: string | null;
   } | null;
 }
 
@@ -357,7 +367,10 @@ export interface CampaignStrategyRecord {
   performanceNote: string | null;
 }
 
+/** The campaign detail's resolved business timezone. */
 export interface AutomatedCampaignView {
+  /** Business timezone used to render and edit every proposed time. */
+  timeZone: string;
   campaign: CampaignContainerRecord;
   /** MARA's campaign strategy, or the deterministic fallback block (v2). */
   strategy: CampaignStrategyRecord | null;
