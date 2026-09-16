@@ -131,6 +131,14 @@ export interface PlannerPerformanceInput {
   bestContentTypeLabel?: string | null;
   winnerLabels?: string[];
   engagementSignals?: string[];
+  /** v2 (MARA Campaign Intelligence): the measured basis, e.g. "reach". */
+  basis?: string | null;
+  /** v2: how many days of published content the evidence covers. */
+  windowDays?: number | null;
+  /** v2: the strongest measured topic, when one stands out. */
+  strongestTopicLabel?: string | null;
+  /** v2: topics that measurably underperformed the account's own baseline. */
+  underperformerLabels?: string[] | null;
 }
 
 export interface CampaignBrief {
@@ -240,6 +248,12 @@ export interface CampaignContainerRecord {
   campaign_notes: string | null;
   generated_summary: string | null;
   parent_campaign_id: string | null;
+  /** v2: the stored strategy object (objective/core message/…). */
+  strategy: Record<string, unknown> | null;
+  /** v2: the short "MARA's approach" line. */
+  strategy_summary: string | null;
+  /** v2: which layer produced the campaign content. */
+  generation_source: "deterministic" | "mara" | null;
   approved_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -259,8 +273,29 @@ export interface CampaignActionRecord {
   email_campaign_id: string | null;
   draft_id: string | null;
   safety_blockers: string[];
+  /** v2: the structured MARA content stored with the action. */
+  mara_content: Record<string, unknown> | null;
+  /** v2: which layer produced the stored content. */
+  content_source: "deterministic" | "mara" | "edited";
   created_at: string;
   updated_at: string;
+}
+
+/** Which layer produced an action's content. */
+export type CampaignContentSource = "deterministic" | "mara" | "edited";
+
+/** The structured MARA content stored on `voom_campaign_actions.mara_content`. */
+export interface CampaignActionContentRecord {
+  format?: "post" | "reel" | "story";
+  concept?: string;
+  hook?: string;
+  cta?: string;
+  ctaUrl?: string | null;
+  visualDirection?: string;
+  script?: string[];
+  hashtags?: string[];
+  audienceNote?: string;
+  sendTimeNote?: string;
 }
 
 /** One timeline row as presented (derived execution state included). */
@@ -268,12 +303,25 @@ export interface CampaignActionView extends CampaignActionRecord {
   /** DERIVED from child campaign/queue state — never stored as fake progress. */
   executionState: import("./status").ActionExecutionState;
   executionLabel: string;
+  /** Which layer wrote this action's content (v2). */
+  contentSource: CampaignContentSource;
+  /** Structured content stored with the action (v2). */
+  content: CampaignActionContentRecord | null;
+  /**
+   * True while the content may still be edited or regenerated. False once a
+   * real send is in flight/completed or the Instagram item is publishing or
+   * published — a sent or published action can never be rewritten.
+   */
+  canEditContent: boolean;
   /** Email deliverable, present for email actions. */
   email?: {
     subject: string | null;
     previewText: string | null;
     body: string;
     cta: string | null;
+    ctaUrl: string | null;
+    audienceNote: string | null;
+    sendTimeNote: string | null;
     childCampaignId: string;
     childStatus: "draft" | "approved" | "rejected";
     canSendExplicitly: boolean;
@@ -283,14 +331,36 @@ export interface CampaignActionView extends CampaignActionRecord {
     draftId: string;
     concept: string;
     caption: string;
+    format: "post" | "reel" | "story";
+    hook: string | null;
+    visualDirection: string | null;
+    script: string[];
+    cta: string | null;
     draftStatus: "draft" | "approved" | "rejected";
     queueStatus: string | null;
     needsVisual: boolean;
   } | null;
 }
 
+/** The campaign strategy block as stored and presented (v2). */
+export interface CampaignStrategyRecord {
+  objective: string;
+  coreMessage: string;
+  audienceAngle: string;
+  narrative: string;
+  ctaStrategy: string;
+  sequenceRationale: string;
+  /** The short "MARA's approach" line. */
+  summary: string;
+  /** 'mara' when MARA wrote it, 'deterministic' for the v1 fallback. */
+  source: "mara" | "deterministic";
+  performanceNote: string | null;
+}
+
 export interface AutomatedCampaignView {
   campaign: CampaignContainerRecord;
+  /** MARA's campaign strategy, or the deterministic fallback block (v2). */
+  strategy: CampaignStrategyRecord | null;
   actions: CampaignActionView[];
   lifecycle: CampaignLifecycle;
   lifecycleLabel: string;

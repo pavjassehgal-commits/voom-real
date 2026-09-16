@@ -2,13 +2,34 @@ import { z } from "zod";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
-import { decideCampaignAction, readAutomatedCampaign } from "@/lib/campaign/server";
+import { decideCampaignAction, editCampaignActionContent, readAutomatedCampaign } from "@/lib/campaign/server";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // Approving/rejecting a timeline action changes approval STATE only. It never
 // sends an email and never publishes to Instagram.
 const decisionSchema = z.object({ action: z.enum(["approve", "reject"]) }).strict();
+
+/**
+ * Editing ONE action's draft content before approval. The limits mirror the
+ * existing campaign/draft validation (subject 300, preview 500, body 12000,
+ * caption 2200). Editing never sends, never publishes and never rebuilds the
+ * campaign — the guarded RPC refuses an action that is already sent/published.
+ */
+const editSchema = z.object({
+  subject: z.string().trim().max(300).optional(),
+  previewText: z.string().trim().max(500).optional(),
+  body: z.string().trim().max(12000).optional(),
+  caption: z.string().trim().max(2200).optional(),
+  concept: z.string().trim().max(160).optional(),
+  hook: z.string().trim().max(300).optional(),
+  visualDirection: z.string().trim().max(1200).optional(),
+  cta: z.string().trim().max(160).optional(),
+  ctaUrl: z.string().trim().max(500).nullable().optional(),
+  audienceNote: z.string().trim().max(500).optional(),
+  sendTimeNote: z.string().trim().max(300).optional(),
+  scheduledFor: z.string().trim().max(40).nullable().optional(),
+}).strict();
 
 export const runtime = "nodejs";
 
@@ -50,5 +71,47 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return Response.json({ message, automated });
   } catch {
     return Response.json({ error: "Voom couldn't update that campaign action. Please retry." }, { status: 503 });
+  }
+}
+
+/**
+ * Edits ONE action's generated draft. Only that action changes; the campaign is
+ * never rebuilt. Nothing is sent or published by this route.
+ */
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string; actionId: string }> }) {
+  const user = await getCurrentUser();
+  if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
+  const { id, actionId } = await params;
+  if (!UUID_RE.test(id) || !UUID_RE.test(actionId)) {
+    return Response.json({ error: "That campaign action was not found." }, { status: 404 });
+  }
+
+  let body: unknown;
+  try { body = await request.json(); } catch {
+    return Response.json({ error: "That edit is not valid." }, { status: 400 });
+  }
+  const parsed = editSchema.safeParse(body);
+  if (!parsed.success || Object.keys(parsed.data).length === 0) {
+    return Response.json({ error: "Check the content before saving." }, { status: 400 });
+  }
+
+  try {
+    const db = await createClient();
+    let admin;
+    try {
+      admin = createAdminClient();
+    } catch {
+      return Response.json({ error: "Campaign editing is not fully configured on the server yet." }, { status: 503 });
+    }
+
+    const result = await editCampaignActionContent(admin, user.id, id, actionId, parsed.data);
+    if (!result.ok) {
+      return Response.json({ error: (result.blockers ?? []).join(" ") || "That draft couldn't be saved." }, { status: 409 });
+    }
+
+    const automated = await readAutomatedCampaign(db, user.id, id);
+    return Response.json({ message: "Draft saved. Nothing has been sent or published.", automated });
+  } catch {
+    return Response.json({ error: "Voom couldn't save that draft. Please retry." }, { status: 503 });
   }
 }

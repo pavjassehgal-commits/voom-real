@@ -103,7 +103,12 @@ export async function POST(request: Request) {
     });
 
     return Response.json({
-      message: "MARA built your campaign. Nothing has been sent or published.",
+      // Truthful about which layer wrote the content: when the text provider
+      // was unavailable the deterministic v1 plan was used and the campaign
+      // was still created. Nothing was sent or published either way.
+      message: result.generationSource === "mara"
+        ? "MARA built your campaign. Nothing has been sent or published."
+        : "Voom built your campaign from its standard campaign plan because MARA's writer was unavailable. Nothing has been sent or published.",
       ...result,
       goals: CAMPAIGN_GOALS,
     }, { status: 201 });

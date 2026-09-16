@@ -68,6 +68,63 @@ reference/
 - No demo/sample data ships in the product: every screen renders real account
   data or an honest empty state
 
+### MARA Campaign Intelligence (Campaigns v2)
+
+Campaign creation is now *"tell MARA what you want to achieve → MARA designs the
+campaign → you review it → Voom executes it according to your automation mode"*.
+
+The pipeline is strictly one-directional:
+
+```
+deterministic skeleton  →  MARA intelligence  →  validated structured plan
+```
+
+`lib/campaign/planner.ts` (v1, unchanged) remains the **only** authority on
+structure: the date range, the action count (`MAX_CAMPAIGN_ACTIONS`), the
+channels (Email + Instagram Post/Reel/Story only), the allowed action types and
+the per-day timing boundaries. MARA fills strategy and content **inside** that
+structure and can never add, drop, re-channel or re-date an action — LLM output
+is never inserted as-is.
+
+- **Provider**: the existing MARA text provider (`@/lib/ai`, the same
+  OpenAI-compatible/Groq adapter used by the chat, weekly plan and Post Studio
+  flows) with strict `json_schema` structured output. No second AI provider was
+  added, and no media provider is reachable from campaign generation.
+- **Validation**: `campaignIntelligenceSchema` (zod) is the second safety layer
+  on every response. Per action, `applyCampaignIntelligence` refuses content
+  that duplicates another action's copy, a Reel with no script, a proposed time
+  outside the slot's own campaign day, or a CTA repeated across the campaign —
+  and substitutes the deterministic v1 draft for that action only. Autopilot
+  safety blockers are re-evaluated on the final merged content.
+- **Strategy**: stored on `voom_campaigns.strategy` / `strategy_summary` /
+  `generation_source`, shown as a compact **"MARA's approach"** block. No AI
+  essays are surfaced.
+- **Fallback**: if the text provider is not configured, fails, or returns
+  anything unusable, the deterministic v1 plan is used unchanged
+  (`generation_source = 'deterministic'`) and the campaign is still created.
+  Every build and every regeneration writes exactly one
+  `voom_campaign_generations` row, idempotent on its key.
+- **Performance Intelligence** is passed to MARA only when
+  `buildPerformancePlanContext` returns real evidence (≥ 3 measured published
+  items). It is advisory: the deterministic mix is identical with and without
+  it, and no performance section is invented when the data is absent.
+- **Editing / regeneration**: `PATCH …/actions/[actionId]` edits one draft
+  (email subject/preview/body/CTA/time; Instagram concept/hook/caption/time)
+  and `POST …/actions/[actionId]/regenerate` asks MARA to rewrite that one
+  draft. Both go through the guarded `update_campaign_action_content` RPC,
+  which refuses an action with a real send in flight/completed or an Instagram
+  queue row that is publishing or published, never duplicates the action, never
+  touches another action, and is a no-op when its idempotency key is replayed.
+- **Safety is unchanged**: campaign generation sends no email, enqueues no
+  Instagram publish, submits no Seedream/Seedance job and spends no media
+  credit in any mode. Paid media stays behind the central
+  `guardAndReserveMedia` entitlement/credit guard (Autopilot + Max plan +
+  toggle + credits + safety).
+
+Requires migration `0036_mara_campaign_intelligence.sql` (additive: two new
+nullable campaign columns, two new action columns, the generation audit table
+and the guarded content writer).
+
 ### Performance Intelligence (v1)
 
 Voom reads Instagram performance metrics only for content it has already
