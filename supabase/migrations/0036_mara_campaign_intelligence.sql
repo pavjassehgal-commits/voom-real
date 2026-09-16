@@ -523,7 +523,10 @@ begin
       owner_user_id, campaign_id, action_id, kind, idempotency_key, provider, status, detail
     ) values (
       p_owner_user_id, v_action.campaign_id, v_action.id,
-      case when (p_patch ->> 'contentSource') = 'mara' then 'action_regenerate' else 'action_regenerate' end,
+      -- This writer is only ever reached from per-action edit/regenerate, so the
+      -- generation kind is always 'action_regenerate'. The provider column is
+      -- what distinguishes MARA-authored content from a deterministic rewrite.
+      'action_regenerate',
       v_key,
       case when (p_patch ->> 'contentSource') = 'mara' then 'mara' else 'fallback' end,
       'completed',
