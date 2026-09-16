@@ -2,31 +2,22 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/utils/supabase/admin";
-import { AUTOMATION_MODES, automationRunsAutomatically } from "@/lib/voom/automation";
-import { runOwnerWorkflow } from "@/lib/voom/workflow/service";
-import type { AdminClient } from "@/lib/post/server-data";
+import { runFleetCoordinator } from "@/lib/coordinator/service";
 
 /**
- * The scheduled rolling-plan automation.
+ * The scheduled rolling-plan automation, now powered by the central
+ * Automation Coordinator v1.
  *
  * Replaces the legacy "generate exactly 3 Instagram recommendations once per
- * week" rule. On every run (daily cron is enough) each automated account has
- * its rolling horizon topped up to the number of items its selected posting
- * cadence requires, starting on that account's real current local date.
+ * week" rule with intelligent gap identification and marketing coordination.
+ * On every run each automated account is evaluated for existing campaign
+ * actions, approved calendar items, and pending approvals before any missing
+ * work is prepared.
  *
- * Idempotent by construction: a workflow item is keyed by (plan, local slot
- * date), so a second run on the same day reuses every existing item and
- * creates nothing. Manual accounts are never touched.
+ * Idempotent by construction: runs are keyed by durable idempotency keys and
+ * slots are deduplicated on (plan, local slot date).
+ * Manual accounts are never touched.
  */
-
-/**
- * Derived from the shared predicate rather than re-listed here, so the modes
- * the scheduled runner picks up can never drift from the modes the Automations
- * screen promises will run automatically. Switching to Manual therefore stops
- * FUTURE automated runs for that account — while leaving every approval,
- * schedule and stored asset that already exists untouched.
- */
-const AUTOMATED_MODES = AUTOMATION_MODES.filter(automationRunsAutomatically);
 
 export interface RollingAutomationResult {
   checked: number;
@@ -42,27 +33,16 @@ export async function runRollingPlanAutomation(
   db: SupabaseClient = createAdminClient(),
   ownerIds?: string[],
 ): Promise<RollingAutomationResult> {
-  let query = db.from("businesses").select("owner_user_id,automation_level")
-    .eq("onboarding_completed", true).in("automation_level", AUTOMATED_MODES);
-  if (ownerIds) query = query.in("owner_user_id", ownerIds);
-  const { data: businesses, error } = await query;
-  if (error) throw new Error("automation_businesses_unavailable");
+  const fleetSummary = await runFleetCoordinator(db, now, ownerIds);
 
-  const result: RollingAutomationResult = { checked: businesses?.length ?? 0, created: 0, reused: 0, autoApproved: 0, awaitingApproval: 0, failed: 0 };
-  for (const business of businesses ?? []) {
-    try {
-      const run = await runOwnerWorkflow(db as AdminClient, { ownerId: String(business.owner_user_id), now });
-      result.created += run.created;
-      result.reused += run.reused;
-      result.autoApproved += run.autoApproved;
-      result.awaitingApproval += run.awaitingApproval;
-      if (run.failures.length) result.failed += 1;
-    } catch {
-      // One broken account never stops the rest of the fleet.
-      result.failed += 1;
-    }
-  }
-  return result;
+  return {
+    checked: fleetSummary.evaluated,
+    created: fleetSummary.actionsTriggered,
+    reused: fleetSummary.evaluated - fleetSummary.failures,
+    autoApproved: 0,
+    awaitingApproval: 0,
+    failed: fleetSummary.failures,
+  };
 }
 
 /** Back-compatible name for the existing cron entry point. */
