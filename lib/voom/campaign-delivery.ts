@@ -205,21 +205,109 @@ export function verifyResendWebhook(payload: string, headers: Headers, secret: s
 
 export async function recordDeliveryFromWebhook(db: SupabaseClient, input: { provider: "resend" | "twilio"; providerMessageId: string | null; eventId: string; eventType: string; receivedAt: string; providerStatus: string | null }) {
   if (!input.providerMessageId) return;
+
+  // 1) Campaign sends (0018 lifecycle).
   const sendResult = await db.from("campaign_sends")
-    .select("id,owner_user_id")
+    .select("id,owner_user_id,recipient_id")
     .eq("provider", input.provider)
     .eq("provider_message_id", input.providerMessageId)
     .maybeSingle();
-  if (sendResult.error || !sendResult.data) return;
-  await db.rpc("record_campaign_delivery_event", {
-    p_owner_user_id: sendResult.data.owner_user_id,
-    p_send_id: sendResult.data.id,
-    p_provider: input.provider,
+
+  if (!sendResult.error && sendResult.data) {
+    await db.rpc("record_campaign_delivery_event", {
+      p_owner_user_id: sendResult.data.owner_user_id,
+      p_send_id: sendResult.data.id,
+      p_provider: input.provider,
+      p_event_id: input.eventId,
+      p_event_type: input.eventType,
+      p_received_at: input.receivedAt,
+      p_provider_status: input.providerStatus,
+    });
+    // A bounce or complaint is durable evidence about the ADDRESS, not just
+    // about one send. Without this the contact stayed 'subscribed' and the
+    // next campaign or lifecycle email went to the same dead address again.
+    await suppressFromProviderEvent(db, {
+      ownerId: String(sendResult.data.owner_user_id),
+      provider: input.provider,
+      eventType: input.eventType,
+      providerStatus: input.providerStatus,
+      eventId: input.eventId,
+      recipientId: (sendResult.data as { recipient_id?: string | null }).recipient_id ?? null,
+    });
+    return;
+  }
+
+  // 2) Lifecycle flow sends (0040). One webhook route serves both: Voom has a
+  //    single email provider and a single delivery-event intake.
+  const runResult = await db.from("voom_email_flow_step_runs")
+    .select("id,owner_user_id")
+    .eq("provider", "resend")
+    .eq("provider_message_id", input.providerMessageId)
+    .maybeSingle();
+
+  if (runResult.error || !runResult.data) return;
+  if (input.provider !== "resend") return;
+
+  await db.rpc("record_email_flow_delivery_event", {
+    p_owner_user_id: runResult.data.owner_user_id,
+    p_send_id: runResult.data.id,
+    p_provider: "resend",
     p_event_id: input.eventId,
     p_event_type: input.eventType,
     p_received_at: input.receivedAt,
     p_provider_status: input.providerStatus,
   });
+}
+
+const SUPPRESSION_EVENTS: Record<string, "bounced" | "complained"> = {
+  "email.bounced": "bounced",
+  "email.complained": "complained",
+  bounced: "bounced",
+  complained: "complained",
+};
+
+/**
+ * Records durable suppression from a verified provider event, for the campaign
+ * path. The lifecycle path records its own suppression inside
+ * `record_email_flow_delivery_event`. Both write the same table, so one bounce
+ * stops every future send to that address.
+ */
+async function suppressFromProviderEvent(
+  db: SupabaseClient,
+  input: {
+    ownerId: string;
+    provider: string;
+    eventType: string;
+    providerStatus: string | null;
+    eventId: string;
+    recipientId: string | null;
+  },
+) {
+  const normalized = (input.providerStatus ?? input.eventType ?? "").toLowerCase();
+  const reason = SUPPRESSION_EVENTS[normalized];
+  if (!reason || !input.recipientId) return;
+
+  try {
+    const { data: recipient, error } = await db.from("campaign_recipients")
+      .select("contact")
+      .eq("owner_user_id", input.ownerId)
+      .eq("id", input.recipientId)
+      .maybeSingle();
+    const address = (recipient as { contact?: string } | null)?.contact;
+    if (error || !address) return;
+
+    await db.rpc("record_email_suppression", {
+      p_owner_user_id: input.ownerId,
+      p_email: address,
+      p_reason: reason,
+      p_provider: input.provider === "resend" ? "resend" : null,
+      p_provider_event_id: input.eventId,
+      p_detail: "Recorded from a verified provider delivery event.",
+    });
+  } catch {
+    // Suppression is a safety net; a failure to record it must not fail the
+    // webhook, and the send row above is already updated.
+  }
 }
 
 function fallbackDelivery(campaign: CampaignRecord, provider: CampaignProviderAvailability, note: string): CampaignDeliveryView {

@@ -63,6 +63,10 @@ reference/
   Cron/Vault pattern. The browser only refreshes display state; it is never the
   provider lifecycle owner. The route polls persisted provider job ids only,
   stores validated MP4s, and enforces the 30-minute `provider_timeout`.
+- Lifecycle **Email Flows** (Email Automation v2) run alongside Campaigns and
+  standalone emails: persistent rules that greet a new subscriber or re-engage
+  an inactive one, proposed by MARA inside deterministic safety limits and
+  activated only by the business owner
 - Not yet implemented: Stripe billing, paid advertising connections. The UI
   says so truthfully instead of simulating them
 - No demo/sample data ships in the product: every screen renders real account
@@ -152,6 +156,75 @@ include it, the collector still stores the real media-node metrics (likes,
 comments) and reports every unread metric as unavailable — it never invents a
 value, and never stores a zero.
 
+### Email Automation v2 (Lifecycle Flows)
+
+A **Flow** is a persistent rule; a **Campaign** is a finite mission. They are
+separate in the schema, the API and the UI — a flow is never turned into a
+campaign, and it never borrows `voom_campaigns` or `campaign_recipients`.
+
+Two flow types ship: **Welcome** (trigger: a contact becomes newly eligible) and
+**Re-engagement** (trigger: an eligible contact Voom has not emailed for the
+inactivity period you choose). New trigger types are added by extending the
+registry in `lib/email-flows/policy.ts`; the engine does not change.
+
+The pipeline is strictly one-directional, exactly like Campaigns v2:
+
+```
+deterministic skeleton  →  MARA intelligence  →  validated structured flow
+```
+
+`buildFlowSkeleton()` is the only authority on structure (step count, order,
+waits, trigger, re-entry). MARA fills the writing inside it through the existing
+text AI provider, and every field is schema-validated and safety-checked before
+it can be stored. If MARA fails, times out, is rate-limited or returns an
+unusable shape, the flow is still created from the deterministic copy — flow
+creation never depends on a provider.
+
+Rules that hold in every automation mode:
+
+- **Consent is authoritative and fails closed.** Only an explicit `subscribed`
+  status with a valid, unsuppressed address may enroll, and consent is
+  re-checked immediately before *every* send. An unsubscribe mid-flow blocks the
+  next email and stops the enrollment.
+- **Activation belongs to the owner.** Manual never creates a flow on its own;
+  Assisted and Autopilot may *propose* a draft, and no policy authorises
+  automatic activation — so Autopilot fails closed and leaves the flow
+  proposed, waiting for approval.
+- **Provider acceptance is not delivery.** A Resend `accepted` response is
+  recorded as accepted; only a verified Resend webhook can set `delivered`.
+  A bounce or complaint suppresses the address for every future send.
+- **Sending is owned by exactly one worker.** Each step run carries a durable
+  idempotency key and a claim lease, and the same key is passed to Resend as its
+  `Idempotency-Key` header. A duplicate or delayed cron tick cannot double-send.
+- **Retries are bounded** (three attempts), after which the run fails, the
+  enrollment stops, and the flow surfaces as needing attention.
+- **Timing uses the business timezone**, never the browser's and never a fixed
+  offset. Sends land inside a 09:00–18:00 local window, never in the past, and a
+  backlog after a pause or an outage is spread across later windows instead of
+  burst-sending.
+- **Editing a live flow writes a new revision.** Contacts already enrolled keep
+  the revision they were promised; historical sends, provider ids and delivery
+  events are immutable.
+- **No paid media is involved anywhere.** Flow creation and execution make no
+  media-generation call and reserve no media credits.
+
+Data model (migration `0040_email_automation_v2.sql`, additive, owner-scoped
+RLS): `voom_email_flows`, `voom_email_flow_steps`, `voom_email_flow_enrollments`,
+`voom_email_flow_step_runs`, `voom_email_flow_delivery_events`,
+`voom_email_flow_events`, `voom_email_suppressions`. All writes go through
+service-role-only RPCs (`create_email_flow`, `enroll_email_flow_contact`,
+`claim_email_flow_step_run`, `record_email_flow_step_provider_result`,
+`record_email_flow_delivery_event`, `advance_email_flow_enrollment`,
+`stop_email_flow_enrollment`, `set_email_flow_status`,
+`reschedule_email_flow_step_run`, `revise_email_flow`, `record_email_suppression`);
+the browser has read access to its own rows only.
+
+The Automation Coordinator reads live and proposed flows, the lifecycle emails
+they have scheduled and their recent activity. It suppresses a Welcome or
+Re-engagement opportunity once a flow of that type exists, and its proposals are
+deduplicated three ways (the opportunity list, an owner-scoped proposal key, and
+a partial unique index), so a daily cron tick can never pile up duplicates.
+
 ### Supabase Cron workers
 
 Configure the existing Supabase Cron job runner to call
@@ -163,3 +236,14 @@ Instagram worker keeps its existing five-minute schedule. The worker reuses
 `mara_media_generations.updated_at` (already maintained by the existing trigger)
 for its two-minute due check and poll lease, so no schema migration or live
 schedule migration is required.
+
+Email Automation v2 adds one more worker: point Supabase Cron at
+`/api/cron/email-flows` **every 15 minutes** (`*/15 * * * *`) with the same
+`Authorization: Bearer <CRON_SECRET>` header. That cadence matches
+`EMAIL_FLOW_CRON_CADENCE_MINUTES` in `lib/email-flows/engine.ts` and is the
+shortest one lifecycle email needs: enrollment happens in the next business-hours
+window anyway, so a finer cadence would only add load. The route is race-safe
+(a claim lease plus a durable idempotency key per step run), returns 503 when
+`CRON_SECRET` is unset and 401 on a mismatch, and is deliberately **not** in
+`vercel.json` — Vercel Hobby's minimum cadence cannot express it, and the route
+was not triggered manually in Production while this was built.

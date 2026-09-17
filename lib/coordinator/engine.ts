@@ -45,6 +45,40 @@ export function evaluateMarketingNeeds(state: AuthoritativeMarketingState): Coor
     }
   }
 
+  // Priority 1.5: Lifecycle email flows that need the owner.
+  // A flow MARA proposed, or one with failed sends, is real marketing work that
+  // is waiting — it is surfaced instead of being silently re-proposed.
+  //
+  // Read defensively: a state built before Email Automation v2 (or one
+  // reconstructed from a stored coordinator run) has no flow fields, and the
+  // Coordinator must keep working rather than throw.
+  const lifecycleFlows = state.emailState?.flows ?? [];
+  const lifecycleOpportunities = state.emailState?.flowOpportunities ?? [];
+  const attentionFlows = lifecycleFlows.filter((flow) => flow.needsAttention);
+  if (attentionFlows.length > 0) {
+    const draft = attentionFlows.filter((flow) => flow.status === "draft");
+    needs.push({
+      type: "email_flow_needs_attention",
+      priority: 15,
+      title: draft.length > 0
+        ? `${draft.length} email flow${draft.length === 1 ? "" : "s"} waiting for your approval`
+        : `Email flow${attentionFlows.length === 1 ? "" : "s"} need attention`,
+      description: attentionFlows
+        .map((flow) => `${flow.name}: ${flow.attentionReason ?? "needs a decision"}`)
+        .join(" "),
+      meta: {
+        flowIds: attentionFlows.map((flow) => flow.id),
+        flows: attentionFlows.map((flow) => ({
+          id: flow.id,
+          name: flow.name,
+          flowType: flow.flowType,
+          status: flow.status,
+          reason: flow.attentionReason ?? null,
+        })),
+      },
+    });
+  }
+
   // Priority 2: General pending approvals (workflow items or other actions)
   if (state.pendingApprovals.length > 0) {
     needs.push({
@@ -87,6 +121,29 @@ export function evaluateMarketingNeeds(state: AuthoritativeMarketingState): Coor
       description: state.emailState.opportunityReason ?? "Audience contacts are ready for a targeted email update.",
       meta: {
         eligibleCount: state.emailState.eligibleContactsCount,
+      },
+    });
+  }
+
+  // Priority 4.5: Lifecycle email opportunities.
+  // Only flow types that do NOT already exist reach here — an existing Welcome
+  // or Re-engagement flow (draft, paused or active) suppresses its own
+  // opportunity, so a repeated Coordinator run proposes nothing new.
+  if (lifecycleOpportunities.length > 0) {
+    const opportunities = lifecycleOpportunities;
+    needs.push({
+      type: "email_flow_opportunity",
+      priority: 45,
+      title: `MARA can prepare ${opportunities.length === 1 ? "a" : opportunities.length} lifecycle email flow${opportunities.length === 1 ? "" : "s"}`,
+      description: opportunities.map((opportunity) => opportunity.reason).join(" "),
+      meta: {
+        opportunities,
+        eligibleCount: state.emailState.eligibleContactsCount,
+        existingFlows: lifecycleFlows.map((flow) => ({
+          id: flow.id,
+          flowType: flow.flowType,
+          status: flow.status,
+        })),
       },
     });
   }
@@ -256,8 +313,22 @@ function generateSummaryMessage(
     return `MARA found ${gaps.length} content gap${gaps.length === 1 ? "" : "s"} in your upcoming schedule.`;
   }
 
+  if (topNeed.type === "email_flow_needs_attention") {
+    const drafts = state.emailState.flows.filter((flow) => flow.status === "draft");
+    return drafts.length > 0
+      ? `Your ${drafts[0].name} needs approval.`
+      : "An email flow needs your attention.";
+  }
+
   if (topNeed.type === "email_opportunity") {
     return "Email opportunity available for your audience.";
+  }
+
+  if (topNeed.type === "email_flow_opportunity") {
+    const first = state.emailState.flowOpportunities[0];
+    return first?.flowType === "welcome"
+      ? "MARA found a welcome-flow opportunity."
+      : "MARA found a re-engagement opportunity.";
   }
 
   return "MARA is preparing upcoming marketing.";

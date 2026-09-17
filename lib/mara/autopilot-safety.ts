@@ -24,6 +24,21 @@ const BLOCKED: Array<[string, RegExp]> = [
   ["paid_advertising", /\b(paid ad(?:vertising)?|sponsored post|boost(?:ed| this)? post|ad spend|media buy|cost per click|cpc|ppc)\b/i],
 ];
 
+/**
+ * The content half of the safety vocabulary, on its own.
+ *
+ * Some surfaces legitimately schedule further out than the 8-day approval
+ * window below — lifecycle email sequences, for instance, wait days or weeks
+ * between steps — but the *content* rules are universal. This exports them
+ * without the schedule check so one vocabulary is shared instead of copied,
+ * and `evaluateAutopilotRecommendation` keeps using exactly this list.
+ */
+export function evaluateContentSafetyBlockers(text: string): string[] {
+  const blockers: string[] = [];
+  for (const [name, pattern] of BLOCKED) if (pattern.test(text)) blockers.push(name);
+  return blockers;
+}
+
 export function evaluateAutopilotRecommendation(input: AutopilotSafetyInput, now = new Date()): AutopilotSafetyResult {
   const content = input.content.trim();
   const title = input.title.trim();
@@ -36,7 +51,7 @@ export function evaluateAutopilotRecommendation(input: AutopilotSafetyInput, now
   const latest = now.getTime() + 8 * 24 * 60 * 60_000;
   if (!Number.isFinite(publishAt) || publishAt < earliest || publishAt > latest) blockers.push("invalid_schedule");
 
-  for (const [name, pattern] of BLOCKED) if (pattern.test(text)) blockers.push(name);
+  blockers.push(...evaluateContentSafetyBlockers(text));
   return {
     safe: blockers.length === 0,
     checks: ["valid_content", "valid_future_schedule", "no_unsupported_offer_or_price", "no_unsupported_claim", "no_sensitive_or_regulated_content", "no_unverified_link", "no_paid_action"],

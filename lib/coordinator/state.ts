@@ -13,6 +13,8 @@ import type {
   ActiveCampaignState,
   PendingApprovalState,
   EmailMarketingState,
+  EmailFlowState,
+  EmailFlowOpportunity,
   PerformanceIntelligenceState,
   MarketingStateBusinessProfile,
   CreditAvailability,
@@ -351,18 +353,130 @@ export async function buildMarketingState(
     .gte("scheduled_for", horizonStartIso);
 
   const scheduledEmailCount = scheduledEmails?.length ?? 0;
-  const daysSinceLastSend = lastSentAt ? (now.getTime() - new Date(lastSentAt).getTime()) / (1000 * 60 * 60 * 24) : 999;
-  const emailOpportunityAvailable = eligibleCount >= 5 && scheduledEmailCount === 0 && daysSinceLastSend >= 7;
+
+  // 7b. Lifecycle email flows (Email Automation v2) are authoritative
+  // marketing state. They are read here so the Coordinator knows what already
+  // exists and never proposes a duplicate Welcome or Re-engagement flow.
+  // Missing 0040 schema degrades to "no flows" instead of throwing.
+  const flows: EmailFlowState[] = [];
+  let scheduledLifecycleEmailCount = 0;
+  let lastLifecycleSendAt: string | null = null;
+  try {
+    const { data: flowRows } = await admin.from("voom_email_flows")
+      .select("id,flow_type,name,status,created_by")
+      .eq("owner_user_id", ownerId)
+      .neq("status", "archived")
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    const flowList = (flowRows ?? []) as Array<Record<string, unknown>>;
+    if (flowList.length > 0) {
+      const flowIds = flowList.map((flow) => String(flow.id));
+      const [{ data: enrollmentRows }, { data: runRows }] = await Promise.all([
+        admin.from("voom_email_flow_enrollments")
+          .select("flow_id,status")
+          .eq("owner_user_id", ownerId)
+          .in("flow_id", flowIds)
+          .limit(5000),
+        admin.from("voom_email_flow_step_runs")
+          .select("flow_id,status,scheduled_for,accepted_at,delivered_at")
+          .eq("owner_user_id", ownerId)
+          .in("flow_id", flowIds)
+          .limit(5000),
+      ]);
+
+      const enrollments = (enrollmentRows ?? []) as Array<{ flow_id: string; status: string }>;
+      const runs = (runRows ?? []) as Array<{ flow_id: string; status: string; scheduled_for: string | null; accepted_at: string | null; delivered_at: string | null }>;
+
+      scheduledLifecycleEmailCount = runs.filter((run) => run.status === "scheduled" || run.status === "sending").length;
+      for (const run of runs) {
+        const at = run.delivered_at ?? run.accepted_at;
+        if (!at) continue;
+        if (!lastLifecycleSendAt || Date.parse(at) > Date.parse(lastLifecycleSendAt)) lastLifecycleSendAt = at;
+      }
+
+      for (const row of flowList) {
+        const flowId = String(row.id);
+        const flowEnrollments = enrollments.filter((e) => String(e.flow_id) === flowId);
+        const nextScheduled = runs
+          .filter((run) => String(run.flow_id) === flowId && run.status === "scheduled" && run.scheduled_for)
+          .map((run) => String(run.scheduled_for))
+          .sort()[0] ?? null;
+        const failedRuns = runs.filter((run) => String(run.flow_id) === flowId && run.status === "failed").length;
+        const status = String(row.status);
+        const createdBy = String(row.created_by ?? "user") === "coordinator" ? "coordinator" : "user";
+        const needsAttention = status === "draft" || (status === "active" && failedRuns > 0);
+
+        flows.push({
+          id: flowId,
+          flowType: String(row.flow_type) === "re_engagement" ? "re_engagement" : "welcome",
+          name: String(row.name ?? ""),
+          status: status as EmailFlowState["status"],
+          createdBy,
+          enrolled: flowEnrollments.length,
+          activeEnrollments: flowEnrollments.filter((e) => e.status === "active").length,
+          nextScheduledAt: nextScheduled,
+          needsAttention,
+          attentionReason: status === "draft"
+            ? (createdBy === "coordinator"
+              ? "MARA proposed this flow; it needs your approval before anyone is enrolled."
+              : "This flow is still a draft.")
+            : failedRuns > 0
+              ? `${failedRuns} lifecycle email${failedRuns === 1 ? "" : "s"} failed.`
+              : null,
+        });
+      }
+    }
+  } catch {
+    // 0040 not applied yet: no lifecycle flows, and the Coordinator still works.
+  }
+
+  const welcomeCovered = flows.some((flow) => flow.flowType === "welcome");
+  const reEngagementCovered = flows.some((flow) => flow.flowType === "re_engagement");
+  const activeLifecycleEnrollments = flows.reduce((total, flow) => total + flow.activeEnrollments, 0);
+
+  // A lifecycle flow that already covers the need is never re-proposed.
+  const flowOpportunities: EmailFlowOpportunity[] = [];
+  if (!welcomeCovered && eligibleCount >= 1) {
+    flowOpportunities.push({
+      flowType: "welcome",
+      reason: `You have ${eligibleCount} subscribed contact${eligibleCount === 1 ? "" : "s"} and no Welcome flow. MARA can prepare a welcome sequence; nothing is sent until you activate it.`,
+    });
+  }
+  if (!reEngagementCovered && eligibleCount >= 5) {
+    flowOpportunities.push({
+      flowType: "re_engagement",
+      reason: `You have ${eligibleCount} subscribed contacts and no Re-engagement flow. MARA can prepare one for contacts Voom has not emailed in a while; nothing is sent until you activate it.`,
+    });
+  }
+
+  // The most recent real send of ANY kind, so "you haven't emailed in a week"
+  // is never claimed while a lifecycle flow is sending.
+  const effectiveLastSentAt = [lastSentAt, lastLifecycleSendAt]
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
+
+  const daysSinceLastSend = effectiveLastSentAt ? (now.getTime() - new Date(effectiveLastSentAt).getTime()) / (1000 * 60 * 60 * 24) : 999;
+  const emailOpportunityAvailable = eligibleCount >= 5
+    && scheduledEmailCount === 0
+    && scheduledLifecycleEmailCount === 0
+    && daysSinceLastSend >= 7;
 
   const emailState: EmailMarketingState = {
     eligibleContactsCount: eligibleCount,
     recentCampaignCount: scheduledEmailCount,
-    lastSentAt,
+    lastSentAt: effectiveLastSentAt,
     scheduledEmailCount,
     opportunityAvailable: emailOpportunityAvailable,
     opportunityReason: emailOpportunityAvailable
       ? `You have ${eligibleCount} contacts ready and haven't sent an email update in over a week.`
       : undefined,
+    flows,
+    scheduledLifecycleEmailCount,
+    activeLifecycleEnrollments,
+    welcomeCovered,
+    reEngagementCovered,
+    flowOpportunities,
   };
 
   const businessProfile: MarketingStateBusinessProfile = {

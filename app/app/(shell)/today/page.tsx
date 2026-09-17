@@ -6,6 +6,9 @@ import { AutomationMode } from "@/components/voom/operating/AutomationMode";
 import { normalizeAutomationMode } from "@/lib/voom/automation";
 import { PerformanceIntelligenceCard } from "@/components/voom/performance/PerformanceIntelligence";
 import { loadPerformanceReport } from "@/lib/performance/data";
+import { readEmailFlowSummary } from "@/lib/email-flows/read";
+import { formatLocalDateTime } from "@/lib/voom/timezone";
+import type { EmailFlowSummary } from "@/lib/email-flows/types";
 import { getOperatingData } from "@/lib/voom/operating-data";
 import { createClient } from "@/utils/supabase/server";
 import type { WorkflowView } from "@/lib/voom/workflow/read";
@@ -28,7 +31,11 @@ export default async function TodayPage() {
   // renders nothing at all until there is enough real data for a statement
   // (see lib/performance/insights.ts) — Today never shows a placeholder
   // "MARA is learning..." message.
-  const performance = await loadPerformanceReport(await createClient(), data.user.id);
+  const sessionDb = await createClient();
+  const performance = await loadPerformanceReport(sessionDb, data.user.id);
+  // Real lifecycle state for the card below. `available` is false when the
+  // 0040 migration is not applied, and then nothing is rendered at all.
+  const lifecycle = await readEmailFlowSummary(sessionDb, data.user.id);
 
   return <div>
     <PageHead
@@ -62,6 +69,12 @@ export default async function TodayPage() {
     </Card>
 
     <PerformanceIntelligenceCard report={performance} source="today" />
+
+    <LifecycleEmailCard
+      summary={lifecycle.available ? lifecycle.summary : null}
+      opportunity={data.coordinator?.needs.find((need) => need.type === "email_flow_opportunity") ?? null}
+      timeZone={snapshot.timeZone}
+    />
 
     <Section title="Publishing today" icon="clock" href="/app/calendar" action="Open Content Calendar" items={summary.publishingToday}
       empty="Nothing is due to publish today." />
@@ -97,6 +110,60 @@ function nextStep(mode: string, summary: { needsApproval: WorkflowView[]; failed
   return mode === "manual"
     ? "You're in Manual mode, so Voom only prepares work when you ask. Build a plan when you're ready."
     : "Your rolling plan is up to date. Voom will replenish the horizon automatically.";
+}
+
+/**
+ * Lifecycle email, from real database rows only.
+ *
+ * Renders nothing at all when the account has no flows, so Today stays clean
+ * and never shows placeholder activity text.
+ */
+function LifecycleEmailCard({
+  summary,
+  opportunity,
+  timeZone,
+}: {
+  summary: EmailFlowSummary | null;
+  opportunity: { title: string; description: string; meta?: Record<string, unknown> } | null;
+  timeZone: string;
+}) {
+  if (!summary || (summary.total === 0 && !opportunity)) return null;
+
+  const lines: string[] = [];
+  for (const flow of summary.flows) {
+    if (flow.status === "active") {
+      lines.push(`${flow.name} is active${flow.activeEnrollments > 0 ? ` — ${flow.activeEnrollments} customer${flow.activeEnrollments === 1 ? " is" : "s are"} in it now` : ""}.`);
+    } else if (flow.status === "draft") {
+      lines.push(`Your ${flow.name} needs approval before anyone is enrolled.`);
+    } else if (flow.status === "paused") {
+      lines.push(`${flow.name} is paused — nothing new will send.`);
+    }
+  }
+  if (summary.scheduledRuns > 0) {
+    lines.push(`${summary.scheduledRuns} lifecycle email${summary.scheduledRuns === 1 ? " is" : "s are"} scheduled.`);
+  }
+  if (opportunity) lines.push(opportunity.description);
+
+  if (lines.length === 0) return null;
+
+  const nextFlow = summary.flows
+    .filter((flow) => flow.status === "active" && flow.nextScheduledAt)
+    .sort((a, b) => String(a.nextScheduledAt).localeCompare(String(b.nextScheduledAt)))[0];
+
+  return <Card className="mb-4 p-5 sm:p-6">
+    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <h2 className="font-display text-base font-semibold">Lifecycle email</h2>
+      <Link href="/app/automations" className="text-[13px] font-semibold text-brand hover:underline">Open Automations →</Link>
+    </div>
+    <ul className="space-y-1.5 text-sm leading-relaxed text-text-2">
+      {lines.slice(0, 4).map((line) => <li key={line}>{line}</li>)}
+    </ul>
+    {nextFlow?.nextScheduledAt && (
+      <p className="mt-2 text-[11.5px] text-text-3">
+        Next lifecycle send: {formatLocalDateTime(nextFlow.nextScheduledAt, timeZone)}
+      </p>
+    )}
+  </Card>;
 }
 
 function Stat({ label, value }: { label: string; value: number }) {
