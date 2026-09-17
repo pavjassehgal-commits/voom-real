@@ -27,6 +27,7 @@ const { createEmailFlow, proposeEmailFlow, coordinatorProposalKey } = await impo
 const engine = await import("../lib/email-flows/engine.ts");
 const { buildMarketingState } = await import("../lib/coordinator/state.ts");
 const { evaluateMarketingNeeds } = await import("../lib/coordinator/engine.ts");
+const { runCoordinatorForOwner } = await import("../lib/coordinator/service.ts");
 
 const OWNER = "11111111-1111-4111-8111-111111111111";
 const BIZ = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -145,6 +146,11 @@ function createAdmin(tables, rpcImpl) {
       return rows;
     }
     async maybeSingle() { return { data: this.rows()[0] ?? null, error: null }; }
+    insert() { return this; }
+    upsert() { return this; }
+    update() { return this; }
+    delete() { return this; }
+    select_after_write() { return this; }
     async single() { return this.maybeSingle(); }
     then(onFulfilled, onRejected) {
       return Promise.resolve({ data: this.rows(), error: null, count: this.rows().length }).then(onFulfilled, onRejected);
@@ -664,9 +670,88 @@ test("6d. a scheduled lifecycle email stops the 'you haven't emailed' claim", as
   assert.equal(state.emailState.opportunityAvailable, false, "lifecycle work counts as scheduled email work");
 });
 
-// ─── 7. External safety ────────────────────────────────────────────────────
+// ─── 7. A UI read is read-only ─────────────────────────────────────────────
 
-test("7. no flow path reached the network, a media provider or a credit", () => {
+/**
+ * `trigger: "ui_read"` is what the Today / Approvals / Automations pages use
+ * when they render. Reading the dashboard must never create, activate or send
+ * anything — only the scheduler and the owner act.
+ */
+test("7a. a ui_read cannot propose, create, activate or send a flow", async () => {
+  const provider = createProvider();
+  const admin = createAdmin(
+    {
+      ...baseTables(),
+      voom_email_flows: [],
+      voom_email_flow_step_runs: [],
+      voom_email_flow_enrollments: [],
+      contacts: Array.from({ length: 12 }, (_, index) => ({
+        id: `contact-${index}`, owner_id: OWNER, email: `contact${index}@example.com`,
+        email_status: "subscribed", first_name: null, created_at: "2026-09-01T09:00:00Z",
+      })),
+    },
+    createRpc(),
+  );
+
+  const result = await runCoordinatorForOwner(admin, OWNER, BIZ, {
+    now: NOW,
+    trigger: "ui_read",
+  });
+
+  // The opportunity is still *seen* (it is real, and the UI may say so)…
+  assert.deepEqual(
+    result.evaluation.state.emailState.flowOpportunities.map((item) => item.flowType),
+    ["welcome", "re_engagement"],
+    "the read still reports the opportunity truthfully",
+  );
+  // …but nothing is written, activated or sent.
+  assert.equal(admin.rpcCalls.filter((call) => call.name === "create_email_flow").length, 0, "no flow is created on a read");
+  assert.equal(admin.rpcCalls.filter((call) => call.name === "set_email_flow_status").length, 0, "nothing is activated on a read");
+  assert.equal(admin.rpcCalls.filter((call) => call.name === "enroll_email_flow_contact").length, 0, "nobody is enrolled on a read");
+  assert.equal(admin.store.voom_email_flows.length, 0, "the database is untouched by a read");
+  assert.deepEqual(result.actionsTaken.filter((action) => String(action.type).startsWith("email_flow")), [], "no email-flow action is recorded");
+  assert.equal(provider.calls.length, 0, "nothing is sent on a read");
+});
+
+test("7b. the same state under the scheduler proposes a draft — and still sends nothing", async () => {
+  const provider = createProvider();
+  const admin = createAdmin(
+    {
+      ...baseTables(),
+      voom_email_flows: [],
+      voom_email_flow_step_runs: [],
+      voom_email_flow_enrollments: [],
+      contacts: Array.from({ length: 12 }, (_, index) => ({
+        id: `contact-${index}`, owner_id: OWNER, email: `contact${index}@example.com`,
+        email_status: "subscribed", first_name: null, created_at: "2026-09-01T09:00:00Z",
+      })),
+    },
+    createRpc(),
+  );
+
+  const result = await runCoordinatorForOwner(admin, OWNER, BIZ, {
+    now: NOW,
+    trigger: "scheduled",
+  });
+
+  const created = admin.rpcCalls.filter((call) => call.name === "create_email_flow");
+  assert.ok(created.length >= 1, "the scheduler does prepare the work");
+  assert.equal(created[0].args.p_payload.createdBy, "coordinator");
+  const proposed = result.actionsTaken.filter((action) => String(action.type).startsWith("email_flow"));
+  assert.ok(proposed.length >= 1, "the proposal is reported");
+  assert.equal(proposed[0].details.activated, false, "and it is explicitly not activated");
+
+  for (const flow of admin.store.voom_email_flows) {
+    assert.equal(flow.status, "draft", "a Coordinator flow is a draft");
+    assert.equal(flow.activated_by, null, "nobody activated it");
+  }
+  assert.equal(admin.rpcCalls.filter((call) => call.name === "enroll_email_flow_contact").length, 0, "a draft enrolls nobody");
+  assert.equal(provider.calls.length, 0, "and sends nothing");
+});
+
+// ─── 8. External safety ────────────────────────────────────────────────────
+
+test("8. no flow path reached the network, a media provider or a credit", () => {
   assert.equal(fetchCalls, 0, "no HTTP request was made anywhere in this file");
   assert.deepEqual(mediaCalls, [], "no media-generation or credit RPC was called");
 });
