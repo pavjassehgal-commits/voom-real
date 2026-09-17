@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildMarketingState } from "./state";
 import { evaluateMarketingNeeds } from "./engine";
 import { runOwnerWorkflow } from "@/lib/voom/workflow/service";
+import { proposeEmailFlow } from "@/lib/email-flows/create";
 import type { AdminClient } from "@/lib/post/server-data";
 import type { CoordinatorRunResult } from "./types";
 
@@ -89,6 +90,59 @@ export async function runCoordinatorForOwner(
         type: "gap_filling_failed",
         details: { error: msg },
       });
+    }
+  }
+
+  // Lifecycle email flows (Email Automation v2).
+  //
+  // The Coordinator may PREPARE a flow — that is Assisted/Autopilot preparing
+  // marketing — but it never activates one. No existing Voom policy authorises
+  // automatic activation of a lifecycle flow that sends email, so Autopilot
+  // fails closed here too and leaves the flow proposed for the owner.
+  //
+  // Duplication is impossible three times over: the opportunity list already
+  // excludes flow types that exist, `proposeEmailFlow` uses a key derived from
+  // (owner, flow type), and the database refuses a second live proposal of the
+  // same type. So `cron → email opportunity → new flow every day` cannot happen.
+  const shouldProposeFlows =
+    trigger !== "ui_read" &&
+    state.mode !== "manual" &&
+    evaluation.state.emailState.flowOpportunities.length > 0;
+
+  if (shouldProposeFlows) {
+    for (const opportunity of evaluation.state.emailState.flowOpportunities) {
+      try {
+        const outcome = await proposeEmailFlow(admin, {
+          ownerId,
+          flowType: opportunity.flowType,
+          mode: state.mode,
+          now,
+        });
+        actionsTaken.push({
+          type: `email_flow_${outcome.outcome}`,
+          details: {
+            flowType: opportunity.flowType,
+            // A proposal is always a draft: nothing can enroll or send yet.
+            activated: false,
+            ...(outcome.outcome === "proposed"
+              ? {
+                  flowId: outcome.result.flow.id,
+                  steps: outcome.result.stepCount,
+                  generationSource: outcome.result.generationSource,
+                }
+              : {}),
+            ...("reason" in outcome ? { reason: outcome.reason } : {}),
+          },
+        });
+      } catch (err) {
+        actionsTaken.push({
+          type: "email_flow_proposal_failed",
+          details: {
+            flowType: opportunity.flowType,
+            error: err instanceof Error ? err.message : "unknown_error",
+          },
+        });
+      }
     }
   }
 

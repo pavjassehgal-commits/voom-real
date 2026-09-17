@@ -11,6 +11,8 @@ export type CoordinatorNeedType =
   | "campaign_needs_attention"
   | "pending_approval"
   | "email_opportunity"
+  | "email_flow_needs_attention"
+  | "email_flow_opportunity"
   | "performance_learning_available"
   | "nothing_needed";
 
@@ -81,13 +83,52 @@ export interface PendingApprovalState {
   sourceId?: string;
 }
 
+/**
+ * One lifecycle email flow, as the Coordinator sees it.
+ *
+ * Flows are authoritative marketing state: an existing Welcome or
+ * Re-engagement flow suppresses the equivalent opportunity, so a daily cron can
+ * never propose the same flow twice.
+ */
+export interface EmailFlowState {
+  id: string;
+  flowType: "welcome" | "re_engagement";
+  name: string;
+  status: "draft" | "active" | "paused" | "archived";
+  createdBy: "user" | "coordinator";
+  enrolled: number;
+  activeEnrollments: number;
+  nextScheduledAt: string | null;
+  needsAttention: boolean;
+  attentionReason?: string | null;
+}
+
+/** A lifecycle flow MARA could prepare. Always a proposal, never an action. */
+export interface EmailFlowOpportunity {
+  flowType: "welcome" | "re_engagement";
+  reason: string;
+  /** The existing flow that already covers this need, when there is one. */
+  suppressedBy?: { flowId: string; name: string; status: string } | null;
+}
+
 export interface EmailMarketingState {
   eligibleContactsCount: number;
   recentCampaignCount: number;
+  /** Last real send of any kind: campaign or lifecycle. */
   lastSentAt: string | null;
   scheduledEmailCount: number;
   opportunityAvailable: boolean;
   opportunityReason?: string;
+  /** Live lifecycle flows (never archived). */
+  flows: EmailFlowState[];
+  /** Lifecycle emails currently scheduled to go out. */
+  scheduledLifecycleEmailCount: number;
+  /** Contacts currently inside a lifecycle flow. */
+  activeLifecycleEnrollments: number;
+  welcomeCovered: boolean;
+  reEngagementCovered: boolean;
+  /** Uncovered flow types MARA may prepare. Empty when everything is covered. */
+  flowOpportunities: EmailFlowOpportunity[];
 }
 
 export interface PerformanceIntelligenceState {

@@ -474,7 +474,17 @@ export async function resolveAudienceChannelEligibility(
   if (!resolved.ok) return resolved;
 
   const summary = computeChannelEligibility(resolved.data, channel);
-  const eligible = summary.eligible.map(({ contact, destination }) => ({
+  // A subscription is necessary but not sufficient: an address the provider has
+  // already bounced or been complained about is suppressed, so the next send
+  // never goes to a known-dead destination. Missing 0040 schema → no filtering.
+  const suppressed = channel === "email"
+    ? await loadSuppressedAddresses(db, ownerId, summary.eligible.map((entry) => entry.destination))
+    : new Set<string>();
+  const eligibleEntries = suppressed.size > 0
+    ? summary.eligible.filter((entry) => !suppressed.has(entry.destination))
+    : summary.eligible;
+
+  const eligible = eligibleEntries.map(({ contact, destination }) => ({
     contactId: contact.id,
     destination,
     masked: maskDestination(destination),
@@ -493,9 +503,35 @@ export async function resolveAudienceChannelEligibility(
       channel,
       totalMembers: resolved.data.length,
       eligibleCount: eligible.length,
-      excludedCount: summary.excluded.length,
+      excludedCount: summary.excluded.length + (summary.eligible.length - eligibleEntries.length),
       duplicateCount: summary.duplicates.length,
       eligible,
     },
   };
+}
+
+/**
+ * Addresses this owner must not email again, from real provider evidence
+ * (bounces and complaints) recorded by `record_email_suppression`.
+ *
+ * Returns an empty set when the table is unavailable, so an un-migrated
+ * database keeps exactly its previous behaviour instead of throwing.
+ */
+async function loadSuppressedAddresses(
+  db: SupabaseClient,
+  ownerId: string,
+  destinations: string[],
+): Promise<Set<string>> {
+  const unique = [...new Set(destinations.filter(Boolean).map((value) => value.toLowerCase()))].slice(0, 500);
+  if (unique.length === 0) return new Set();
+  try {
+    const { data, error } = await db.from("voom_email_suppressions")
+      .select("email")
+      .eq("owner_id", ownerId)
+      .in("email", unique);
+    if (error) return new Set();
+    return new Set(((data ?? []) as Array<{ email: string }>).map((row) => String(row.email).toLowerCase()));
+  } catch {
+    return new Set();
+  }
 }
