@@ -42,6 +42,8 @@ export async function saveOnboarding(input: BusinessProfileInput): Promise<SaveR
       content_frequency: input.contentFrequency || null,
       automation_level: input.automationLevel || null,
       publishing_permission: input.publishingPermission || null,
+      website: input.website?.trim() || null,
+      primary_color: input.primaryColor || null,
       onboarding_completed: true,
     },
     { onConflict: "owner_user_id" },
@@ -77,6 +79,8 @@ export async function saveBrandSettings(input: BusinessProfileInput): Promise<Sa
       content_frequency: input.contentFrequency || null,
       automation_level: input.automationLevel || null,
       publishing_permission: input.publishingPermission || null,
+      website: input.website?.trim() || null,
+      primary_color: input.primaryColor || null,
     },
     { onConflict: "owner_user_id" },
   );

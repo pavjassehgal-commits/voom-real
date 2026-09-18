@@ -38,6 +38,7 @@ import {
 } from "./policy";
 import { computeStepInstant, nextSafeSendInstant } from "./timing";
 import { sendFlowEmail, type FlowSendDeps } from "./send";
+import { composeEmailForSession } from "@/lib/branded-email/session";
 import type {
   EmailFlowEnrollmentRecord,
   EmailFlowRecord,
@@ -412,7 +413,13 @@ async function executeRun(
     return;
   }
 
-  const snapshot = (claimed.content_snapshot ?? {}) as { subject?: string; body?: string };
+  const snapshot = (claimed.content_snapshot ?? {}) as {
+    subject?: string;
+    body?: string;
+    previewText?: string;
+    cta?: string;
+    ctaUrl?: string | null;
+  };
   const subject = String(snapshot.subject ?? "").slice(0, 300);
   const body = String(snapshot.body ?? "");
   if (!subject || !body) {
@@ -427,26 +434,70 @@ async function executeRun(
     return;
   }
 
+  // ── Compose through the Branded Email Engine (renderer + sender identity).
+  //    A quality blocker surfaces as needs-attention and never reaches the
+  //    provider — malformed mail is never shipped. ──────────────────────────
+  let composed: Awaited<ReturnType<typeof composeEmailForSession>> | null = null;
+  let composeError: string | null = null;
+  try {
+    composed = await composeEmailForSession(admin, {
+      ownerId,
+      recipientEmail: eligibility.destination as string,
+      firstName: contact.first_name,
+      subject,
+      previewText: String(snapshot.previewText ?? ""),
+      body,
+      cta: String(snapshot.cta ?? ""),
+      ctaUrl: String(snapshot.ctaUrl ?? ""),
+      marketing: true,
+      flowId: flow.id,
+      contactId: enrollment.contact_id,
+      layout: "welcome",
+      kind: flow.flow_type,
+      position: run.position,
+    });
+  } catch (error) {
+    composeError = error instanceof Error ? error.message.slice(0, 300) : "compose_failed";
+  }
+
   // ── Send through the EXISTING Resend infrastructure ───────────────────────
   let provider;
-  try {
-    provider = await sendFlowEmail(
-      {
-        to: eligibility.destination as string,
-        subject,
-        body,
-        idempotencyKey: attemptKey,
-        firstName: contact.first_name,
-      },
-      options.send ?? {},
-    );
-  } catch {
+  if (!composeError && composed && composed.composed.ok) {
+    try {
+      provider = await sendFlowEmail(
+        {
+          to: eligibility.destination as string,
+          subject: composed.composed.subject,
+          body: composed.composed.html,
+          html: composed.composed.html,
+          text: composed.composed.text,
+          replyTo: composed.sender.replyTo,
+          fromName: composed.sender.fromName,
+          fromAddress: composed.sender.fromAddress,
+          idempotencyKey: attemptKey,
+          firstName: contact.first_name,
+        },
+        options.send ?? {},
+      );
+    } catch {
+      provider = {
+        ok: false,
+        providerMessageId: null,
+        providerStatus: null,
+        errorCode: "provider_request_failed",
+        errorMessage: "The provider request did not complete.",
+      };
+    }
+  } else {
     provider = {
       ok: false,
       providerMessageId: null,
       providerStatus: null,
-      errorCode: "provider_request_failed",
-      errorMessage: "The provider request did not complete.",
+      errorCode: composeError ? "quality_guard_failed" : "email_quality_guard_blocked",
+      errorMessage: composeError
+        ?? (composed && !composed.composed.ok
+          ? (composed.composed.needsAttentionMessage ?? "The email failed its pre-send quality guard.")
+          : "The email could not be composed safely."),
     };
   }
 

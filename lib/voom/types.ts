@@ -51,6 +51,16 @@ export interface BusinessRecord {
   monthly_media_budget_usd?: number | string | null;
   /** Plan (migration 0035). free | pro | max */
   plan?: string | null;
+  /** Branded Email Engine (migration 0041). */
+  email_sender_address?: string | null;
+  email_sender_name?: string | null;
+  email_reply_to?: string | null;
+  email_sender_status?: string | null;
+  website?: string | null;
+  primary_color?: string | null;
+  accent_color?: string | null;
+  logo_path?: string | null;
+  footer_address?: string | null;
   onboarding_completed: boolean;
   created_at: string;
   updated_at: string;
@@ -69,6 +79,10 @@ export interface BusinessProfileInput {
   contentFrequency: string;
   automationLevel: string;
   publishingPermission: string;
+  /** Business website (onboarding "Website or page", optional). */
+  website?: string;
+  /** Brand color chosen at onboarding (OB_COLORS palette, optional). */
+  primaryColor?: string;
 }
 
 export type CampaignStatus = "draft" | "approved" | "rejected";
@@ -81,6 +95,8 @@ export type CampaignKind = "email" | "sms" | "multi";
 
 export interface CampaignRecord {
   id: string;
+  /** The owner recorded on the campaign row; present on fully-selected reads. */
+  owner_user_id?: string;
   kind: CampaignKind;
   name: string;
   objective: string;
@@ -110,6 +126,8 @@ export interface CampaignRecord {
 
 export interface CampaignRecipientRecord {
   id: string;
+  /** The owner recorded on the recipient row (from `add_campaign_recipient`). */
+  owner_user_id?: string | null;
   contact: string;
   contact_name: string | null;
   consent_at: string;
