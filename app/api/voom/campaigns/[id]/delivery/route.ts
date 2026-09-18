@@ -123,7 +123,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return Response.json({ error: rpcErrorMessage(recipientResult.error, "Voom couldn't save that recipient safely."), delivery }, { status: rpcStatus(recipientResult.error) });
     }
 
-    const recipient = recipientResult.data as CampaignRecipientRecord;
+    const recipient = { ...(recipientResult.data as CampaignRecipientRecord), owner_user_id: user.id };
     const attemptKey = createCampaignSendAttemptKey();
     const claimResult = await admin.rpc("claim_campaign_send", {
       p_owner_user_id: user.id,
@@ -283,7 +283,7 @@ async function sendToLinkedAudience(db: SupabaseClient, ownerId: string, campaig
       continue;
     }
 
-    const recipient = recipientResult.data as CampaignRecipientRecord;
+    const recipient = { ...(recipientResult.data as CampaignRecipientRecord), owner_user_id: ownerId };
     const attemptKey = createCampaignSendAttemptKey();
     const claimResult = await admin.rpc("claim_campaign_send", {
       p_owner_user_id: ownerId,

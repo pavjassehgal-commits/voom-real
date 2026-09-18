@@ -117,7 +117,7 @@ function brandFromBusiness(business: BusinessRecord | null): Brand {
     freq: business.content_frequency ?? "",
     auto: business.automation_level ?? "",
     permission: business.publishing_permission ?? "",
-    color: "#e8481f",
+    color: business.primary_color ?? "#e8481f",
   };
 }
 
@@ -387,6 +387,8 @@ export function VoomProvider({
         contentFrequency: skipped ? "" : o.freq,
         automationLevel: skipped ? "" : o.auto,
         publishingPermission: skipped ? "" : o.permission,
+        website: skipped ? "" : o.site,
+        primaryColor: skipped ? "" : o.color,
       };
 
       const result = await saveOnboardingAction(payload);

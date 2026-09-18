@@ -9,6 +9,7 @@ import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { AdSepNote } from "@/components/voom/ui/Notes";
 import { Btn, Card, Chip, Field, Input, Tag } from "@/components/voom/ui/primitives";
+import { PrimingPreview } from "@/components/voom/email/PrimingPreview";
 import { getPlanConfig } from "@/lib/billing/plans";
 import type { CreditSummary } from "@/lib/billing/ledger";
 
@@ -26,6 +27,29 @@ export default function SettingsPage() {
   const [savingSpend, setSavingSpend] = useState(false);
   const [creditSummary, setCreditSummary] = useState<CreditSummary | null>(null);
   const [creditLoading, setCreditLoading] = useState(true);
+  const [emailBrand, setEmailBrand] = useState<null | undefined | {
+    onBusinessIdentity: boolean;
+    verificationLabel: string;
+    fromName: string;
+    fromAddress: string;
+    replyTo: string | null;
+  }>(null);
+
+  useEffect(() => {
+    let active = true;
+    void fetch("/api/voom/email-brand/settings", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((body: { settings?: { sender: { onBusinessIdentity: boolean; verificationLabel: string; fromName: string; fromAddress: string; replyTo: string | null } } }) => {
+        if (active && body.settings) setEmailBrand(body.settings.sender);
+        else if (active) setEmailBrand(undefined);
+      })
+      .catch(() => {
+        if (active) setEmailBrand(undefined);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -202,6 +226,43 @@ export default function SettingsPage() {
           </Chip>
         </div>
       </Card>
+
+      <Card className="mb-3.5 p-4">
+        <h2 className="mb-3.5 font-display text-lg font-semibold">Email sender — what customers see</h2>
+        {emailBrand === null ? (
+          <p className="text-sm text-text-3">Loading sender identity…</p>
+        ) : emailBrand !== undefined ? (
+          <div className="space-y-2.5 text-sm">
+            <p className="text-[13px] leading-relaxed text-text-2">
+              Voom sends on your behalf through a verified sending domain. Until your own domain is verified, emails are sent from the Voom-managed sending identity while keeping your business name as the sender.
+            </p>
+            <div className="flex items-center gap-2">
+              <Tag tone={emailBrand.onBusinessIdentity ? "t-green" : "t-amber"}>
+                {emailBrand.verificationLabel}
+              </Tag>
+              <span className="text-[13px] text-text-2">Sender domain verification</span>
+            </div>
+            <Field label="From name">
+              <div className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-[13.5px]">{emailBrand.fromName}</div>
+            </Field>
+            <Field label="From address">
+              <div className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-[13.5px]">{emailBrand.fromAddress}</div>
+            </Field>
+            {emailBrand.replyTo && (
+              <Field label="Reply-to">
+                <div className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-[13.5px]">{emailBrand.replyTo}</div>
+              </Field>
+            )}
+            <p className="text-[12px] text-text-3">
+              Voom never spoofs: an unverified business address is never used as the sending address. Verification requires configuration through your email provider; it is never inferred from a domain name.
+            </p>
+          </div>
+        ) : (
+          <p className="text-sm text-text-3">Sender identity unavailable — configuration pending.</p>
+        )}
+      </Card>
+
+      <PrimingPreview />
 
       <Card className="mb-3.5 p-4">
         <h2 className="mb-1.5 font-display text-lg font-semibold">Voom automation</h2>

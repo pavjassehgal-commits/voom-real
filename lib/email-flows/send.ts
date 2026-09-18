@@ -25,6 +25,17 @@ export interface FlowSendInput {
   subject: string;
   body: string;
   /**
+   * Branded optional fields: when provided (the Branded Email Engine path),
+   * the resolved sender identity, reply-to and the premium HTML are sent.
+   * When absent (legacy callers/tests), the Voom-managed identity and the
+   * plain-text body are sent exactly as before.
+   */
+  html?: string;
+  text?: string;
+  replyTo?: string | null;
+  fromName?: string | null;
+  fromAddress?: string | null;
+  /**
    * Stable per step run (the run's own idempotency key). Resend deduplicates
    * on this header, so even if Voom's own claim guard were ever bypassed by a
    * timeout-and-retry, the provider would not send the same message twice.
@@ -54,16 +65,30 @@ export function personalizeFlowBody(body: string, firstName: string | null | und
 
 export async function sendFlowEmail(input: FlowSendInput, deps: FlowSendDeps = {}): Promise<FlowSendResult> {
   const client = deps.client ?? createResendClient();
-  const text = personalizeFlowBody(input.body, input.firstName ?? null);
+  const text = input.text ?? personalizeFlowBody(input.body, input.firstName ?? null);
+  const html = input.html ?? null;
+
+  const fromName = input.fromName?.trim() || client.config.fromName;
+  const fromAddress = input.fromAddress?.trim() || client.config.fromAddress;
+
+  const payload: Record<string, unknown> = {
+    from: `${fromName} <${fromAddress}>`,
+    to: [input.to],
+    subject: input.subject,
+  };
+  if (html) {
+    // Premium path: the renderer's HTML is the body, the plain-text part is
+    // the accessible alternative.
+    payload.html = html;
+    payload.text = text;
+  } else {
+    payload.text = text;
+  }
+  if (input.replyTo) payload.reply_to = input.replyTo;
 
   const response = await client.post(
     "emails",
-    {
-      from: `${client.config.fromName} <${client.config.fromAddress}>`,
-      to: [input.to],
-      subject: input.subject,
-      text,
-    },
+    payload,
     // Provider-side idempotency, in addition to Voom's durable claim guard.
     { headers: { "Idempotency-Key": input.idempotencyKey } },
   );

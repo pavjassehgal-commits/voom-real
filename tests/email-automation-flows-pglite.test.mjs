@@ -779,8 +779,12 @@ test("7. migration 0040 is additive and owner-scoped", async () => {
   const dir = "supabase/migrations";
   const files = fs.readdirSync(dir).filter((name) => name.endsWith(".sql")).sort();
 
-  assert.equal(files[files.length - 1], "0040_email_automation_v2.sql", "0040 is the newest migration");
-  assert.equal(files[files.length - 2].startsWith("0039_"), true, "it sits directly on top of 0039");
+  // 0040 is unchanged; the Branded Email Engine (0041) is the newest migration
+  // and sits on top of it without altering it.
+  assert.equal(files[files.length - 1], "0041_branded_email_engine.sql", "0041 is the newest migration");
+  assert.ok(files.includes("0040_email_automation_v2.sql"), "0040 still exists untouched");
+  const after039 = files[files.findIndex((name) => name.startsWith("0039_")) + 1];
+  assert.equal(after039, "0040_email_automation_v2.sql", "0040 sits directly on top of 0039");
 
   const sql = fs.readFileSync(path.join(dir, "0040_email_automation_v2.sql"), "utf8").toLowerCase();
 

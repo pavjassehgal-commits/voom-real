@@ -6,6 +6,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createResendClient } from "@/lib/email/client";
 import { getResendAvailability } from "@/lib/email/config";
 import { resolveAudienceChannelEligibility } from "@/lib/contacts/server-data";
+import { sendComposedEmail } from "@/lib/branded-email/send";
+import { composeEmailForSession } from "@/lib/branded-email/session";
 import type { AudienceChannelEligibility, AudienceEligibilityPreview } from "@/lib/contacts/types";
 import type { CampaignRecord, CampaignRecipientRecord, CampaignSendRecord, CampaignDeliveryView, CampaignProviderAvailability, CampaignDeliveryState, CampaignSendSummary } from "./types";
 
@@ -177,7 +179,71 @@ export function createCampaignSendAttemptKey() {
   return randomUUID();
 }
 
+export interface CampaignSendResult {
+  ok: boolean;
+  providerMessageId: string | null;
+  providerStatus: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+}
+
+/**
+ * Sends one approved campaign email through the Branded Email Engine.
+ *
+ * The body is composed with the premium renderer (HTML + plain-text
+ * alternative), the sender identity is resolved per-business (never spoofed),
+ * and a real unsubscribe link is minted for the marketing send. A pre-send
+ * quality blocker surfaces as `quality_guard_blocked` instead of shipping
+ * malformed mail. When the branded session cannot be built (e.g. 0041 not
+ * applied), the send falls back to the exact legacy plain-text behaviour.
+ */
 export async function sendEmailCampaign(campaign: CampaignRecord, recipient: CampaignRecipientRecord) {
+  const ownerId = (campaign as { owner_user_id?: string | null }).owner_user_id
+    ?? recipient.owner_user_id
+    ?? null;
+
+  if (ownerId) {
+    try {
+      const { composed, sender } = await composeEmailForSession(await campaignDbClient(), {
+        ownerId,
+        recipientEmail: recipient.contact,
+        firstName: recipient.contact_name,
+        subject: campaign.subject?.trim() || campaign.name,
+        previewText: campaign.preview_text,
+        body: campaign.content ?? "",
+        cta: null,
+        ctaUrl: null,
+        marketing: true,
+        campaignId: campaign.id,
+        kind: "campaign",
+      });
+
+      if (!composed.ok) {
+        return {
+          ok: false,
+          providerMessageId: null,
+          providerStatus: null,
+          errorCode: "quality_guard_blocked",
+          errorMessage: composed.needsAttentionMessage ?? "The email failed its pre-send quality guard.",
+        };
+      }
+
+      return sendComposedEmail({
+        to: recipient.contact,
+        subject: composed.subject,
+        html: composed.html,
+        text: composed.text,
+        from: `${sender.fromName} <${sender.fromAddress}>`,
+        replyTo: sender.replyTo,
+        idempotencyKey: createCampaignSendAttemptKey(),
+        tags: [{ name: "campaign_id", value: campaign.id }],
+      });
+    } catch {
+      // Fall through to the legacy plain-text send below. The branded engine
+      // degrades, it never breaks delivery.
+    }
+  }
+
   const client = createResendClient();
   const response = await client.post("emails", {
     from: `${client.config.fromName} <${client.config.fromAddress}>`,
@@ -193,6 +259,14 @@ export async function sendEmailCampaign(campaign: CampaignRecord, recipient: Cam
     errorCode: response.ok ? null : `HTTP_${response.status}`,
     errorMessage: response.ok ? null : providerErrorMessage(body, "Resend couldn't accept that email send."),
   };
+}
+
+let campaignDbClientPromise: Promise<Awaited<ReturnType<typeof import("@/utils/supabase/admin").createAdminClient>>> | null = null;
+async function campaignDbClient() {
+  if (!campaignDbClientPromise) {
+    campaignDbClientPromise = import("@/utils/supabase/admin").then((mod) => mod.createAdminClient());
+  }
+  return campaignDbClientPromise;
 }
 
 export function verifyResendWebhook(payload: string, headers: Headers, secret: string) {
