@@ -779,8 +779,12 @@ test("7. migrations 0040 and 0041 are additive and owner-scoped", async () => {
   const dir = "supabase/migrations";
   const files = fs.readdirSync(dir).filter((name) => name.endsWith(".sql")).sort();
 
-  assert.equal(files[files.length - 1], "0041_branded_email_engine.sql", "0041 is the newest migration");
-  assert.equal(files[files.length - 2], "0040_email_automation_v2.sql", "it sits directly on top of 0040, which must never be modified or rerun");
+  // 0042 is a focused bug fix on top of the Branded Email Engine: it replaces
+  // three CHECK constraints and two RPC bodies that 0041 shipped with
+  // uncompilable regular expressions. It edits neither 0040 nor 0041.
+  assert.equal(files[files.length - 1], "0042_branded_email_url_regex_fix.sql", "0042 is the newest migration");
+  assert.equal(files[files.length - 2], "0041_branded_email_engine.sql", "it sits directly on top of 0041");
+  assert.equal(files[files.length - 3], "0040_email_automation_v2.sql", "0041 still sits directly on top of 0040, which must never be modified or rerun");
 
   const sql = fs.readFileSync(path.join(dir, "0040_email_automation_v2.sql"), "utf8").toLowerCase();
 
@@ -831,6 +835,17 @@ test("7. migrations 0040 and 0041 are additive and owner-scoped", async () => {
   assert.equal(policies41.length, 4, `expected the four owner-scoped select policies, got: ${policies41.join(", ")}`);
   assert.match(sql41, /using \(\(select auth\.uid\(\)\) = owner_user_id\)/, "engine rows are scoped to their owner");
   assert.doesNotMatch(sql41, /grant (?:insert|update|delete)[^;]*to authenticated/, "the browser cannot write engine data");
+
+  // 0042 is additive in the same way: it re-declares two RPC bodies and three
+  // CHECK constraints, and destroys nothing.
+  const sql42 = fs.readFileSync(path.join(dir, "0042_branded_email_url_regex_fix.sql"), "utf8").toLowerCase();
+  assert.doesNotMatch(sql42, /drop table/, "0042 drops no table");
+  assert.doesNotMatch(sql42, /drop column/, "0042 drops no column");
+  assert.doesNotMatch(sql42, /truncate/, "0042 truncates nothing");
+  assert.doesNotMatch(sql42, /alter column [a-z_]+ type/, "0042 retypes no existing column");
+  assert.doesNotMatch(sql42, /create table/, "0042 creates no new table");
+  assert.doesNotMatch(sql42, /grant (?:insert|update|delete)[^;]*to authenticated/, "0042 adds no browser write path");
+  assert.doesNotMatch(sql42, /grant execute[^;]*to (anon|authenticated)/, "0042 keeps the RPCs service-role only");
 });
 
 // ─── 8. The policy layer and the schema agree ──────────────────────────────
