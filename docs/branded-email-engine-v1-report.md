@@ -56,7 +56,7 @@ Priority honored: published business email assets → (draft asset copy path, ow
 
 ## 10. Unsubscribe (real, working)
 
-- Token: `base64url("v1:<ownerId>:<email>")` + HMAC-SHA256 (key: `EMAIL_UNSUBSCRIBE_SECRET`, falling back to `SUPABASE_SECRET_KEY`), deterministic per owner+address, constant-time compare.
+- Token: `base64url("v1:<ownerId>:<email>")` + HMAC-SHA256 (key: `EMAIL_UNSUBSCRIBE_SECRET` **only** — no fallback to `SUPABASE_SECRET_KEY` or any other credential; see §19), deterministic per owner+address, constant-time compare.
 - Links: `NEXT_PUBLIC_SITE_URL` (or request origin) `/unsubscribe?token=…` — rendered in **HTML and plain text** (guard-enforced).
 - Processing: public page (no login) → `POST /api/unsubscribe` → verify → `record_email_unsubscribe` RPC (service-role only, idempotent) → durable suppression + `contacts.email_status='unsubscribed'`.
 - Tampered/forged/malformed tokens refused with distinct honest messages (test 5b). No secret configured ⇒ `unsubscribe_unavailable` — the send is refused rather than shipping a dead link (test 5c).
@@ -102,3 +102,30 @@ SMS/WhatsApp/push (permanent), drag-and-drop editor, arbitrary HTML editor, doze
 2. Set `EMAIL_UNSUBSCRIBE_SECRET` (long random string) — without it the engine **refuses to send** by design.
 3. Verify the business sending domain in the Resend dashboard; the settings card will flip to "Verified" from live provider state — never from manual claims.
 4. The email-flow cron remains deliberately unconfigured (unchanged decision — activating it starts the live welcome flow including Email #2).
+
+## 19. Security hotfix — the unsubscribe secret is exclusive (2026-09-19)
+
+Follow-up hardening to §10: the unsubscribe HMAC no longer falls back to
+`SUPABASE_SECRET_KEY`. `EMAIL_UNSUBSCRIBE_SECRET` is the **only** credential
+accepted for unsubscribe token signing/verification — no fallback to
+`SUPABASE_SECRET_KEY`, `CRON_SECRET`, encryption keys, provider/API keys, or any
+derived or runtime-generated secret.
+
+- **Why**: sharing a signing key across subsystems widens the blast radius of a
+  single leaked credential, and silently couples unsubscribe-token validity to an
+  unrelated secret's rotation (rotating `SUPABASE_SECRET_KEY` would have
+  invalidated every previously minted link, and vice versa).
+- **Behavior change**: none when `EMAIL_UNSUBSCRIBE_SECRET` is set. When it is
+  unset the engine already refused to send (fail-closed) — the fallback only ever
+  "worked" by silently borrowing an unrelated credential, which is exactly what
+  is removed. Verification without the secret returns `not_configured`; the
+  public page shows the same generic not-found as for any invalid token.
+- **Pinned by tests**: 5c (no secret at all ⇒ refused), 5d (`SUPABASE_SECRET_KEY`
+  present ⇒ still refused — never a signing key), 5e (no other credential —
+  `CRON_SECRET`, provider/API keys, webhook secrets, encryption-style keys —
+  substitutes for it).
+- **Scope**: `lib/email/branded/unsubscribe.ts`, `tests/branded-email-engine.test.mjs`,
+  `.env.example`, this report. No migration, no token-format change, no
+  sender/template change, no cron change, and no impact on Email #2 beyond what
+  §16 already states (production must set `EMAIL_UNSUBSCRIBE_SECRET` before
+  go-live).
