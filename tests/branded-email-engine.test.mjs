@@ -715,6 +715,7 @@ test("5b. tampered, forged and malformed tokens are all refused", async () => {
 
 test("5c. with no secret configured, minting is refused (never a fake link)", async () => {
   const saved = process.env.EMAIL_UNSUBSCRIBE_SECRET;
+  const savedSupabase = process.env.SUPABASE_SECRET_KEY;
   delete process.env.EMAIL_UNSUBSCRIBE_SECRET;
   delete process.env.SUPABASE_SECRET_KEY;
   try {
@@ -722,7 +723,63 @@ test("5c. with no secret configured, minting is refused (never a fake link)", as
     assert.equal(isUnsubscribeMintingConfigured(), false);
     assert.equal(verifyUnsubscribeToken("anything.at.all").reason, "not_configured");
   } finally {
-    process.env.EMAIL_UNSUBSCRIBE_SECRET = saved ?? "branded_test_secret";
+    if (saved === undefined) delete process.env.EMAIL_UNSUBSCRIBE_SECRET;
+    else process.env.EMAIL_UNSUBSCRIBE_SECRET = saved;
+    if (savedSupabase === undefined) delete process.env.SUPABASE_SECRET_KEY;
+    else process.env.SUPABASE_SECRET_KEY = savedSupabase;
+  }
+});
+
+test("5d. SUPABASE_SECRET_KEY is never a fallback signing key", async () => {
+  const saved = process.env.EMAIL_UNSUBSCRIBE_SECRET;
+  const savedSupabase = process.env.SUPABASE_SECRET_KEY;
+  delete process.env.EMAIL_UNSUBSCRIBE_SECRET;
+  // The Supabase secret must not stand in for EMAIL_UNSUBSCRIBE_SECRET even
+  // when it is the only secret present in the environment.
+  process.env.SUPABASE_SECRET_KEY = "decoy_supabase_secret_never_a_signing_key";
+  try {
+    const { isUnsubscribeMintingConfigured, verifyUnsubscribeToken } = await import("../lib/email/branded/unsubscribe.ts");
+    assert.equal(isUnsubscribeMintingConfigured(), false, "no fallback to SUPABASE_SECRET_KEY");
+    assert.equal(verifyUnsubscribeToken("anything.at.all").reason, "not_configured");
+  } finally {
+    if (saved === undefined) delete process.env.EMAIL_UNSUBSCRIBE_SECRET;
+    else process.env.EMAIL_UNSUBSCRIBE_SECRET = saved;
+    if (savedSupabase === undefined) delete process.env.SUPABASE_SECRET_KEY;
+    else process.env.SUPABASE_SECRET_KEY = savedSupabase;
+  }
+});
+
+test("5e. no other credential substitutes for EMAIL_UNSUBSCRIBE_SECRET", async () => {
+  const saved = process.env.EMAIL_UNSUBSCRIBE_SECRET;
+  const savedOthers = {
+    SUPABASE_SECRET_KEY: process.env.SUPABASE_SECRET_KEY,
+    CRON_SECRET: process.env.CRON_SECRET,
+    EMAIL_PROVIDER_API_KEY: process.env.EMAIL_PROVIDER_API_KEY,
+    EMAIL_WEBHOOK_SECRET: process.env.EMAIL_WEBHOOK_SECRET,
+    AI_API_KEY: process.env.AI_API_KEY,
+    ENCRYPTION_KEY: process.env.ENCRYPTION_KEY,
+  };
+  delete process.env.EMAIL_UNSUBSCRIBE_SECRET;
+  // Every plausible look-alike credential is present — none of them may be
+  // borrowed for unsubscribe signing/verification (no derived or
+  // runtime-generated key either).
+  process.env.SUPABASE_SECRET_KEY = "decoy_supabase_secret";
+  process.env.CRON_SECRET = "decoy_cron_secret";
+  process.env.EMAIL_PROVIDER_API_KEY = "re_decoy_provider_key";
+  process.env.EMAIL_WEBHOOK_SECRET = "whsec_decoy";
+  process.env.AI_API_KEY = "sk-decoy";
+  process.env.ENCRYPTION_KEY = "decoy_encryption_key";
+  try {
+    const { isUnsubscribeMintingConfigured, verifyUnsubscribeToken } = await import("../lib/email/branded/unsubscribe.ts");
+    assert.equal(isUnsubscribeMintingConfigured(), false, "EMAIL_UNSUBSCRIBE_SECRET is exclusive");
+    assert.equal(verifyUnsubscribeToken("anything.at.all").reason, "not_configured");
+  } finally {
+    if (saved === undefined) delete process.env.EMAIL_UNSUBSCRIBE_SECRET;
+    else process.env.EMAIL_UNSUBSCRIBE_SECRET = saved;
+    for (const [name, value] of Object.entries(savedOthers)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
 });
 

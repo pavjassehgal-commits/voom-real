@@ -31,11 +31,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 const UNSUBSCRIBE_TOKEN_VERSION = "v1";
 
 function hmacKey(): string {
-  return (
-    process.env.EMAIL_UNSUBSCRIBE_SECRET?.trim() ||
-    process.env.SUPABASE_SECRET_KEY?.trim() ||
-    ""
-  );
+  // Exclusive by design: EMAIL_UNSUBSCRIBE_SECRET is the ONLY credential
+  // accepted for unsubscribe token signing/verification. No fallback to
+  // SUPABASE_SECRET_KEY, CRON_SECRET, encryption keys, provider/API keys, or
+  // any derived/runtime-generated secret — sharing a signing key across
+  // subsystems widens the blast radius of a leak and silently couples
+  // unsubscribe-token validity to an unrelated credential's rotation.
+  // Unset ⇒ fail closed: minting is refused and verification returns
+  // not_configured (generic not-found on the public page).
+  return process.env.EMAIL_UNSUBSCRIBE_SECRET?.trim() || "";
 }
 
 export function isUnsubscribeMintingConfigured(): boolean {
