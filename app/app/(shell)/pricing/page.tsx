@@ -2,7 +2,62 @@
 
 import { useState } from "react";
 import { useVoomState } from "@/lib/voom/store";
-import { nfc, PLANS } from "@/lib/voom/demoData";
+import { nfc } from "@/lib/voom/demoData";
+import { getPlanConfig } from "@/lib/billing/plans";
+
+const PLANS = [
+  {
+    id: "free" as const,
+    name: "Free",
+    get m() { return getPlanConfig("free").priceUsd; },
+    y: 0,
+    blurb: getPlanConfig("free").blurb,
+    hot: false,
+    f: [
+      "Manual mode only — You control execution. MARA helps when you ask.",
+      "Plan, draft and upload your own media",
+      "No AI image/video generation (0 credits)",
+      "No Autopilot",
+      "Approvals & Content Calendar",
+      "Instagram Posts, Reels & Stories (own assets)",
+    ],
+    off: ["AI generation with MARA", "Assisted mode", "Autopilot mode", "Automatic paid media"],
+  },
+  {
+    id: "pro" as const,
+    name: "Pro",
+    get m() { return getPlanConfig("pro").priceUsd; },
+    y: 290,
+    blurb: getPlanConfig("pro").blurb,
+    hot: false,
+    f: [
+      "Manual + Assisted mode",
+      "MARA drafts your copy & schedules",
+      "AI image & video generation (150 credits)",
+      "Publishing queue automation",
+      "You approve before Voom acts",
+      "Email marketing (soon)",
+    ],
+    off: ["Autopilot mode", "Automatic paid media"],
+  },
+  {
+    id: "max" as const,
+    name: "Max",
+    get m() { return getPlanConfig("max").priceUsd; },
+    y: 790,
+    blurb: getPlanConfig("max").blurb,
+    hot: true,
+    f: [
+      "Manual + Assisted + Autopilot mode",
+      "MARA runs your marketing within limits",
+      "AI image & video generation (500 credits)",
+      "Automatic paid media generation (toggle)",
+      "Safe actions execute automatically",
+      "Campaign intelligence & insights",
+    ],
+    off: [],
+  },
+];
 import { Icon } from "@/components/voom/icons";
 import { Btn, Card, Tag } from "@/components/voom/ui/primitives";
 import { AD_SEPARATION, AdSepNote } from "@/components/voom/ui/Notes";
@@ -77,7 +132,7 @@ export default function PricingPage() {
               </div>
               <p className="my-1.5 text-[13.3px] text-text-2">{p.blurb}</p>
               <div className="flex items-baseline gap-1.5">
-                <span className="font-display text-[34px] font-bold tracking-tight">AED {nfc(p.m)}</span>
+                <span className="font-display text-[34px] font-bold tracking-tight">${nfc(p.m)}</span>
                 <span className="text-[13.5px] text-text-3">/month</span>
               </div>
               <div className="mt-1 text-xs text-text-3">{p.m ? "Software subscription only — ad budget is separate" : "No card required"}</div>

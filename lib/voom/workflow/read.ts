@@ -1,4 +1,5 @@
 import "server-only";
+import { normalizePlan, canUseAutomationMode } from "@/lib/billing/plans";
 
 import { accountTimezone, formatLocalTime, isoToLocalDate, localDate, relativeDayLabel } from "@/lib/voom/timezone";
 import { CADENCE_LABELS, DEFAULT_HORIZON_DAYS, isWithinHorizon, normalizeCadence, type Cadence } from "@/lib/voom/cadence";
@@ -201,12 +202,17 @@ export async function loadWorkflowSnapshot(
 ): Promise<WorkflowSnapshot> {
   const now = options.now ?? new Date();
   const { data: business } = await admin.from("businesses")
-    .select("content_frequency,automation_level,timezone").eq("owner_user_id", ownerId).maybeSingle();
+    .select("content_frequency,automation_level,timezone,plan").eq("owner_user_id", ownerId).maybeSingle();
   const timeZone = accountTimezone((business as { timezone?: string | null } | null)?.timezone);
   const today = localDate(now, timeZone);
   const cadence = normalizeCadence(business?.content_frequency);
-  const mode = business?.automation_level === "manual" || business?.automation_level === "autopilot"
+  
+  const planId = normalizePlan((business as any)?.plan);
+  let mode = business?.automation_level === "manual" || business?.automation_level === "autopilot"
     ? business.automation_level : "assisted";
+  if (!canUseAutomationMode(planId, mode)) {
+    mode = planId === "pro" ? "assisted" : "manual";
+  }
 
   const { data: plan } = await admin.from("marketing_plans")
     .select("id,business_goal,valid_from,valid_until")

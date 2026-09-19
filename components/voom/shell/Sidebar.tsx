@@ -8,7 +8,7 @@ import Logo from "@/app/components/Logo";
 import { NAV, pageIdFromPath } from "./nav";
 
 export function Sidebar() {
-  const { sideOpen } = useVoomState();
+  const { sideOpen, plan } = useVoomState();
   const { goTo, toggleSidebar } = useVoomActions();
   const pathname = usePathname();
   const active = pageIdFromPath(pathname);
@@ -61,8 +61,10 @@ export function Sidebar() {
           ))}
         </nav>
         <div className="voom-grad-deep relative mx-1.5 mt-3 overflow-hidden rounded-[15px] p-3.5 text-white">
-          <b className="font-display text-[15px]">You’re on Free</b>
-          <p className="my-0.5 mb-2.5 text-xs opacity-85">Your assisted marketing workspace is active — no card required.</p>
+          <b className="font-display text-[15px]">You’re on {plan === "max" ? "Max" : plan === "pro" ? "Pro" : "Free"}</b>
+          <p className="my-0.5 mb-2.5 text-xs opacity-85">
+            {plan === "max" ? "Your automated marketing workspace is active." : plan === "pro" ? "Your assisted marketing workspace is active." : "Your manual marketing workspace is active."}
+          </p>
           <Btn
             variant="plain"
             size="sm"

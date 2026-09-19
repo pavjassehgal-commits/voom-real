@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useVoomActions, useVoomState, getInitials } from "@/lib/voom/store";
-import { PLANS } from "@/lib/voom/demoData";
+import { getPlanConfig } from "@/lib/billing/plans";
 import { Icon } from "../icons";
 import { IconBtn } from "../ui/primitives";
 import { useModal } from "@/lib/voom/modal";
@@ -159,7 +159,7 @@ export function Topbar() {
     };
   }, [syncAttention]);
 
-  const planName = PLANS.find((p) => p.id === plan)?.name ?? "Free";
+  const planName = getPlanConfig(plan === "max" ? "max" : plan === "pro" ? "pro" : "free").name;
 
   function handleNotifOpen() {
     open(<NotificationsModal />);

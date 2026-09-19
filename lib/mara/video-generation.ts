@@ -151,6 +151,23 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
     }
   }
 
+  const generationId = input.generationId ?? randomUUID();
+
+
+  // V1 billing: reserve credits BEFORE provider submission (hard boundary)
+  if (ports.reserveCredits) {
+    const creditSource = input.source === "autopilot" ? "autopilot" : "user_request";
+    const reserve = await ports.reserveCredits({ ownerId: input.ownerId, generationId, mediaType: "video", source: creditSource });
+    if (!reserve.ok) {
+      const reason = reserve.reason ?? "spend_limit";
+      if (reason === "insufficient_credits" || reason === "plan_not_allowed") {
+        return { ok: false, status: 402, code: reason as any, errorCode: reason, message: reserve.message ?? "Not enough credits or plan does not allow generation." };
+      }
+      return { ok: false, status: 503, code: "automatic_media_disabled" as any, errorCode: reason, message: reserve.message ?? "Automatic media generation disabled." };
+    }
+  }
+
+  
   let plan: VideoPlanResult;
   try {
     plan = await ports.planMedia({
@@ -161,6 +178,7 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
       hasSourceImage: input.sourceAsset !== null,
     });
   } catch (reason) {
+    if (ports.refundCredits) await ports.refundCredits(input.ownerId, generationId).catch(() => undefined);
     const code = reason instanceof Error ? (reason as Error & { code?: string }).code ?? "plan_failed" : "plan_failed";
     if (code === "not_configured") {
       return { ok: false, status: 503, code: "not_configured", errorCode: "not_configured", message: "MARA's AI provider is not configured yet, so no video was planned." };
@@ -177,10 +195,12 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
 
   if (input.sourceAsset) {
     if (!input.supportsImageToVideo) {
+      if (ports.refundCredits) await ports.refundCredits(input.ownerId, generationId).catch(() => undefined);
       return { ok: false, status: 503, code: "unsupported_input", errorCode: "unsupported_input", message: "This video provider can't animate your image yet. Your previous asset is unchanged." };
     }
     const stored = await ports.loadReferenceImage(input.ownerId, input.sourceAsset.storagePath, input.sourceAsset.assetId);
     if (!stored) {
+      if (ports.refundCredits) await ports.refundCredits(input.ownerId, generationId).catch(() => undefined);
       return { ok: false, status: 503, code: "db_failure", errorCode: "db_failure", message: "The uploaded image could not be read safely. Nothing was generated." };
     }
     referenceImage = { bytes: stored.bytes, mimeType: stored.mimeType, extension: stored.extension, name: stored.name, url: stored.url ?? null };
@@ -191,6 +211,7 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
     try {
       base = await ports.generateBaseImage({ prompt: basePrompt, aspectRatio: "9:16" });
     } catch (reason) {
+      if (ports.refundCredits) await ports.refundCredits(input.ownerId, generationId).catch(() => undefined);
       if (input.providerName !== "openrouter" || !(reason instanceof Error) || reason.message !== "image_provider_not_configured") {
         return { ok: false, status: 503, code: "provider_failed", errorCode: "unavailable", message: "MARA couldn't create the base visual for the video. Nothing was generated." };
       }
@@ -201,12 +222,14 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
     } else {
       const inspected = inspectImageBytes(base.bytes);
       if (!inspected || !aspectMatches(inspected.width, inspected.height, "9:16")) {
+        if (ports.refundCredits) await ports.refundCredits(input.ownerId, generationId).catch(() => undefined);
         return { ok: false, status: 503, code: "provider_failed", errorCode: "invalid_output", message: "The base visual didn't pass Voom's checks, so no video was generated. Nothing changed." };
       }
       const baseExtension = inspected.mimeType === "image/png" ? "png" as const : inspected.mimeType === "image/webp" ? "webp" as const : "jpg" as const;
       try {
         baseImagePath = await ports.uploadBaseImage(input.ownerId, input.draftId, base.bytes, inspected.mimeType, baseExtension);
       } catch {
+        if (ports.refundCredits) await ports.refundCredits(input.ownerId, generationId).catch(() => undefined);
         return { ok: false, status: 503, code: "provider_failed", errorCode: "storage_failure", message: "Voom couldn't store the base visual safely. Nothing was generated." };
       }
       let referenceUrl: string | null = null;
@@ -215,6 +238,7 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
           referenceUrl = await ports.signReferenceImage(input.ownerId, baseImagePath);
         } catch {
           await ports.removeAbandonedObject(input.ownerId, baseImagePath).catch(() => undefined);
+          if (ports.refundCredits) await ports.refundCredits(input.ownerId, generationId).catch(() => undefined);
           return { ok: false, status: 503, code: "provider_failed", errorCode: "storage_failure", message: "Voom couldn't prepare the base visual safely. Nothing was generated." };
         }
       }
@@ -233,21 +257,6 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
 
   const providerPrompt = `${plan.visualPrompt.trim().replace(/\\s+/g, " ")} ${plan.motionDirection.trim().replace(/\\s+/g, " ")}`.slice(0, 4000);
 
-  const generationId = input.generationId ?? randomUUID();
-
-  // V1 billing: reserve credits BEFORE provider submission (hard boundary)
-  if (ports.reserveCredits) {
-    const creditSource = input.source === "autopilot" ? "autopilot" : "user_request";
-    const reserve = await ports.reserveCredits({ ownerId: input.ownerId, generationId, mediaType: "video", source: creditSource });
-    if (!reserve.ok) {
-      if (baseImagePath) await ports.removeAbandonedObject(input.ownerId, baseImagePath).catch(() => undefined);
-      const reason = reserve.reason ?? "spend_limit";
-      if (reason === "insufficient_credits" || reason === "plan_not_allowed") {
-        return { ok: false, status: 402, code: reason as any, errorCode: reason, message: reserve.message ?? "Not enough credits or plan does not allow generation." };
-      }
-      return { ok: false, status: 503, code: "automatic_media_disabled" as any, errorCode: reason, message: reserve.message ?? "Automatic media generation disabled." };
-    }
-  }
 
   const row: Record<string, unknown> = {
     id: generationId,
