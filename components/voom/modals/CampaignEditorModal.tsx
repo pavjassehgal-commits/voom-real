@@ -7,6 +7,7 @@ import type { AudienceSendResults, CampaignDeliveryState, CampaignDeliveryView, 
 import { Icon } from "../icons";
 import { ModalBody, ModalFoot, ModalHead, ModalShell } from "../ui/Modal";
 import { Btn, Card, Field, Input, Tag, Textarea } from "../ui/primitives";
+import { EmailPreview, type PreviewData } from "./EmailPreview";
 
 type RecipientMode = "single" | "audience";
 
@@ -29,6 +30,10 @@ export function CampaignEditorModal({ campaign }: { campaign?: CampaignRecord | 
   const [subject, setSubject] = useState(campaign?.subject ?? "");
   const [previewText, setPreviewText] = useState(campaign?.preview_text ?? "");
   const [content, setContent] = useState(campaign?.content ?? "");
+  const [ctaUrl, setCtaUrl] = useState(campaign?.cta_url ?? "");
+  const [previewData, setPreviewData] = useState<PreviewData | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewError, setPreviewError] = useState("");
   const [sendDate, setSendDate] = useState(campaign?.proposed_send_at ? toDateInput(campaign.proposed_send_at) : "");
   const [sendTime, setSendTime] = useState(campaign?.proposed_send_at ? toTimeInput(campaign.proposed_send_at) : "");
   const [status, setStatus] = useState<CampaignStatus>(campaign?.status ?? "draft");
@@ -118,8 +123,38 @@ export function CampaignEditorModal({ campaign }: { campaign?: CampaignRecord | 
       subject: subject.trim() || null,
       previewText: previewText.trim() || null,
       content: content.trim(),
+      ctaUrl: ctaUrl.trim() || null,
       proposedSendAt: composeSendAt(sendDate, sendTime),
     };
+  }
+
+  async function loadPreview() {
+    if (!id) return;
+    setPreviewOpen(true);
+    setPreviewData(null);
+    setPreviewError("");
+    try {
+      const response = await fetch(`/api/voom/campaigns/${encodeURIComponent(id)}/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: name.trim() || "Untitled email",
+          objective: objective.trim(),
+          subject: subject.trim() || null,
+          previewText: previewText.trim() || null,
+          content: content.trim(),
+          ctaUrl: ctaUrl.trim() || null,
+        }),
+      });
+      const body = await response.json() as { preview?: PreviewData; error?: string };
+      if (!response.ok || !body.preview) {
+        setPreviewError(body.error ?? "Voom couldn't build that preview.");
+        return;
+      }
+      setPreviewData(body.preview);
+    } catch {
+      setPreviewError("Voom couldn't build that preview. Please retry.");
+    }
   }
 
   async function saveDraft() {
@@ -349,6 +384,45 @@ export function CampaignEditorModal({ campaign }: { campaign?: CampaignRecord | 
         <Field label="Body / content">
           <Textarea rows={7} maxLength={12000} value={content} onChange={(e) => setContent(e.target.value)} placeholder="Write the email content here, or review what MARA prepared." />
         </Field>
+        <Field
+          label="CTA destination (button link)"
+          hint="Only a real destination you control — your website, or an exact page URL. Leave empty and the email shows a reply-oriented call to action instead of a fake link."
+        >
+          <Input value={ctaUrl} onChange={(e) => setCtaUrl(e.target.value)} maxLength={500} placeholder="https://yourbusiness.com/…" />
+        </Field>
+
+        <Card className="mb-3.5 border-line p-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-[13px] font-semibold">Preview</div>
+              <div className="text-[12px] text-text-3">
+                The exact email the next send produces — same renderer, sender identity and quality checks as production.
+              </div>
+            </div>
+            <Btn
+              variant="outline"
+              size="sm"
+              disabled={!id}
+              title={!id ? "Save the draft first, then preview." : undefined}
+              onClick={() => (previewOpen && previewData ? setPreviewOpen(false) : void loadPreview())}
+            >
+              <Icon name="eye" size={13} /> {previewOpen && previewData ? "Hide preview" : "Preview email"}
+            </Btn>
+          </div>
+          {previewOpen && (
+            <div className="mt-3">
+              {!id && <p className="text-xs text-text-3">Save the draft first to preview.</p>}
+              {previewError && <p role="alert" className="text-xs text-red">{previewError}</p>}
+              {!previewError && !previewData && <p className="text-xs text-text-3">Building the preview…</p>}
+              {previewData && (
+                <EmailPreview
+                  data={previewData}
+                  recipientNote="Unsaved edits are previewed as-is. Save to make this the campaign's content."
+                />
+              )}
+            </div>
+          )}
+        </Card>
 
         <div className="flex flex-wrap gap-2.5">
           <div className="min-w-[180px] flex-1">

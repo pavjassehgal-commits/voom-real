@@ -88,6 +88,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const contact = normalizeCampaignContact(parsed.data.contact);
     if (!isValidEmailContact(contact)) return Response.json({ error: "Enter a valid recipient email address." }, { status: 400 });
 
+    // Unsubscribes are durable: a real opt-out (working link click, provider
+    // bounce or complaint) blocks this address from every future marketing
+    // send, audience or single recipient.
+    const { data: suppressionRows } = await db.from("voom_email_suppressions")
+      .select("email")
+      .eq("owner_id", user.id)
+      .eq("email", contact)
+      .limit(1);
+    if ((suppressionRows ?? []).length > 0) {
+      return Response.json({ error: "That recipient has opted out of marketing email and cannot be messaged." }, { status: 409 });
+    }
+
     const delivery = await readCampaignDelivery(db, user.id, campaign);
     const provider = getCampaignProviderAvailability(campaign.kind);
     if (!provider.configured) {
@@ -161,6 +173,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
 
     const latest = await readCampaignDelivery(db, user.id, campaign);
+
+    // The pre-send quality guard blocked a malformed email: nothing reached
+    // the provider. Surface the exact needs-attention items instead of a
+    // generic provider error.
+    if (!providerResult.ok && providerResult.qualityFailures && providerResult.qualityFailures.length > 0) {
+      return Response.json({
+        error: `That email can't be sent yet — ${providerResult.qualityFailures.length} quality check${providerResult.qualityFailures.length === 1 ? "" : "s"} need attention.`,
+        qualityFailures: providerResult.qualityFailures,
+        delivery: latest,
+      }, { status: 422 });
+    }
+
     return Response.json({
       message: providerResult.ok
         ? `${provider.label} accepted the ${campaign.kind}. Delivered will appear only after a verified provider callback confirms it.`
@@ -263,6 +287,7 @@ async function sendToLinkedAudience(db: SupabaseClient, ownerId: string, campaig
   let accepted = 0;
   let failed = 0;
   let skipped = 0;
+  let qualityBlocked: { code: string; message: string }[] | null = null;
   const consentAt = new Date().toISOString();
 
   // Sequential processing keeps this a safe, provider-polite batch and gives
@@ -332,7 +357,24 @@ async function sendToLinkedAudience(db: SupabaseClient, ownerId: string, campaig
     } else {
       failed += 1;
       recipients.push({ destination: target.masked, status: "failed", detail: providerResult.errorMessage || `${provider.label} could not send that ${campaign.kind}.` });
+      // The quality guard blocked a malformed email. Every recipient in this
+      // send carries the same content, so the whole send stops here — no
+      // further provider calls, and the owner sees the exact fix list.
+      if (providerResult.qualityFailures && providerResult.qualityFailures.length > 0) {
+        qualityBlocked = providerResult.qualityFailures;
+        break;
+      }
     }
+  }
+
+  if (qualityBlocked) {
+    const latest = await readCampaignDelivery(db, ownerId, campaign);
+    return Response.json({
+      error: `That email can't be sent yet — ${qualityBlocked.length} quality check${qualityBlocked.length === 1 ? "" : "s"} need attention. Fix them, then send again.`,
+      qualityFailures: qualityBlocked,
+      results: { attempted: batch.length, accepted, failed, skipped, overLimit: 0, cap: BULK_SEND_CAP, recipients },
+      delivery: latest,
+    }, { status: 422 });
   }
 
   // plan.ok guarantees the whole eligible set fits within the cap.

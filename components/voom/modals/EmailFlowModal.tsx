@@ -8,6 +8,7 @@ import { formatLocalDateTime } from "@/lib/voom/timezone";
 import { Icon } from "../icons";
 import { ModalBody, ModalFoot, ModalHead, ModalShell } from "../ui/Modal";
 import { Btn, Input, Tag, Textarea, cx } from "../ui/primitives";
+import { EmailPreview, type PreviewData } from "./EmailPreview";
 
 const STATUS_TONE: Record<string, string> = {
   active: "t-green",
@@ -45,6 +46,40 @@ export function EmailFlowModal({
   const [drafts, setDrafts] = useState<EmailFlowStepView[]>(
     () => (initial?.steps ?? []).map((step) => ({ ...step })),
   );
+  // The per-step live preview (same deterministic renderer as production).
+  const [previewStep, setPreviewStep] = useState<number | null>(null);
+  const [previewData, setPreviewData] = useState<PreviewData | null>(null);
+  const [previewError, setPreviewError] = useState("");
+
+  async function loadStepPreview(index: number) {
+    const draft = drafts[index];
+    if (!draft) return;
+    setPreviewStep(draft.position);
+    setPreviewData(null);
+    setPreviewError("");
+    try {
+      const response = await fetch(`/api/voom/email-flows/${encodeURIComponent(flowId)}/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          position: draft.position,
+          subject: draft.subject,
+          previewText: draft.previewText,
+          body: draft.body,
+          cta: draft.cta,
+          ctaUrl: draft.ctaUrl,
+        }),
+      });
+      const body = await response.json() as { preview?: PreviewData; error?: string };
+      if (!response.ok || !body.preview) {
+        setPreviewError(body.error ?? "Voom couldn't build that preview.");
+        return;
+      }
+      setPreviewData(body.preview);
+    } catch {
+      setPreviewError("Voom couldn't build that preview. Please retry.");
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -189,6 +224,14 @@ export function EmailFlowModal({
                     <Tag tone={step.contentSource === "mara" ? "t-blue" : "t-grey"}>
                       {step.contentSource === "mara" ? "MARA" : step.contentSource === "edited" ? "Edited" : "Voom copy"}
                     </Tag>
+                    <button
+                      type="button"
+                      onClick={() => (previewStep === step.position ? setPreviewStep(null) : void loadStepPreview(index))}
+                      className="ml-auto inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1 text-[11.5px] font-semibold text-text-2 transition hover:bg-surface-2"
+                    >
+                      <Icon name={previewStep === step.position ? "x" : "eye"} size={12} />
+                      {previewStep === step.position ? "Hide preview" : "Preview email"}
+                    </button>
                   </div>
 
                   {editing ? (
@@ -230,6 +273,19 @@ export function EmailFlowModal({
                         {step.body}
                       </pre>
                       {step.cta && <p><b className="font-semibold">CTA:</b> {step.cta}</p>}
+                    </div>
+                  )}
+
+                  {previewStep === step.position && (
+                    <div className="mt-3">
+                      {previewError && <p role="alert" className="text-xs text-red">{previewError}</p>}
+                      {!previewError && !previewData && <p className="text-xs text-text-3">Building the preview…</p>}
+                      {previewData && (
+                        <EmailPreview
+                          data={previewData}
+                          recipientNote="Exactly what this step sends — same renderer, sender and checks as the real send."
+                        />
+                      )}
                     </div>
                   )}
                 </li>

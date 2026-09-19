@@ -412,7 +412,13 @@ async function executeRun(
     return;
   }
 
-  const snapshot = (claimed.content_snapshot ?? {}) as { subject?: string; body?: string };
+  const snapshot = (claimed.content_snapshot ?? {}) as {
+    subject?: string;
+    body?: string;
+    previewText?: string;
+    cta?: string;
+    ctaUrl?: string;
+  };
   const subject = String(snapshot.subject ?? "").slice(0, 300);
   const body = String(snapshot.body ?? "");
   if (!subject || !body) {
@@ -427,14 +433,23 @@ async function executeRun(
     return;
   }
 
-  // ── Send through the EXISTING Resend infrastructure ───────────────────────
+  // ── Send through the shared Branded Email Engine ──────────────────────────
+  // The same pipeline campaign sends use: business sender identity (with
+  // provider-backed verification), validated design, deterministic renderer,
+  // quality guard, real unsubscribe — then the existing Resend client.
   let provider;
   try {
     provider = await sendFlowEmail(
       {
+        admin,
+        ownerId,
         to: eligibility.destination as string,
         subject,
         body,
+        previewText: snapshot.previewText ?? null,
+        cta: snapshot.cta ?? "",
+        ctaUrl: snapshot.ctaUrl ?? null,
+        flowType: flow.flow_type,
         idempotencyKey: attemptKey,
         firstName: contact.first_name,
       },
@@ -447,6 +462,7 @@ async function executeRun(
       providerStatus: null,
       errorCode: "provider_request_failed",
       errorMessage: "The provider request did not complete.",
+      terminal: false,
     };
   }
 
@@ -462,7 +478,12 @@ async function executeRun(
 
   if (!provider.ok) {
     summary.failed += 1;
-    await maybeRetry(admin, ownerId, timeZone, now, claimed, summary);
+    // Terminal failures (quality guard, sender identity unresolved, missing
+    // unsubscribe) cannot be fixed by resending the same content — the run
+    // fails without a retry. Provider refusals still get the bounded retry.
+    if (!provider.terminal) {
+      await maybeRetry(admin, ownerId, timeZone, now, claimed, summary);
+    }
     return;
   }
 

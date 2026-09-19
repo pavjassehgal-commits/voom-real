@@ -52,6 +52,12 @@ export interface ResendApiClient {
   provider: "resend";
   config: ResendConfig;
   post(path: string, body: unknown, init?: Omit<RequestInit, "method" | "body">): Promise<Response>;
+  /**
+   * A general provider request. POST is used for sends; GET exists so the
+   * sender-identity layer can read provider-backed state (e.g. the domains
+   * endpoint) without inventing a second client.
+   */
+  request(method: "GET" | "POST", path: string, body?: unknown, init?: Omit<RequestInit, "method" | "body">): Promise<Response>;
 }
 
 export type ProviderFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -100,7 +106,7 @@ export function createResendApiClient(config: ResendConfig, options: ResendClien
   return {
     provider: "resend",
     config,
-    async post(path, body, init) {
+    async request(method, path, body, init) {
       const headers = new Headers(init?.headers);
       headers.set("Authorization", `Bearer ${config.apiKey}`);
       headers.set("Content-Type", "application/json");
@@ -108,12 +114,15 @@ export function createResendApiClient(config: ResendConfig, options: ResendClien
 
       return fetchImpl(new URL(normalizePath(path), config.apiBaseUrl), {
         ...init,
-        method: "POST",
+        method,
         headers,
-        body: JSON.stringify(body),
+        body: body === undefined ? undefined : JSON.stringify(body),
         cache: "no-store",
         signal: init?.signal ?? AbortSignal.timeout(timeoutMs),
       });
+    },
+    async post(path, body, init) {
+      return (this as unknown as ResendApiClient).request("POST", path, body, init);
     },
   };
 }

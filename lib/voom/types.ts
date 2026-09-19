@@ -81,6 +81,8 @@ export type CampaignKind = "email" | "sms" | "multi";
 
 export interface CampaignRecord {
   id: string;
+  /** Present on owner-scoped rows; the delivery route is the authoritative source. */
+  owner_user_id?: string;
   kind: CampaignKind;
   name: string;
   objective: string;
@@ -92,6 +94,8 @@ export interface CampaignRecord {
   subject: string | null;
   preview_text: string | null;
   content: string;
+  /** Explicit campaign destination for the CTA button (migration 0041). */
+  cta_url?: string | null;
   proposed_send_at: string | null;
   status: CampaignStatus;
   approved_at?: string | null;
@@ -110,6 +114,8 @@ export interface CampaignRecord {
 
 export interface CampaignRecipientRecord {
   id: string;
+  /** Present on the RPC `returning *` rows the delivery route consumes. */
+  owner_user_id?: string;
   contact: string;
   contact_name: string | null;
   consent_at: string;

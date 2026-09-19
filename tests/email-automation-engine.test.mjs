@@ -52,6 +52,8 @@ const RESEND_ENV = {
   EMAIL_FROM_ADDRESS: "hello@synrapay.example",
   EMAIL_FROM_NAME: "SynraPay",
   EMAIL_WEBHOOK_SECRET: "whsec_test_placeholder",
+  // The branded engine fails closed without a signed-unsubscribe secret.
+  EMAIL_UNSUBSCRIBE_SECRET: "test_unsubscribe_secret_not_real",
 };
 const savedEnv = {};
 

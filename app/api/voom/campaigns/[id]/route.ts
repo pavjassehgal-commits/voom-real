@@ -22,6 +22,8 @@ const editFields = z.object({
   subject: z.string().trim().max(300).nullable().optional(),
   previewText: z.string().trim().max(500).nullable().optional(),
   content: z.string().trim().max(12000).optional(),
+  /** Explicit campaign destination for the CTA button; never invented. */
+  ctaUrl: z.string().trim().max(500).nullable().optional(),
   proposedSendAt: z.string().datetime({ offset: true }).nullable().optional(),
 }).strict();
 
@@ -93,6 +95,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       subject: parsed.data.subject,
       preview_text: parsed.data.previewText,
       content: parsed.data.content,
+      cta_url: parsed.data.ctaUrl,
       proposed_send_at: proposedSendAt,
     });
     if (!campaign) return Response.json({ error: "That campaign was not found." }, { status: 404 });
