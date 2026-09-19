@@ -8,6 +8,7 @@ import { approvePostDraft, syncPostToCalendar, type AdminClient } from "@/lib/po
 import { loadPerformancePlanContext } from "@/lib/performance/data";
 import type { PerformancePlanContext } from "@/lib/performance/plan-context";
 import { mayAutomaticallyGeneratePaidMedia, normalizeAutomationMode, type AutomationModeValue, type WorkflowTrigger } from "@/lib/voom/automation";
+import { canUseAutomationMode, normalizePlan } from "@/lib/billing/plans";
 import { CADENCE_LABELS, normalizeCadence, type Cadence } from "@/lib/voom/cadence";
 import { accountTimezone, formatLocalTime, localDate } from "@/lib/voom/timezone";
 import { ensureWorkflowMedia, type WorkflowMediaDeps } from "./media";
@@ -89,13 +90,18 @@ export interface WorkflowPlanningDeps {
 export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInput): Promise<RollingPlanResult> {
   const now = input.now ?? new Date();
   const { data: business } = await admin.from("businesses")
-    .select("id,brand_name,brand_description,industry,target_customer,main_goal,brand_personality,preferred_channels,content_frequency,automation_level,timezone")
+    .select("id,brand_name,brand_description,industry,target_customer,main_goal,brand_personality,preferred_channels,content_frequency,automation_level,timezone,plan")
     .eq("owner_user_id", input.ownerId).maybeSingle();
   if (!business) throw new Error("business_not_found");
 
   const timeZone = accountTimezone((business as { timezone?: string | null }).timezone);
   const cadence = input.cadence ?? normalizeCadence(business.content_frequency);
-  const mode = normalizeAutomationMode(business.automation_level);
+  
+  const planId = normalizePlan((business as any).plan);
+  let mode = normalizeAutomationMode(business.automation_level);
+  if (!canUseAutomationMode(planId, mode)) {
+    mode = planId === "pro" ? "assisted" : "manual";
+  }
   const trigger: WorkflowTrigger = input.trigger === "replenish" ? "replenish" : "scheduled";
   const goal = String(business.main_goal ?? "Grow awareness");
 

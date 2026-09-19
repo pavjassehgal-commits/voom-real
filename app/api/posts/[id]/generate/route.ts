@@ -10,7 +10,7 @@ import { estimateMediaCostUsd, normalizeAllowAutomaticPaidMedia } from "@/lib/ma
 import { aspectMatches, inspectImageBytes } from "@/lib/media/media-inspect";
 import { applyPostOverlay } from "@/lib/media/image-overlay";
 import { createAdminClient } from "@/utils/supabase/admin";
-import { normalizePlan } from "@/lib/billing/plans";
+import { normalizePlan, canUseAutomationMode } from "@/lib/billing/plans";
 import { creditCostForMedia } from "@/lib/billing/credits";
 import { guardAndReserveMedia, releaseReservationOnFailure, confirmReservation } from "@/lib/billing/entitlement-guard";
 
@@ -34,9 +34,13 @@ const GENERATED_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 async function loadBillingContext(admin: any, ownerId: string) {
   try {
     const { data } = await admin.from("businesses").select("plan,allow_automatic_paid_media,automation_level").eq("owner_user_id", ownerId).maybeSingle();
+
     const plan = normalizePlan((data as any)?.plan);
     const allowAutomatic = normalizeAllowAutomaticPaidMedia((data as any)?.allow_automatic_paid_media);
-    const mode = (data as any)?.automation_level === "manual" || (data as any)?.automation_level === "autopilot" ? (data as any).automation_level : "assisted";
+    let mode = (data as any)?.automation_level === "manual" || (data as any)?.automation_level === "autopilot" ? (data as any).automation_level : "assisted";
+    if (!canUseAutomationMode(plan, mode)) {
+      mode = plan === "pro" ? "assisted" : "manual";
+    }
     return { plan, allowAutomatic, mode };
   } catch {
     return { plan: "free" as const, allowAutomatic: false, mode: "assisted" as const };

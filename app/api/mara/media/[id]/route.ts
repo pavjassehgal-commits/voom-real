@@ -5,7 +5,7 @@ import type { GeneratedMedia } from "@/lib/media/types";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
-import { normalizePlan } from "@/lib/billing/plans";
+import { normalizePlan, canUseAutomationMode } from "@/lib/billing/plans";
 import { normalizeAllowAutomaticPaidMedia } from "@/lib/mara/media-spend";
 import { normalizeAutomationMode } from "@/lib/voom/automation";
 import { guardAndReserveMedia, releaseReservationOnFailure, confirmReservation } from "@/lib/billing/entitlement-guard";
@@ -66,10 +66,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 async function loadBilling(admin: ReturnType<typeof createAdminClient>, ownerId: string) {
   try {
     const { data } = await admin.from("businesses").select("plan,allow_automatic_paid_media,automation_level").eq("owner_user_id", ownerId).maybeSingle();
+
+    const planId = normalizePlan((data as any)?.plan);
+    let mode = normalizeAutomationMode((data as any)?.automation_level);
+    if (!canUseAutomationMode(planId, mode)) {
+      mode = planId === "pro" ? "assisted" : "manual";
+    }
     return {
-      planId: normalizePlan((data as any)?.plan),
+      planId,
       allowAutomatic: normalizeAllowAutomaticPaidMedia((data as any)?.allow_automatic_paid_media),
-      mode: normalizeAutomationMode((data as any)?.automation_level),
+      mode,
     };
   } catch {
     return { planId: "free" as const, allowAutomatic: false, mode: "assisted" as const };

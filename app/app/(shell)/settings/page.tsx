@@ -256,19 +256,7 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
-        <div className="pt-3.5">
-          <Field
-            label="Monthly AI media budget (USD) — legacy"
-            hint="Voom stops automatic media generation once this month's estimated spend reaches it. Item planning, copy and drafts keep going. Credits are the primary limit in v1."
-          >
-            <Input
-              inputMode="decimal"
-              value={mediaBudgetInput}
-              onChange={(e) => setMediaBudgetInput(e.target.value)}
-              placeholder="25"
-            />
-          </Field>
-        </div>
+
         <p className="mb-3.5 text-[12.5px] text-text-3">{MANUAL_NEVER_AUTO_SPENDS}</p>
         <Btn variant="outline" size="sm" onClick={handleSaveSpending} disabled={savingSpend || settingsSaving}>
           {savingSpend ? "Saving…" : "Save spending settings"}
