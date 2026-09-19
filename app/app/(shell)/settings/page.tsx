@@ -11,6 +11,7 @@ import { AdSepNote } from "@/components/voom/ui/Notes";
 import { Btn, Card, Chip, Field, Input, Tag } from "@/components/voom/ui/primitives";
 import { getPlanConfig } from "@/lib/billing/plans";
 import type { CreditSummary } from "@/lib/billing/ledger";
+import { EmailIdentityCard } from "@/components/voom/modals/EmailIdentityCard";
 
 export default function SettingsPage() {
   const { brand, mediaSpend, theme, displayName, email, settingsSaving, settingsError, plan } = useVoomState();
@@ -202,6 +203,8 @@ export default function SettingsPage() {
           </Chip>
         </div>
       </Card>
+
+      <EmailIdentityCard />
 
       <Card className="mb-3.5 p-4">
         <h2 className="mb-1.5 font-display text-lg font-semibold">Voom automation</h2>

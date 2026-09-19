@@ -3,9 +3,10 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { Webhook } from "standardwebhooks";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createResendClient } from "@/lib/email/client";
 import { getResendAvailability } from "@/lib/email/config";
+import { dispatchBrandedEmail, prepareBrandedSend } from "@/lib/email/branded/dispatch";
 import { resolveAudienceChannelEligibility } from "@/lib/contacts/server-data";
+import { createAdminClient } from "@/utils/supabase/admin";
 import type { AudienceChannelEligibility, AudienceEligibilityPreview } from "@/lib/contacts/types";
 import type { CampaignRecord, CampaignRecipientRecord, CampaignSendRecord, CampaignDeliveryView, CampaignProviderAvailability, CampaignDeliveryState, CampaignSendSummary } from "./types";
 
@@ -177,22 +178,106 @@ export function createCampaignSendAttemptKey() {
   return randomUUID();
 }
 
-export async function sendEmailCampaign(campaign: CampaignRecord, recipient: CampaignRecipientRecord) {
-  const client = createResendClient();
-  const response = await client.post("emails", {
-    from: `${client.config.fromName} <${client.config.fromAddress}>`,
-    to: [recipient.contact],
-    subject: campaign.subject?.trim() || campaign.name,
-    text: campaign.content,
-  });
-  const body = await safeProviderBody(response);
-  return {
-    ok: response.ok && typeof body?.id === "string" && body.id.length > 0,
-    providerMessageId: typeof body?.id === "string" ? body.id : null,
-    providerStatus: typeof body?.last_event === "string" ? body.last_event : "accepted",
-    errorCode: response.ok ? null : `HTTP_${response.status}`,
-    errorMessage: response.ok ? null : providerErrorMessage(body, "Resend couldn't accept that email send."),
-  };
+export interface CampaignSendProviderResult {
+  ok: boolean;
+  providerMessageId: string | null;
+  providerStatus: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  /** Present when the pre-send quality guard blocked the message. */
+  qualityFailures?: Array<{ code: string; message: string }>;
+  /** A terminal failure (quality guard / sender) cannot be fixed by retrying
+   *  the same content; the route surfaces it as needs-attention. */
+  terminal: boolean;
+}
+
+/**
+ * Sends one campaign email through the SHARED Branded Email Engine — the same
+ * sender identity, design spec, renderer, quality guard and unsubscribe
+ * pipeline lifecycle flow emails use. There is no second email stack: the
+ * plain "Voom <global>" send is gone for every new campaign send.
+ *
+ * Truthfulness is unchanged: a successful response means the provider
+ * ACCEPTED the message. `delivered` is only ever set by a verified webhook.
+ */
+export async function sendEmailCampaign(campaign: CampaignRecord, recipient: CampaignRecipientRecord): Promise<CampaignSendProviderResult> {
+  let admin: ReturnType<typeof createAdminClient>;
+  try {
+    admin = createAdminClient();
+  } catch {
+    return {
+      ok: false,
+      providerMessageId: null,
+      providerStatus: null,
+      errorCode: "delivery_not_configured",
+      errorMessage: "Campaign delivery is not fully configured on the server yet.",
+      terminal: true,
+    };
+  }
+
+  // The owner comes from the recipient's own row (the claim's principal),
+  // never from campaign content a client could steer.
+  const ownerId = recipient.owner_user_id ?? campaign.owner_user_id;
+  if (!ownerId) {
+    return {
+      ok: false,
+      providerMessageId: null,
+      providerStatus: null,
+      errorCode: "owner_unresolvable",
+      errorMessage: "Voom couldn't determine the campaign owner safely. Nothing was sent.",
+      terminal: true,
+    };
+  }
+
+  const prepared = await prepareBrandedSend(
+    {
+      admin,
+      ownerId,
+      to: recipient.contact,
+      // Provisional: replaced below with the claim's own idempotency key, so
+      // the provider-side dedupe key is exactly the durable claim key.
+      idempotencyKey: createCampaignSendAttemptKey(),
+      subject: campaign.subject?.trim() || campaign.name,
+      previewText: campaign.preview_text,
+      body: campaign.content,
+      cta: "Learn more",
+      ctaUrl: campaign.cta_url ?? null,
+      campaignObjective: campaign.objective,
+      campaignName: campaign.name,
+    },
+    {},
+  );
+
+  if (!prepared.ok) {
+    return {
+      ok: false,
+      providerMessageId: null,
+      providerStatus: null,
+      errorCode: prepared.code,
+      errorMessage: prepared.message,
+      qualityFailures: prepared.qualityFailures,
+      terminal: prepared.terminal,
+    };
+  }
+
+  // The claim (made by the route) stored the durable idempotency key on the
+  // send row; use it as the provider-side dedupe key for this exact send.
+  let payload = prepared.payload;
+  try {
+    const { data: sendRow } = await admin.from("campaign_sends")
+      .select("idempotency_key")
+      .eq("owner_user_id", ownerId)
+      .eq("campaign_id", campaign.id)
+      .eq("recipient_id", recipient.id)
+      .maybeSingle();
+    const claimKey = (sendRow as { idempotency_key?: string | null } | null)?.idempotency_key;
+    if (claimKey) payload = { ...payload, idempotencyKey: claimKey };
+  } catch {
+    // The provisional key is still unique per attempt; dedupe stays safe.
+  }
+
+  const response = await dispatchBrandedEmail(payload, {});
+  return { ...response, terminal: false };
 }
 
 export function verifyResendWebhook(payload: string, headers: Headers, secret: string) {
@@ -356,27 +441,4 @@ function buildDeliveryNote(campaign: CampaignRecord, provider: CampaignProviderA
 function isDeliverySchemaMissing(error: unknown) {
   const text = `${(error as { code?: string })?.code ?? ""} ${(error as { message?: string })?.message ?? ""}`;
   return /PGRST20[24]|campaign_(recipients|sends|delivery_events)|relation .* does not exist|schema cache/i.test(text);
-}
-
-async function safeProviderBody(response: Response) {
-  const text = await response.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    return { message: text } satisfies Record<string, unknown>;
-  }
-}
-
-function providerErrorMessage(body: Record<string, unknown> | null, fallback: string) {
-  const candidate = typeof body?.message === "string"
-    ? body.message
-    : typeof body?.error === "string"
-      ? body.error
-      : typeof body?.detail === "string"
-        ? body.detail
-        : typeof body?.more_info === "string"
-          ? body.more_info
-          : fallback;
-  return candidate.slice(0, 1000);
 }

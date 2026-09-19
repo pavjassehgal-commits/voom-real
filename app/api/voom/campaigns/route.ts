@@ -21,6 +21,8 @@ const campaignFields = z.object({
   subject: z.string().trim().max(300).nullable().optional(),
   previewText: z.string().trim().max(500).nullable().optional(),
   content: z.string().trim().max(12000).default(""),
+  /** Explicit campaign destination for the CTA button; never invented. */
+  ctaUrl: z.string().trim().max(500).nullable().optional(),
   proposedSendAt: z.string().datetime({ offset: true }).nullable().optional(),
 }).strict();
 
@@ -121,6 +123,7 @@ export async function POST(request: Request) {
       subject: parsed.data.subject ?? null,
       preview_text: parsed.data.previewText ?? null,
       content: parsed.data.content,
+      cta_url: parsed.data.ctaUrl ?? null,
       proposed_send_at: parsed.data.proposedSendAt ?? null,
     });
     return Response.json({ campaign }, { status: 201 });

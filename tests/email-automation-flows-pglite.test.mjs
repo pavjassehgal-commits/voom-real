@@ -773,14 +773,14 @@ test("6c. the flow RPCs are service-role only", async () => {
 
 // ─── 7. The migration is additive ──────────────────────────────────────────
 
-test("7. migration 0040 is additive and owner-scoped", async () => {
+test("7. migrations 0040 and 0041 are additive and owner-scoped", async () => {
   const fs = await import("node:fs");
   const path = await import("node:path");
   const dir = "supabase/migrations";
   const files = fs.readdirSync(dir).filter((name) => name.endsWith(".sql")).sort();
 
-  assert.equal(files[files.length - 1], "0040_email_automation_v2.sql", "0040 is the newest migration");
-  assert.equal(files[files.length - 2].startsWith("0039_"), true, "it sits directly on top of 0039");
+  assert.equal(files[files.length - 1], "0041_branded_email_engine.sql", "0041 is the newest migration");
+  assert.equal(files[files.length - 2], "0040_email_automation_v2.sql", "it sits directly on top of 0040, which must never be modified or rerun");
 
   const sql = fs.readFileSync(path.join(dir, "0040_email_automation_v2.sql"), "utf8").toLowerCase();
 
@@ -810,6 +810,27 @@ test("7. migration 0040 is additive and owner-scoped", async () => {
 
   // There is no authenticated write path anywhere in this feature.
   assert.doesNotMatch(sql, /grant (?:insert|update|delete)[^;]*to authenticated/, "the browser cannot write flow data");
+
+  // 0041 (Branded Email Engine) carries the same guarantees, and never
+  // touches what 0040 already shipped (delivered history stays immutable).
+  const sql41 = fs.readFileSync(path.join(dir, "0041_branded_email_engine.sql"), "utf8").toLowerCase();
+  assert.doesNotMatch(sql41, /drop table/, "0041 drops no table");
+  assert.doesNotMatch(sql41, /drop column/, "0041 drops no column");
+  assert.doesNotMatch(sql41, /truncate/, "0041 truncates nothing");
+  assert.doesNotMatch(sql41, /alter column [a-z_]+ type/, "0041 retypes no existing column");
+  assert.doesNotMatch(sql41, /alter table public\.voom_email_flow/, "0041 never rewrites the 0040 flow tables");
+
+  const created41 = [...sql41.matchAll(/create table (?:if not exists )?public\.([a-z_]+)/g)].map((m) => m[1]);
+  assert.equal(created41.length, 4, `expected the four new tables, got: ${created41.join(", ")}`);
+  for (const table of created41) {
+    assert.match(table, /^voom_email_/, `${table} must be an email engine table`);
+    assert.match(sql41, new RegExp(`alter table public\\.${table} enable row level security`), `${table} must have RLS`);
+  }
+
+  const policies41 = [...sql41.matchAll(/create policy "([a-z0-9_]+)"/g)].map((m) => m[1]);
+  assert.equal(policies41.length, 4, `expected the four owner-scoped select policies, got: ${policies41.join(", ")}`);
+  assert.match(sql41, /using \(\(select auth\.uid\(\)\) = owner_user_id\)/, "engine rows are scoped to their owner");
+  assert.doesNotMatch(sql41, /grant (?:insert|update|delete)[^;]*to authenticated/, "the browser cannot write engine data");
 });
 
 // ─── 8. The policy layer and the schema agree ──────────────────────────────

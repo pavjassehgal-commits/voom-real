@@ -72,7 +72,7 @@ test("campaign reads return the linked audience id", async () => {
   assert.match(data, /audience_id/);
   // One shared column list (which includes audience_id) is used by every
   // campaign select/insert/update, so no read can silently drop it.
-  assert.match(data, /const CAMPAIGN_COLUMNS = "id,kind,is_automated,parent_campaign_id,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,goal,start_at,end_at,offer_details,campaign_notes,generated_summary,approved_at,created_at,updated_at";/);
+  assert.match(data, /const CAMPAIGN_COLUMNS = "id,kind,is_automated,parent_campaign_id,name,objective,audience,audience_id,subject,preview_text,content,cta_url,proposed_send_at,status,goal,start_at,end_at,offer_details,campaign_notes,generated_summary,approved_at,created_at,updated_at";/);
   const selects = data.match(/select\(CAMPAIGN_COLUMNS\)/g) ?? [];
   assert.ok(selects.length >= 6, `expected all campaign selects to use CAMPAIGN_COLUMNS, got ${selects.length}`);
 });

@@ -73,7 +73,7 @@ export async function getDraft(db: ServerSupabase, ownerId: string, id: string) 
   return data;
 }
 
-const CAMPAIGN_COLUMNS = "id,kind,is_automated,parent_campaign_id,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,goal,start_at,end_at,offer_details,campaign_notes,generated_summary,approved_at,created_at,updated_at";
+const CAMPAIGN_COLUMNS = "id,kind,is_automated,parent_campaign_id,name,objective,audience,audience_id,subject,preview_text,content,cta_url,proposed_send_at,status,goal,start_at,end_at,offer_details,campaign_notes,generated_summary,approved_at,created_at,updated_at";
 
 export async function listCampaigns(db: ServerSupabase, ownerId: string, kind?: string) {
   let query = db.from("voom_campaigns").select(CAMPAIGN_COLUMNS)
