@@ -1,7 +1,7 @@
 # Branded Email Engine v1 — Delivery Report
 
 **PR:** https://github.com/pavjassehgal-commits/voom-real/pull/50 (open — **not merged**, per instructions)
-**Head SHA:** `d15daeb6bab4a185eb96f229fcf2ec8ed5b4008e` (PR head; engine code landed in `128c4eb7b5a149bb25f61656084271d90dabab3c`)
+**Head SHA:** the PR's latest commit (this report is part of the branch); the engine code itself landed in `128c4eb7b5a149bb25f61656084271d90dabab3c`
 **Branch:** `arena/01a0b49a-voom-real` (from `main` @ `15895219e6a34746284d2359c276720f4d7403a0`)
 **Live-traffic safety:** no email sent, Email #2 not triggered, cron untouched, delivered Email #1 untouched, migration 0040 untouched, 0041 not applied anywhere by this work.
 
