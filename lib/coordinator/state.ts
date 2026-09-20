@@ -176,23 +176,35 @@ export async function buildMarketingState(
       list.push(a);
       actionsByCampaign.set(campId, list);
 
-      // Add to commitments if it is an Instagram action
+      // Add to commitments for any active social channel action. Multi-Social
+      // Core: the coordinator reads the ONE calendar, so TikTok/YouTube
+      // campaign actions count as real commitments too — understanding them
+      // never grants execution (they have no provider path).
       const ch = String(a.channel);
-      if (ch.startsWith("instagram_") && a.status !== "failed" && a.status !== "skipped") {
+      const isSocialVideo = ch === "tiktok_video" || ch === "youtube_short" || ch === "youtube_video";
+      if ((ch.startsWith("instagram_") || isSocialVideo) && a.status !== "failed" && a.status !== "skipped") {
         const sched = String(a.scheduled_for);
         const localD = isoToLocalDate(sched, tz);
-        const format: ContentType = ch === "instagram_reel" ? "reel" : ch === "instagram_story" ? "story" : "post";
+        const format: ContentType | "video" | "short" = ch === "instagram_reel" ? "reel"
+          : ch === "instagram_story" ? "story"
+          : ch === "youtube_short" ? "short"
+          : isSocialVideo ? "video"
+          : "post";
         campaignActionCommitments.push({
           id: String(a.id),
           source: "campaign",
           sourceId: campId,
-          channel: ch as "instagram_post" | "instagram_reel" | "instagram_story",
+          channel: ch as CalendarCommitment["channel"],
           format,
           title: String(a.title),
           publishAt: sched,
           localDate: localD,
           localTime: sched,
-          status: a.status === "executed" ? "published" : a.status === "approved" ? "approved" : "needs_approval",
+          // Truthful: an approved social action is never "published" — no
+          // provider exists, so it stays approved.
+          status: isSocialVideo
+            ? (a.status === "approved" ? "approved" : "needs_approval")
+            : a.status === "executed" ? "published" : a.status === "approved" ? "approved" : "needs_approval",
         });
       }
     }
@@ -265,25 +277,40 @@ export async function buildMarketingState(
     if (alreadyCampaign) continue;
 
     const kind = String(d.kind ?? "instagram_post");
-    const format: ContentType = kind === "reel" ? "reel" : kind === "story" ? "story" : "post";
+    // Multi-Social Core: TikTok/YouTube planning drafts carry their real
+    // channel. They have no publish queue, so their state is the honest one:
+    // approved items stay approved — never scheduled-for-execution, never
+    // published.
+    const isSocialDraft = kind === "tiktok_video" || kind === "youtube_short" || kind === "youtube_video";
+    const format: ContentType | "video" | "short" = kind === "reel" ? "reel"
+      : kind === "story" ? "story"
+      : kind === "youtube_short" ? "short"
+      : isSocialDraft ? "video"
+      : "post";
     const publishAt = String(d.proposed_publish_at);
     const localD = isoToLocalDate(publishAt, tz);
     const qRow = queueByDraft.get(String(d.id));
 
     let status: CalendarCommitment["status"] = "proposed";
-    if (qRow?.status === "published") status = "published";
-    else if (qRow?.status === "publishing") status = "publishing";
-    else if (qRow?.status === "failed") status = "failed";
-    else if (qRow?.status === "waiting_for_media") status = "waiting_for_media";
-    else if (qRow?.status === "scheduled") status = "scheduled";
-    else if (d.status === "approved") status = "approved";
-    else if (pendingApprovals.some((p) => p.sourceId === String(d.id))) status = "needs_approval";
+    if (isSocialDraft) {
+      status = d.status === "approved" ? "approved" : d.status === "rejected" ? "failed" : "proposed";
+    } else {
+      if (qRow?.status === "published") status = "published";
+      else if (qRow?.status === "publishing") status = "publishing";
+      else if (qRow?.status === "failed") status = "failed";
+      else if (qRow?.status === "waiting_for_media") status = "waiting_for_media";
+      else if (qRow?.status === "scheduled") status = "scheduled";
+      else if (d.status === "approved") status = "approved";
+      else if (pendingApprovals.some((p) => p.sourceId === String(d.id))) status = "needs_approval";
+    }
 
     draftCommitments.push({
       id: String(d.id),
       source: "workflow_plan",
       sourceId: String(d.source_plan_id ?? d.id),
-      channel: `instagram_${format}`,
+      // In the non-social branch `format` is always post/reel/story at
+      // runtime; the cast keeps the template inside the channel union.
+      channel: isSocialDraft ? (kind as CalendarCommitment["channel"]) : `instagram_${format as ContentType}`,
       format,
       title: String(d.title),
       publishAt,
@@ -299,20 +326,35 @@ export async function buildMarketingState(
     if (c.source_draft_id && (draftCommitments.some((dc) => dc.id === String(c.source_draft_id)) || campaignActionCommitments.some((cc) => cc.id === String(c.source_draft_id)))) {
       continue;
     }
-    const channelLower = String(c.channel).toLowerCase();
-    const format: ContentType = channelLower.includes("reel") ? "reel" : channelLower.includes("story") ? "story" : "post";
+    const channelLabel = String(c.channel ?? "").toLowerCase();
+    // Multi-Social Core: the calendar's channel label decides the commitment's
+    // real channel. TikTok/YouTube mirrors are approved planning items — their
+    // state stays truthful (never scheduled-for-execution, never published).
+    const isTikTok = channelLabel === "tiktok";
+    const isYouTubeShort = channelLabel === "youtube short";
+    const isYouTubeVideo = channelLabel === "youtube video";
+    const isSocialCalendar = isTikTok || isYouTubeShort || isYouTubeVideo;
+    const format: ContentType | "video" | "short" = isYouTubeShort ? "short"
+      : isSocialCalendar ? "video"
+      : channelLabel.includes("reel") ? "reel"
+      : channelLabel.includes("story") ? "story"
+      : "post";
     const publishAt = String(c.publish_at);
     standaloneCalendarCommitments.push({
       id: String(c.id),
       source: "direct_calendar",
       sourceId: String(c.id),
-      channel: `instagram_${format}`,
+      // In the non-social branch `format` is always post/reel/story at
+      // runtime; the cast keeps the template inside the channel union.
+      channel: isTikTok ? "tiktok_video" : isYouTubeShort ? "youtube_short" : isYouTubeVideo ? "youtube_video" : `instagram_${format as ContentType}`,
       format,
       title: String(c.title),
       publishAt,
       localDate: isoToLocalDate(publishAt, tz),
       localTime: publishAt,
-      status: c.status === "scheduled" ? "scheduled" : "approved",
+      // A social mirror is presentation for an approved draft — 'scheduled'
+      // would imply an execution path that does not exist.
+      status: isSocialCalendar ? "approved" : c.status === "scheduled" ? "scheduled" : "approved",
     });
   }
 

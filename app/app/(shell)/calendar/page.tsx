@@ -6,27 +6,42 @@ import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { CreateContentModal } from "@/components/voom/modals/CreateContentModal";
 import { SavedCalendarDetailModal } from "@/components/voom/modals/SavedCalendarDetailModal";
+import { SocialEditorModal } from "@/components/voom/modals/SocialEditorModal";
 import { Btn, Card, Chip, EmptyState, IconBtn, Tag } from "@/components/voom/ui/primitives";
 import { currentScheduleDate } from "@/lib/voom/schedule-guard";
 import { PublishingQueue } from "@/components/voom/PublishingQueue";
 import type { WorkflowSnapshot, WorkflowView } from "@/lib/voom/workflow/read";
 import { MEDIA_GENERATION_HARD_TIMEOUT_MINUTES, WORKFLOW_STATUS_LABELS, WORKFLOW_STATUSES } from "@/lib/voom/workflow/state";
 import { isPastInstant } from "@/lib/voom/schedule-guard";
+import type { SocialCalendarItemView } from "@/lib/social/server-drafts";
 
 /**
  * The Content Calendar is the authoritative visual schedule of the ONE
- * executable content workflow. Every cell entry is a real workflow item with
- * its real local scheduled time and real status; clicking one opens the real
+ * executable content workflow, across every channel. Instagram cells are real
+ * workflow items with their real local scheduled time and real status; TikTok
+ * and YouTube cells are the approved + scheduled planning drafts, labelled
+ * truthfully as approved-but-not-published. Clicking a cell opens the real
  * draft. There is no sample dataset and no hardcoded month.
  */
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-const FILTERS = ["All", "Instagram Post", "Reel", "Instagram Story"] as const;
+const FILTERS = ["All", "Instagram Post", "Reel", "Instagram Story", "TikTok Video", "YouTube Short", "YouTube Video"] as const;
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** One calendar cell entry: an executable Instagram workflow item, or a
+ * TikTok/YouTube approved planning draft (never executed, always truthful). */
+type CalendarEvent =
+  | { type: "workflow"; item: WorkflowView }
+  | { type: "social"; item: SocialCalendarItemView };
+
+function timeOf(event: CalendarEvent): string {
+  return event.item.localTime;
+}
 
 export default function CalendarPage() {
   const { open } = useModal();
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot | null>(null);
+  const [socialItems, setSocialItems] = useState<SocialCalendarItemView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>("All");
   const [cursor, setCursor] = useState<{ month: number; year: number } | null>(null);
@@ -34,9 +49,10 @@ export default function CalendarPage() {
   const load = useCallback(async () => {
     try {
       const response = await fetch("/api/voom/workflow", { cache: "no-store" });
-      const body = await response.json() as { snapshot?: WorkflowSnapshot; error?: string };
+      const body = await response.json() as { snapshot?: WorkflowSnapshot; socialItems?: SocialCalendarItemView[]; error?: string };
       if (!response.ok || !body.snapshot) throw new Error(body.error ?? "Your schedule couldn't load.");
       setSnapshot(body.snapshot);
+      setSocialItems(body.socialItems ?? []);
       setError(null);
       // The calendar always opens on the real current local month.
       setCursor((current) => current ?? monthOf(body.snapshot!.today));
@@ -58,23 +74,33 @@ export default function CalendarPage() {
     () => (snapshot?.items ?? []).filter((item) => filter === "All" || item.contentTypeLabel === filter),
     [snapshot, filter],
   );
+  // Multi-Social Core: the ONE calendar merges the executable Instagram
+  // workflow with the approved + scheduled TikTok/YouTube planning drafts,
+  // chronologically by local date/time.
+  const socialCells = useMemo(
+    () => socialItems.filter((item) => filter === "All" || item.contentTypeLabel === filter),
+    [socialItems, filter],
+  );
   const byDate = useMemo(() => {
-    const map = new Map<string, WorkflowView[]>();
-    for (const item of items) map.set(item.localDate, [...(map.get(item.localDate) ?? []), item]);
+    const map = new Map<string, CalendarEvent[]>();
+    for (const item of items) map.set(item.localDate, [...(map.get(item.localDate) ?? []), { type: "workflow", item }]);
+    for (const item of socialCells) map.set(item.localDate, [...(map.get(item.localDate) ?? []), { type: "social", item }]);
+    for (const list of map.values()) list.sort((a, b) => (timeOf(a) === timeOf(b) ? 0 : timeOf(a) < timeOf(b) ? -1 : 1));
     return map;
-  }, [items]);
+  }, [items, socialCells]);
 
   // Fallback before the first snapshot arrives: the real current local date,
   // not a hardcoded month and not the device's UTC date.
   const view = cursor ?? monthOf(currentScheduleDate());
   const cells = useMemo(() => buildCells(view.year, view.month), [view.year, view.month]);
   const counts = useMemo(() => countByStatus(items), [items]);
+  const totalVisible = items.length + socialCells.length;
 
   return <div>
     <PageHead
       title="Content calendar"
       description={snapshot
-        ? `${items.length} workflow item${items.length === 1 ? "" : "s"} · ${snapshot.cadenceLabel} · times shown in ${snapshot.timeZone.replace("_", " ")}`
+        ? `${totalVisible} scheduled item${totalVisible === 1 ? "" : "s"} across every channel · ${snapshot.cadenceLabel} · times shown in ${snapshot.timeZone.replace("_", " ")}`
         : "Loading your real schedule…"}
       actions={<Btn variant="primary" size="sm" onClick={() => open(<CreateContentModal onChanged={() => void load()} />)}>
         <Icon name="plus" size={14} /> Create content
@@ -97,12 +123,12 @@ export default function CalendarPage() {
       </div>
     </div>
 
-    {snapshot && items.length === 0 && (
+    {snapshot && totalVisible === 0 && (
       <Card className="mb-3.5">
         <EmptyState
           icon="cal"
           title="Your calendar is empty"
-          reason="This calendar shows the content Voom is actually executing — planned drafts, items waiting for your approval, and what is scheduled or published. Build your rolling plan, or create content directly, and items appear here with their real status."
+          reason="This calendar shows the content Voom is actually executing — planned drafts, items waiting for your approval, and what is scheduled or published, across Instagram, TikTok and YouTube. Build your rolling plan, or create content directly, and items appear here with their real status."
           action={<Btn variant="outline" size="sm" onClick={() => open(<CreateContentModal onChanged={() => void load()} />)}>
             <Icon name="plus" size={14} /> Create content
           </Btn>}
@@ -120,17 +146,27 @@ export default function CalendarPage() {
           <div className="flex items-center justify-between">
             <span className={`grid h-[23px] w-[23px] place-items-center rounded-lg text-xs font-semibold ${isToday ? "voom-grad text-white" : "text-text-2"}`}>{cell.day}</span>
           </div>
-          {events.slice(0, 3).map((item) => <button
+          {events.slice(0, 3).map((event) => event.type === "workflow" ? <button
             type="button"
-            key={item.draftId}
+            key={event.item.draftId}
             className="flex w-full items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-[7px] px-1.5 py-1 text-left text-[9.5px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand sm:px-2 sm:text-[11px]"
-            style={{ background: `${colorFor(item.status)}1f`, color: colorFor(item.status) }}
-            aria-label={`Open ${item.concept}`}
-            onClick={() => item.calendarItemId
-              ? open(<SavedCalendarDetailModal itemId={item.calendarItemId} />)
-              : open(<WorkflowDetail item={item} />)}
+            style={{ background: `${colorFor(event.item.status)}1f`, color: colorFor(event.item.status) }}
+            aria-label={`Open ${event.item.concept}`}
+            onClick={() => event.item.calendarItemId
+              ? open(<SavedCalendarDetailModal itemId={event.item.calendarItemId} />)
+              : open(<WorkflowDetail item={event.item} />)}
           >
-            {item.localTime} · {item.contentTypeLabel} · {item.concept}
+            {event.item.localTime} · {event.item.contentTypeLabel} · {event.item.concept}
+          </button> : <button
+            type="button"
+            key={`social-${event.item.draftId}`}
+            className="flex w-full items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-[7px] px-1.5 py-1 text-left text-[9.5px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand sm:px-2 sm:text-[11px]"
+            style={{ background: "#7c3aed1f", color: "#7c3aed" }}
+            aria-label={`Open ${event.item.concept} (${event.item.contentTypeLabel}, approved — publishing not connected)`}
+            title={`${event.item.contentTypeLabel} · approved — publishing not connected yet`}
+            onClick={() => open(<SocialEditorModal draftId={event.item.draftId} onChanged={() => void load()} />)}
+          >
+            {event.item.localTime} · {event.item.contentTypeLabel} · {event.item.concept}
           </button>)}
           {events.length > 3 && <span className="pl-1 text-[10px] text-text-3">+{events.length - 3} more</span>}
         </div>;
@@ -144,6 +180,12 @@ export default function CalendarPage() {
           <div className="mt-2 font-display text-2xl">{counts[status] ?? 0}</div>
         </div>
       </Card>)}
+      <Card className="flex items-center justify-between p-4">
+        <div>
+          <Tag tone="t-brand">Approved · not connected</Tag>
+          <div className="mt-2 font-display text-2xl">{socialCells.length}</div>
+        </div>
+      </Card>
     </div>
   </div>;
 }

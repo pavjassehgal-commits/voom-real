@@ -1,0 +1,1310 @@
+-- Multi-Social Core v1 — the channel-neutral social foundation.
+--
+-- Voom is evolving from an Instagram + Email product into one marketing
+-- engine with platform adapters (Instagram, TikTok, YouTube, Email). This
+-- migration is the SMALLEST SAFE ADDITIVE CHANGE that makes the existing
+-- architecture channel-neutral. It replaces nothing:
+--
+--   1. public.mara_drafts evolves into the social content model:
+--        * kind gains 'tiktok_video', 'youtube_short', 'youtube_video'
+--          (every previous kind stays valid);
+--        * social_channel / social_format — the ONE canonical channel+format
+--          vocabulary (lib/social/channels), CHECKed as valid pairs;
+--        * content_meta jsonb — the structured, extensible deliverable
+--          (title / description / concept / script / hashtags; thumbnail,
+--          playlist or audience metadata can be added later WITHOUT another
+--          redesign);
+--        * provider_ref — a provider's own publication reference, written
+--          ONLY from a real provider confirmation. NULL everywhere today for
+--          TikTok/YouTube because no integration exists.
+--      Deterministic backfill: every existing Instagram draft keeps working
+--      and gains its structured pair (instagram_post→post, reel→reel,
+--      story→story). Historical email/SMS/plan drafts keep NULL — they are
+--      not social content items.
+--
+--   2. public.content_calendar_items becomes the one chronological marketing
+--      calendar: channel gains 'TikTok', 'YouTube Short', 'YouTube Video',
+--      and social_channel / social_format give every row its canonical pair
+--      (backfilled from the existing labels; historical SMS stays NULL and
+--      read-only).
+--
+--   3. voom_campaigns.channels widens from 1-2 of (instagram,email) to 1-4
+--      of (instagram,tiktok,youtube,email). Existing selections are untouched
+--      and remain valid.
+--
+--   4. voom_campaign_actions.channel gains tiktok_video, youtube_short and
+--      youtube_video. The 0045 container-channel guard is replaced with the
+--      same rule over the four families, so an action can still never run on
+--      a channel its campaign did not select.
+--
+--   5. create_automated_campaign / add_campaign_action are replaced with
+--      versions that accept the new channels and write the structured draft
+--      columns, and update_campaign_action_content (0038) is replaced with a
+--      version that keeps the structured pair in sync when an Instagram
+--      format flips. Email children, Instagram drafts, the publish queue, the
+--      schedule guard (0037), idempotency and the inserts-only guarantee are
+--      all preserved unchanged.
+--
+-- TRUTHFULNESS: nothing here creates a TikTok/YouTube connection, token,
+-- provider id or publish path — no such integration exists yet, and this
+-- migration invents none. A TikTok/YouTube draft can be planned, approved
+-- and scheduled inside Voom; the publisher boundary refuses execution until
+-- real integrations ship. No row is ever marked published by this file.
+--
+-- NOTHING here deletes data, drops a table or a column, retypes a column,
+-- rewrites a delivered email, touches migrations 0001-0045, sends email,
+-- publishes to Instagram, enqueues paid media, spends a credit, changes a
+-- plan price or allowance, or schedules a cron. The retired SMS channel
+-- stays out of every new allowlist while its historical rows remain
+-- readable. RLS and service-role-only mutation boundaries are preserved.
+
+begin;
+
+-- 1) mara_drafts: the social content model ----------------------------------
+
+-- 1a) kind gains the three social video kinds. Drop-by-lookup so this works
+--     whatever PostgreSQL named the original constraint (the 0021 pattern).
+do $$
+declare c record;
+begin
+  for c in
+    select con.conname
+    from pg_constraint con
+    join pg_attribute att
+      on att.attrelid = con.conrelid and att.attnum = any (con.conkey)
+    where con.conrelid = 'public.mara_drafts'::regclass
+      and con.contype = 'c'
+      and att.attname = 'kind'
+  loop
+    execute format('alter table public.mara_drafts drop constraint %I', c.conname);
+  end loop;
+end $$;
+
+alter table public.mara_drafts
+  add constraint mara_drafts_kind_check
+  check (kind in (
+    'instagram_caption',
+    'instagram_post',
+    'reel',
+    'story',
+    'email',
+    'sms',
+    'campaign_plan',
+    'weekly_calendar',
+    'tiktok_video',
+    'youtube_short',
+    'youtube_video'
+  ));
+
+-- 1b) The structured social columns.
+alter table public.mara_drafts
+  add column if not exists social_channel text,
+  add column if not exists social_format text,
+  add column if not exists content_meta jsonb not null default '{}'::jsonb,
+  add column if not exists provider_ref text
+    check (provider_ref is null or char_length(provider_ref) between 1 and 300);
+
+-- 1c) One canonical channel+format vocabulary, enforced as valid pairs.
+--     Invalid combinations (tiktok+email, youtube+reel, instagram+short)
+--     fail here, server-side, exactly like lib/social/channels refuses them.
+alter table public.mara_drafts
+  drop constraint if exists mara_drafts_social_pair_check;
+alter table public.mara_drafts
+  add constraint mara_drafts_social_pair_check
+  check (
+    (social_channel is null and social_format is null)
+    or (
+      (
+        (social_channel = 'instagram' and social_format in ('post', 'reel', 'story'))
+        or (social_channel = 'tiktok' and social_format = 'video')
+        or (social_channel = 'youtube' and social_format in ('short', 'video'))
+        or (social_channel = 'email' and social_format is null)
+      )
+      -- The kind and the pair must tell the same story: a youtube_video row
+      -- can never claim the Short format, a reel is always Instagram. Rows
+      -- for non-media kinds (email, plans, captions) carry NULL columns and
+      -- are handled by the first branch.
+      and (
+        kind not in ('instagram_post', 'reel', 'story', 'tiktok_video', 'youtube_short', 'youtube_video')
+        or (kind = 'instagram_post' and social_channel = 'instagram' and social_format = 'post')
+        or (kind = 'reel' and social_channel = 'instagram' and social_format = 'reel')
+        or (kind = 'story' and social_channel = 'instagram' and social_format = 'story')
+        or (kind = 'tiktok_video' and social_channel = 'tiktok' and social_format = 'video')
+        or (kind = 'youtube_short' and social_channel = 'youtube' and social_format = 'short')
+        or (kind = 'youtube_video' and social_channel = 'youtube' and social_format = 'video')
+      )
+    )
+  );
+
+-- 1d) Deterministic backfill: every existing Instagram draft gains its
+--     structured pair. Nothing else is touched — email/SMS/plan drafts are
+--     not social content items and keep NULL.
+update public.mara_drafts
+   set social_channel = 'instagram', social_format = 'post'
+ where kind = 'instagram_post' and social_channel is null;
+
+update public.mara_drafts
+   set social_channel = 'instagram', social_format = 'reel'
+ where kind = 'reel' and social_channel is null;
+
+update public.mara_drafts
+   set social_channel = 'instagram', social_format = 'story'
+ where kind = 'story' and social_channel is null;
+
+create index if not exists mara_drafts_owner_social_idx
+  on public.mara_drafts (owner_user_id, social_channel, social_format)
+  where social_channel is not null;
+
+-- 2) content_calendar_items: the one marketing calendar ----------------------
+
+-- 2a) channel gains the three new labels (drop-by-lookup, the 0024 pattern).
+do $$
+declare c record;
+begin
+  for c in
+    select con.conname
+    from pg_constraint con
+    join pg_attribute att
+      on att.attrelid = con.conrelid and att.attnum = any (con.conkey)
+    where con.conrelid = 'public.content_calendar_items'::regclass
+      and con.contype = 'c'
+      and att.attname = 'channel'
+  loop
+    execute format('alter table public.content_calendar_items drop constraint %I', c.conname);
+  end loop;
+end $$;
+
+alter table public.content_calendar_items
+  add constraint content_calendar_items_channel_check
+  check (channel in (
+    'Instagram', 'Reel', 'Story', 'Feed', 'Email', 'SMS',
+    'TikTok', 'YouTube Short', 'YouTube Video'
+  ));
+
+-- 2b) The canonical pair, backfilled deterministically from the labels.
+alter table public.content_calendar_items
+  add column if not exists social_channel text,
+  add column if not exists social_format text;
+
+alter table public.content_calendar_items
+  drop constraint if exists content_calendar_items_social_pair_check;
+alter table public.content_calendar_items
+  add constraint content_calendar_items_social_pair_check
+  check (
+    social_channel is null
+    or (social_channel = 'instagram' and social_format in ('post', 'reel', 'story'))
+    or (social_channel = 'tiktok' and social_format = 'video')
+    or (social_channel = 'youtube' and social_format in ('short', 'video'))
+    or (social_channel = 'email' and social_format is null)
+  );
+
+update public.content_calendar_items
+   set social_channel = 'instagram', social_format = 'post'
+ where channel in ('Instagram', 'Feed') and social_channel is null;
+
+update public.content_calendar_items
+   set social_channel = 'instagram', social_format = 'reel'
+ where channel = 'Reel' and social_channel is null;
+
+update public.content_calendar_items
+   set social_channel = 'instagram', social_format = 'story'
+ where channel = 'Story' and social_channel is null;
+
+update public.content_calendar_items
+   set social_channel = 'email'
+ where channel = 'Email' and social_channel is null;
+
+-- Historical SMS rows deliberately keep social_channel NULL: retired,
+-- read-only, never claimed as an active channel.
+
+-- 3) voom_campaigns: the channel selection widens to four --------------------
+
+-- The selection must be a non-empty subset of the four active channels with
+-- no repeats. CHECK constraints cannot contain subqueries, so uniqueness is
+-- enforced as a strictly increasing canonical rank (instagram < tiktok <
+-- youtube < email). The build RPC and the TS normalizer both store the
+-- canonical order, so this also guarantees one canonical stored form — and
+-- every row 0045 already wrote satisfies it.
+alter table public.voom_campaigns
+  drop constraint if exists voom_campaigns_channels_check;
+alter table public.voom_campaigns
+  add constraint voom_campaigns_channels_check
+  check (
+    channels is null
+    or (
+      cardinality(channels) between 1 and 4
+      and channels <@ array['instagram', 'tiktok', 'youtube', 'email']::text[]
+      and (
+        cardinality(channels) < 2
+        or (case channels[1] when 'instagram' then 0 when 'tiktok' then 1 when 'youtube' then 2 else 3 end)
+         < (case channels[2] when 'instagram' then 0 when 'tiktok' then 1 when 'youtube' then 2 else 3 end)
+      )
+      and (
+        cardinality(channels) < 3
+        or (case channels[2] when 'instagram' then 0 when 'tiktok' then 1 when 'youtube' then 2 else 3 end)
+         < (case channels[3] when 'instagram' then 0 when 'tiktok' then 1 when 'youtube' then 2 else 3 end)
+      )
+      and (
+        cardinality(channels) < 4
+        or (case channels[3] when 'instagram' then 0 when 'tiktok' then 1 when 'youtube' then 2 else 3 end)
+         < (case channels[4] when 'instagram' then 0 when 'tiktok' then 1 when 'youtube' then 2 else 3 end)
+      )
+    )
+  );
+
+-- 4) voom_campaign_actions: the action channels widen to seven ---------------
+
+do $$
+declare c record;
+begin
+  for c in
+    select con.conname
+    from pg_constraint con
+    join pg_attribute att
+      on att.attrelid = con.conrelid and att.attnum = any (con.conkey)
+    where con.conrelid = 'public.voom_campaign_actions'::regclass
+      and con.contype = 'c'
+      and att.attname = 'channel'
+  loop
+    execute format('alter table public.voom_campaign_actions drop constraint %I', c.conname);
+  end loop;
+end $$;
+
+alter table public.voom_campaign_actions
+  add constraint voom_campaign_actions_channel_check
+  check (channel in (
+    'email', 'instagram_post', 'instagram_reel', 'instagram_story',
+    'tiktok_video', 'youtube_short', 'youtube_video'
+  ));
+
+-- 5) The container-channel guard, over four families --------------------------
+--
+-- Same rule as 0045, widened: an action's family must be one of its
+-- campaign's selected channels. Service-role-only, as before.
+
+create or replace function public.guard_campaign_action_channel()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_channels text[];
+  v_family text;
+begin
+  v_family := case
+    when new.channel = 'email' then 'email'
+    when new.channel in ('instagram_post', 'instagram_reel', 'instagram_story') then 'instagram'
+    when new.channel = 'tiktok_video' then 'tiktok'
+    when new.channel in ('youtube_short', 'youtube_video') then 'youtube'
+    else null
+  end;
+
+  if v_family is null then
+    raise exception 'campaign_action_channel_invalid'
+      using errcode = '23514';
+  end if;
+
+  select channels
+    into v_channels
+    from public.voom_campaigns
+   where id = new.campaign_id
+     and owner_user_id = new.owner_user_id;
+
+  -- A missing container is the composite owner/campaign foreign key's job
+  -- (23503); a historical container with no selection keeps its existing rows
+  -- readable instead of failing on an unrelated update.
+  if not found or v_channels is null then
+    return new;
+  end if;
+
+  if not (v_family = any (v_channels)) then
+    raise exception 'campaign_action_channel_not_selected'
+      using errcode = '23514';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists voom_campaign_action_channel_guard
+  on public.voom_campaign_actions;
+
+create trigger voom_campaign_action_channel_guard
+before insert or update of channel, campaign_id, owner_user_id
+on public.voom_campaign_actions
+for each row execute function public.guard_campaign_action_channel();
+
+revoke all on function public.guard_campaign_action_channel() from public, anon, authenticated;
+grant execute on function public.guard_campaign_action_channel() to service_role;
+
+-- 6) create_automated_campaign (Multi-Social) --------------------------------
+--
+-- Same signature, same idempotency contract, same execution identities, the
+-- same inserts-only guarantee and the same generation audit as 0045. What
+-- changes: the channel allowlist is the four active channels (canonical order
+-- instagram, tiktok, youtube, email), the action allowlist is the seven
+-- active action channels, and social drafts carry the structured
+-- social_channel / social_format / content_meta columns. TikTok and YouTube
+-- actions create ordinary drafts — NO publish queue row, NO provider call,
+-- NO connection: nothing external can happen from this insert.
+
+create or replace function public.create_automated_campaign(
+  p_owner_user_id uuid,
+  p_payload jsonb
+) returns public.voom_campaigns
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_campaign jsonb := p_payload -> 'campaign';
+  v_actions jsonb := coalesce(p_payload -> 'actions', '[]'::jsonb);
+  v_key text;
+  v_existing public.voom_campaigns;
+  v_container public.voom_campaigns;
+  v_conversation_id uuid;
+  v_action jsonb;
+  v_channel text;
+  v_status text;
+  v_child public.voom_campaigns;
+  v_draft_id uuid;
+  v_draft_kind text;
+  v_calendar_channel text;
+  v_social_channel text;
+  v_social_format text;
+  v_action_id uuid;
+  v_count integer;
+  v_source text;
+  v_method text;
+  v_channels text[] := '{}';
+  v_selected text;
+  v_family text;
+begin
+  v_key := trim(coalesce(v_campaign ->> 'idempotencyKey', ''));
+  if char_length(v_key) not between 16 and 200 then
+    raise exception 'invalid_build_idempotency_key';
+  end if;
+
+  -- Idempotent replay: same owner + same key returns the same container.
+  select * into v_existing
+  from public.voom_campaigns
+  where owner_user_id = p_owner_user_id
+    and build_idempotency_key = v_key
+    and parent_campaign_id is null
+  for update;
+
+  if found then
+    return v_existing;
+  end if;
+
+  if v_campaign ->> 'name' is null or char_length(trim(v_campaign ->> 'name')) not between 1 and 160 then
+    raise exception 'invalid_campaign_name';
+  end if;
+  if v_campaign ->> 'goal' is null or (v_campaign ->> 'goal') not in
+     ('promote_product', 'drive_sales', 'announce', 're_engage', 'awareness') then
+    raise exception 'invalid_campaign_goal';
+  end if;
+  if nullif(v_campaign ->> 'startAt', '') is null or nullif(v_campaign ->> 'endAt', '') is null then
+    raise exception 'invalid_campaign_dates';
+  end if;
+
+  -- Creation method: 'mara' unless the caller explicitly says 'self'. It is a
+  -- record of who planned the campaign, never of who may execute it.
+  v_method := case
+    when lower(trim(coalesce(v_campaign ->> 'creationMethod', ''))) = 'self' then 'self'
+    else 'mara'
+  end;
+
+  -- Authoritative channel selection. Absent means the legacy default
+  -- (instagram + email) — exactly what v2/v3 callers always received; a
+  -- channel whose provider is not connected is never selected silently.
+  -- Anything outside the allowlist is refused here, so no retired or
+  -- invented channel can enter a campaign.
+  if coalesce(v_campaign -> 'channels', 'null'::jsonb) <> 'null'::jsonb
+     and jsonb_typeof(v_campaign -> 'channels') <> 'array' then
+    raise exception 'invalid_campaign_channels';
+  end if;
+
+  for v_selected in
+    select * from jsonb_array_elements_text(
+      coalesce(v_campaign -> 'channels', '["instagram","email"]'::jsonb)
+    )
+  loop
+    if v_selected not in ('instagram', 'tiktok', 'youtube', 'email') then
+      raise exception 'invalid_campaign_channels';
+    end if;
+    if v_selected = any (v_channels) then
+      raise exception 'invalid_campaign_channels';
+    end if;
+    v_channels := v_channels || v_selected;
+  end loop;
+
+  if cardinality(v_channels) not between 1 and 4 then
+    raise exception 'invalid_campaign_channels';
+  end if;
+
+  select array_agg(c order by case c
+           when 'instagram' then 0
+           when 'tiktok' then 1
+           when 'youtube' then 2
+           else 3
+         end)
+    into v_channels
+    from unnest(v_channels) as c;
+
+  if jsonb_typeof(v_actions) <> 'array' then
+    raise exception 'invalid_action_count';
+  end if;
+
+  select jsonb_array_length(v_actions) into v_count;
+  if v_count is null or v_count > 16 then
+    raise exception 'invalid_action_count';
+  end if;
+  -- A MARA build always produces a plan; a self-created campaign may start
+  -- empty and grow one action at a time.
+  if v_count < 1 and v_method <> 'self' then
+    raise exception 'invalid_action_count';
+  end if;
+
+  -- The audit conversation all campaign-generated social drafts live in.
+  select id into v_conversation_id
+  from public.mara_conversations
+  where owner_user_id = p_owner_user_id and title = 'Automated Campaigns'
+  limit 1;
+
+  if v_conversation_id is null then
+    insert into public.mara_conversations (owner_user_id, title)
+    values (p_owner_user_id, 'Automated Campaigns')
+    returning id into v_conversation_id;
+  end if;
+
+  -- A self-created campaign has no generation layer, so generation_source stays
+  -- NULL rather than claiming MARA or a deterministic planner wrote it.
+  v_source := nullif(trim(coalesce(v_campaign ->> 'generationSource', '')), '');
+  if v_source is not null and v_source not in ('deterministic', 'mara') then
+    raise exception 'invalid_generation_source';
+  end if;
+
+  -- Container.
+  insert into public.voom_campaigns (
+    owner_user_id, kind, is_automated, name, objective, audience, audience_id,
+    goal, start_at, end_at, offer_details, campaign_notes, generated_summary,
+    status, build_idempotency_key, strategy, strategy_summary, generation_source,
+    channels, creation_method
+  ) values (
+    p_owner_user_id,
+    'multi',
+    true,
+    left(trim(v_campaign ->> 'name'), 160),
+    left(coalesce(v_campaign ->> 'notes', ''), 1000),
+    left(coalesce(v_campaign ->> 'audience', ''), 1000),
+    nullif(v_campaign ->> 'audienceId', '')::uuid,
+    v_campaign ->> 'goal',
+    (nullif(v_campaign ->> 'startAt', ''))::timestamptz,
+    (nullif(v_campaign ->> 'endAt', ''))::timestamptz,
+    nullif(left(v_campaign ->> 'offerDetails', 1000), ''),
+    nullif(left(v_campaign ->> 'notes', 2000), ''),
+    nullif(left(v_campaign ->> 'summary', 2000), ''),
+    'draft',
+    v_key,
+    nullif(v_campaign -> 'strategy', 'null'::jsonb),
+    nullif(left(v_campaign ->> 'strategySummary', 400), ''),
+    v_source,
+    v_channels,
+    v_method
+  )
+  returning * into v_container;
+
+  -- Exactly one generation row per build key. A replayed build already
+  -- returned above, so this insert only ever runs for a genuinely new key.
+  insert into public.voom_campaign_generations (
+    owner_user_id, campaign_id, action_id, kind, idempotency_key, provider, status, detail
+  ) values (
+    p_owner_user_id, v_container.id, null, 'build', v_key,
+    case when v_method = 'self' then 'self' when v_source = 'mara' then 'mara' else 'fallback' end,
+    case when v_method = 'self' then 'self' when v_source = 'mara' then 'completed' else 'fallback' end,
+    jsonb_build_object(
+      'actionCount', v_count,
+      'creationMethod', v_method,
+      'channels', to_jsonb(v_channels),
+      'fallbackSlots', coalesce(v_campaign -> 'fallbackSlots', '[]'::jsonb),
+      'performanceUsed', coalesce((v_campaign ->> 'performanceUsed')::boolean, false)
+    )
+  )
+  on conflict (owner_user_id, idempotency_key) do nothing;
+
+  for v_action in select * from jsonb_array_elements(v_actions)
+  loop
+    v_channel := v_action ->> 'channel';
+    v_status := coalesce(v_action ->> 'status', 'proposed');
+
+    if v_channel not in (
+      'email', 'instagram_post', 'instagram_reel', 'instagram_story',
+      'tiktok_video', 'youtube_short', 'youtube_video'
+    ) then
+      raise exception 'invalid_action_channel';
+    end if;
+    if v_status not in ('proposed', 'needs_approval', 'approved') then
+      raise exception 'invalid_action_status';
+    end if;
+
+    -- The campaign's own selection is authoritative: an action can never widen
+    -- the channels its campaign runs on.
+    v_family := case
+      when v_channel = 'email' then 'email'
+      when v_channel = 'tiktok_video' then 'tiktok'
+      when v_channel in ('youtube_short', 'youtube_video') then 'youtube'
+      else 'instagram'
+    end;
+    if not (v_family = any (v_channels)) then
+      raise exception 'campaign_action_channel_not_selected';
+    end if;
+
+    if v_channel = 'email' then
+      -- Email actions reuse the existing email campaign table and its full
+      -- 0018 delivery lifecycle. Nothing is sent here.
+      insert into public.voom_campaigns (
+        owner_user_id, kind, is_automated, parent_campaign_id, name, objective,
+        audience, audience_id, subject, preview_text, content, proposed_send_at,
+        status, approved_at, channels, creation_method
+      ) values (
+        p_owner_user_id,
+        'email',
+        true,
+        v_container.id,
+        left(v_action ->> 'title', 160),
+        left(coalesce(v_action ->> 'purpose', ''), 1000),
+        left(coalesce(v_campaign ->> 'audience', ''), 1000),
+        nullif(v_action ->> 'audienceId', '')::uuid,
+        nullif(left(v_action ->> 'subject', 300), ''),
+        nullif(left(v_action ->> 'previewText', 500), ''),
+        left(coalesce(v_action ->> 'body', v_action ->> 'title'), 12000),
+        (nullif(v_action ->> 'scheduledFor', ''))::timestamptz,
+        case when v_status = 'approved' then 'approved' else 'draft' end,
+        case when v_status = 'approved' then now() else null end,
+        array['email']::text[],
+        v_method
+      )
+      returning * into v_child;
+
+      insert into public.voom_campaign_actions (
+        owner_user_id, campaign_id, slot, channel, stage, title, purpose,
+        scheduled_for, status, email_campaign_id, safety_blockers, idempotency_key,
+        mara_content, content_source
+      ) values (
+        p_owner_user_id, v_container.id,
+        (v_action ->> 'slot')::integer, v_channel, v_action ->> 'stage',
+        left(v_action ->> 'title', 160),
+        left(coalesce(v_action ->> 'purpose', ''), 1000),
+        (nullif(v_action ->> 'scheduledFor', ''))::timestamptz,
+        v_status, v_child.id,
+        coalesce((select array(select jsonb_array_elements_text(coalesce(v_action -> 'safetyBlockers', '[]'::jsonb)))), '{}'),
+        v_action ->> 'idempotencyKey',
+        coalesce(nullif(v_action -> 'content', 'null'::jsonb), '{}'::jsonb),
+        case (v_action ->> 'contentSource')
+          when 'mara' then 'mara'
+          when 'edited' then 'edited'
+          else 'deterministic'
+        end
+      )
+      returning id into v_action_id;
+
+    else
+      -- Social actions (Instagram, TikTok, YouTube) are ordinary drafts; they
+      -- carry no visual and therefore can never be auto-scheduled or
+      -- auto-published. TikTok/YouTube additionally get NO publish queue row:
+      -- no provider integration exists, so nothing external can happen.
+      v_draft_kind := case v_channel
+        when 'instagram_reel' then 'reel'
+        when 'instagram_story' then 'story'
+        when 'tiktok_video' then 'tiktok_video'
+        when 'youtube_short' then 'youtube_short'
+        when 'youtube_video' then 'youtube_video'
+        else 'instagram_post'
+      end;
+      v_calendar_channel := case v_channel
+        when 'instagram_reel' then 'Reel'
+        when 'instagram_story' then 'Story'
+        when 'tiktok_video' then 'TikTok'
+        when 'youtube_short' then 'YouTube Short'
+        when 'youtube_video' then 'YouTube Video'
+        else 'Instagram'
+      end;
+      v_social_channel := case
+        when v_channel = 'tiktok_video' then 'tiktok'
+        when v_channel in ('youtube_short', 'youtube_video') then 'youtube'
+        else 'instagram'
+      end;
+      v_social_format := case v_channel
+        when 'instagram_reel' then 'reel'
+        when 'instagram_story' then 'story'
+        when 'tiktok_video' then 'video'
+        when 'youtube_short' then 'short'
+        when 'youtube_video' then 'video'
+        else 'post'
+      end;
+
+      insert into public.mara_drafts (
+        conversation_id, owner_user_id, kind, channel, title, content,
+        proposed_publish_at, status, social_channel, social_format, content_meta
+      ) values (
+        v_conversation_id, p_owner_user_id, v_draft_kind,
+        case v_draft_kind
+          when 'story' then 'Instagram Story · 9:16'
+          when 'reel' then 'Reel · 9:16'
+          when 'tiktok_video' then 'TikTok · 9:16'
+          when 'youtube_short' then 'YouTube Short · 9:16'
+          when 'youtube_video' then 'YouTube Video · 16:9'
+          else 'Instagram Post · 4:5'
+        end,
+        left(v_action ->> 'title', 160),
+        left(coalesce(v_action ->> 'caption', v_action ->> 'concept', v_action ->> 'title'), 12000),
+        (nullif(v_action ->> 'scheduledFor', ''))::timestamptz,
+        case when v_status = 'approved' then 'approved' else 'draft' end,
+        v_social_channel,
+        v_social_format,
+        jsonb_build_object(
+          'concept', nullif(v_action ->> 'concept', ''),
+          'description', nullif(v_action ->> 'description', ''),
+          'script', coalesce(nullif(v_action -> 'script', 'null'::jsonb), '[]'::jsonb),
+          'hashtags', coalesce(nullif(v_action -> 'hashtags', 'null'::jsonb), '[]'::jsonb)
+        )
+      )
+      returning id into v_draft_id;
+
+      -- Autopilot-safe social actions are approved and mirrored to the
+      -- calendar as 'approved' (never 'scheduled'): without a visual there is
+      -- no publish-queue row, and TikTok/YouTube have no queue at all, so
+      -- cron can publish nothing.
+      if v_status = 'approved' then
+        insert into public.content_calendar_items (
+          owner_user_id, title, channel, content, topic,
+          publish_at, status, source_draft_id, social_channel, social_format
+        ) values (
+          p_owner_user_id,
+          left(v_action ->> 'title', 160),
+          v_calendar_channel,
+          left(coalesce(v_action ->> 'caption', v_action ->> 'concept', ''), 12000),
+          left(coalesce(v_action ->> 'purpose', ''), 500),
+          (nullif(v_action ->> 'scheduledFor', ''))::timestamptz,
+          'approved',
+          v_draft_id,
+          v_social_channel,
+          v_social_format
+        )
+        on conflict (owner_user_id, source_draft_id) do update set
+          title = excluded.title,
+          channel = excluded.channel,
+          content = excluded.content,
+          topic = excluded.topic,
+          publish_at = excluded.publish_at,
+          status = excluded.status,
+          social_channel = excluded.social_channel,
+          social_format = excluded.social_format;
+      end if;
+
+      insert into public.voom_campaign_actions (
+        owner_user_id, campaign_id, slot, channel, stage, title, purpose,
+        scheduled_for, status, draft_id, safety_blockers, idempotency_key,
+        mara_content, content_source
+      ) values (
+        p_owner_user_id, v_container.id,
+        (v_action ->> 'slot')::integer, v_channel, v_action ->> 'stage',
+        left(v_action ->> 'title', 160),
+        left(coalesce(v_action ->> 'purpose', ''), 1000),
+        (nullif(v_action ->> 'scheduledFor', ''))::timestamptz,
+        v_status, v_draft_id,
+        coalesce((select array(select jsonb_array_elements_text(coalesce(v_action -> 'safetyBlockers', '[]'::jsonb)))), '{}'),
+        v_action ->> 'idempotencyKey',
+        coalesce(nullif(v_action -> 'content', 'null'::jsonb), '{}'::jsonb),
+        case (v_action ->> 'contentSource')
+          when 'mara' then 'mara'
+          when 'edited' then 'edited'
+          else 'deterministic'
+        end
+      )
+      returning id into v_action_id;
+    end if;
+  end loop;
+
+  return v_container;
+end;
+$$;
+
+revoke all on function public.create_automated_campaign(uuid, jsonb) from public, anon, authenticated;
+grant execute on function public.create_automated_campaign(uuid, jsonb) to service_role;
+
+-- 7) add_campaign_action (Multi-Social) --------------------------------------
+--
+-- Appends ONE action to an existing campaign. Same owner scoping, same
+-- channel-selection rule (now over four families), same execution identities,
+-- same schedule guard, idempotent on (owner_user_id, idempotency_key).
+-- Inserts only: no provider call, no send, no publish, no queue row, no paid
+-- media, no credit, no cron.
+
+create or replace function public.add_campaign_action(
+  p_owner_user_id uuid,
+  p_campaign_id uuid,
+  p_payload jsonb
+) returns public.voom_campaign_actions
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_container public.voom_campaigns;
+  v_existing public.voom_campaign_actions;
+  v_action public.voom_campaign_actions;
+  v_conversation_id uuid;
+  v_child public.voom_campaigns;
+  v_draft_id uuid;
+  v_draft_kind text;
+  v_calendar_channel text;
+  v_social_channel text;
+  v_social_format text;
+  v_key text;
+  v_channel text;
+  v_status text;
+  v_stage text;
+  v_family text;
+  v_slot integer;
+  v_count integer;
+  v_scheduled timestamptz;
+  v_content_source text;
+begin
+  v_key := trim(coalesce(p_payload ->> 'idempotencyKey', ''));
+  if char_length(v_key) not between 16 and 200 then
+    raise exception 'invalid_action_idempotency_key';
+  end if;
+
+  -- Idempotent replay: this owner + key already produced an action.
+  select * into v_existing
+  from public.voom_campaign_actions
+  where owner_user_id = p_owner_user_id
+    and idempotency_key = v_key
+  for update;
+
+  if found then
+    return v_existing;
+  end if;
+
+  select * into v_container
+  from public.voom_campaigns
+  where id = p_campaign_id
+    and owner_user_id = p_owner_user_id
+    and kind = 'multi'
+    and parent_campaign_id is null
+  for update;
+
+  if not found then
+    raise exception 'campaign_not_found';
+  end if;
+
+  v_channel := p_payload ->> 'channel';
+  v_status := coalesce(p_payload ->> 'status', 'needs_approval');
+  v_stage := coalesce(p_payload ->> 'stage', 'consideration');
+
+  if v_channel not in (
+    'email', 'instagram_post', 'instagram_reel', 'instagram_story',
+    'tiktok_video', 'youtube_short', 'youtube_video'
+  ) then
+    raise exception 'invalid_action_channel';
+  end if;
+  if v_status not in ('proposed', 'needs_approval', 'approved') then
+    raise exception 'invalid_action_status';
+  end if;
+  if v_stage not in ('awareness', 'consideration', 'conversion', 'retention') then
+    raise exception 'invalid_action_stage';
+  end if;
+  if nullif(trim(coalesce(p_payload ->> 'title', '')), '') is null
+     or char_length(trim(p_payload ->> 'title')) > 160 then
+    raise exception 'invalid_action_title';
+  end if;
+
+  v_scheduled := (nullif(p_payload ->> 'scheduledFor', ''))::timestamptz;
+  if v_scheduled is null then
+    raise exception 'invalid_action_schedule';
+  end if;
+
+  -- The campaign's own selection is authoritative.
+  v_family := case
+    when v_channel = 'email' then 'email'
+    when v_channel = 'tiktok_video' then 'tiktok'
+    when v_channel in ('youtube_short', 'youtube_video') then 'youtube'
+    else 'instagram'
+  end;
+  if v_container.channels is not null and not (v_family = any (v_container.channels)) then
+    raise exception 'campaign_action_channel_not_selected';
+  end if;
+
+  select count(*)::int, coalesce(max(slot), -1) + 1
+    into v_count, v_slot
+    from public.voom_campaign_actions
+   where owner_user_id = p_owner_user_id
+     and campaign_id = v_container.id;
+
+  if v_count >= 16 or v_slot > 15 then
+    raise exception 'campaign_action_limit_reached';
+  end if;
+
+  v_content_source := case (p_payload ->> 'contentSource')
+    when 'mara' then 'mara'
+    when 'deterministic' then 'deterministic'
+    else 'edited'
+  end;
+
+  if v_channel = 'email' then
+    insert into public.voom_campaigns (
+      owner_user_id, kind, is_automated, parent_campaign_id, name, objective,
+      audience, audience_id, subject, preview_text, content, proposed_send_at,
+      status, approved_at, channels, creation_method
+    ) values (
+      p_owner_user_id,
+      'email',
+      true,
+      v_container.id,
+      left(trim(p_payload ->> 'title'), 160),
+      left(coalesce(p_payload ->> 'purpose', ''), 1000),
+      left(coalesce(v_container.audience, ''), 1000),
+      nullif(p_payload ->> 'audienceId', '')::uuid,
+      nullif(left(p_payload ->> 'subject', 300), ''),
+      nullif(left(p_payload ->> 'previewText', 500), ''),
+      left(coalesce(p_payload ->> 'body', p_payload ->> 'title'), 12000),
+      v_scheduled,
+      case when v_status = 'approved' then 'approved' else 'draft' end,
+      case when v_status = 'approved' then now() else null end,
+      array['email']::text[],
+      v_container.creation_method
+    )
+    returning * into v_child;
+
+    insert into public.voom_campaign_actions (
+      owner_user_id, campaign_id, slot, channel, stage, title, purpose,
+      scheduled_for, status, email_campaign_id, safety_blockers, idempotency_key,
+      mara_content, content_source
+    ) values (
+      p_owner_user_id, v_container.id, v_slot, v_channel, v_stage,
+      left(trim(p_payload ->> 'title'), 160),
+      left(coalesce(p_payload ->> 'purpose', ''), 1000),
+      v_scheduled, v_status, v_child.id,
+      coalesce((select array(select jsonb_array_elements_text(coalesce(p_payload -> 'safetyBlockers', '[]'::jsonb)))), '{}'),
+      v_key,
+      coalesce(nullif(p_payload -> 'content', 'null'::jsonb), '{}'::jsonb),
+      v_content_source
+    )
+    returning * into v_action;
+  else
+    select id into v_conversation_id
+    from public.mara_conversations
+    where owner_user_id = p_owner_user_id and title = 'Automated Campaigns'
+    limit 1;
+
+    if v_conversation_id is null then
+      insert into public.mara_conversations (owner_user_id, title)
+      values (p_owner_user_id, 'Automated Campaigns')
+      returning id into v_conversation_id;
+    end if;
+
+    v_draft_kind := case v_channel
+      when 'instagram_reel' then 'reel'
+      when 'instagram_story' then 'story'
+      when 'tiktok_video' then 'tiktok_video'
+      when 'youtube_short' then 'youtube_short'
+      when 'youtube_video' then 'youtube_video'
+      else 'instagram_post'
+    end;
+    v_calendar_channel := case v_channel
+      when 'instagram_reel' then 'Reel'
+      when 'instagram_story' then 'Story'
+      when 'tiktok_video' then 'TikTok'
+      when 'youtube_short' then 'YouTube Short'
+      when 'youtube_video' then 'YouTube Video'
+      else 'Instagram'
+    end;
+    v_social_channel := case
+      when v_channel = 'tiktok_video' then 'tiktok'
+      when v_channel in ('youtube_short', 'youtube_video') then 'youtube'
+      else 'instagram'
+    end;
+    v_social_format := case v_channel
+      when 'instagram_reel' then 'reel'
+      when 'instagram_story' then 'story'
+      when 'tiktok_video' then 'video'
+      when 'youtube_short' then 'short'
+      when 'youtube_video' then 'video'
+      else 'post'
+    end;
+
+    insert into public.mara_drafts (
+      conversation_id, owner_user_id, kind, channel, title, content,
+      proposed_publish_at, status, social_channel, social_format, content_meta
+    ) values (
+      v_conversation_id, p_owner_user_id, v_draft_kind,
+      case v_draft_kind
+        when 'story' then 'Instagram Story · 9:16'
+        when 'reel' then 'Reel · 9:16'
+        when 'tiktok_video' then 'TikTok · 9:16'
+        when 'youtube_short' then 'YouTube Short · 9:16'
+        when 'youtube_video' then 'YouTube Video · 16:9'
+        else 'Instagram Post · 4:5'
+      end,
+      left(trim(p_payload ->> 'title'), 160),
+      left(coalesce(p_payload ->> 'caption', p_payload ->> 'concept', p_payload ->> 'title'), 12000),
+      v_scheduled,
+      case when v_status = 'approved' then 'approved' else 'draft' end,
+      v_social_channel,
+      v_social_format,
+      jsonb_build_object(
+        'concept', nullif(p_payload ->> 'concept', ''),
+        'description', nullif(p_payload ->> 'description', ''),
+        'script', coalesce(nullif(p_payload -> 'script', 'null'::jsonb), '[]'::jsonb),
+        'hashtags', coalesce(nullif(p_payload -> 'hashtags', 'null'::jsonb), '[]'::jsonb)
+      )
+    )
+    returning id into v_draft_id;
+
+    -- Same rule as the build: an approved social action is mirrored to the
+    -- calendar as 'approved' only. Instagram needs a visual before any queue
+    -- row exists; TikTok/YouTube have no queue at all — nothing external can
+    -- happen from this insert.
+    if v_status = 'approved' then
+      insert into public.content_calendar_items (
+        owner_user_id, title, channel, content, topic,
+        publish_at, status, source_draft_id, social_channel, social_format
+      ) values (
+        p_owner_user_id,
+        left(trim(p_payload ->> 'title'), 160),
+        v_calendar_channel,
+        left(coalesce(p_payload ->> 'caption', p_payload ->> 'concept', ''), 12000),
+        left(coalesce(p_payload ->> 'purpose', ''), 500),
+        v_scheduled,
+        'approved',
+        v_draft_id,
+        v_social_channel,
+        v_social_format
+      )
+      on conflict (owner_user_id, source_draft_id) do update set
+        title = excluded.title,
+        channel = excluded.channel,
+        content = excluded.content,
+        topic = excluded.topic,
+        publish_at = excluded.publish_at,
+        status = excluded.status,
+        social_channel = excluded.social_channel,
+        social_format = excluded.social_format;
+    end if;
+
+    insert into public.voom_campaign_actions (
+      owner_user_id, campaign_id, slot, channel, stage, title, purpose,
+      scheduled_for, status, draft_id, safety_blockers, idempotency_key,
+      mara_content, content_source
+    ) values (
+      p_owner_user_id, v_container.id, v_slot, v_channel, v_stage,
+      left(trim(p_payload ->> 'title'), 160),
+      left(coalesce(p_payload ->> 'purpose', ''), 1000),
+      v_scheduled, v_status, v_draft_id,
+      coalesce((select array(select jsonb_array_elements_text(coalesce(p_payload -> 'safetyBlockers', '[]'::jsonb)))), '{}'),
+      v_key,
+      coalesce(nullif(p_payload -> 'content', 'null'::jsonb), '{}'::jsonb),
+      v_content_source
+    )
+    returning * into v_action;
+  end if;
+
+  insert into public.voom_campaign_generations (
+    owner_user_id, campaign_id, action_id, kind, idempotency_key, provider, status, detail
+  ) values (
+    p_owner_user_id, v_container.id, v_action.id, 'action_add', v_key,
+    case when v_content_source = 'mara' then 'mara' else 'self' end,
+    case when v_content_source = 'mara' then 'completed' else 'self' end,
+    jsonb_build_object('channel', v_channel, 'slot', v_slot)
+  )
+  on conflict (owner_user_id, idempotency_key) do nothing;
+
+  return v_action;
+end;
+$$;
+
+revoke all on function public.add_campaign_action(uuid, uuid, jsonb) from public, anon, authenticated;
+grant execute on function public.add_campaign_action(uuid, uuid, jsonb) to service_role;
+
+-- 8) update_campaign_action_content (Multi-Social) ----------------------------
+--
+-- The 0038 guarded writer, preserved in full, with ONE addition: an Instagram
+-- format flip now keeps the 0046 structured pair in sync on the draft and its
+-- calendar mirror. Without it, flipping Post → Reel would leave the row
+-- claiming kind 'reel' with the 'post' pair — exactly the contradiction the
+-- mara_drafts kind/pair check exists to refuse. Every guard (locked sends,
+-- published/publishing rows, media-locked formats, past schedules, caption
+-- limits, idempotent replays) is unchanged. Social video actions never carry
+-- a format patch, so the flip branch cannot touch them.
+
+create or replace function public.update_campaign_action_content(
+  p_owner_user_id uuid,
+  p_action_id uuid,
+  p_patch jsonb,
+  p_idempotency_key text default null,
+  p_reset_review boolean default false
+) returns public.voom_campaign_actions
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_action public.voom_campaign_actions;
+  v_key text := nullif(trim(coalesce(p_idempotency_key, '')), '');
+  v_scheduled timestamptz;
+  v_content jsonb;
+  v_new_channel text;
+  v_new_kind text;
+  v_new_calendar_channel text;
+begin
+  if v_key is not null and char_length(v_key) not between 16 and 200 then
+    raise exception 'invalid_generation_idempotency_key';
+  end if;
+
+  select * into v_action
+  from public.voom_campaign_actions
+  where id = p_action_id and owner_user_id = p_owner_user_id
+  for update;
+
+  if not found then
+    raise exception 'campaign_action_not_found';
+  end if;
+
+  v_content := coalesce(v_action.mara_content, '{}'::jsonb)
+    || coalesce(nullif(p_patch -> 'content', 'null'::jsonb), '{}'::jsonb);
+
+  -- Idempotent replay: this key already produced a generation. Return the row
+  -- exactly as it stands; nothing is written a second time.
+  if v_key is not null and exists (
+    select 1 from public.voom_campaign_generations
+    where owner_user_id = p_owner_user_id and idempotency_key = v_key
+  ) then
+    return v_action;
+  end if;
+
+  if v_action.channel = 'email' then
+    -- A send that was queued, accepted, delivered or even attempted locks the
+    -- content: what the recipient saw must stay what the record says.
+    if exists (
+      select 1 from public.campaign_sends
+      where owner_user_id = p_owner_user_id
+        and campaign_id = v_action.email_campaign_id
+        and internal_status <> 'skipped'
+    ) then
+      raise exception 'campaign_action_locked';
+    end if;
+
+    update public.voom_campaigns
+    set subject = coalesce(nullif(left(p_patch ->> 'subject', 300), ''), subject),
+        preview_text = coalesce(nullif(left(p_patch ->> 'previewText', 500), ''), preview_text),
+        content = coalesce(nullif(left(p_patch ->> 'body', 12000), ''), content),
+        proposed_send_at = coalesce((nullif(p_patch ->> 'scheduledFor', ''))::timestamptz, proposed_send_at),
+        -- Content changed, so a previous approval no longer describes it.
+        status = case when p_reset_review then 'draft' else status end,
+        approved_at = case when p_reset_review then null else approved_at end
+    where id = v_action.email_campaign_id and owner_user_id = p_owner_user_id;
+  else
+    if v_action.draft_id is null then
+      raise exception 'campaign_action_not_found';
+    end if;
+
+    -- A campaign Instagram format can be changed in place before media or
+    -- publishing. Keep the action, Studio draft, calendar mirror and future
+    -- generation path on the same format; never leave a Post-labelled action
+    -- backed by a Reel draft (or vice versa).
+    if nullif(p_patch ->> 'format', '') is not null then
+      if (p_patch ->> 'format') not in ('post', 'reel', 'story') then
+        raise exception 'instagram_format_invalid';
+      end if;
+      v_content := jsonb_set(v_content, '{format}', to_jsonb(p_patch ->> 'format'), true);
+      if (p_patch ->> 'format') = 'reel' then
+        if coalesce(jsonb_typeof(v_content -> 'script'), '') <> 'array' then
+          raise exception 'instagram_reel_script_required';
+        end if;
+        if jsonb_array_length(v_content -> 'script') = 0 then
+          raise exception 'instagram_reel_script_required';
+        end if;
+      else
+        if p_patch ? 'content'
+          and jsonb_typeof(p_patch -> 'content' -> 'script') = 'array'
+          and jsonb_array_length(p_patch -> 'content' -> 'script') > 0 then
+          raise exception 'instagram_non_reel_script_forbidden';
+        end if;
+        -- A format change away from Reel must not leave stale Reel-only data.
+        v_content := v_content - 'script';
+      end if;
+      v_new_channel := case p_patch ->> 'format'
+        when 'reel' then 'instagram_reel'
+        when 'story' then 'instagram_story'
+        else 'instagram_post'
+      end;
+      if v_new_channel <> v_action.channel then
+        if exists (
+          select 1 from public.post_draft_assets
+          where owner_user_id = p_owner_user_id and draft_id = v_action.draft_id
+        ) then
+          raise exception 'instagram_format_locked';
+        end if;
+        if exists (
+          select 1 from public.instagram_publish_queue
+          where owner_user_id = p_owner_user_id
+            and draft_id = v_action.draft_id
+            and status in ('publishing', 'published')
+        ) then
+          raise exception 'campaign_action_locked';
+        end if;
+        v_new_kind := case v_new_channel
+          when 'instagram_reel' then 'reel'
+          when 'instagram_story' then 'story'
+          else 'instagram_post'
+        end;
+        v_new_calendar_channel := case v_new_channel
+          when 'instagram_reel' then 'Reel'
+          when 'instagram_story' then 'Story'
+          else 'Instagram'
+        end;
+        update public.mara_drafts
+        set kind = v_new_kind,
+            channel = case v_new_kind
+              when 'reel' then 'Reel · 9:16'
+              when 'story' then 'Instagram Story · 9:16'
+              else 'Instagram Post · 4:5'
+            end,
+            -- Multi-Social Core: the structured pair must follow the kind, so
+            -- a format flip never leaves a Reel draft claiming the Post pair.
+            social_channel = 'instagram',
+            social_format = case v_new_kind
+              when 'reel' then 'reel'
+              when 'story' then 'story'
+              else 'post'
+            end
+        where id = v_action.draft_id and owner_user_id = p_owner_user_id;
+        update public.content_calendar_items
+        set channel = v_new_calendar_channel,
+            social_channel = 'instagram',
+            social_format = case v_new_calendar_channel
+              when 'Reel' then 'reel'
+              when 'Story' then 'story'
+              else 'post'
+            end
+        where owner_user_id = p_owner_user_id
+          and source_draft_id = v_action.draft_id
+          and status in ('draft', 'approved');
+        update public.instagram_publish_queue
+        set media_kind = case v_new_channel
+          when 'instagram_reel' then 'reel'
+          when 'instagram_story' then 'story'
+          else 'image'
+        end
+        where owner_user_id = p_owner_user_id
+          and draft_id = v_action.draft_id
+          and status in ('scheduled', 'waiting_for_media');
+      end if;
+    end if;
+
+    -- Instagram's own caption limit, enforced here so a rewritten draft can
+    -- never be stored in a shape the publisher would have to refuse later.
+    if char_length(coalesce(p_patch ->> 'caption', '')) > 2200
+      or char_length(coalesce(p_patch ->> 'queueCaption', '')) > 2200 then
+      raise exception 'instagram_caption_too_long';
+    end if;
+
+    -- Publishing or already published is final. A row still waiting (scheduled
+    -- or waiting_for_media) is updated in place so what publishes matches what
+    -- the user is looking at.
+    if exists (
+      select 1 from public.instagram_publish_queue
+      where owner_user_id = p_owner_user_id
+        and draft_id = v_action.draft_id
+        and status in ('publishing', 'published')
+    ) then
+      raise exception 'campaign_action_locked';
+    end if;
+
+    update public.mara_drafts
+    set title = coalesce(nullif(left(p_patch ->> 'title', 160), ''), title),
+        content = coalesce(nullif(left(p_patch ->> 'caption', 12000), ''), content),
+        proposed_publish_at = coalesce((nullif(p_patch ->> 'scheduledFor', ''))::timestamptz, proposed_publish_at),
+        status = case when p_reset_review then 'draft' else status end
+    where id = v_action.draft_id and owner_user_id = p_owner_user_id;
+
+    -- Keep the existing calendar mirror truthful while it is still a mirror.
+    update public.content_calendar_items
+    set title = coalesce(nullif(left(p_patch ->> 'title', 160), ''), title),
+        content = coalesce(nullif(left(p_patch ->> 'caption', 12000), ''), content),
+        publish_at = coalesce((nullif(p_patch ->> 'scheduledFor', ''))::timestamptz, publish_at)
+    where owner_user_id = p_owner_user_id
+      and source_draft_id = v_action.draft_id
+      and status in ('draft', 'approved');
+
+    if p_reset_review then
+      -- Regenerated content must be reviewed again: withdraw the mirror and
+      -- cancel any queue row that has not started. Published/in-flight rows
+      -- were already refused above and are never touched here.
+      delete from public.content_calendar_items
+      where owner_user_id = p_owner_user_id and source_draft_id = v_action.draft_id;
+
+      update public.instagram_publish_queue
+      set status = 'cancelled'
+      where owner_user_id = p_owner_user_id
+        and draft_id = v_action.draft_id
+        and status in ('scheduled', 'waiting_for_media');
+    else
+      update public.instagram_publish_queue
+      set caption = coalesce(nullif(left(p_patch ->> 'queueCaption', 2200), ''), caption),
+          scheduled_at = coalesce((nullif(p_patch ->> 'scheduledFor', ''))::timestamptz, scheduled_at)
+      where owner_user_id = p_owner_user_id
+        and draft_id = v_action.draft_id
+        and status in ('scheduled', 'waiting_for_media');
+    end if;
+  end if;
+
+  -- The structured content was merged before the guarded format checks;
+  -- refresh the action row itself with that validated shape.
+  v_scheduled := coalesce((nullif(p_patch ->> 'scheduledFor', ''))::timestamptz, v_action.scheduled_for);
+
+  update public.voom_campaign_actions
+  set channel = coalesce(v_new_channel, channel),
+      title = coalesce(nullif(left(p_patch ->> 'title', 160), ''), title),
+      purpose = coalesce(nullif(left(p_patch ->> 'purpose', 1000), ''), purpose),
+      scheduled_for = v_scheduled,
+      mara_content = v_content,
+      content_source = coalesce(nullif(p_patch ->> 'contentSource', ''), content_source),
+      safety_blockers = coalesce(
+        (select array(select jsonb_array_elements_text(p_patch -> 'safetyBlockers'))),
+        safety_blockers
+      ),
+      status = case when p_reset_review then 'needs_approval' else status end
+  where id = v_action.id and owner_user_id = p_owner_user_id
+  returning * into v_action;
+
+  if v_key is not null then
+    insert into public.voom_campaign_generations (
+      owner_user_id, campaign_id, action_id, kind, idempotency_key, provider, status, detail
+    ) values (
+      p_owner_user_id, v_action.campaign_id, v_action.id,
+      -- This writer is only ever reached from per-action edit/regenerate, so the
+      -- generation kind is always 'action_regenerate'. The provider column is
+      -- what distinguishes MARA-authored content from a deterministic rewrite.
+      'action_regenerate',
+      v_key,
+      case when (p_patch ->> 'contentSource') = 'mara' then 'mara' else 'fallback' end,
+      'completed',
+      jsonb_build_object('channel', v_action.channel, 'resetReview', p_reset_review)
+    )
+    on conflict (owner_user_id, idempotency_key) do nothing;
+  end if;
+
+  return v_action;
+end;
+$$;
+
+revoke all on function public.update_campaign_action_content(uuid, uuid, jsonb, text, boolean)
+  from public, anon, authenticated;
+grant execute on function public.update_campaign_action_content(uuid, uuid, jsonb, text, boolean)
+  to service_role;
+
+commit;

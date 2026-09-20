@@ -41,9 +41,10 @@ test("0026 and the additive 0028 video metadata migration are bounded", async ()
   assert.deepEqual(files.filter((name) => /^0025_/.test(name)), ["0025_mara_media_video_generation.sql"]);
   assert.deepEqual(files.filter((name) => /^0027_/.test(name)), ["0027_mara_media_provider_diagnostics.sql"], "the only 0027 is provider diagnostics");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  // Production is through 0045 (Campaigns v3). Anything newer is a migration
+  // Production is through 0045 (Campaigns v3). 0046 (Multi-Social Core) is
+  // checked in but NOT applied to production. Anything newer is a migration
   // this suite has not been told about — it must be added deliberately.
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 45), "no migration beyond 0045 (the production head) may exist");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 46), "no migration beyond 0046 may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],

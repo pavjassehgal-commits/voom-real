@@ -7,7 +7,13 @@ import type { PlanId } from "@/lib/billing/plans";
 import type { Cadence, ContentType } from "@/lib/voom/cadence";
 
 export type CoordinatorNeedType =
-  | "instagram_calendar_gap"
+  /**
+   * Multi-Social Core: the gap need covers the ONE marketing calendar across
+   * every channel (Instagram, TikTok, YouTube). Gap FILLING still only ever
+   * proposes Instagram drafts — the coordinator never autonomously creates
+   * TikTok/YouTube work.
+   */
+  | "content_calendar_gap"
   | "campaign_needs_attention"
   | "pending_approval"
   | "email_opportunity"
@@ -45,8 +51,14 @@ export interface CalendarCommitment {
   id: string;
   source: "campaign" | "workflow_plan" | "direct_calendar" | "draft";
   sourceId: string;
-  channel: "instagram_post" | "instagram_reel" | "instagram_story" | "email";
-  format: ContentType;
+  /**
+   * Multi-Social Core: the coordinator reads the ONE marketing calendar, so
+   * commitments carry their real channel — Instagram, TikTok, YouTube or
+   * email. Understanding a channel never grants execution over it.
+   */
+  channel: "instagram_post" | "instagram_reel" | "instagram_story" | "tiktok_video" | "youtube_short" | "youtube_video" | "email";
+  /** Instagram keeps post/reel/story; social video commitments use video/short. */
+  format: ContentType | "video" | "short";
   title: string;
   publishAt: string;
   localDate: string;

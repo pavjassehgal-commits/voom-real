@@ -353,7 +353,9 @@ test("a Story needs a visual to be approved but no caption — Stories have none
 
 test("the create-content API accepts the story kind and the 9:16 format", async () => {
   const route = await read("app/api/posts/route.ts");
-  assert.match(route, /kind: z\.enum\(\["instagram_post", "reel", "story"\]\)/);
+  // Multi-Social Core widened the one create-content enum with the three
+  // social video kinds; Story is still accepted exactly as before.
+  assert.match(route, /kind: z\.enum\(\["instagram_post", "reel", "story", "tiktok_video", "youtube_short", "youtube_video"\]\)/);
   assert.match(route, /format: z\.enum\(\["1:1", "4:5", "9:16"\]\)/);
 });
 
@@ -421,7 +423,10 @@ test("Create content offers Instagram Post, Reel and Instagram Story", async () 
   const modal = await read("components/voom/modals/CreateContentModal.tsx");
   assert.match(modal, /title="Instagram Story"/);
   assert.match(modal, /create\("story"/);
-  assert.match(modal, /type Step = "choose" \| "instagram_post" \| "reel" \| "story"/);
+  // Multi-Social Core: the ONE Studio creator is platform-first, so the step
+  // machine gained a "platform" step and the three social video kinds — the
+  // Instagram options (Post, Reel, Story) are all still offered.
+  assert.match(modal, /type Step = "platform" \| "choose" \| "instagram_post" \| "reel" \| "story" \| "tiktok_video" \| "youtube_short" \| "youtube_video"/);
 });
 
 test("the Content Calendar filters and badges Story entries", async () => {

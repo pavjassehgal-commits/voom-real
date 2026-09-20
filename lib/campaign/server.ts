@@ -22,6 +22,8 @@ import {
   type ReelProductionMethod,
 } from "@/lib/mara/reel-production";
 import { checkScheduleInstant } from "@/lib/voom/schedule-guard";
+import { SOCIAL_PUBLISH_STATE_LABELS, publishStateForUnconnectedProvider } from "@/lib/social/publish-state";
+import { getSocialDraft, updateSocialDraft } from "@/lib/social/server-drafts";
 import { canUseAutopilot, normalizePlan, type PlanId } from "@/lib/billing/plans";
 import { accountTimezone, daysBetween, isoToLocalDate, localToUtcIso } from "@/lib/voom/timezone";
 import { generateCampaignIntelligence, type CampaignIntelligenceDeps } from "./intelligence";
@@ -415,7 +417,7 @@ export async function buildAutomatedCampaign(
 
 /** One action a user writes themselves instead of asking MARA to plan it. */
 export interface SelfCampaignActionInput {
-  /** Instagram Post / Reel / Story, or Email. */
+  /** Instagram Post / Reel / Story, TikTok Video, YouTube Short/Video, or Email. */
   channel: CampaignActionChannel;
   stage?: CampaignStage;
   title: string;
@@ -432,6 +434,11 @@ export interface SelfCampaignActionInput {
   // Instagram deliverable --------------------------------------------------
   caption?: string;
   concept?: string;
+  // Multi-Social Core: TikTok / YouTube deliverable ---------------------------
+  /** Long-form description (YouTube Video/Short). */
+  description?: string;
+  /** Script / outline lines (YouTube Video, TikTok beats). */
+  script?: string[];
 }
 
 export interface CreateSelfCampaignInput {
@@ -799,15 +806,28 @@ export async function addCampaignAction(
     const caption = String(input.caption ?? "").trim();
     if (caption.length > 2200) return { ok: false, reason: "invalid_caption" };
     const concept = String(input.concept ?? "").trim().slice(0, 160);
+    // Multi-Social Core: TikTok/YouTube actions carry the structured long-form
+    // deliverable (title/description/script). A YouTube Video is a first-class
+    // deliverable — never a renamed Reel.
+    const description = isSocialVideoChannel(input.channel)
+      ? String(input.description ?? "").trim().slice(0, 2000)
+      : "";
+    const script = isSocialVideoChannel(input.channel) && Array.isArray(input.script)
+      ? (input.script as unknown[]).filter((line): line is string => typeof line === "string")
+          .map((line) => line.trim().slice(0, 400)).filter(Boolean).slice(0, 12)
+      : [];
     payload.caption = caption;
     payload.concept = concept || title;
+    if (description) payload.description = description;
+    if (script.length) payload.script = script;
     payload.content = {
       format: formatForChannel(input.channel),
       concept: concept || title,
       cta: String(input.cta ?? "").trim().slice(0, 160) || null,
       visualDirection: null,
-      script: [] as string[],
+      script,
       hashtags: [] as string[],
+      ...(description ? { description } : {}),
     };
   }
 
@@ -918,6 +938,7 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
       canEditContent: true,
       email: null,
       instagram: null,
+      social: null,
     };
 
     if (action.channel === "email" && action.email_campaign_id) {
@@ -952,6 +973,56 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
       return base;
     }
 
+    // ── Multi-Social Core: TikTok / YouTube actions ────────────────────────
+    //
+    // Draft-backed like Instagram, but with NO provider queue: no TikTok or
+    // YouTube integration exists, so the derived state is the honest one —
+    // approved items read `blocked` (provider not connected) and can never
+    // read as scheduled-for-execution, executing, or executed.
+    if (isSocialVideoChannel(action.channel) && action.draft_id) {
+      const draft = drafts.get(action.draft_id);
+      const postView = postViews.get(action.draft_id);
+      const draftStatus = String(draft?.status ?? "draft") as "draft" | "approved" | "rejected";
+      const hasAsset = postView?.visualReady ?? assets.has(action.draft_id);
+      const state = deriveActionState({
+        kind: "social",
+        channel: action.channel === "tiktok_video" ? "tiktok" : "youtube",
+        planStatus: action.status,
+        draftStatus: draft ? draftStatus : null,
+        hasAsset,
+        scheduledFor: action.scheduled_for,
+      });
+      base.executionState = state;
+      base.executionLabel = ACTION_EXECUTION_LABELS[state];
+      // No provider ever owns this content yet, so it stays editable.
+      base.canEditContent = true;
+      const publishState = publishStateForUnconnectedProvider(draft ? draftStatus : null);
+      base.social = {
+        draftId: action.draft_id,
+        channel: action.channel === "tiktok_video" ? "tiktok" : "youtube",
+        format: action.channel === "youtube_short" ? "short" : "video",
+        title: action.title,
+        caption: draft ? String(draft.content ?? "") : "",
+        description: content?.description ?? null,
+        concept: content?.concept ?? null,
+        script: content?.script ?? [],
+        draftStatus,
+        publishState,
+        publishStateLabel: SOCIAL_PUBLISH_STATE_LABELS[publishState],
+        providerRef: null,
+        needsAsset: !hasAsset,
+        media: postView?.visual
+          ? {
+              previewUrl: postView.visual.previewUrl,
+              mimeType: postView.visual.mimeType,
+              displayName: postView.visual.displayName,
+              origin: postView.visual.origin,
+            }
+          : null,
+      };
+      return base;
+    }
+
     if (action.draft_id) {
       const draft = drafts.get(action.draft_id);
       const postView = postViews.get(action.draft_id);
@@ -975,7 +1046,11 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
         draftId: action.draft_id,
         concept: content?.concept ?? action.title,
         caption: draft ? String(draft.content ?? "") : "",
-        format: content?.format ?? formatForChannel(action.channel),
+        // Instagram actions only ever carry an Instagram format; the broader
+        // union (video/short) belongs to the social deliverable below.
+        format: content?.format === "video" || content?.format === "short"
+          ? instagramFormatForActionChannel(action.channel)
+          : content?.format ?? instagramFormatForActionChannel(action.channel),
         hook: content?.hook ?? null,
         visualDirection: content?.visualDirection ?? null,
         script: content?.script ?? [],
@@ -1043,7 +1118,9 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
     counts: {
       total: views.length,
       email: views.filter((a) => a.channel === "email").length,
-      instagram: views.filter((a) => a.channel !== "email").length,
+      instagram: views.filter((a) => a.channel.startsWith("instagram_")).length,
+      tiktok: views.filter((a) => a.channel === "tiktok_video").length,
+      youtube: views.filter((a) => a.channel === "youtube_short" || a.channel === "youtube_video").length,
       approved: views.filter((a) => ["approved", "scheduled", "executing", "executed"].includes(a.executionState)).length,
       executed: views.filter((a) => a.executionState === "executed").length,
       needingApproval: views.filter((a) => ["proposed", "needs_approval"].includes(a.executionState)).length,
@@ -1070,6 +1147,18 @@ function toFacts(view: CampaignActionView): import("./status").ActionFacts {
       planStatus: view.status,
       childStatus: view.email.childStatus,
       sendStatus,
+      scheduledFor: view.scheduled_for,
+    };
+  }
+  // Multi-Social Core: TikTok/YouTube facts carry no queue — there is no
+  // provider machinery to derive from, so an approved item derives `blocked`.
+  if (view.social) {
+    return {
+      kind: "social",
+      channel: view.social.channel,
+      planStatus: view.status,
+      draftStatus: view.social.draftStatus,
+      hasAsset: !view.social.needsAsset,
       scheduledFor: view.scheduled_for,
     };
   }
@@ -1206,7 +1295,34 @@ export async function decideCampaignAction(
   const action = row as CampaignActionRecord | null;
   if (!action) return { ok: false, blockers: ["That campaign action was not found."] };
 
-  if (action.channel === "email") {
+  if (isSocialVideoChannel(action.channel)) {
+    // ── Multi-Social Core: TikTok / YouTube action decisions ──────────────
+    //
+    // Approval records the decision INSIDE Voom only. There is no TikTok or
+    // YouTube provider integration, so no queue row is ever created, nothing
+    // is handed to a provider, and the canonical publish state stays
+    // `connection_required` — approval never means publication.
+    if (!action.draft_id) return { ok: false, blockers: ["That social draft was not found."] };
+    if (decision === "reject") {
+      const { error: rejectError } = await admin.from("mara_drafts").update({ status: "rejected" })
+        .eq("owner_user_id", ownerId).eq("id", action.draft_id);
+      if (rejectError) throw new Error("campaign_action_decision_failed");
+      await admin.from("content_calendar_items").delete()
+        .eq("owner_user_id", ownerId).eq("source_draft_id", action.draft_id);
+      await admin.from("voom_campaign_actions").update({ status: "skipped" })
+        .eq("owner_user_id", ownerId).eq("id", action.id);
+    } else {
+      const social = await getSocialDraft(admin, ownerId, action.draft_id);
+      if (!social) return { ok: false, blockers: ["That social draft was not found."] };
+      if (!social.asset) {
+        return { ok: false, blockers: ["Attach the video file before approving this action."] };
+      }
+      const updated = await updateSocialDraft(admin, ownerId, action.draft_id, { decision: "approved" });
+      if (!updated) return { ok: false, blockers: ["That social draft could not be approved."] };
+      await admin.from("voom_campaign_actions").update({ status: "approved" })
+        .eq("owner_user_id", ownerId).eq("id", action.id);
+    }
+  } else if (action.channel === "email") {
     const { error: rpcError } = await admin.rpc("set_campaign_action_email_approval", {
       p_owner_user_id: ownerId,
       p_action_id: action.id,
@@ -1256,6 +1372,8 @@ export interface CampaignActionEdit {
   visualDirection?: string;
   script?: string[];
   format?: "post" | "reel" | "story";
+  // Multi-Social Core (YouTube deliverable text)
+  description?: string;
   // Shared
   purpose?: string;
   cta?: string;
@@ -1323,6 +1441,39 @@ export async function editCampaignActionContent(
       nextContent.cta = edit.cta.trim();
     }
     if (edit.ctaUrl !== undefined) nextContent.ctaUrl = edit.ctaUrl ? edit.ctaUrl.slice(0, 500) : null;
+  } else if (isSocialVideoChannel(action.channel)) {
+    // ── Multi-Social Core: TikTok / YouTube action edits ──────────────────
+    //
+    // The caption is raw platform text (no Instagram CTA/hashtag composition),
+    // the description belongs to the YouTube deliverable, and the script is a
+    // beat list / outline. The guarded writer keeps the linked social draft and
+    // its calendar mirror in sync; there is no provider queue to update.
+    if (edit.hook !== undefined || edit.visualDirection !== undefined || edit.format !== undefined || edit.cta !== undefined) {
+      return { ok: false, blockers: ["Those fields belong to Instagram actions."] };
+    }
+    if (edit.caption !== undefined) {
+      // 2200 is TikTok's own caption limit and the guarded writer's cap.
+      if (edit.caption.length > 2200) return { ok: false, blockers: ["Keep the caption under 2200 characters."] };
+      patch.caption = edit.caption;
+    }
+    if (edit.concept !== undefined) {
+      const concept = edit.concept.trim();
+      if (!concept || concept.length > 160) return { ok: false, blockers: ["A concept between 1 and 160 characters is required."] };
+      patch.title = concept;
+      nextContent.concept = concept;
+    }
+    if (edit.description !== undefined) {
+      if (action.channel !== "youtube_short" && action.channel !== "youtube_video") {
+        return { ok: false, blockers: ["Only YouTube actions carry a description."] };
+      }
+      if (edit.description.length > 5000) return { ok: false, blockers: ["Keep the description under 5000 characters."] };
+      nextContent.description = edit.description.trim();
+    }
+    if (edit.script !== undefined) {
+      const script = edit.script.map((line) => line.trim()).filter(Boolean).slice(0, 40);
+      if (script.some((line) => line.length > 400)) return { ok: false, blockers: ["Keep each script line under 400 characters."] };
+      nextContent.script = script;
+    }
   } else {
     if (edit.format !== undefined) nextContent.format = edit.format;
     const composed = composePostCaption({
@@ -1729,7 +1880,11 @@ function emailContentRecord(action: EnrichedCampaignAction): CampaignActionConte
   };
 }
 
-/** The structured content stored on an Instagram action. */
+/**
+ * The structured content stored on an Instagram, TikTok or YouTube action.
+ * Multi-Social Core adds the long-form `description` (YouTube Video/Short);
+ * the Instagram mapping is unchanged.
+ */
 function instagramContentRecord(action: EnrichedCampaignAction): CampaignActionContentRecord {
   return {
     format: action.format ?? formatForChannel(action.channel),
@@ -1739,6 +1894,7 @@ function instagramContentRecord(action: EnrichedCampaignAction): CampaignActionC
     visualDirection: action.visualDirection ?? undefined,
     script: action.script ?? [],
     hashtags: action.hashtags ?? [],
+    description: action.description ?? undefined,
   };
 }
 
@@ -1755,7 +1911,26 @@ function strategyPayload(strategy: CampaignStrategyView) {
   };
 }
 
-function formatForChannel(channel: string): "post" | "reel" | "story" {
+/**
+ * The canonical format for one action channel. Multi-Social Core adds TikTok's
+ * `video` and YouTube's `short`/`video`; the Instagram mapping is unchanged.
+ */
+function formatForChannel(channel: string): "post" | "reel" | "story" | "video" | "short" {
+  if (channel === "instagram_reel") return "reel";
+  if (channel === "instagram_story") return "story";
+  if (channel === "tiktok_video") return "video";
+  if (channel === "youtube_short") return "short";
+  if (channel === "youtube_video") return "video";
+  return "post";
+}
+
+/** True for TikTok/YouTube actions — draft-backed, no provider queue yet. */
+function isSocialVideoChannel(channel: string): boolean {
+  return channel === "tiktok_video" || channel === "youtube_short" || channel === "youtube_video";
+}
+
+/** The Instagram-only format narrowing used by the Instagram deliverable. */
+function instagramFormatForActionChannel(channel: string): "post" | "reel" | "story" {
   if (channel === "instagram_reel") return "reel";
   if (channel === "instagram_story") return "story";
   return "post";

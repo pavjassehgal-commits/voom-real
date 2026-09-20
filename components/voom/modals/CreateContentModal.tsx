@@ -6,21 +6,27 @@ import { Btn } from "@/components/voom/ui/primitives";
 import { ModalBody, ModalFoot, ModalHead, ModalShell } from "@/components/voom/ui/Modal";
 import { Icon } from "@/components/voom/icons";
 import { PostEditorModal } from "./PostEditorModal";
+import { SocialEditorModal } from "./SocialEditorModal";
 
-type Step = "choose" | "instagram_post" | "reel" | "story";
-type Kind = "instagram_post" | "reel" | "story";
+type Platform = "instagram" | "tiktok" | "youtube";
+type Step = "platform" | "choose" | "instagram_post" | "reel" | "story" | "tiktok_video" | "youtube_short" | "youtube_video";
+type Kind = "instagram_post" | "reel" | "story" | "tiktok_video" | "youtube_short" | "youtube_video";
 
 /**
- * The single "Create content" entry point.
+ * The single "Create content" entry point — ONE Studio for every platform.
  *
- *   Create content → Instagram Post / Reel / Instagram Story
+ *   Create content → Platform (Instagram / TikTok / YouTube) → Format →
+ *   creation path (Create with MARA / my own asset / existing video)
  *
  * Everything it creates stays internal: a draft, an approval, an internal
- * schedule, and a Content Calendar entry. It never calls Instagram.
+ * schedule, and a Content Calendar entry. It never calls Instagram, TikTok or
+ * YouTube. TikTok and YouTube formats are planning drafts — their publishing
+ * connections do not exist yet, and the flow says so plainly.
  */
 export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
   const { open, close } = useModal();
-  const [step, setStep] = useState<Step>("choose");
+  const [platform, setPlatform] = useState<Platform>("instagram");
+  const [step, setStep] = useState<Step>("platform");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -28,7 +34,12 @@ export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
     setBusy(true);
     setError("");
     try {
-      const concept = kind === "reel" ? "New Reel" : kind === "story" ? "New Instagram Story" : "New Instagram Post";
+      const concept = kind === "reel" ? "New Reel"
+        : kind === "story" ? "New Instagram Story"
+        : kind === "tiktok_video" ? "New TikTok Video"
+        : kind === "youtube_short" ? "New YouTube Short"
+        : kind === "youtube_video" ? "New YouTube Video"
+        : "New Instagram Post";
       const response = await fetch("/api/posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -37,29 +48,60 @@ export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
       const body = await response.json() as { id?: string; error?: string };
       if (!response.ok || !body.id) throw new Error(body.error ?? "Voom couldn't start that draft.");
       onChanged?.();
-      open(<PostEditorModal postId={body.id} onChanged={onChanged} />);
+      if (kind === "tiktok_video" || kind === "youtube_short" || kind === "youtube_video") {
+        open(<SocialEditorModal draftId={body.id} onChanged={onChanged} />);
+      } else {
+        open(<PostEditorModal postId={body.id} onChanged={onChanged} />);
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Voom couldn't start that draft.");
       setBusy(false);
     }
   }
 
-  const title = step === "choose" ? "Create content"
+  const title = step === "platform" ? "Create content"
+    : step === "choose" ? (platform === "instagram" ? "Instagram" : platform === "tiktok" ? "TikTok" : "YouTube")
     : step === "instagram_post" ? "Instagram Post"
     : step === "reel" ? "Reel"
-    : "Instagram Story";
+    : step === "story" ? "Instagram Story"
+    : step === "tiktok_video" ? "TikTok Video"
+    : step === "youtube_short" ? "YouTube Short"
+    : "YouTube Video";
 
   return (
     <ModalShell wide maxWidth={620}>
       <ModalHead
         title={title}
-        sub="Drafts, approvals and scheduling stay inside Voom. Nothing is published to Instagram."
+        sub="Drafts, approvals and scheduling stay inside Voom. Nothing is published to any platform."
         onClose={close}
       />
       <ModalBody>
         {error ? <div role="alert" className="mb-3.5 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-sm text-red">{error}</div> : null}
 
-        {step === "choose" ? (
+        {step === "platform" ? (
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Choice
+              icon="ig"
+              title="Instagram"
+              body="Posts, Reels and Stories with real publishing through your connected account."
+              onClick={() => { setPlatform("instagram"); setStep("choose"); }}
+            />
+            <Choice
+              icon="film"
+              title="TikTok"
+              body="Plan TikTok-native videos. Publishing starts when the TikTok connection ships."
+              onClick={() => { setPlatform("tiktok"); setStep("choose"); }}
+            />
+            <Choice
+              icon="play"
+              title="YouTube"
+              body="Plan Shorts and full videos with title, description and outline."
+              onClick={() => { setPlatform("youtube"); setStep("choose"); }}
+            />
+          </div>
+        ) : null}
+
+        {step === "choose" && platform === "instagram" ? (
           <div className="grid gap-3 sm:grid-cols-2">
             <Choice
               icon="ig"
@@ -79,6 +121,42 @@ export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
               body="A 9:16 full-screen image or video. Upload one you already have, or let MARA create the visual."
               onClick={() => setStep("story")}
             />
+          </div>
+        ) : null}
+
+        {step === "choose" && platform === "tiktok" ? (
+          <div className="space-y-3">
+            <Choice
+              icon="film"
+              title="TikTok Video"
+              body="A short-form vertical video planned TikTok-native: blunt hook, fast beats, one-line caption. Create it yourself now; MARA planning for TikTok arrives with the connection."
+              onClick={() => setStep("tiktok_video")}
+            />
+            <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-text-3">
+              TikTok publishing is not connected yet. Voom plans, approves and schedules your TikTok content and tells
+              you plainly that it cannot publish — it never fakes a publication.
+            </p>
+          </div>
+        ) : null}
+
+        {step === "choose" && platform === "youtube" ? (
+          <div className="space-y-3">
+            <Choice
+              icon="play"
+              title="YouTube Short"
+              body="A short vertical video with a search-friendly title and a 1-2 line description."
+              onClick={() => setStep("youtube_short")}
+            />
+            <Choice
+              icon="film"
+              title="YouTube Video"
+              body="A longer-form video with a title, full description, concept and outline/script. Planning it never generates an expensive video."
+              onClick={() => setStep("youtube_video")}
+            />
+            <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-text-3">
+              YouTube publishing is not connected yet. Voom plans, approves and schedules your YouTube content and
+              tells you plainly that it cannot publish — it never fakes a publication.
+            </p>
           </div>
         ) : null}
 
@@ -153,9 +231,50 @@ export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
             </p>
           </div>
         ) : null}
+
+        {step === "tiktok_video" ? (
+          <div className="space-y-3">
+            <Choice
+              icon="film"
+              title="Create it myself"
+              body="Start a TikTok planning draft: write the hook, beat list and caption in the editor. You can attach your own video file afterwards. No credit is spent and no video is generated."
+              onClick={() => void create("tiktok_video", "own_asset")}
+              busy={busy}
+            />
+            <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-text-3">
+              MARA already plans TikTok beats inside multi-channel campaigns. Standalone MARA planning for TikTok
+              arrives with the TikTok publishing connection.
+            </p>
+          </div>
+        ) : null}
+
+        {step === "youtube_short" ? (
+          <div className="space-y-3">
+            <Choice
+              icon="play"
+              title="Create it myself"
+              body="Start a YouTube Short planning draft: title, caption and a short beat list. You can attach your own video file afterwards. No credit is spent and no video is generated."
+              onClick={() => void create("youtube_short", "own_asset")}
+              busy={busy}
+            />
+          </div>
+        ) : null}
+
+        {step === "youtube_video" ? (
+          <div className="space-y-3">
+            <Choice
+              icon="play"
+              title="Create it myself"
+              body="Start a YouTube Video planning draft: title, description, concept and outline/script. Planning never triggers video generation — that stays an explicit, credit-checked action."
+              onClick={() => void create("youtube_video", "own_asset")}
+              busy={busy}
+            />
+          </div>
+        ) : null}
       </ModalBody>
       <ModalFoot>
-        {step !== "choose" ? <Btn variant="ghost" onClick={() => { setStep("choose"); setError(""); }}>Back</Btn> : null}
+        {step === "choose" ? <Btn variant="ghost" onClick={() => { setStep("platform"); setError(""); }}>Back</Btn> : null}
+        {step !== "choose" && step !== "platform" ? <Btn variant="ghost" onClick={() => { setStep("choose"); setError(""); }}>Back</Btn> : null}
         <Btn variant="primary" onClick={close}>Done</Btn>
       </ModalFoot>
     </ModalShell>

@@ -28,6 +28,7 @@
 import { z } from "zod";
 
 import { evaluateAutopilotRecommendation } from "@/lib/mara/autopilot-safety";
+import { coordinatedSequenceRule, platformDefinitionsFor } from "@/lib/social/platforms";
 import {
   accountTimezone,
   isoToLocalDate,
@@ -105,13 +106,71 @@ export const campaignInstagramContentSchema = z.object({
 
 export type MaraCampaignInstagramContent = z.infer<typeof campaignInstagramContentSchema>;
 
+/**
+ * Multi-Social Core: TikTok Video content. The caption is short and the
+ * script is a beat list — TikTok-native writing, never a restated Reel
+ * caption (the duplicate-copy guard below enforces the difference).
+ */
+export const campaignTiktokContentSchema = z.object({
+  purpose: z.string().min(1).max(1000),
+  concept: z.string().min(1).max(160),
+  hook: z.string().max(300),
+  caption: z.string().min(1).max(400),
+  cta: z.string().max(160),
+  visualDirection: z.string().max(1200),
+  /** The short beat-by-beat sequence (3-6 lines). */
+  script: z.array(z.string().min(1).max(300)).min(1).max(8),
+  hashtags: z.array(z.string().min(1).max(40)).max(8),
+  proposedSendAt: z.string().datetime({ offset: true }).nullable(),
+}).strict();
+
+export type MaraCampaignTiktokContent = z.infer<typeof campaignTiktokContentSchema>;
+
+/**
+ * Multi-Social Core: YouTube content. `format` distinguishes the Short from
+ * the full Video. A full Video is a first-class long-form deliverable: it
+ * must carry a real description and a script/outline — schema-enforced, not
+ * optional. Planning it never triggers expensive media generation.
+ */
+export const CAMPAIGN_YOUTUBE_FORMATS = ["short", "video"] as const;
+export type CampaignYoutubeFormat = (typeof CAMPAIGN_YOUTUBE_FORMATS)[number];
+
+export const campaignYoutubeContentSchema = z.object({
+  format: z.enum(CAMPAIGN_YOUTUBE_FORMATS),
+  purpose: z.string().min(1).max(1000),
+  concept: z.string().min(1).max(160),
+  hook: z.string().max(300),
+  /** Search-friendly video title. */
+  title: z.string().min(1).max(160),
+  /** 1-2 lines for a Short; a full 2-4 sentence description for a Video. */
+  description: z.string().min(1).max(2000),
+  caption: z.string().min(1).max(2200),
+  cta: z.string().max(160),
+  visualDirection: z.string().max(1200),
+  /** Shorts: a short beat list. Videos: a real outline/script. */
+  script: z.array(z.string().min(1).max(400)).min(1).max(12),
+  proposedSendAt: z.string().datetime({ offset: true }).nullable(),
+}).strict();
+
+export type MaraCampaignYoutubeContent = z.infer<typeof campaignYoutubeContentSchema>;
+
 export const campaignActionContentSchema = z.object({
   /** The skeleton slot this content belongs to. MARA may not invent slots. */
   slot: z.number().int().min(0).max(MAX_CAMPAIGN_ACTIONS - 1),
-  channel: z.enum(["email", "instagram_post", "instagram_reel", "instagram_story"]),
+  channel: z.enum([
+    "email",
+    "instagram_post",
+    "instagram_reel",
+    "instagram_story",
+    "tiktok_video",
+    "youtube_short",
+    "youtube_video",
+  ]),
   title: z.string().min(1).max(160),
   email: campaignEmailContentSchema.nullable(),
   instagram: campaignInstagramContentSchema.nullable(),
+  tiktok: campaignTiktokContentSchema.nullable(),
+  youtube: campaignYoutubeContentSchema.nullable(),
 }).strict();
 
 export type MaraCampaignActionContent = z.infer<typeof campaignActionContentSchema>;
@@ -161,10 +220,10 @@ export const campaignIntelligenceJsonSchema = {
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["slot", "channel", "title", "email", "instagram"],
+          required: ["slot", "channel", "title", "email", "instagram", "tiktok", "youtube"],
           properties: {
             slot: { type: "integer", minimum: 0, maximum: MAX_CAMPAIGN_ACTIONS - 1, description: "The skeleton slot index this content fills." },
-            channel: { type: "string", enum: ["email", "instagram_post", "instagram_reel", "instagram_story"], description: "Copy the slot's channel exactly." },
+            channel: { type: "string", enum: ["email", "instagram_post", "instagram_reel", "instagram_story", "tiktok_video", "youtube_short", "youtube_video"], description: "Copy the slot's channel exactly." },
             title: { type: "string", minLength: 1, maxLength: 160, description: "Short internal name for this action (max 12 words)." },
             email: {
               type: ["object", "null"],
@@ -198,6 +257,42 @@ export const campaignIntelligenceJsonSchema = {
                 proposedSendAt: { type: ["string", "null"], description: "ISO-8601 with offset inside this slot's campaign day, or null to keep the proposed time." },
               },
             },
+            tiktok: {
+              type: ["object", "null"],
+              additionalProperties: false,
+              required: ["purpose", "concept", "hook", "caption", "cta", "visualDirection", "script", "hashtags", "proposedSendAt"],
+              description: "TikTok Video slots only; null for every other channel.",
+              properties: {
+                purpose: { type: "string", minLength: 1, maxLength: 1000, description: "Why this TikTok action exists at this point in the sequence." },
+                concept: { type: "string", minLength: 1, maxLength: 160, description: "Short internal name for the asset (max 12 words)." },
+                hook: { type: "string", maxLength: 300, description: "The blunt, conversational first line. Never the Instagram Reel's hook reworded." },
+                caption: { type: "string", minLength: 1, maxLength: 400, description: "One short TikTok caption line. Never a restated Instagram caption or email body." },
+                cta: { type: "string", maxLength: 160, description: "One short call to action, max 8 words." },
+                visualDirection: { type: "string", maxLength: 1200, description: "Text-only shot direction. No paid media is generated from it here." },
+                script: { type: "array", minItems: 1, maxItems: 8, description: "The short beat-by-beat sequence (3-6 lines).", items: { type: "string", minLength: 1, maxLength: 300 } },
+                hashtags: { type: "array", maxItems: 8, description: "3-5 TikTok tags without the # symbol.", items: { type: "string", minLength: 1, maxLength: 40 } },
+                proposedSendAt: { type: ["string", "null"], description: "ISO-8601 with offset inside this slot's campaign day, or null to keep the proposed time." },
+              },
+            },
+            youtube: {
+              type: ["object", "null"],
+              additionalProperties: false,
+              required: ["format", "purpose", "concept", "hook", "title", "description", "caption", "cta", "visualDirection", "script", "proposedSendAt"],
+              description: "YouTube Short and YouTube Video slots only; null for every other channel.",
+              properties: {
+                format: { type: "string", enum: ["short", "video"], description: "Must match the slot's channel: youtube_short is 'short', youtube_video is 'video'." },
+                purpose: { type: "string", minLength: 1, maxLength: 1000, description: "Why this YouTube action exists at this point in the sequence." },
+                concept: { type: "string", minLength: 1, maxLength: 160, description: "Short internal name for the asset (max 12 words)." },
+                hook: { type: "string", maxLength: 300, description: "The opening line that promises the payoff." },
+                title: { type: "string", minLength: 1, maxLength: 160, description: "Search-friendly video title; front-load the topic." },
+                description: { type: "string", minLength: 1, maxLength: 2000, description: "1-2 lines for a Short. For a full Video: 2-4 sentences with the payoff and chapters." },
+                caption: { type: "string", minLength: 1, maxLength: 2200, description: "The complete caption/community post copy. Never a restated email body." },
+                cta: { type: "string", maxLength: 160, description: "One short call to action, max 8 words." },
+                visualDirection: { type: "string", maxLength: 1200, description: "Text-only shot/outline direction. Planning NEVER generates long-form video." },
+                script: { type: "array", minItems: 1, maxItems: 12, description: "Shorts: 3-5 beats. Videos: a real outline (hook, 3-5 sections, closing CTA).", items: { type: "string", minLength: 1, maxLength: 400 } },
+                proposedSendAt: { type: ["string", "null"], description: "ISO-8601 with offset inside this slot's campaign day, or null to keep the proposed time." },
+              },
+            },
           },
         },
       },
@@ -210,24 +305,36 @@ export const campaignIntelligenceJsonSchema = {
 
 export const CAMPAIGN_INTELLIGENCE_SYSTEM_PROMPT = `You are MARA, Voom's practical AI marketing manager. You are filling in ONE already-designed campaign for the authenticated user's own business.
 
-The campaign STRUCTURE is already decided and is not yours to change. You receive a skeleton: an ordered list of slots, each with a fixed channel (email, instagram_post, instagram_reel or instagram_story), a fixed campaign day and a proposed time. Your job is the strategy and the content inside that structure.
+The campaign STRUCTURE is already decided and is not yours to change. You receive a skeleton: an ordered list of slots, each with a fixed channel (email, instagram_post, instagram_reel, instagram_story, tiktok_video, youtube_short or youtube_video), a fixed campaign day and a proposed time. Your job is the strategy and the content inside that structure.
 
-The campaign also has AUTHORITATIVE CHANNELS in campaign.selectedChannels ("instagram", "email", or both) and a channelPlan. Those channels are the whole campaign. When channelPlan is "instagram_only" or "email_only", never write about, promise, or refer to the channel that is not selected. When it is "multichannel", the two channels are ONE coordinated sequence, not two separate plans.
+The campaign also has AUTHORITATIVE CHANNELS in campaign.selectedChannels (any of "instagram", "tiktok", "youtube", "email") and a channelPlan. Those channels are the whole campaign. When channelPlan names a single channel, never write about, promise, or refer to any channel that is not selected. When it is "multichannel", the channels are ONE coordinated sequence, not separate plans.
+
+PLATFORM DIFFERENCES ARE REAL — never paste the same content across platforms:
+- Instagram Post: a visual feed moment; scannable caption, benefit-led, hashtags allowed.
+- Instagram Reel: short vertical video; scroll-stopping hook, 3-6 shot-by-shot script lines.
+- Instagram Story: one overlay line, one sticker idea, no caption essay.
+- TikTok Video: TikTok-NATIVE, not a reposted Reel — blunt conversational hook, fast cuts, sound-forward beats, one short caption line, 3-5 tags. Never reuse the Reel's hook or caption wording.
+- YouTube Short: search-friendly title front-loading the topic, 1-2 line description, explicit payoff promise; less slang-dependent than TikTok.
+- YouTube Video: the campaign's depth piece — a specific title, a 2-4 sentence description with chapters, and a real outline/script (hook, 3-5 sections, closing CTA). It may explain what the short-form pieces teased. Planning it NEVER generates video.
+- Email: specific subject, preview text that extends it, 80-250 word body, one clear CTA.
+A coordinated multichannel arc typically reads: teaser Reel → TikTok variation → email launch → YouTube Short → deeper YouTube video → Instagram reminder. Each action differs in hook, wording and angle while carrying the same core message. Follow campaign.platformRules for the supplied channels.
 
 Return JSON only, matching the requested schema exactly.
 
 Hard rules:
 - Return exactly one action object per skeleton slot, with the SAME slot index and the SAME channel. Never add slots, never drop slots, never change a channel, never reorder.
-- Only fill "email" for email slots and only fill "instagram" for Instagram slots; the other must be null.
-- Follow campaign.channelRules exactly.
+- Fill ONLY the payload that matches the slot's channel ("email", "instagram", "tiktok" or "youtube"); every other payload must be null.
+- Follow campaign.channelRules and campaign.platformRules exactly.
 - Write like this specific business. Never invent prices, discounts, offers, opening hours, locations, statistics, reviews, awards, guarantees or claims that are not in the supplied context.
 - ctaUrl must be a real destination that appears in the supplied context, otherwise null. Never invent a URL.
-- In a multichannel campaign, email and Instagram must complement each other, not repeat: an Instagram caption must never restate an email body. In any campaign, two actions must never carry the same caption, body or CTA. Vary the angle per stage: announce, then explain the benefit, then proof, then a final clear next step.
+- In a multichannel campaign the platforms must complement each other, not repeat: a caption must never restate an email body, and a TikTok caption must never restate a Reel caption. In any campaign, two actions must never carry the same caption, body, script or CTA. Vary the angle per stage: announce, then explain the benefit, then proof, then a final clear next step.
 - Every email needs a specific subject (never a bare teaser), a preview text that extends it, a concise plain-text body of 80-250 words, and one clear CTA.
 - Every Instagram action needs a concept, a hook, a full caption and a CTA. For a Reel, "script" must be a short shot-by-shot sequence (3-6 lines) and "visualDirection" must describe what to film. For Posts and Stories "script" must be an empty array. Instagram Stories carry no hashtags-heavy essay: keep them short.
+- Every TikTok action needs a beat-by-beat "script" (3-6 lines), a blunt hook that is NOT the Reel's hook, and a one-line caption with 3-5 tags.
+- Every YouTube action needs "title" and "description". For youtube_video, "description" must be 2-4 sentences with the payoff and chapters, and "script" must be a real outline (hook, 3-5 sections, closing CTA) — a full YouTube video is long-form depth, never a renamed Short.
 - proposedSendAt, when you set one, must stay inside the same campaign day as that slot's proposed time. Otherwise return null and the proposed time is kept.
-- recentPerformance, when present, is EVIDENCE from this business's own already-published Instagram content. It is advisory: bias one or two choices toward what measurably worked, keep the sequence diverse, never repeat an old winner verbatim, and never invent metrics. When it is absent, say nothing about performance.
-- Nothing you write is sent or published by this step. Never claim an email was sent, a post was published, or a visual was generated. This is a draft for the user to review.
+- recentPerformance, when present, is EVIDENCE from this business's own already-published Instagram content. It is advisory: bias one or two choices toward what measurably worked, keep the sequence diverse, never repeat an old winner verbatim, and never invent metrics. When it is absent, say nothing about performance. No TikTok or YouTube performance data exists; never claim any.
+- Nothing you write is sent or published by this step. Never claim an email was sent, a post was published, or a visual was generated. This is a draft for the user to review. TikTok and YouTube publishing is not even connected yet: never promise a publish time on those platforms in the copy.
 - Plain text only. No markdown.`;
 
 // ─── Context handed to MARA ────────────────────────────────────────────────
@@ -325,7 +432,7 @@ export function buildCampaignIntelligenceContext(input: CampaignIntelligenceCont
   const channelsAllowed = CAMPAIGN_ACTION_CHANNELS.filter(
     (channel) => actionChannelFamily(channel) !== null && channels.includes(actionChannelFamily(channel) as CampaignChannel),
   );
-  const channelPlan = channels.length > 1 ? "multichannel" : channels[0] === "email" ? "email_only" : "instagram_only";
+  const channelPlan = channels.length > 1 ? "multichannel" : `${channels[0]}_only`;
 
   return {
     task: "fill_campaign_skeleton",
@@ -358,9 +465,16 @@ export function buildCampaignIntelligenceContext(input: CampaignIntelligenceCont
       days: input.summary.days,
       /** v3: the campaign's authoritative channels — never wider than this. */
       selectedChannels: channels,
-      /** 'instagram_only' | 'email_only' | 'multichannel'. */
+      /** e.g. 'instagram_only' | 'email_only' | 'tiktok_only' | 'multichannel'. */
       channelPlan,
-      channelRules: CAMPAIGN_CHANNEL_RULES[channelPlan],
+      channelRules: CAMPAIGN_CHANNEL_RULES[channelPlan] ?? CAMPAIGN_CHANNEL_RULES.multichannel,
+      /**
+       * Multi-Social Core: per-platform native-writing rules and the
+       * coordinated-sequence rule, built from the ONE platform vocabulary
+       * (lib/social/platforms) for exactly the selected channels.
+       */
+      platformRules: coordinatedSequenceRule(channels),
+      platformFormats: platformDefinitionsFor(channelsAllowed),
       selectedAudience: input.selectedAudience
         ? { name: input.selectedAudience.name.slice(0, 120), eligibleEmailCount: input.selectedAudience.eligibleEmailCount ?? null }
         : null,
@@ -404,11 +518,15 @@ export function buildCampaignIntelligenceContext(input: CampaignIntelligenceCont
  */
 export const CAMPAIGN_CHANNEL_RULES: Record<string, string> = {
   multichannel:
-    "This campaign runs on Instagram AND email as ONE coordinated sequence. Order the story across both: an awareness Instagram moment, then the email that explains it, then a reminder Instagram moment, then the follow-up email. Each channel does what it is best at — Instagram earns attention, email carries detail and the direct next step. Never restate an email body in a caption or a caption in an email body.",
+    "This campaign runs on MULTIPLE channels as ONE coordinated sequence. Order the story across them: short-form video earns attention, email carries detail and the direct next step, long-form YouTube explains in depth, and reminders close. Each channel does what it is best at, natively. Never restate an email body in a caption, a caption in an email body, or a Reel's hook in a TikTok video.",
   instagram_only:
-    "This campaign runs on Instagram ONLY. Write every action as an Instagram moment. Never mention an email, a newsletter, an inbox, a subject line or 'we'll email you'. Carry the whole sequence visually: announce, explain the benefit, prove it, then close.",
+    "This campaign runs on Instagram ONLY. Write every action as an Instagram moment. Never mention an email, a newsletter, an inbox, a subject line, TikTok, YouTube or 'we'll email you'. Carry the whole sequence visually: announce, explain the benefit, prove it, then close.",
   email_only:
-    "This campaign runs on email ONLY. Write every action as an email. Never mention a Reel, a Story, a feed post, a caption or 'see our Instagram'. Carry the whole sequence in the inbox: announce, explain the benefit, then close with one clear next step.",
+    "This campaign runs on email ONLY. Write every action as an email. Never mention a Reel, a Story, a feed post, a caption, TikTok, YouTube or 'see our Instagram'. Carry the whole sequence in the inbox: announce, explain the benefit, then close with one clear next step.",
+  tiktok_only:
+    "This campaign runs on TikTok ONLY. Write every action TikTok-native: blunt conversational hooks, fast beats, one-line captions, 3-5 tags. Never mention an email, Instagram, YouTube or 'see our profile bio link in bio' style cross-posting. Carry the whole sequence in short-form video: hook, prove, close.",
+  youtube_only:
+    "This campaign runs on YouTube ONLY. Shorts are discovery moments with search-friendly titles; the full Video is the depth piece with a real description and outline. Never mention an email, Instagram or TikTok. Carry the whole sequence on YouTube: tease with Shorts, explain in the full video, close with one clear next step.",
 };
 
 /** Truthful per-mode statement of what this build may and may not do. */
@@ -423,8 +541,11 @@ export const AUTOMATION_MODE_RULES: Record<string, string> = {
 export interface EnrichedCampaignAction extends PlannedAction {
   /** Which layer produced this action's content. */
   contentSource: "mara" | "deterministic";
-  /** Instagram format, present for Instagram actions. */
-  format?: CampaignInstagramFormat;
+  /**
+   * The canonical format: Instagram post/reel/story, TikTok video, YouTube
+   * short/video. Present for every non-email action.
+   */
+  format?: CampaignInstagramFormat | CampaignYoutubeFormat | "video";
   hook?: string;
   visualDirection?: string;
   script?: string[];
@@ -467,6 +588,14 @@ const INSTAGRAM_FORMAT_FOR_CHANNEL: Record<string, CampaignInstagramFormat> = {
   instagram_post: "post",
   instagram_reel: "reel",
   instagram_story: "story",
+};
+
+/** Multi-Social Core: the canonical format for every non-email action channel. */
+const FORMAT_FOR_ACTION_CHANNEL: Record<string, CampaignInstagramFormat | CampaignYoutubeFormat> = {
+  ...INSTAGRAM_FORMAT_FOR_CHANNEL,
+  tiktok_video: "video",
+  youtube_short: "short",
+  youtube_video: "video",
 };
 
 /** How similar two pieces of copy may be before they count as duplicates. */
@@ -517,7 +646,13 @@ export function applyCampaignIntelligence(input: ApplyIntelligenceInput): ApplyI
     }
 
     const scheduledFor = resolveProposedTime(
-      base.channel === "email" ? candidate.email?.proposedSendAt : candidate.instagram?.proposedSendAt,
+      base.channel === "email"
+        ? candidate.email?.proposedSendAt
+        : base.channel === "tiktok_video"
+          ? candidate.tiktok?.proposedSendAt
+          : base.channel === "youtube_short" || base.channel === "youtube_video"
+            ? candidate.youtube?.proposedSendAt
+            : candidate.instagram?.proposedSendAt,
       base,
       now,
       input.timeZone,
@@ -525,7 +660,7 @@ export function applyCampaignIntelligence(input: ApplyIntelligenceInput): ApplyI
 
     if (base.channel === "email") {
       const email = candidate.email;
-      if (!email || candidate.instagram) {
+      if (!email || candidate.instagram || candidate.tiktok || candidate.youtube) {
         fallbackSlots.push(base.slot);
         return deterministic;
       }
@@ -551,9 +686,92 @@ export function applyCampaignIntelligence(input: ApplyIntelligenceInput): ApplyI
       }, now);
     }
 
+    // ── Multi-Social Core: TikTok slot ────────────────────────────────────
+    if (base.channel === "tiktok_video") {
+      const tiktok = candidate.tiktok;
+      // Wrong payload shape, or a payload for another channel: refuse.
+      if (!tiktok || candidate.email || candidate.instagram || candidate.youtube) {
+        fallbackSlots.push(base.slot);
+        return deterministic;
+      }
+      // A TikTok video must carry real beats — an empty script is refused.
+      if (!tiktok.script.length || !tiktok.visualDirection.trim()) {
+        fallbackSlots.push(base.slot);
+        return deterministic;
+      }
+      // Cross-platform duplication guard: a TikTok caption that restates the
+      // Reel caption (or any earlier copy) is refused — MARA cannot paste.
+      if (isDuplicate(tiktok.caption, usedCopy) || isDuplicate(tiktok.hook, usedCopy)) {
+        fallbackSlots.push(base.slot);
+        return deterministic;
+      }
+      const cta = repeatedCta(tiktok.cta, usedCtas) ? deterministicCtaFor(base) ?? tiktok.cta : tiktok.cta;
+      usedCopy.push(normalizeCopy(tiktok.caption));
+      usedCopy.push(normalizeCopy(tiktok.hook));
+      const hashtags = tiktok.hashtags.slice(0, 5);
+      return withSafety({
+        ...deterministic,
+        contentSource: "mara",
+        scheduledFor,
+        title: candidate.title,
+        purpose: tiktok.purpose,
+        concept: tiktok.concept,
+        caption: composeCaption(tiktok.caption, cta, hashtags),
+        hashtags,
+        format: "video",
+        hook: tiktok.hook,
+        cta,
+        visualDirection: tiktok.visualDirection,
+        script: tiktok.script,
+      }, now);
+    }
+
+    // ── Multi-Social Core: YouTube slot (Short or full Video) ─────────────
+    if (base.channel === "youtube_short" || base.channel === "youtube_video") {
+      const youtube = candidate.youtube;
+      const expectedFormat = base.channel === "youtube_short" ? "short" : "video";
+      if (!youtube || candidate.email || candidate.instagram || candidate.tiktok || youtube.format !== expectedFormat) {
+        fallbackSlots.push(base.slot);
+        return deterministic;
+      }
+      // Both YouTube formats need a real title, description and outline. The
+      // full Video is the depth piece: its script must be a real outline.
+      if (!youtube.script.length || !youtube.title.trim() || !youtube.description.trim()) {
+        fallbackSlots.push(base.slot);
+        return deterministic;
+      }
+      if (expectedFormat === "video" && youtube.script.length < 3) {
+        fallbackSlots.push(base.slot);
+        return deterministic;
+      }
+      if (isDuplicate(youtube.caption, usedCopy) || isDuplicate(youtube.description, usedCopy)) {
+        fallbackSlots.push(base.slot);
+        return deterministic;
+      }
+      const cta = repeatedCta(youtube.cta, usedCtas) ? deterministicCtaFor(base) ?? youtube.cta : youtube.cta;
+      usedCopy.push(normalizeCopy(youtube.caption));
+      usedCopy.push(normalizeCopy(youtube.description));
+      return withSafety({
+        ...deterministic,
+        contentSource: "mara",
+        scheduledFor,
+        title: candidate.title,
+        purpose: youtube.purpose,
+        concept: youtube.concept,
+        caption: composeCaption(youtube.caption, cta, []),
+        hashtags: [],
+        format: youtube.format,
+        hook: youtube.hook,
+        cta,
+        visualDirection: youtube.visualDirection,
+        script: youtube.script,
+        description: youtube.description,
+      }, now);
+    }
+
     const instagram = candidate.instagram;
     const expectedFormat = INSTAGRAM_FORMAT_FOR_CHANNEL[base.channel];
-    if (!instagram || candidate.email || instagram.format !== expectedFormat) {
+    if (!instagram || candidate.email || candidate.tiktok || candidate.youtube || instagram.format !== expectedFormat) {
       fallbackSlots.push(base.slot);
       return deterministic;
     }
@@ -620,7 +838,7 @@ function enrichDeterministic(base: PlannedAction): EnrichedCampaignAction {
   return {
     ...base,
     contentSource: "deterministic",
-    ...(base.channel === "email" ? {} : { format: INSTAGRAM_FORMAT_FOR_CHANNEL[base.channel] }),
+    ...(base.channel === "email" ? {} : { format: FORMAT_FOR_ACTION_CHANNEL[base.channel] }),
   };
 }
 
@@ -744,13 +962,19 @@ export function deterministicStrategy(input: Omit<ApplyIntelligenceInput, "intel
   const offer = input.brief.offerDetails?.trim();
   const audience = input.brief.targetAudience?.trim() || input.brand.targetCustomer?.[0] || "your existing audience";
   const emailCount = input.skeleton.filter((action) => action.channel === "email").length;
-  const instagramCount = input.skeleton.length - emailCount;
+  const instagramCount = input.skeleton.filter((action) => action.channel.startsWith("instagram_")).length;
   const reelCount = input.skeleton.filter((action) => action.channel === "instagram_reel").length;
   const storyCount = input.skeleton.filter((action) => action.channel === "instagram_story").length;
+  const tiktokCount = input.skeleton.filter((action) => action.channel === "tiktok_video").length;
+  const youtubeShortCount = input.skeleton.filter((action) => action.channel === "youtube_short").length;
+  const youtubeVideoCount = input.skeleton.filter((action) => action.channel === "youtube_video").length;
 
   const moves = [
     instagramCount ? "Instagram carries the announcement" : "",
     reelCount ? "a Reel explains the benefit" : "",
+    tiktokCount ? `TikTok retells the moment natively (${tiktokCount === 1 ? "1 video" : `${tiktokCount} videos`})` : "",
+    youtubeShortCount ? `a YouTube Short extends discovery (${youtubeShortCount === 1 ? "1 Short" : `${youtubeShortCount} Shorts`})` : "",
+    youtubeVideoCount ? `the full YouTube Video goes deep (${youtubeVideoCount === 1 ? "1 video" : `${youtubeVideoCount} videos`})` : "",
     storyCount ? "a Story keeps it present" : "",
     emailCount ? `email goes into detail and drives the next step (${emailCount === 1 ? "1 email" : `${emailCount} emails`})` : "",
   ].filter(Boolean);

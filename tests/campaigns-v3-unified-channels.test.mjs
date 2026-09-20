@@ -51,16 +51,17 @@ const BRIEF = {
 
 // ─── 1. The channel model ───────────────────────────────────────────────────
 
-test("a campaign has authoritative channels, and only two are selectable", async () => {
+test("a campaign has authoritative channels: the four Multi-Social Core channels", async () => {
   const { CAMPAIGN_CHANNELS, CAMPAIGN_CHANNEL_CHOICES, CAMPAIGN_CHANNEL_LABELS, actionChannelFamily } = await typesReady;
 
-  assert.deepEqual([...CAMPAIGN_CHANNELS], ["instagram", "email"], "exactly Instagram and Email");
-  assert.equal(CAMPAIGN_CHANNELS.length, 2, "no third channel product");
+  // Multi-Social Core: one campaign model, four selectable channels.
+  assert.deepEqual([...CAMPAIGN_CHANNELS], ["instagram", "tiktok", "youtube", "email"], "the four active channels");
+  assert.equal(CAMPAIGN_CHANNELS.length, 4, "no fifth channel product");
   for (const channel of CAMPAIGN_CHANNELS) assert.ok(CAMPAIGN_CHANNEL_LABELS[channel], "every channel has a label");
 
-  // The three user-facing combinations are the same two channels, not three
-  // separate campaign models.
-  assert.deepEqual(CAMPAIGN_CHANNEL_CHOICES.map((choice) => choice.id), ["instagram", "email", "both"]);
+  // The user-facing choices are the selectable channels themselves — any
+  // non-empty combination is a valid campaign, not a fixed set of bundles.
+  assert.deepEqual(CAMPAIGN_CHANNEL_CHOICES.map((choice) => choice.id), ["instagram", "tiktok", "youtube", "email"]);
   for (const choice of CAMPAIGN_CHANNEL_CHOICES) {
     for (const channel of choice.channels) assert.ok(CAMPAIGN_CHANNELS.includes(channel));
   }
@@ -70,27 +71,41 @@ test("a campaign has authoritative channels, and only two are selectable", async
   assert.equal(actionChannelFamily("instagram_post"), "instagram");
   assert.equal(actionChannelFamily("instagram_reel"), "instagram");
   assert.equal(actionChannelFamily("instagram_story"), "instagram");
+  assert.equal(actionChannelFamily("tiktok_video"), "tiktok");
+  assert.equal(actionChannelFamily("youtube_short"), "youtube");
+  assert.equal(actionChannelFamily("youtube_video"), "youtube");
   assert.equal(actionChannelFamily("nonsense"), null, "an invented channel has no family");
 });
 
 test("channel validation is one allowlist: empty, unknown, retired and repeated values are refused", async () => {
-  const { normalizeCampaignChannels, CAMPAIGN_CHANNELS } = await typesReady;
+  const { normalizeCampaignChannels, CAMPAIGN_CHANNELS, LEGACY_DEFAULT_CAMPAIGN_CHANNELS } = await typesReady;
 
-  // No explicit choice keeps the v2 behaviour: both active channels.
-  assert.deepEqual(normalizeCampaignChannels(undefined), { ok: true, channels: [...CAMPAIGN_CHANNELS] });
-  assert.deepEqual(normalizeCampaignChannels(null), { ok: true, channels: [...CAMPAIGN_CHANNELS] });
+  // Multi-Social Core: no explicit choice keeps the Campaigns v3 behaviour —
+  // Instagram + Email. TikTok/YouTube are never selected silently, because a
+  // channel whose provider is not connected must be an active user choice.
+  assert.deepEqual(normalizeCampaignChannels(undefined), { ok: true, channels: [...LEGACY_DEFAULT_CAMPAIGN_CHANNELS] });
+  assert.deepEqual(normalizeCampaignChannels(null), { ok: true, channels: [...LEGACY_DEFAULT_CAMPAIGN_CHANNELS] });
+  assert.deepEqual([...LEGACY_DEFAULT_CAMPAIGN_CHANNELS], ["instagram", "email"], "the legacy default is unchanged");
 
   assert.deepEqual(normalizeCampaignChannels(["instagram"]), { ok: true, channels: ["instagram"] });
   assert.deepEqual(normalizeCampaignChannels(["email"]), { ok: true, channels: ["email"] });
+  assert.deepEqual(normalizeCampaignChannels(["tiktok"]), { ok: true, channels: ["tiktok"] });
+  assert.deepEqual(normalizeCampaignChannels(["youtube"]), { ok: true, channels: ["youtube"] });
   assert.deepEqual(normalizeCampaignChannels(["email", "instagram"]), { ok: true, channels: ["instagram", "email"] },
     "the stored order is canonical, so the same selection always looks the same");
   assert.deepEqual(normalizeCampaignChannels([" Email ", "INSTAGRAM"]), { ok: true, channels: ["instagram", "email"] },
     "values are normalised, not string-matched blindly");
+  assert.deepEqual(
+    normalizeCampaignChannels(["youtube", "tiktok", "email", "instagram"]),
+    { ok: true, channels: ["instagram", "tiktok", "youtube", "email"] },
+    "any non-empty combination of the four channels is one campaign, canonically ordered",
+  );
 
   assert.equal(normalizeCampaignChannels([]).ok, false, "an empty selection is refused");
   assert.equal(normalizeCampaignChannels([]).reason, "empty");
   assert.equal(normalizeCampaignChannels(["instagram", "instagram"]).ok, false, "a repeat is refused");
-  assert.equal(normalizeCampaignChannels(["instagram", "email", "email"]).ok, false, "more than two is refused");
+  assert.equal(normalizeCampaignChannels(["instagram", "email", "email"]).ok, false, "a repeat is refused in a longer list");
+  assert.equal(normalizeCampaignChannels(["instagram", "tiktok", "youtube", "email", "instagram"]).ok, false, "more than the four channels is refused");
   assert.equal(normalizeCampaignChannels("instagram").ok, false, "a non-array is refused");
   assert.equal(normalizeCampaignChannels([null]).ok, false, "a null entry is refused");
 
@@ -315,10 +330,19 @@ test("MARA is told which channels the campaign runs on", async () => {
   const { CAMPAIGN_INTELLIGENCE_SYSTEM_PROMPT } = await strategyReady;
   assert.match(CAMPAIGN_INTELLIGENCE_SYSTEM_PROMPT, /AUTHORITATIVE CHANNELS/);
   assert.match(CAMPAIGN_INTELLIGENCE_SYSTEM_PROMPT, /campaign\.selectedChannels/);
-  assert.match(CAMPAIGN_INTELLIGENCE_SYSTEM_PROMPT, /ONE coordinated sequence, not two separate plans/);
-  assert.match(CAMPAIGN_INTELLIGENCE_SYSTEM_PROMPT, /Follow campaign\.channelRules exactly/);
+  assert.match(CAMPAIGN_INTELLIGENCE_SYSTEM_PROMPT, /ONE coordinated sequence, not separate plans/);
+  assert.match(CAMPAIGN_INTELLIGENCE_SYSTEM_PROMPT, /Follow campaign\.channelRules and campaign\.platformRules exactly/);
+  // Multi-Social Core: the prompt teaches platform-native writing — the four
+  // channels, never per-platform products, and never a retired channel.
+  assert.match(CAMPAIGN_INTELLIGENCE_SYSTEM_PROMPT, /PLATFORM DIFFERENCES ARE REAL/);
+  assert.match(CAMPAIGN_INTELLIGENCE_SYSTEM_PROMPT, /tiktok_video, youtube_short or youtube_video/);
   assert.doesNotMatch(CAMPAIGN_INTELLIGENCE_SYSTEM_PROMPT, /\bsms\b/i, "the prompt never offers a retired channel");
-  assert.ok(Object.keys(CAMPAIGN_CHANNEL_RULES).length === 3);
+  // Multi-Social Core: one rule set per single-channel plan plus the
+  // coordinated multichannel rule — never one rule set per channel PRODUCT.
+  assert.ok(Object.keys(CAMPAIGN_CHANNEL_RULES).length === 5);
+  for (const key of ["multichannel", "instagram_only", "email_only", "tiktok_only", "youtube_only"]) {
+    assert.ok(CAMPAIGN_CHANNEL_RULES[key], `${key} has a rule`);
+  }
 });
 
 test("MARA can never widen a campaign's channels in the merge", async () => {
@@ -538,12 +562,14 @@ test("migration 0045 stores the channels, refuses invalid combinations and is ad
   assert.doesNotMatch(sql, /5\s*(credits|voom credits)|40\s*(credits|voom credits)/i, "media costs are untouched");
 });
 
-test("migrations 0001–0044 are untouched and 0045 is the only new one", async () => {
+test("migrations 0001–0045 are untouched and 0046 is the only new one", async () => {
   const { readdir } = await import("node:fs/promises");
   const files = (await readdir(new URL("supabase/migrations/", root))).filter((name) => name.endsWith(".sql")).sort();
 
-  assert.equal(files[files.length - 1], "0045_campaigns_v3_unified_channels.sql", "0045 is the only new migration");
-  assert.equal(files[files.length - 2], "0044_email_flow_durable_claims.sql", "production is still through 0044");
+  // Multi-Social Core adds exactly one migration; production is still through
+  // 0045 until 0046 is deliberately applied.
+  assert.equal(files[files.length - 1], "0046_multi_social_core.sql", "0046 is the only new migration");
+  assert.equal(files[files.length - 2], "0045_campaigns_v3_unified_channels.sql", "production is still through 0045");
   for (const expected of [
     "0033_automated_campaigns.sql",
     "0034_automated_campaign_shape_check_fix.sql",

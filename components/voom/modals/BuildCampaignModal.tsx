@@ -5,9 +5,11 @@ import { useModal } from "@/lib/voom/modal";
 import { addDays, daysBetween, localToUtcIso } from "@/lib/voom/timezone";
 import type { AudienceRecord } from "@/lib/contacts/types";
 import {
-  CAMPAIGN_CHANNEL_CHOICES,
+  CAMPAIGN_CHANNELS,
+  CAMPAIGN_CHANNEL_LABELS,
   CAMPAIGN_GOALS,
   CAMPAIGN_GOAL_LABELS,
+  LEGACY_DEFAULT_CAMPAIGN_CHANNELS,
   type CampaignActionChannel,
   type CampaignChannel,
   type CampaignGoal,
@@ -17,7 +19,7 @@ import { ModalBody, ModalFoot, ModalHead, ModalShell } from "../ui/Modal";
 import { Btn, Card, Field, Input, Tag, Textarea } from "../ui/primitives";
 
 /**
- * The ONE campaign creation flow (Campaigns v3).
+ * The ONE campaign creation flow (Multi-Social Campaigns).
  *
  * Two creation paths write the same campaign model:
  *   - Create with MARA: the guided brief; MARA plans a coordinated sequence
@@ -29,6 +31,10 @@ import { Btn, Card, Field, Input, Tag, Textarea } from "../ui/primitives";
  * drafts: nothing is sent, nothing is published and no paid media credit is
  * spent here. Your automation mode (Manual / Assisted / Autopilot) is a separate
  * setting and still decides what happens next.
+ *
+ * TikTok and YouTube are planning channels: content can be drafted, approved
+ * and scheduled, but Voom truthfully cannot publish there until the real
+ * provider integrations exist — the UI says so plainly.
  */
 
 /** How a campaign is created — deliberately not an automation-mode word. */
@@ -39,18 +45,25 @@ const CREATION_PATHS = [
 
 type CreationPath = (typeof CREATION_PATHS)[number]["id"];
 
-const INSTAGRAM_FORMATS = [
-  { id: "post", label: "Post" },
-  { id: "reel", label: "Reel" },
-  { id: "story", label: "Story" },
-] as const;
-
-type InstagramFormat = (typeof INSTAGRAM_FORMATS)[number]["id"];
+/** The canonical formats each channel offers, from the ONE vocabulary. */
+const FORMATS_FOR_FAMILY: Record<Exclude<CampaignChannel, "email">, ReadonlyArray<{ id: string; label: string }>> = {
+  instagram: [
+    { id: "post", label: "Post" },
+    { id: "reel", label: "Reel" },
+    { id: "story", label: "Story" },
+  ],
+  tiktok: [{ id: "video", label: "Video" }],
+  youtube: [
+    { id: "short", label: "Short" },
+    { id: "video", label: "Video" },
+  ],
+};
 
 interface DraftAction {
   id: string;
   family: CampaignChannel;
-  format: InstagramFormat;
+  /** The format inside the action's family; ignored for email. */
+  format: string;
   /** Business-local calendar date. */
   date: string;
   /** Business-local wall-clock time. */
@@ -61,19 +74,19 @@ interface DraftAction {
   body: string;
   cta: string;
   caption: string;
+  /** Multi-Social Core: the long-form description (YouTube Video/Short). */
+  description: string;
 }
-
-type ChannelChoice = (typeof CAMPAIGN_CHANNEL_CHOICES)[number]["id"];
 
 function actionChannelOf(action: DraftAction): CampaignActionChannel {
   if (action.family === "email") return "email";
-  return `instagram_${action.format}` as CampaignActionChannel;
+  return `${action.family}_${action.format}` as CampaignActionChannel;
 }
 
-/** The authoritative channels behind one picker value — and never anything else. */
-function channelsForChoice(choice: ChannelChoice): CampaignChannel[] {
-  const found = CAMPAIGN_CHANNEL_CHOICES.find((option) => option.id === choice);
-  return found ? [...found.channels] : ["instagram", "email"];
+/** The first format a family defaults to. */
+function defaultFormatFor(family: CampaignChannel): string {
+  if (family === "email") return "";
+  return FORMATS_FOR_FAMILY[family][0]?.id ?? "post";
 }
 
 /**
@@ -83,12 +96,11 @@ function channelsForChoice(choice: ChannelChoice): CampaignChannel[] {
  * extra render pass and no window where the two disagree.
  */
 function reconcileActions(actions: DraftAction[], channels: CampaignChannel[]): DraftAction[] {
-  const allowsInstagram = channels.includes("instagram");
-  const allowsEmail = channels.includes("email");
+  if (!channels.length) return actions;
   return actions.map((action) => {
-    if (action.family === "email" && !allowsEmail) return { ...action, family: "instagram" };
-    if (action.family === "instagram" && !allowsInstagram) return { ...action, family: "email" };
-    return action;
+    if (channels.includes(action.family)) return action;
+    const family = channels[0];
+    return { ...action, family, format: defaultFormatFor(family) };
   });
 }
 
@@ -100,7 +112,10 @@ function timeToMinutes(time: string): number {
 export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string) => void }) {
   const { close } = useModal();
   const [path, setPath] = useState<CreationPath>("mara");
-  const [channelChoice, setChannelChoice] = useState<ChannelChoice>("both");
+  // Multi-Social Campaigns: any non-empty combination of the four channels.
+  // The legacy default (Instagram + Email) is the starting selection — a
+  // channel whose provider is not connected is never selected silently.
+  const [selectedChannels, setSelectedChannels] = useState<CampaignChannel[]>([...LEGACY_DEFAULT_CAMPAIGN_CHANNELS]);
   const [name, setName] = useState("");
   const [goal, setGoal] = useState<CampaignGoal>("drive_sales");
   // The server's workflow snapshot is the source of truth for the business
@@ -118,8 +133,8 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const channels = channelsForChoice(channelChoice);
-  const allowsInstagram = channels.includes("instagram");
+  // Canonical stored order: instagram, tiktok, youtube, email.
+  const channels = CAMPAIGN_CHANNELS.filter((channel) => selectedChannels.includes(channel));
   const allowsEmail = channels.includes("email");
 
   useEffect(() => {
@@ -162,19 +177,27 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
     return daysBetween(startDate, endDate) + 1;
   }, [startDate, endDate]);
 
-  /** Changing the channels and re-pointing any now-invalid draft is one act. */
-  function chooseChannels(choice: ChannelChoice) {
-    const next = channelsForChoice(choice);
-    setChannelChoice(choice);
-    setDraftActions((current) => reconcileActions(current, next));
+  /**
+   * Toggling a channel and re-pointing any now-invalid draft is one act. The
+   * last selected channel can never be toggled off: a campaign must run on at
+   * least one channel.
+   */
+  function toggleChannel(channel: CampaignChannel) {
+    setSelectedChannels((current) => {
+      const has = current.includes(channel);
+      if (has && current.length === 1) return current;
+      const next = CAMPAIGN_CHANNELS.filter((c) => (has ? c !== channel : c === channel || current.includes(c)));
+      setDraftActions((actions) => reconcileActions(actions, next));
+      return next;
+    });
   }
 
   function addAction() {
-    const family: CampaignChannel = allowsInstagram ? "instagram" : "email";
+    const family: CampaignChannel = channels[0] ?? "instagram";
     setDraftActions((current) => [...current, {
       id: crypto.randomUUID(),
       family,
-      format: "post",
+      format: defaultFormatFor(family),
       date: startDate || today,
       time: family === "email" ? "10:00" : "18:00",
       title: "",
@@ -183,6 +206,7 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
       body: "",
       cta: "",
       caption: "",
+      description: "",
     }]);
   }
 
@@ -248,7 +272,14 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
                         cta: action.cta.trim(),
                         audienceId: audienceId || null,
                       }
-                    : { caption: action.caption.trim() }),
+                    : {
+                        caption: action.caption.trim(),
+                        concept: action.title.trim(),
+                        // Multi-Social Core: YouTube carries its description.
+                        ...(action.family === "youtube" && action.description.trim()
+                          ? { description: action.description.trim() }
+                          : {}),
+                      }),
                 })),
               }
             : {}),
@@ -288,13 +319,26 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
           />
         </Field>
 
-        <Field label="Channels" hint="A campaign holds coordinated actions across the channels you select.">
-          <PillGroup
-            ariaLabel="Campaign channels"
-            value={channelChoice}
-            options={CAMPAIGN_CHANNEL_CHOICES.map((choice) => ({ id: choice.id, label: choice.label }))}
-            onChange={(value) => chooseChannels(value as ChannelChoice)}
-          />
+        <Field
+          label="Channels"
+          hint="Pick any combination — one campaign, one coordinated timeline. TikTok and YouTube plan and schedule inside Voom; publishing there starts when their connections ship."
+        >
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Campaign channels">
+            {CAMPAIGN_CHANNELS.map((channel) => {
+              const active = selectedChannels.includes(channel);
+              return (
+                <button
+                  type="button"
+                  key={channel}
+                  onClick={() => toggleChannel(channel)}
+                  aria-pressed={active}
+                  className={`rounded-full border font-semibold transition px-3.5 py-1.5 text-[13px] ${active ? "border-brand bg-[var(--brand-soft)] text-brand" : "border-line bg-surface-2 text-text-2 hover:border-line-2"}`}
+                >
+                  {CAMPAIGN_CHANNEL_LABELS[channel]}
+                </button>
+              );
+            })}
+          </div>
         </Field>
 
         <Field label="Campaign name or short idea" hint={path === "self" ? "One line is enough." : "One line is enough — MARA works out the details."}>
@@ -350,11 +394,11 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
               <div className="flex items-start gap-2.5">
                 <Icon name="info" className="mt-0.5 flex-none text-brand" size={16} />
                 <p className="text-[12.5px] leading-[1.6] text-text-2">
-                  MARA builds a timed sequence inside the channels you selected — for an Instagram + Email campaign that
-                  is one coordinated story (an Instagram moment, the email that explains it, a reminder, the follow-up),
-                  not two separate plans. Building only creates drafts: no email is sent, nothing is published, and no
-                  paid media credits are spent. Your automation mode decides whether anything is pre-approved; every
-                  external action still follows the existing approval and safety rules.
+                  MARA builds a timed sequence inside the channels you selected — one coordinated story told natively on
+                  each platform (a teaser Reel, a TikTok variation, the email launch, a YouTube Short, the deeper
+                  YouTube video), never the same copy pasted everywhere. Building only creates drafts: no email is
+                  sent, nothing is published, and no paid media credits are spent. Your automation mode decides whether
+                  anything is pre-approved; every external action still follows the existing approval and safety rules.
                 </p>
               </div>
             </Card>
@@ -399,13 +443,16 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <Tag tone="t-grey">Action {index + 1}</Tag>
                       <div className="flex flex-wrap items-center gap-1.5">
-                        {allowsInstagram && allowsEmail && (
+                        {channels.length > 1 && (
                           <PillGroup
                             compact
                             ariaLabel={`Action ${index + 1} channel`}
                             value={action.family}
-                            options={[{ id: "instagram", label: "Instagram" }, { id: "email", label: "Email" }]}
-                            onChange={(value) => patchAction(action.id, { family: value as CampaignChannel })}
+                            options={channels.map((channel) => ({ id: channel, label: CAMPAIGN_CHANNEL_LABELS[channel] }))}
+                            onChange={(value) => {
+                              const family = value as CampaignChannel;
+                              patchAction(action.id, { family, format: defaultFormatFor(family) });
+                            }}
                           />
                         )}
                         <button
@@ -437,13 +484,45 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
                             compact
                             ariaLabel={`Action ${index + 1} format`}
                             value={action.format}
-                            options={INSTAGRAM_FORMATS.map((format) => ({ id: format.id, label: format.label }))}
-                            onChange={(value) => patchAction(action.id, { format: value as InstagramFormat })}
+                            options={FORMATS_FOR_FAMILY.instagram}
+                            onChange={(value) => patchAction(action.id, { format: value })}
                           />
                         </Field>
                         <Field label="Caption" hint={action.format === "reel" ? "You can add the shot list later in the campaign workspace." : "You can edit this later in the campaign workspace."}>
                           <Textarea rows={3} value={action.caption} onChange={(e) => patchAction(action.id, { caption: e.target.value })} maxLength={2200} placeholder="What this post says…" />
                         </Field>
+                      </>
+                    ) : action.family === "tiktok" || action.family === "youtube" ? (
+                      <>
+                        {action.family === "youtube" && (
+                          <Field label="Format">
+                            <PillGroup
+                              compact
+                              ariaLabel={`Action ${index + 1} format`}
+                              value={action.format}
+                              options={FORMATS_FOR_FAMILY.youtube}
+                              onChange={(value) => patchAction(action.id, { format: value })}
+                            />
+                          </Field>
+                        )}
+                        <Field
+                          label="Caption"
+                          hint={action.family === "tiktok"
+                            ? "One short TikTok-native line. You can add the beat list later in the campaign workspace."
+                            : "The video caption. You can edit everything later in the campaign workspace."}
+                        >
+                          <Textarea rows={3} value={action.caption} onChange={(e) => patchAction(action.id, { caption: e.target.value })} maxLength={2200} placeholder={action.family === "tiktok" ? "One short line + 3-5 tags…" : "What this video says…"} />
+                        </Field>
+                        {action.family === "youtube" && action.format === "video" && (
+                          <Field label="Description" hint="The full YouTube description — the payoff and what the video covers. Planning it never generates a video.">
+                            <Textarea rows={3} value={action.description} onChange={(e) => patchAction(action.id, { description: e.target.value })} maxLength={2000} placeholder="What viewers get from this video…" />
+                          </Field>
+                        )}
+                        <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-text-3">
+                          {action.family === "tiktok"
+                            ? "TikTok publishing is not connected yet — this action is planned, approved and scheduled inside Voom, and Voom will tell you plainly when it cannot publish."
+                            : "YouTube publishing is not connected yet — this action is planned, approved and scheduled inside Voom, and Voom will tell you plainly when it cannot publish."}
+                        </p>
                       </>
                     ) : (
                       <>
