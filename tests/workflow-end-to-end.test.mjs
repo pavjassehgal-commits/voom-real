@@ -391,30 +391,52 @@ test("Manual mode creates nothing automatically", async () => {
 // Assisted mode
 // ===========================================================================
 
-test("Assisted generates content, holds it for approval, and approval advances the SAME item", async () => {
+/**
+ * The owner's explicit "Create with MARA" click on a planned card (Plans +
+ * Credits v1: the ONLY way media is produced outside Autopilot). Mirrors what
+ * the paid path leaves behind: a completed generation and stored bytes on the
+ * SAME draft — no new item, no approval, no schedule.
+ */
+function produceMediaExplicitly(store, draftId) {
+  store.providerImageCalls += 1;
+  store.media.set(draftId, { status: "completed" });
+  store.assets.add(draftId);
+}
+
+test("Assisted prepares content and waits; the owner's media + approval advance the SAME item (v1)", async () => {
   const store = createStore();
   const result = await rolling.ensureRollingPlan(createPorts(store), {
     now: NOW, timeZone: TZ, cadence: "3x_week", mode: "assisted", goal: "awareness",
   });
   assert.equal(result.created, 3);
+  assert.equal(result.stage, "planning_only", "Assisted never reaches the paid stage on its own");
   assert.equal(result.autoApproved, 0);
-  assert.equal(result.awaitingApproval, 3);
+  assert.equal(result.awaitingApproval, 0, "approval is asked for once media exists, not at planning");
 
-  // Content and media exist, but nothing is scheduled or queued.
-  assert.equal(store.assets.size, 3);
+  // Content exists; NO media was generated, nothing is scheduled or queued.
+  assert.equal(store.generationCalls, 3);
+  assert.equal(store.providerImageCalls, 0, "no paid generation without an explicit action");
+  assert.equal(store.assets.size, 0);
   assert.equal(store.queue.size, 0);
-  for (const draftId of store.drafts.keys()) assert.equal(viewFor(store, draftId), "needs_approval");
+  for (const draftId of store.drafts.keys()) assert.equal(viewFor(store, draftId), "planned");
+
+  // The owner produces the visual on ONE planned card: the same item is now
+  // ready for review, and only that one.
+  const [first, ...others] = [...store.drafts.keys()];
+  produceMediaExplicitly(store, first);
+  assert.equal(store.providerImageCalls, 1, "exactly one paid generation, for the one click");
+  assert.equal(viewFor(store, first), "ready_for_review");
+  for (const id of others) assert.equal(viewFor(store, id), "planned");
+  assert.equal(store.drafts.size, 3, "producing media must not create another item");
 
   // Approving advances the SAME draft — no second copy is created anywhere.
-  const [first] = [...store.drafts.keys()];
   approveItem(store, first);
-  store.approvals.delete(first);
   assert.equal(viewFor(store, first), "scheduled");
   assert.equal(store.drafts.size, 3, "approval must not create another item");
   assert.equal(store.calendar.get(first), `cal-${first}`);
   assert.equal(store.queue.get(first).status, "scheduled");
-  // The other two genuinely still need action.
-  assert.equal([...store.drafts.keys()].filter((id) => viewFor(store, id) === "needs_approval").length, 2);
+  // The other two genuinely still need the owner's action.
+  assert.equal([...store.drafts.keys()].filter((id) => viewFor(store, id) === "planned").length, 2);
 });
 
 test("editing the caption and time before approval updates the same workflow item", async () => {
@@ -428,10 +450,13 @@ test("editing the caption and time before approval updates the same workflow ite
   item.caption = "An edited caption in the brand voice.";
   item.publishAt = edited;
 
+  // Only content Voom owns bytes for may be enqueued: the owner produces the
+  // visual first (v1), then approves — still the one item.
+  produceMediaExplicitly(store, draftId);
   approveItem(store, draftId);
-  store.approvals.delete(draftId);
   assert.equal(store.drafts.size, 1);
   assert.equal(store.queue.get(draftId).scheduledAt, edited);
+  assert.equal(store.queue.get(draftId).caption, "An edited caption in the brand voice.");
   assert.equal(tz.isoToLocalDate(edited, TZ), "2026-09-14");
 });
 

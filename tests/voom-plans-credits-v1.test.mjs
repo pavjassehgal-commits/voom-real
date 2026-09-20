@@ -87,7 +87,7 @@ test("2. Assisted never auto-generates paid media (v1 deliberate change)", () =>
   assert.equal(guard.mayAutomaticallyGeneratePaidMediaV2("assisted"), false);
 });
 
-test.skip("3. Autopilot auto-generates only if all 6 conditions true", async () => {
+test("3. Autopilot auto-generates only if all 6 conditions true", { skip: "guardAndReserveMedia now reserves through the reserve_media_credits RPC (migration 0035), which this table-only fake admin does not model; the Autopilot conditions are proven against the real SQL in voom-plans-credits-safety.test.mjs (5, 6) and the mode policy in tests 1, 2 and 8 here" }, async () => {
   const freeGuard = await guard.guardAndReserveMedia(createFakeAdmin(), {
     ownerId: "owner-1",
     planId: "free",
@@ -179,7 +179,7 @@ test("4. Reservation happens BEFORE provider submission (ledger API exists)", ()
   assert.ok(typeof guard.guardAndReserveMedia === "function");
 });
 
-test.skip("5. Refund on pre-creation failure", async () => {
+test("5. Refund on pre-creation failure", { skip: "reserve/refund now run through the ledger RPCs, which this table-only fake admin does not model; refund semantics are proven against the real SQL in voom-plans-credits-safety.test.mjs (9) and in workflow-video-hard-timeout.test.mjs (4c)" }, async () => {
   const admin = createFakeAdmin();
   const genId = "gen-refund";
   const reserve = await ledger.reserveCredits(admin, {
@@ -200,7 +200,7 @@ test.skip("5. Refund on pre-creation failure", async () => {
   assert.equal(summary.remaining, 150);
 });
 
-test.skip("6. No double charge via generation_id unique", async () => {
+test("6. No double charge via generation_id unique", { skip: "the (owner, generation_id) idempotency now lives in the reserve_media_credits RPC, which this table-only fake admin does not model; it is proven against the real SQL in voom-plans-credits-safety.test.mjs (8) and behaviourally in manual-replenish-cost-safety.test.mjs (5b)" }, async () => {
   const admin = createFakeAdmin();
   const genId = "gen-double";
   const first = await ledger.reserveCredits(admin, {
@@ -309,7 +309,7 @@ test("14. Credit costs centralized: image 5, video 40", () => {
   assert.equal(credits.creditCostForMedia({ mediaType: "video", durationSeconds: 8 }), 40);
 });
 
-test.skip("15. Ledger durability: remaining = allowance + purchased - charged", async () => {
+test("15. Ledger durability: remaining = allowance + purchased - charged", { skip: "the allowance/usage arithmetic now lives in the reserve_media_credits RPC and voom_plan_allowance (migration 0035), which this table-only fake admin does not model; it is proven against the real SQL in voom-plans-credits-safety.test.mjs (4, 7)" }, async () => {
   const admin = createFakeAdmin();
   let summary = await ledger.getCreditSummary(admin, "owner-1", "pro");
   assert.equal(summary.allowance, 150);

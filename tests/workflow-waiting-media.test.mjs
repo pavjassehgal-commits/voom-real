@@ -516,13 +516,22 @@ test("5c. the duplicate-generation guard also lives in the database", async () =
   // image path inserts the row BEFORE any provider call, so a conflict fails
   // safely without a charge.
   const media = await readFile(new URL("../lib/voom/workflow/media.ts", import.meta.url), "utf8");
-  const imageStart = media.indexOf("async function generateWorkflowImage");
-  const imageBody = media.slice(imageStart, media.indexOf("export function buildVisualPrompt", imageStart));
-  const insertAt = imageBody.indexOf(".insert(");
+  // The image path lives inside produceWorkflowMedia (after the reel branch):
+  // anchor on its durable insert rather than a helper name that can move.
+  const imageStart = media.indexOf('const imageGenId = generationIdForLedger;');
+  assert.notEqual(imageStart, -1, "the image path inserts its row under the pre-reserved ledger id");
+  const imageEnd = media.indexOf("export function buildVisualPrompt", imageStart);
+  assert.ok(imageEnd > imageStart);
+  const imageBody = media.slice(imageStart, imageEnd);
+  const insertAt = imageBody.indexOf('.from("mara_media_generations").insert(');
   // The paid image call goes through the module's one provider seam
   // (`deps.generateImage`, wired to createMediaProvider in production).
   const providerAt = imageBody.indexOf("deps.generateImage(");
   assert.ok(insertAt !== -1 && providerAt !== -1 && insertAt < providerAt, "row persisted before any paid provider call");
+  // And the credit reservation precedes both: nothing paid is reachable
+  // before the plan + credit guard has answered.
+  const reserveAt = media.indexOf("await guardAndReserveMedia(");
+  assert.ok(reserveAt !== -1 && reserveAt < imageStart, "credits are reserved before the durable row and the provider");
   assert.match(media, /async generateImage\(input\) \{[\s\S]*?createMediaProvider\(config\)\.generateImage/, "the default seam is the real provider");
 });
 

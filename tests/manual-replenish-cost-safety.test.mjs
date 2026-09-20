@@ -17,17 +17,27 @@
  *   lib/voom/workflow/next-actions.ts  — the card actions
  *
  * Everything external is faked in memory: Supabase (a table-backed admin
- * client), the AI copy provider (global fetch is intercepted and every request
- * is recorded) and the two paid provider seams of lib/voom/workflow/media.ts
- * (`generateImage` = Seedream, `startVideo` = Seedance), which are swapped for
- * recording fakes via the module's own `deps` port — production wiring is
- * never touched. No OpenRouter call, no cron, no publishing. "Zero provider
- * requests" is asserted at both boundaries: the seams AND the network.
+ * client, including the credit-ledger RPCs of migration 0035), the AI copy
+ * provider (global fetch is intercepted and every request is recorded) and the
+ * two paid provider seams of lib/voom/workflow/media.ts (`generateImage` =
+ * Seedream, `startVideo` = Seedance), which are swapped for recording fakes
+ * via the module's own `deps` port — production wiring is never touched. No
+ * OpenRouter call, no cron, no publishing. "Zero provider requests" is
+ * asserted at both boundaries: the seams AND the network.
+ *
+ * Plans + Credits v1 (the authoritative policy this suite now pins):
+ *   Free = Manual only, 0 credits, no AI media at all;
+ *   Pro  = Manual + Assisted, 150 credits, explicit generation only;
+ *   Max  = Manual + Assisted + Autopilot, 500 credits.
+ *   Image = 5 credits, video = 40 credits. ONLY Autopilot may generate paid
+ *   media automatically — Assisted, like Manual, plans and drafts and waits
+ *   for an explicit Create with MARA click.
  */
 import "./helpers/server-only-shim.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { createFakeCreditLedger, waitFor } from "./helpers/credit-ledger-fake.mjs";
 
 // MARA copy is the free internal planning step; it is answered by the fake
 // fetch below (AI_PROVIDER=local needs no API key). No media provider is
@@ -147,6 +157,10 @@ function containsMatch(value, needle) {
 function createFakeAdmin(tables) {
   const writes = [];
   const rpcs = [];
+  // The credit ledger of migration 0035, in memory: the REAL entitlement guard
+  // and ledger module run against it, so "exactly one paid job" is also
+  // "exactly one reservation" — and a Free account is refused before any seam.
+  const ledger = createFakeCreditLedger(tables, { now: () => NOW });
 
   class Query {
     constructor(table) {
@@ -230,11 +244,14 @@ function createFakeAdmin(tables) {
   }
 
   return {
-    writes, rpcs, tables,
+    writes, rpcs, tables, ledger,
     rows: (table) => tables.get(table) ?? [],
     writesTo: (table) => writes.filter((write) => write.table === table),
     from: (table) => new Query(table),
-    async rpc(name, args) { rpcs.push({ name, args }); return { data: null, error: null }; },
+    async rpc(name, args) {
+      rpcs.push({ name, args });
+      return (await ledger.rpc(name, args)) ?? { data: null, error: null };
+    },
     storage: {
       from: () => ({
         upload: async () => ({ data: null, error: null }),
@@ -246,7 +263,12 @@ function createFakeAdmin(tables) {
   };
 }
 
-/** The SynraPay account: a Manual (by default) business, no plan yet. */
+/**
+ * The SynraPay account: a Manual (by default) business, no marketing plan yet.
+ * `plan` is the billing plan column (free / pro / max); it defaults to the
+ * production default for an account that never chose one — Free — so the
+ * tests that need explicit generation opt into Pro deliberately.
+ */
 function seedAccount(options = {}) {
   return createFakeAdmin(new Map(Object.entries({
     businesses: [{
@@ -254,6 +276,7 @@ function seedAccount(options = {}) {
       industry: "Fintech", target_customer: ["SMB founders"], main_goal: "Grow awareness", brand_personality: ["Confident"],
       preferred_channels: ["Instagram"], content_frequency: options.cadence ?? "3x per week",
       automation_level: options.mode ?? "manual", timezone: TZ, onboarding_completed: true,
+      ...(options.plan ? { plan: options.plan } : {}),
     }],
     profiles: [{ user_id: OWNER, display_name: "SynraPay" }],
     marketing_plans: [], mara_drafts: [], mara_conversations: [], mara_media_generations: [],
@@ -287,26 +310,31 @@ function assertNoPaidOrAutomaticSideEffects(db, run) {
 // 1. The central policy
 // ===========================================================================
 
-test("1. mayAutomaticallyGeneratePaidMedia: Manual is never allowed; Assisted/Autopilot unchanged", () => {
+test("1. mayAutomaticallyGeneratePaidMedia: Manual is never allowed; Assisted never (v1); only Autopilot", () => {
   const { mayAutomaticallyGeneratePaidMedia: may, WORKFLOW_TRIGGERS, AUTOMATION_MODES } = automation;
   assert.deepEqual([...WORKFLOW_TRIGGERS], ["scheduled", "replenish"]);
   assert.equal(may("manual", "replenish"), false, "Manual + Replenish must return false");
   assert.equal(may("manual", "scheduled"), false);
-  assert.equal(may("assisted", "replenish"), true, "Assisted behaviour preserved");
-  assert.equal(may("assisted", "scheduled"), true);
+  // Plans + Credits v1: Assisted prepares and waits — paid media needs an
+  // explicit user generation action, so the automatic policy denies it too.
+  assert.equal(may("assisted", "replenish"), false, "Assisted never generates paid media automatically (v1)");
+  assert.equal(may("assisted", "scheduled"), false);
   assert.equal(may("autopilot", "replenish"), true, "Autopilot behaviour preserved");
   assert.equal(may("autopilot", "scheduled"), true);
-  // Exhaustive: exactly the Manual pairs are false.
+  // Exhaustive: every non-Autopilot pair is denied, nothing else is.
   const denied = AUTOMATION_MODES.flatMap((mode) => WORKFLOW_TRIGGERS.filter((trigger) => !may(mode, trigger)).map((trigger) => `${mode}/${trigger}`));
-  assert.deepEqual(denied, ["manual/scheduled", "manual/replenish"]);
+  assert.deepEqual(denied, ["manual/scheduled", "manual/replenish", "assisted/scheduled", "assisted/replenish"]);
 
   // The engine derives its stage from the same policy — a requested "full"
-  // (or any forged value) cannot widen a Manual run.
-  for (const stage of [undefined, "full", "bogus", "planning_only"]) {
-    assert.equal(rolling.resolveWorkflowStage({ mode: "manual", trigger: "replenish", stage }), "planning_only");
+  // (or any forged value) cannot widen a Manual or an Assisted run.
+  for (const mode of ["manual", "assisted"]) {
+    for (const stage of [undefined, "full", "bogus", "planning_only"]) {
+      assert.equal(rolling.resolveWorkflowStage({ mode, trigger: "replenish", stage }), "planning_only", `${mode}/${stage}`);
+      assert.equal(rolling.resolveWorkflowStage({ mode, trigger: "scheduled", stage }), "planning_only", `${mode}/${stage}`);
+    }
   }
-  assert.equal(rolling.resolveWorkflowStage({ mode: "assisted", trigger: "replenish" }), "full");
   assert.equal(rolling.resolveWorkflowStage({ mode: "autopilot", trigger: "scheduled" }), "full");
+  assert.equal(rolling.resolveWorkflowStage({ mode: "autopilot", trigger: "replenish" }), "full");
   assert.equal(rolling.resolveWorkflowStage({ mode: "autopilot", trigger: "replenish", stage: "planning_only" }), "planning_only");
 });
 
@@ -474,8 +502,23 @@ test("3b. even a forged 'full' stage cannot make the engine reach media for Manu
 test("3c. runOwnerWorkflow reads the SAVED mode — no caller can run a Manual account as Assisted", async () => {
   const source = await read("lib/voom/workflow/service.ts");
   assert.doesNotMatch(source, /mode\?:\s*"manual"\s*\|\s*"assisted"\s*\|\s*"autopilot"/, "WorkflowRunInput has no mode override");
-  assert.match(source, /const mode = normalizeAutomationMode\(business\.automation_level\)/);
+  assert.match(source, /let mode = normalizeAutomationMode\(business\.automation_level\)/, "the mode comes from the saved row");
+  // The only thing that can change the saved mode is the plan entitlement,
+  // and it can only NARROW it (Free -> Manual, Pro -> at most Assisted).
+  assert.match(source, /if \(!canUseAutomationMode\(planId, mode\)\) \{\s*mode = planId === "pro" \? "assisted" : "manual";/);
+  assert.doesNotMatch(source, /mode = "autopilot"/, "nothing ever widens a run to Autopilot");
   assert.match(source, /if \(!mayAutomaticallyGeneratePaidMedia\(context\.mode, context\.trigger\)\)/, "the ensureMedia port carries the guard");
+
+  // Executed, not only read: a Free account whose row still says "assisted"
+  // is run as Manual — the plan gate narrows, so a Replenish stays planning-only
+  // and nothing paid is even reachable.
+  resetNetwork();
+  const free = seedAccount({ mode: "assisted", cadence: "3x per week" });
+  const run = await service.runOwnerWorkflow(free, { ownerId: OWNER, now: NOW, trigger: "replenish", mediaDeps: fakeMediaDeps });
+  assert.equal(run.mode, "manual", "Free cannot run Assisted: the saved mode is narrowed, never widened");
+  assert.equal(run.stage, "planning_only");
+  assert.equal(run.created, 3);
+  assertNoPaidOrAutomaticSideEffects(free, run);
   const route = await read("app/api/plan/route.ts");
   assert.doesNotMatch(route, /"assisted" as const|"autopilot" as const|\bmode\s*[:=]/, "the route no longer computes or passes a mode");
   assert.doesNotMatch(route, /automation_level/, "the route does not read the mode at all");
@@ -483,7 +526,7 @@ test("3c. runOwnerWorkflow reads the SAVED mode — no caller can run a Manual a
 });
 
 // ===========================================================================
-// 4. Assisted and Autopilot are unchanged
+// 4. Assisted is planning-only too (v1); Autopilot is unchanged
 // ===========================================================================
 
 function countingPorts() {
@@ -501,20 +544,24 @@ function countingPorts() {
   return { ports, calls };
 }
 
-test("4a. Assisted: Replenish and scheduled runs still generate media, then stop for approval", async () => {
+test("4a. Assisted: Replenish and scheduled runs plan and draft every slot, and never reach the paid stage (v1)", async () => {
   for (const trigger of ["replenish", "scheduled", undefined]) {
     const { ports, calls } = countingPorts();
     const run = await rolling.ensureRollingPlan(ports, { now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "awareness", trigger });
     assert.equal(run.mode, "assisted");
-    assert.equal(run.stage, "full");
-    assert.equal(run.created, 7);
-    assert.equal(calls.ensureMedia, 7, `Assisted/${trigger} still runs media for every slot`);
-    assert.ok(calls.image > 0 && calls.video > 0);
-    assert.equal(run.mediaQueued, 7);
+    assert.equal(run.stage, "planning_only", `Assisted/${trigger} is planning-only: paid media needs an explicit click`);
+    assert.equal(run.created, 7, "Assisted still prepares the whole horizon");
+    assert.equal(calls.createDraft, 7);
+    assert.equal(calls.ensureMedia, 0, `Assisted/${trigger} never runs the paid media stage`);
+    assert.equal(calls.image + calls.video, 0);
+    assert.equal(run.mediaQueued, 0);
     assert.equal(calls.autoApprove, 0, "Assisted never auto-approves");
-    assert.equal(calls.requestApproval, 7);
-    assert.equal(run.awaitingApproval, 7);
+    // Approval is asked for once the owner has produced the item's media
+    // (the planned card offers Create with MARA / Upload), not at planning.
+    assert.equal(calls.requestApproval, 0);
+    assert.equal(run.awaitingApproval, 0);
     assert.equal(run.autoApproved, 0);
+    assert.deepEqual(run.failures, []);
   }
 });
 
@@ -532,41 +579,49 @@ test("4b. Autopilot: Replenish and scheduled runs still generate media and auto-
   }
 });
 
-test("4c. through the REAL service, an Assisted Replenish still submits image generations (the baseline Manual no longer shares)", async () => {
+test("4c. through the REAL service, an Assisted (Pro) Replenish drafts the horizon and submits nothing paid (v1)", async () => {
   resetNetwork();
-  const db = seedAccount({ mode: "assisted", cadence: "3x per week" });
+  // Pro is the plan that includes Assisted, so the saved mode is honoured.
+  const db = seedAccount({ mode: "assisted", cadence: "3x per week", plan: "pro" });
   const run = await service.runOwnerWorkflow(db, { ownerId: OWNER, now: NOW, trigger: "replenish", mediaDeps: fakeMediaDeps });
-  assert.equal(run.mode, "assisted");
-  assert.equal(run.stage, "full");
+  assert.equal(run.mode, "assisted", "a Pro account keeps its saved Assisted mode");
+  assert.equal(run.stage, "planning_only", "Assisted is planning-only: paid media needs an explicit click");
   assert.equal(run.created, 3);
-  const imageSlots = run.plan.items.filter((item) => item.contentType !== "reel").length;
-  assert.ok(imageSlots > 0);
-  assert.equal(imageRequests().length, imageSlots, "Assisted still submits one Seedream request per image slot");
-  assert.equal(db.rows("mara_media_generations").filter((row) => row.media_type === "image" && row.status === "completed").length, imageSlots);
-  assert.equal(db.rows("post_draft_assets").length, imageSlots);
-  // The Reel reached the video seam — it was NOT refused by the policy: the
-  // failure is the (fake, unavailable) provider's, not the guard's.
-  assert.equal(videoRequests().length, 1, "Assisted still submits the Reel to the video path");
-  const reelFailure = run.failures.find((failure) => failure.stage === "media");
-  assert.ok(reelFailure, "the reel's media stage ran");
-  assert.notEqual(reelFailure.code, service.AUTOMATIC_MEDIA_FORBIDDEN);
-  // And Assisted still stops for approval.
-  assert.equal(run.awaitingApproval, 3);
+  assert.equal(run.plan.items.length, 3);
+  assert.ok(run.plan.items.some((item) => item.contentType !== "reel") && run.plan.items.some((item) => item.contentType === "reel"));
+  // Drafts and copy exist; the paid seams were never reached at either
+  // boundary, no generation row exists, and no credit was reserved.
+  assert.equal(db.rows("mara_drafts").length, 3);
+  assert.equal(imageRequests().length, 0, "Assisted submits no Seedream request on its own");
+  assert.equal(videoRequests().length, 0, "Assisted submits no Seedance request on its own");
+  assert.deepEqual(run.failures, [], "nothing paid ran, so nothing paid could fail");
+  assert.deepEqual(db.ledger.rows(), [], "no credit reservation was even attempted");
+  assertNoPaidOrAutomaticSideEffects(db, run);
+  // Approval comes after the owner produces media on the planned card, so
+  // nothing sits in Approvals yet and nothing was auto-approved.
+  assert.equal(run.awaitingApproval, 0);
   assert.equal(run.autoApproved, 0);
-  assert.equal(db.rows("mara_pending_actions").length, 3);
+  assert.equal(db.rows("mara_pending_actions").length, 0);
   for (const draft of db.rows("mara_drafts")) assert.equal(draft.status, "draft");
 });
 
 // ===========================================================================
-// 5. Manual: the explicit click still works, and stays idempotent
+// 5. Manual: the explicit click still works (on a plan with credits), and
+//    stays idempotent — and a Free account is refused before any provider
 // ===========================================================================
 
-async function manualPlannedItem() {
+/**
+ * A Manual account with a planned Post. `plan` defaults to Pro: Manual is
+ * allowed on every plan, but only Pro/Max include AI media credits, so an
+ * explicit Create with MARA click can actually reach the (fake) provider.
+ */
+async function manualPlannedItem(options = {}) {
   resetNetwork();
-  const db = seedAccount({ mode: "manual", cadence: "3x per week" });
+  const db = seedAccount({ mode: "manual", cadence: "3x per week", plan: options.plan ?? "pro" });
   await service.runOwnerWorkflow(db, { ownerId: OWNER, now: NOW, trigger: "replenish", mediaDeps: fakeMediaDeps });
   const draft = db.rows("mara_drafts").find((row) => row.kind === "instagram_post");
   assert.ok(draft);
+  assert.deepEqual(db.ledger.rows(), [], "planning reserved nothing");
   resetNetwork();
   return {
     db,
@@ -578,7 +633,7 @@ async function manualPlannedItem() {
   };
 }
 
-test("5a. an explicit Create with MARA click in Manual starts exactly ONE paid generation", async () => {
+test("5a. an explicit Create with MARA click in Manual (Pro) starts exactly ONE paid generation and reserves it once", async () => {
   const { db, draft, request } = await manualPlannedItem();
   // This is what the Marketing Plan card's server action calls (explicit: true).
   const outcome = await mediaMod.produceWorkflowMedia(db, request, { explicit: true, now: NOW, deps: fakeMediaDeps });
@@ -592,11 +647,41 @@ test("5a. an explicit Create with MARA click in Manual starts exactly ONE paid g
   assert.equal(generations[0].status, "completed");
   assert.equal(generations[0].provider, "openrouter");
   assert.equal(db.rows("post_draft_assets").length, 1, "the visual is attached to the SAME item");
+  // Credits: reserved BEFORE the provider call, settled after the bytes are
+  // stored — one image, 5 credits, one ledger row, keyed by the generation.
+  assert.deepEqual(db.ledger.calls.map((call) => call.name), ["reserve_media_credits", "settle_media_credits"]);
+  // The only other RPC is the calendar sync withdrawing a publish-queue row
+  // for a still-draft post — there is none, so nothing is enqueued or cancelled.
+  assert.deepEqual(
+    db.rpcs.map((call) => call.name).filter((name) => !name.endsWith("_media_credits")),
+    ["cancel_instagram_publish_queue_item"],
+  );
+  const ledgerRows = db.ledger.rows();
+  assert.equal(ledgerRows.length, 1);
+  assert.equal(ledgerRows[0].credits, 5);
+  assert.equal(ledgerRows[0].media_type, "image");
+  assert.equal(ledgerRows[0].source, "user_request");
+  assert.equal(ledgerRows[0].status, "settled");
+  assert.equal(ledgerRows[0].generation_id, generations[0].id, "the ledger row and the generation row share one identity");
+  assert.deepEqual(db.ledger.usage(OWNER), { used: 5, allowance: 150, remaining: 145 });
   // Still Manual: nothing was approved, scheduled or queued by the click.
   assert.equal(db.rows("mara_drafts").find((row) => row.id === draft.id).status, "draft");
   assert.equal(db.rows("content_calendar_items").length, 0);
   assert.equal(db.rows("instagram_publish_queue").length, 0);
   assert.equal(mediaMod.mediaOutcomeMessage("completed"), "MARA generated the visual for this item. Nothing was published.");
+});
+
+test("5a-free. the same explicit click on a Free account is refused before any provider or ledger work", async () => {
+  const { db, request } = await manualPlannedItem({ plan: "free" });
+  const outcome = await mediaMod.produceWorkflowMedia(db, request, { explicit: true, now: NOW, deps: fakeMediaDeps });
+  assert.deepEqual(outcome, { ok: false, code: "plan_not_allowed" }, "Free has no AI media: the guard refuses, truthfully");
+  assert.equal(imageRequests().length, 0, "no Seedream request");
+  assert.equal(videoRequests().length, 0);
+  assert.equal(network.calls.length, 0, "no network activity of any kind");
+  assert.equal(db.rows("mara_media_generations").length, 0, "no generation row is created for a refused click");
+  assert.equal(db.rows("post_draft_assets").length, 0);
+  assert.deepEqual(db.ledger.rows(), [], "nothing was reserved");
+  assert.deepEqual(db.rpcs, [], "the plan check happens before the ledger is even consulted");
 });
 
 test("5b. repeated explicit generation is idempotent: a second click while one is in flight pays nothing", async () => {
@@ -609,20 +694,32 @@ test("5b. repeated explicit generation is idempotent: a second click while one i
     return { provider: "openrouter", bytes: jpeg(1024, 1024) };
   };
   const first = mediaMod.produceWorkflowMedia(db, request, { explicit: true, now: NOW, deps: fakeMediaDeps });
-  // Let the first click reach the provider (its generation row is now live).
-  while (imageRequests().length === 0) await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(db.rows("mara_media_generations").length, 1);
+  try {
+    // Let the first click reach the provider (its generation row is now live).
+    // Bounded: if the click is refused before the seam (e.g. by the plan or
+    // credit guard), the wait fails with the refusal instead of spinning.
+    await waitFor(async () => {
+      if (imageRequests().length > 0) return true;
+      const settled = await Promise.race([first, new Promise((resolve) => setTimeout(resolve, 0, null))]);
+      if (settled) throw new Error(`the first click finished without reaching the provider: ${JSON.stringify(settled)}`);
+      return false;
+    }, { timeoutMs: 2_000, message: "the first click to reach the image provider" });
+    assert.equal(db.rows("mara_media_generations").length, 1);
+    assert.equal(db.ledger.live(OWNER).length, 1, "the in-flight click holds exactly one reservation");
 
-  const second = await mediaMod.produceWorkflowMedia(db, request, { explicit: true, now: new Date(NOW.getTime() + 1_000), deps: fakeMediaDeps });
-  assert.deepEqual(second, { ok: true, state: "exists" }, "the repeat click is a no-op");
-  assert.equal(imageRequests().length, 1, "still exactly one provider request");
-  assert.equal(db.rows("mara_media_generations").length, 1, "still exactly one generation row");
-
-  release();
+    const second = await mediaMod.produceWorkflowMedia(db, request, { explicit: true, now: new Date(NOW.getTime() + 1_000), deps: fakeMediaDeps });
+    assert.deepEqual(second, { ok: true, state: "exists" }, "the repeat click is a no-op");
+    assert.equal(imageRequests().length, 1, "still exactly one provider request");
+    assert.equal(db.rows("mara_media_generations").length, 1, "still exactly one generation row");
+    assert.equal(db.ledger.rows().length, 1, "the repeat click reserved nothing");
+  } finally {
+    release();
+  }
   assert.deepEqual(await first, { ok: true, state: "completed" });
   assert.equal(imageRequests().length, 1);
   assert.equal(db.rows("mara_media_generations").length, 1);
   assert.equal(db.rows("post_draft_assets").length, 1);
+  assert.deepEqual(db.ledger.rows().map((row) => [row.credits, row.status]), [[5, "settled"]], "one image, charged once");
   assert.equal(mediaMod.mediaOutcomeMessage("exists"), "A generation is already in flight for this item — nothing new was started, so nothing was charged.");
 });
 
@@ -639,6 +736,7 @@ test("5c. after the explicit generation, a Manual Replenish reuses the item and 
   assert.equal(run.created, 0);
   assert.equal(network.calls.length, 0, "no network activity of any kind");
   assert.equal(db.rows("mara_media_generations").length, 1, "the one explicit generation is the only one that ever existed");
+  assert.equal(db.ledger.rows().length, 1, "the one explicit reservation is the only one that ever existed");
   assert.equal(run.mediaQueued, 0);
   assert.equal(run.awaitingApproval, 0);
   assert.equal(run.autoApproved, 0);
@@ -653,13 +751,18 @@ test("6. Replenish copy is truthful per mode and the Manual card never implies f
     automation.replenishPlanDescription("manual"),
     "Replenish plan creates your upcoming content plan. Media is generated only when you ask MARA to create it.",
   );
-  for (const mode of ["assisted", "autopilot"]) {
-    assert.match(automation.replenishPlanDescription(mode), /generates media automatically/i, `${mode} states the automatic generation plainly`);
-  }
+  // v1: Assisted prepares and waits, so its sentence must NOT promise
+  // automatic media; only Autopilot may, and only within the credit limits.
+  assert.match(automation.replenishPlanDescription("assisted"), /waits for your approval/i);
+  assert.match(automation.replenishPlanDescription("assisted"), /only when you ask MARA to create it/i);
+  assert.doesNotMatch(automation.replenishPlanDescription("assisted"), /generates? media automatically/i);
+  assert.match(automation.replenishPlanDescription("autopilot"), /may generate media automatically within your credit limits/i, "Autopilot states the automatic generation plainly, and its limit");
   assert.doesNotMatch(automation.replenishPlanDescription("manual"), /automatically|finished|generates media/i);
 
   const manual = automation.AUTOMATION_MODE_COPY.manual;
-  assert.match(manual.media, /replenishing your plan creates drafts only/i);
+  assert.match(manual.media, /^No automatic media generation\./);
+  assert.match(manual.media, /only from an explicit Create with MARA click/i);
+  assert.match(manual.media, /only if your plan includes AI media credits/i);
   assert.doesNotMatch(manual.media, /building your plan, Create with MARA/i, "building the plan is no longer listed as a paid-media trigger");
 
   const workspace = await read("components/voom/operating/PlanWorkspace.tsx");

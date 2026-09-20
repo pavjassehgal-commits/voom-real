@@ -377,8 +377,16 @@ test("provider secrets and payloads stay server-side only", async () => {
   assert.match(generate, /error: "MARA couldn't write that post\. Please retry\." \}, \{ status: 502 \}\)/);
   assert.match(generate, /error: "MARA couldn't plan that Story\. Please retry\." \}, \{ status: 502 \}\)/);
   assert.match(suggest, /error: "MARA couldn't suggest copy just now\. Please retry\." \}, \{ status: 502 \}\)/);
+  // The one `.message` a response may carry is the entitlement guard's — a
+  // Voom-authored plan/credit sentence, built from the plan config and the
+  // ledger numbers only, never from a provider response.
+  const [guardSource, ledgerSource] = await Promise.all([read("lib/billing/entitlement-guard.ts"), read("lib/billing/ledger.ts")]);
+  for (const source of [guardSource, ledgerSource]) {
+    assert.doesNotMatch(source, /\bfetch\(|openrouter|createAiProvider|createMediaProvider|reason\.message|error\.message|err\.message/i,
+      "entitlement messages are never derived from a provider error");
+  }
   for (const route of [generate, suggest]) {
-    assert.doesNotMatch(route, /error: \w+\.message/, "route responses never interpolate provider error messages");
+    assert.doesNotMatch(route.replace(/error: guard\.message/g, ""), /error: \w+\.message/, "route responses never interpolate provider error messages");
     assert.doesNotMatch(route, /error: String\(/);
   }
 });

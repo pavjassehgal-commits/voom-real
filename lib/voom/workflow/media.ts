@@ -383,9 +383,13 @@ export async function produceWorkflowMedia(
     }
 
     if ("error" in result) {
-      if (result.status !== 409) {
-        await releaseReservationOnFailure(admin, request.ownerId, generationIdForLedger).catch(() => null);
-      }
+      // No job was started under THIS call's ledger identity — including on a
+      // 409, where the active job (and its own reservation) belongs to a
+      // different generation id — so the reservation taken above must be
+      // released, or the losing click of a race would keep credits charged for
+      // a video that never existed. The refund RPC is idempotent, so this is a
+      // no-op when the video orchestrator already refunded at insert time.
+      await releaseReservationOnFailure(admin, request.ownerId, generationIdForLedger).catch(() => null);
       return { ok: false, code: result.status === 409 ? "video_start_conflict" : "video_start_failed" };
     }
 

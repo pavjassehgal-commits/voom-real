@@ -41,6 +41,7 @@
 import "./helpers/server-only-shim.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createFakeCreditLedger } from "./helpers/credit-ledger-fake.mjs";
 
 const state = await import("../lib/voom/workflow/state.ts");
 const readModel = await import("../lib/voom/workflow/read.ts");
@@ -91,6 +92,11 @@ const ACTIVE_GEN_STATUSES = ["queued", "generating", "processing"];
 
 function createFakeAdmin(tables) {
   const writes = [];
+  // Plans + Credits v1: the explicit retry reserves credits BEFORE the
+  // provider is asked for anything. The ledger RPCs of migration 0035 are
+  // modelled in memory so the REAL guard runs, and "one fresh paid job" can
+  // also be asserted as "one live reservation of exactly 40 credits".
+  const ledger = createFakeCreditLedger(tables, { now: () => NOW });
 
   class Query {
     constructor(table) {
@@ -161,10 +167,14 @@ function createFakeAdmin(tables) {
   return {
     writes,
     tables,
+    ledger,
     generations: () => tables.get("mara_media_generations") ?? [],
     queueRows: () => tables.get("instagram_publish_queue") ?? [],
     writesTo: (table) => writes.filter((write) => write.table === table),
     from: (table) => new Query(table),
+    async rpc(name, args) {
+      return (await ledger.rpc(name, args)) ?? { data: null, error: null };
+    },
     storage: {
       from: () => ({
         createSignedUrl: async (path) => ({ data: { signedUrl: `https://signed.invalid/${path}` } }),
@@ -212,6 +222,9 @@ function seedIncident(options = {}) {
     businesses: [{
       owner_user_id: OWNER, content_frequency: "Daily", timezone: TZ,
       automation_level: options.mode ?? "assisted",
+      // The SynraPay account is on Pro: Assisted is a Pro mode, and Pro is
+      // what lets an explicit Create with MARA / Retry click spend credits.
+      plan: options.plan ?? "pro",
     }],
     marketing_plans: [{
       id: "plan-1", owner_user_id: OWNER, business_goal: "Global reach", status: "active",
@@ -309,8 +322,11 @@ function fakeVideoDeps(db) {
           return { status: 409, error: "A video generation is already running for this content.", generation: null };
         }
         calls.providerJobs += 1;
+        // Like the real orchestrator, the caller's pre-reserved ledger id IS the
+        // durable row id (ledger row == generation row), else a fresh one.
+        const freshId = args.generationId ?? `gen-fresh-${calls.providerJobs}`;
         rows.push({
-          id: `gen-fresh-${calls.providerJobs}`,
+          id: freshId,
           owner_user_id: args.ownerId,
           conversation_id: args.post.conversationId,
           draft_id: args.post.id,
@@ -327,7 +343,7 @@ function fakeVideoDeps(db) {
           updated_at: NOW.toISOString(),
         });
         db.writes.push({ table: "mara_media_generations", op: "insert", patch: { via: "startVideo" } });
-        return { status: 202, generation: { id: `gen-fresh-${calls.providerJobs}` }, message: "MARA started generating this video." };
+        return { status: 202, generation: { id: freshId }, message: "MARA started generating this video." };
       },
     },
   };
@@ -707,9 +723,28 @@ test("4a. an explicit retry after the timeout creates exactly one fresh generati
   assert.equal(fake.calls.providerJobs, 1, "exactly one fresh provider job");
   assert.equal(fake.calls.start, 1);
   assert.match(fake.calls.tokens[0], new RegExp(`^workflow-${DRAFT}:`), "a fresh per-attempt token");
+  // Credits: the reservation is taken BEFORE the provider seam (the ledger
+  // call precedes the fake's startVideo) and settled once the job is live —
+  // one video, 40 credits, one row, sharing the fresh generation's identity.
+  assert.deepEqual(db.ledger.calls.map((call) => call.name), ["reserve_media_credits", "settle_media_credits"]);
+  assert.deepEqual(db.ledger.rows().map((row) => [row.media_type, row.credits, row.status, row.source]), [["video", 40, "settled", "user_request"]]);
+  assert.equal(db.ledger.rows()[0].generation_id, fresh.id, "the ledger row is keyed by the fresh generation");
+  assert.deepEqual(db.ledger.usage(OWNER), { used: 40, allowance: 150, remaining: 110 });
   // The held schedule is untouched until a real asset exists.
   assert.equal(db.queueRows()[0].status, "waiting_for_media");
   assert.deepEqual(db.writesTo("instagram_publish_queue"), []);
+});
+
+test("4a-free. the same explicit retry on a Free account is refused before any provider or ledger work", async () => {
+  const db = createFakeAdmin(seedIncident({ plan: "free" }));
+  const fake = fakeVideoDeps(db);
+  const outcome = await mediaMod.produceWorkflowMedia(db, reelRequest(), { now: NOW, explicit: true, deps: fake.deps });
+  assert.deepEqual(outcome, { ok: false, code: "plan_not_allowed" }, "Free has no AI media: refused truthfully");
+  assert.equal(fake.calls.start, 0, "the paid path was never entered");
+  assert.equal(fake.calls.providerJobs, 0);
+  assert.deepEqual(db.ledger.rows(), [], "nothing was reserved");
+  assert.equal(db.generations().length, 1, "no fresh row; the timed-out row is all there is");
+  assert.equal(db.queueRows()[0].status, "waiting_for_media");
 });
 
 test("4b. repeated retry clicks create at most one fresh paid job", async () => {
@@ -727,6 +762,8 @@ test("4b. repeated retry clicks create at most one fresh paid job", async () => 
   assert.equal(fake.calls.start, 1, "the paid path was entered once");
   assert.equal(db.generations().length, 2, "the timed-out row plus exactly one fresh row");
   assert.equal(db.generations().filter((row) => ACTIVE_GEN_STATUSES.includes(row.status)).length, 1);
+  assert.equal(db.ledger.rows().length, 1, "the later clicks reserved nothing");
+  assert.deepEqual(db.ledger.usage(OWNER), { used: 40, allowance: 150, remaining: 110 }, "charged once");
 });
 
 test("4c. two racing clicks still create only one paid job (the database guard)", async () => {
@@ -741,6 +778,14 @@ test("4c. two racing clicks still create only one paid job (the database guard)"
   assert.equal(fake.calls.providerJobs, 1, "at most one fresh provider job was ever submitted");
   assert.equal(db.generations().length, 2);
   assert.equal(db.generations().filter((row) => ACTIVE_GEN_STATUSES.includes(row.status)).length, 1);
+  // The loser of the race is refused BEFORE any provider job exists, so it is
+  // never charged: its pre-reservation must be released, leaving exactly the
+  // winner's 40 credits live — never 80 for one video.
+  const live = db.ledger.live(OWNER);
+  assert.deepEqual(live.map((row) => [row.credits, row.status]), [[40, "settled"]], "one live reservation for one job");
+  assert.deepEqual(db.ledger.usage(OWNER), { used: 40, allowance: 150, remaining: 110 }, "the losing click cost nothing");
+  const winner = db.generations().find((row) => ACTIVE_GEN_STATUSES.includes(row.status));
+  assert.equal(live[0].generation_id, winner.id, "the live reservation belongs to the job that actually started");
 });
 
 test("4d. the same token resolves to the same job instead of paying twice", async () => {
@@ -756,6 +801,7 @@ test("4d. the same token resolves to the same job instead of paying twice", asyn
   assert.deepEqual(second, { ok: true, state: "exists" });
   assert.equal(fake.calls.providerJobs, 1);
   assert.equal(db.generations().length, 2);
+  assert.equal(db.ledger.rows().length, 1, "the same token never pays twice");
 });
 
 test("4e. nothing automatic ever submits a fresh paid generation for a timed-out job", async () => {
