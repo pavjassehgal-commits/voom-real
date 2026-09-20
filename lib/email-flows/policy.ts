@@ -35,7 +35,7 @@ export const SEND_LEASE_MINUTES = 10;
  * Provider-politeness ceiling per owner per tick. Also what makes resume safe:
  * an overdue pile is spread across ticks instead of bursting out at once.
  */
-export const MAX_SENDS_PER_TICK = 25;
+export const MAX_SENDS_PER_TICK = 5;
 /** Enrollment ceiling per owner per tick, so a first run cannot flood a flow. */
 export const MAX_ENROLLMENTS_PER_TICK = 50;
 /** How far ahead the engine may schedule (keeps `no past schedule` honest). */

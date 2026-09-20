@@ -473,6 +473,37 @@ test("4a. only the worker whose key comes back owns the send — never two", asy
   assert.equal(race.attempts, 1, "and it did not consume another attempt");
 });
 
+test("4a-2. v2 durable claims use a worker token and never reclaim an ambiguous send", async () => {
+  const { run } = await enrolledRun("durable-claim");
+  await all("update public.voom_email_flow_step_runs set scheduled_for = now() - interval '1 minute' where id = $1", [run.id]);
+  const providerKey = KEY("durable-provider");
+
+  const first = await one(
+    "select * from public.claim_email_flow_step_run_v2($1::uuid, $2::uuid, $3::text, $4::text)",
+    [OWNER_A, run.id, KEY("worker-a"), providerKey],
+  );
+  assert.equal(first.status, "sending");
+  assert.equal(first.claim_token, KEY("worker-a"));
+  assert.equal(first.idempotency_key, providerKey, "the provider identity is stable per run");
+
+  const overlap = await one(
+    "select * from public.claim_email_flow_step_run_v2($1::uuid, $2::uuid, $3::text, $4::text)",
+    [OWNER_A, run.id, KEY("worker-b"), providerKey],
+  );
+  assert.equal(overlap.claim_token, KEY("worker-a"), "the overlapping worker never owns the claim");
+  assert.equal(overlap.attempts, 1);
+
+  await all("update public.voom_email_flow_step_runs set claimed_at = now() - interval '11 minutes' where id = $1", [run.id]);
+  const abandoned = await one(
+    "select public.abandon_stale_email_flow_step_run($1::uuid, $2::uuid, $3::integer) as result",
+    [OWNER_A, run.id, 10],
+  );
+  assert.equal(jsonb(abandoned.result).outcome, "abandoned");
+  const terminal = await one("select status, last_error_code from public.voom_email_flow_step_runs where id = $1", [run.id]);
+  assert.equal(terminal.status, "failed");
+  assert.equal(terminal.last_error_code, "provider_outcome_ambiguous");
+});
+
 test("4b. provider acceptance is recorded as accepted, never as delivered", async () => {
   const { run } = await enrolledRun("accepted");
   await one("select * from public.claim_email_flow_step_run($1::uuid, $2::uuid, $3::text)", [OWNER_A, run.id, KEY("accepted-claim")]);
@@ -746,6 +777,8 @@ test("6c. the flow RPCs are service-role only", async () => {
     "public.create_email_flow(uuid,jsonb)",
     "public.enroll_email_flow_contact(uuid,uuid,uuid,timestamptz,text)",
     "public.claim_email_flow_step_run(uuid,uuid,text,integer)",
+    "public.claim_email_flow_step_run_v2(uuid,uuid,text,text)",
+    "public.abandon_stale_email_flow_step_run(uuid,uuid,integer)",
     "public.record_email_flow_step_provider_result(uuid,uuid,text,text,text,text,text)",
     "public.record_email_flow_delivery_event(uuid,uuid,text,text,text,timestamptz,text)",
     "public.advance_email_flow_enrollment(uuid,uuid,integer,timestamptz,text)",
@@ -773,18 +806,17 @@ test("6c. the flow RPCs are service-role only", async () => {
 
 // ─── 7. The migration is additive ──────────────────────────────────────────
 
-test("7. migrations 0040 and 0041 are additive and owner-scoped", async () => {
+test("7. migrations 0040–0044 remain additive and owner-scoped", async () => {
   const fs = await import("node:fs");
   const path = await import("node:path");
   const dir = "supabase/migrations";
   const files = fs.readdirSync(dir).filter((name) => name.endsWith(".sql")).sort();
 
-  // 0042 is a focused bug fix on top of the Branded Email Engine: it replaces
-  // three CHECK constraints and two RPC bodies that 0041 shipped with
-  // uncompilable regular expressions. It edits neither 0040 nor 0041.
-  assert.equal(files[files.length - 1], "0042_branded_email_url_regex_fix.sql", "0042 is the newest migration");
-  assert.equal(files[files.length - 2], "0041_branded_email_engine.sql", "it sits directly on top of 0041");
-  assert.equal(files[files.length - 3], "0040_email_automation_v2.sql", "0041 still sits directly on top of 0040, which must never be modified or rerun");
+  assert.equal(files[files.length - 1], "0044_email_flow_durable_claims.sql", "0044 is the only new migration");
+  assert.ok(files.includes("0043_plans_credits_safety.sql"));
+  assert.ok(files.includes("0042_branded_email_url_regex_fix.sql"));
+  assert.ok(files.includes("0041_branded_email_engine.sql"));
+  assert.ok(files.includes("0040_email_automation_v2.sql"));
 
   const sql = fs.readFileSync(path.join(dir, "0040_email_automation_v2.sql"), "utf8").toLowerCase();
 

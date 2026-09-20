@@ -10,8 +10,8 @@
  * Race safety, in three independent layers:
  *   - a partial unique index allows ONE active enrollment per contact per flow;
  *   - a unique index allows ONE run per (enrollment, position), ever;
- *   - `claim_email_flow_step_run` hands the send to exactly one caller, and the
- *     caller only sends when the returned idempotency key is its own.
+ *   - `claim_email_flow_step_run_v2` hands the send to exactly one caller, and
+ *     the caller only sends when its worker-unique claim token comes back.
  *
  * Truthfulness: a successful provider call is recorded as ACCEPTED. Nothing
  * here ever writes 'delivered'; only a verified Resend webhook does.
@@ -19,7 +19,7 @@
 
 import "server-only";
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { accountTimezone, addDays, localDate, localToUtcIso } from "@/lib/voom/timezone";
@@ -36,8 +36,8 @@ import {
   flowMayExecute,
   isInactiveContact,
 } from "./policy";
-import { computeStepInstant, nextSafeSendInstant } from "./timing";
-import { sendFlowEmail, type FlowSendDeps } from "./send";
+import { computeStepInstant, isInsideSendWindow, nextSafeSendInstant } from "./timing";
+import { dispatchPreparedFlowEmail, prepareFlowEmail, type FlowSendDeps } from "./send";
 import type {
   EmailFlowEnrollmentRecord,
   EmailFlowRecord,
@@ -71,6 +71,8 @@ export interface EngineRunSummary {
   ineligible: number;
   coolingDown: number;
   dueRuns: number;
+  claimed: number;
+  submitted: number;
   sent: number;
   failed: number;
   retried: number;
@@ -90,6 +92,8 @@ const EMPTY_SUMMARY: Omit<EngineRunSummary, "ownerId" | "providerConfigured"> = 
   ineligible: 0,
   coolingDown: 0,
   dueRuns: 0,
+  claimed: 0,
+  submitted: 0,
   sent: 0,
   failed: 0,
   retried: 0,
@@ -307,12 +311,31 @@ async function executeFlow(
       .limit(limit),
   ]);
 
-  const runs = [...((dueRows ?? []) as unknown as EmailFlowStepRunRecord[]), ...((staleRows ?? []) as unknown as EmailFlowStepRunRecord[])];
+  const stale = (staleRows ?? []) as unknown as EmailFlowStepRunRecord[];
+  for (const run of stale) {
+    const { data, error } = await admin.rpc("abandon_stale_email_flow_step_run", {
+      p_owner_user_id: ownerId,
+      p_run_id: run.id,
+      p_lease_minutes: SEND_LEASE_MINUTES,
+    });
+    if (!error && (data as { outcome?: string } | null)?.outcome === "abandoned") {
+      summary.failed += 1;
+      summary.reclaimed += 1;
+    }
+  }
+
+  const runs = (dueRows ?? []) as unknown as EmailFlowStepRunRecord[];
   if (runs.length === 0) return;
   summary.dueRuns += runs.length;
 
+  // A delayed cron must not send at night. Scheduled rows remain durable and
+  // are picked up inside the next business-local window.
+  if (!isInsideSendWindow(now, timeZone)) {
+    summary.skipped += runs.length;
+    return;
+  }
+
   for (const run of runs) {
-    if (run.status === "sending") summary.reclaimed += 1;
     await executeRun(admin, ownerId, flow, timeZone, now, run, summary, options);
   }
 }
@@ -328,24 +351,34 @@ async function executeRun(
   options: EngineOptions,
 ): Promise<void> {
   // ── Eligibility is re-checked immediately before EVERY send ───────────────
-  const { data: enrollmentRow } = await admin.from("voom_email_flow_enrollments")
+  const { data: enrollmentRow, error: enrollmentError } = await admin.from("voom_email_flow_enrollments")
     .select("id,status,contact_id,revision,current_position")
     .eq("owner_user_id", ownerId)
     .eq("id", run.enrollment_id)
     .maybeSingle();
   const enrollment = enrollmentRow as unknown as EmailFlowEnrollmentRecord | null;
 
+  if (enrollmentError) {
+    summary.skipped += 1;
+    return;
+  }
+
   if (!enrollment || enrollment.status !== "active") {
     summary.skipped += 1;
     return;
   }
 
-  const { data: contactRow } = await admin.from("contacts")
+  const { data: contactRow, error: contactError } = await admin.from("contacts")
     .select("id,email,email_status,first_name")
     .eq("owner_id", ownerId)
     .eq("id", enrollment.contact_id)
     .maybeSingle();
   const contact = contactRow as unknown as (CandidateContact | null);
+
+  if (contactError) {
+    summary.skipped += 1;
+    return;
+  }
 
   if (!contact) {
     // The contact was removed: stop the enrollment, send nothing.
@@ -360,7 +393,13 @@ async function executeRun(
     return;
   }
 
-  const suppressed = await loadSuppressedEmails(admin, ownerId, contact.email ? [contact.email] : []);
+  let suppressed: Set<string>;
+  try {
+    suppressed = await loadSuppressedEmails(admin, ownerId, contact.email ? [contact.email] : []);
+  } catch {
+    summary.skipped += 1;
+    return;
+  }
   const eligibility = flowContactEligibility(contact, suppressed);
 
   if (!eligibility.eligible) {
@@ -391,12 +430,15 @@ async function executeRun(
   }
 
   // ── Claim: exactly one caller may send this step ──────────────────────────
-  const attemptKey = key("send", run.id, String(run.attempts + 1), now.toISOString().slice(0, 13));
-  const { data: claimedRow, error: claimError } = await admin.rpc("claim_email_flow_step_run", {
+  const claimToken = `claim-${randomUUID()}`;
+  // Stable for the whole run, including explicit provider rejections. Resend
+  // therefore sees one logical submission identity, never one per retry.
+  const providerIdempotencyKey = key("send", run.id);
+  const { data: claimedRow, error: claimError } = await admin.rpc("claim_email_flow_step_run_v2", {
     p_owner_user_id: ownerId,
     p_run_id: run.id,
-    p_attempt_key: attemptKey,
-    p_lease_minutes: SEND_LEASE_MINUTES,
+    p_claim_token: claimToken,
+    p_provider_idempotency_key: providerIdempotencyKey,
   });
 
   if (claimError) {
@@ -406,11 +448,12 @@ async function executeRun(
   }
 
   const claimed = claimedRow as unknown as EmailFlowStepRunRecord | null;
-  if (!claimed || claimed.idempotency_key !== attemptKey) {
+  if (!claimed || claimed.claim_token !== claimToken) {
     // Another worker owns it, it is in flight, or it already completed.
     summary.skipped += 1;
     return;
   }
+  summary.claimed += 1;
 
   const snapshot = (claimed.content_snapshot ?? {}) as {
     subject?: string;
@@ -437,33 +480,41 @@ async function executeRun(
   // The same pipeline campaign sends use: business sender identity (with
   // provider-backed verification), validated design, deterministic renderer,
   // quality guard, real unsubscribe — then the existing Resend client.
+  const sendInput = {
+    admin,
+    ownerId,
+    to: eligibility.destination as string,
+    subject,
+    body,
+    previewText: snapshot.previewText ?? null,
+    cta: snapshot.cta ?? "",
+    ctaUrl: snapshot.ctaUrl ?? null,
+    flowType: flow.flow_type,
+    idempotencyKey: providerIdempotencyKey,
+    firstName: contact.first_name,
+  };
+  const prepared = await prepareFlowEmail(sendInput, options.send ?? {});
   let provider;
-  try {
-    provider = await sendFlowEmail(
-      {
-        admin,
-        ownerId,
-        to: eligibility.destination as string,
-        subject,
-        body,
-        previewText: snapshot.previewText ?? null,
-        cta: snapshot.cta ?? "",
-        ctaUrl: snapshot.ctaUrl ?? null,
-        flowType: flow.flow_type,
-        idempotencyKey: attemptKey,
-        firstName: contact.first_name,
-      },
-      options.send ?? {},
-    );
-  } catch {
-    provider = {
-      ok: false,
-      providerMessageId: null,
-      providerStatus: null,
-      errorCode: "provider_request_failed",
-      errorMessage: "The provider request did not complete.",
-      terminal: false,
-    };
+  if (!prepared.ok) {
+    provider = prepared.result;
+  } else {
+    // Preparation can involve provider-backed sender verification. Re-check
+    // authorization and recipient state immediately before the send boundary.
+    const stillEligible = await recipientStillEligible(admin, ownerId, flow.id, enrollment.contact_id);
+    const dispatchClock = options.now ? now : new Date();
+    if (!stillEligible || !isInsideSendWindow(dispatchClock, timeZone)) {
+      provider = {
+        ok: false,
+        providerMessageId: null,
+        providerStatus: null,
+        errorCode: "send_precondition_changed",
+        errorMessage: "The flow or recipient was no longer eligible at send time.",
+        terminal: true,
+      };
+    } else {
+      summary.submitted += 1;
+      provider = await dispatchPreparedFlowEmail(prepared.payload, options.send ?? {});
+    }
   }
 
   const { data: recordedRow } = await admin.rpc("record_email_flow_step_provider_result", {
@@ -481,7 +532,13 @@ async function executeRun(
     // Terminal failures (quality guard, sender identity unresolved, missing
     // unsubscribe) cannot be fixed by resending the same content — the run
     // fails without a retry. Provider refusals still get the bounded retry.
-    if (!provider.terminal) {
+    if (provider.ambiguous) {
+      await admin.rpc("abandon_stale_email_flow_step_run", {
+        p_owner_user_id: ownerId,
+        p_run_id: claimed.id,
+        p_lease_minutes: SEND_LEASE_MINUTES,
+      });
+    } else if (!provider.terminal) {
       await maybeRetry(admin, ownerId, timeZone, now, claimed, summary);
     }
     return;
@@ -625,6 +682,9 @@ export async function rescheduleOverdueRuns(
 
 export interface FleetSummary {
   owners: number;
+  evaluated: number;
+  claimed: number;
+  submitted: number;
   enrolled: number;
   sent: number;
   failed: number;
@@ -645,6 +705,9 @@ export async function runEmailFlowsFleet(
   const now = options.now ?? new Date();
   const summary: FleetSummary = {
     owners: 0,
+    evaluated: 0,
+    claimed: 0,
+    submitted: 0,
     enrolled: 0,
     sent: 0,
     failed: 0,
@@ -669,6 +732,9 @@ export async function runEmailFlowsFleet(
   for (const ownerId of ownerIds) {
     try {
       const result = await runEmailFlowsForOwner(admin, ownerId, { ...options, now });
+      summary.evaluated += result.dueRuns;
+      summary.claimed += result.claimed;
+      summary.submitted += result.submitted;
       summary.enrolled += result.enrolled;
       summary.sent += result.sent;
       summary.failed += result.failed;
@@ -696,7 +762,7 @@ async function ownerTimeZone(admin: SupabaseClient, ownerId: string): Promise<st
   return accountTimezone((data as { timezone?: string | null } | null)?.timezone);
 }
 
-/** Suppressed addresses for this owner. Missing table → empty set (fail open on reads only; sends still need a subscription). */
+/** Suppression lookup is fail-closed: an unavailable table sends nothing. */
 async function loadSuppressedEmails(
   admin: SupabaseClient,
   ownerId: string,
@@ -709,10 +775,40 @@ async function loadSuppressedEmails(
       .select("email")
       .eq("owner_id", ownerId)
       .in("email", unique);
-    if (error) return new Set();
+    if (error) throw new Error("suppression_lookup_failed");
     return new Set(((data ?? []) as Array<{ email: string }>).map((row) => String(row.email).toLowerCase()));
   } catch {
-    return new Set();
+    throw new Error("suppression_lookup_failed");
+  }
+}
+
+async function recipientStillEligible(
+  admin: SupabaseClient,
+  ownerId: string,
+  flowId: string,
+  contactId: string,
+): Promise<boolean> {
+  const [{ data: flow, error: flowError }, { data: contact, error: contactError }] = await Promise.all([
+    admin.from("voom_email_flows")
+      .select("id,status,activated_by")
+      .eq("owner_user_id", ownerId)
+      .eq("id", flowId)
+      .maybeSingle(),
+    admin.from("contacts")
+      .select("id,email,email_status")
+      .eq("owner_id", ownerId)
+      .eq("id", contactId)
+      .maybeSingle(),
+  ]);
+  if (flowError || contactError) return false;
+  const currentFlow = flow as { status?: string; activated_by?: string } | null;
+  const currentContact = contact as CandidateContact | null;
+  if (currentFlow?.status !== "active" || currentFlow.activated_by !== "user" || !currentContact) return false;
+  try {
+    const suppressed = await loadSuppressedEmails(admin, ownerId, currentContact.email ? [currentContact.email] : []);
+    return flowContactEligibility(currentContact, suppressed).eligible;
+  } catch {
+    return false;
   }
 }
 

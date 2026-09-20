@@ -1035,7 +1035,8 @@ test("7d. the flow send adapter funnels through the branded engine", async () =>
     new URL("../lib/email-flows/engine.ts", import.meta.url),
     "utf8",
   );
-  assert.match(engineSource, /sendFlowEmail/, "the engine sends through the shared adapter");
+  assert.match(engineSource, /prepareFlowEmail/, "the engine prepares through the shared adapter");
+  assert.match(engineSource, /dispatchPreparedFlowEmail/, "the engine dispatches through the shared adapter");
   assert.doesNotMatch(engineSource, /seedream|seedance|openrouter|media-credit/i, "no media path in the engine");
 });
 
