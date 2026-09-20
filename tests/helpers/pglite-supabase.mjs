@@ -68,15 +68,33 @@ export function migrationSql(name) {
 /**
  * Creates a fresh embedded database with every file in supabase/migrations
  * applied, in filename order. Returns the db plus the applied file names.
+ *
+ * `stopBefore` holds back every migration whose name sorts at or after it, so a
+ * test can write rows in the shape an EARLIER production schema produced and
+ * then apply the later migration through `applyPending()` — the only way to
+ * prove a migration's backfill really is deterministic and non-destructive.
  */
-export async function createSupabaseLite() {
+export async function createSupabaseLite({ stopBefore = null } = {}) {
   const db = new PGlite();
   await db.exec(SCAFFOLD);
   const applied = [];
+  const pending = [];
   for (const file of readdirSync(MIGRATIONS_DIR).sort()) {
     if (!file.endsWith(".sql")) continue;
+    if (stopBefore && file >= stopBefore) { pending.push(file); continue; }
     await db.exec(migrationSql(file));
     applied.push(file);
   }
-  return { db, applied };
+  return {
+    db,
+    applied,
+    /** Applies the migrations held back by `stopBefore`, in order. */
+    async applyPending() {
+      for (const file of pending.splice(0)) {
+        await db.exec(migrationSql(file));
+        applied.push(file);
+      }
+      return applied;
+    },
+  };
 }

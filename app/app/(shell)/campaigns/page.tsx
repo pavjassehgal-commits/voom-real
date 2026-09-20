@@ -5,7 +5,12 @@ import { useCallback, useEffect, useState } from "react";
 import { useVoomActions } from "@/lib/voom/store";
 import { useModal } from "@/lib/voom/modal";
 import type { CampaignDeliveryView, CampaignRecord } from "@/lib/voom/types";
-import type { AutomatedCampaignView } from "@/lib/campaign/types";
+import {
+  CAMPAIGN_CHANNEL_LABELS,
+  CAMPAIGN_CREATION_METHOD_LABELS,
+  type AutomatedCampaignView,
+  type CampaignChannel,
+} from "@/lib/campaign/types";
 import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { BuildCampaignModal } from "@/components/voom/modals/BuildCampaignModal";
@@ -77,14 +82,14 @@ export default function CampaignsPage() {
     <div>
       <PageHead
         title="Campaigns"
-        description="Tell Voom what you want, and MARA builds a timed Instagram and email campaign for your review. Nothing is sent or published without you."
+        description="One campaign, one timeline. Choose Instagram, Email, or both — then create it with MARA or write the actions yourself. Nothing is sent or published without you."
         actions={
           <>
             <Btn variant="outline" size="sm" onClick={() => open(<CampaignEditorModal />)}>
               <Icon name="edit" size={14} /> New email draft
             </Btn>
             <Btn variant="primary" size="sm" onClick={openBuilder}>
-              <Icon name="spark" size={14} /> Build campaign with MARA
+              <Icon name="plus" size={14} /> New campaign
             </Btn>
           </>
         }
@@ -94,21 +99,21 @@ export default function CampaignsPage() {
 
       <Card className="p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-display text-lg font-semibold">MARA-built campaigns</h2>
+          <h2 className="font-display text-lg font-semibold">Your campaigns</h2>
           <Tag tone="t-grey">{automated.length}</Tag>
         </div>
         <p className="mt-1 text-[13px] text-text-3">
-          One timeline per campaign — Instagram Posts, Reels, Stories and emails together, ordered by date, each with its real status.
+          One timeline per campaign — Instagram Posts, Reels, Stories and emails together on the channels that campaign runs on, ordered by date, each with its real status.
         </p>
 
         {automated.length === 0 ? (
           <EmptyState
             icon="spark"
-            title="No automated campaigns yet"
-            reason="Give MARA a goal, a short idea and dates, and it will build the full Instagram and email sequence for you to approve. It never sends or publishes during the build."
+            title="No campaigns yet"
+            reason="Pick your channels, then give MARA a goal, a short idea and dates and it will build the full Instagram and email sequence for you to approve — or choose Create myself and write the actions yourself. Neither path sends or publishes anything."
             action={
               <Btn variant="primary" size="sm" onClick={openBuilder}>
-                <Icon name="spark" size={14} /> Build campaign with MARA
+                <Icon name="plus" size={14} /> New campaign
               </Btn>
             }
             className="py-8"
@@ -132,7 +137,7 @@ export default function CampaignsPage() {
         </p>
         {legacy.length === 0 ? (
           <p className="mt-3 py-4 text-center text-sm text-text-3">
-            No standalone email drafts yet. For a full sequence, use <b>Build campaign with MARA</b>.
+            No standalone email drafts yet. For a full sequence, use <b>New campaign</b>.
           </p>
         ) : (
           <div className="mt-3 overflow-x-auto">
@@ -221,11 +226,14 @@ export default function CampaignsPage() {
 }
 
 function AutomatedCampaignCard({ view, onOpen }: { view: AutomatedCampaignView; onOpen: () => void }) {
-  const { campaign, counts, lifecycle, lifecycleLabel } = view;
+  const { campaign, counts, lifecycle, lifecycleLabel, channels, creationMethod } = view;
   return (
     <button type="button" onClick={onOpen} className="overflow-hidden rounded-2xl border border-line bg-surface p-4 text-left transition hover:border-brand">
       <div className="flex flex-wrap items-center gap-2">
         <Tag tone={lifecycleTone(lifecycle)}>{lifecycleLabel}</Tag>
+        {/* Campaigns v3: the channels this campaign runs on, and who wrote it. */}
+        <Tag tone="t-brand">{channelLabel(channels)}</Tag>
+        <Tag tone="t-grey">{CAMPAIGN_CREATION_METHOD_LABELS[creationMethod]}</Tag>
         <Tag tone="t-grey">{counts.instagram} IG</Tag>
         <Tag tone="t-grey">{counts.email} email</Tag>
         {counts.needingApproval > 0 && <Tag tone="t-amber">{counts.needingApproval} to review</Tag>}
@@ -265,10 +273,17 @@ function useLegacySmsArchive(): CampaignRecord[] {
 }
 
 const HOW_IT_WORKS: [string, string][] = [
-  ["You give the brief", "A goal, a campaign name or idea and dates. Offer, audience and notes are optional."],
-  ["MARA builds the plan", "MARA sequences Instagram Posts, Reels, Stories and emails across the dates, using your business context and real performance when it exists."],
+  ["You choose the channels", "Instagram, Email, or both. A campaign holds coordinated actions across the channels you selected — there is one campaign, not one per channel."],
+  ["You create it your way", "Create with MARA and it sequences the actions across your dates using your business context and real performance — or Create myself and write each action directly."],
   ["You approve, Voom executes", "Review the single timeline and approve per action. Emails send only via an explicit send; Instagram items still need a visual and schedule."],
 ];
+
+/** Campaigns v3 — the campaign's own channel selection as one short label. */
+function channelLabel(channels: CampaignChannel[] | null | undefined): string {
+  const selected = (channels ?? []).filter((channel) => CAMPAIGN_CHANNEL_LABELS[channel]);
+  if (selected.length === 0) return "Instagram + Email";
+  return selected.map((channel) => CAMPAIGN_CHANNEL_LABELS[channel]).join(" + ");
+}
 
 function lifecycleTone(status: string) {
   if (status === "completed") return "t-green";

@@ -3,7 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { useModal } from "@/lib/voom/modal";
-import { ACTION_CHANNEL_LABELS, CAMPAIGN_GOAL_LABELS, type AutomatedCampaignView, type CampaignActionView } from "@/lib/campaign/types";
+import {
+  ACTION_CHANNEL_LABELS,
+  CAMPAIGN_CHANNEL_LABELS,
+  CAMPAIGN_CREATION_METHOD_LABELS,
+  CAMPAIGN_GOAL_LABELS,
+  type AutomatedCampaignView,
+  type CampaignActionView,
+  type CampaignChannel,
+} from "@/lib/campaign/types";
 import { actionStateTone } from "@/lib/campaign/status";
 import { formatLocalTimeInput, isoToLocalDate, localToUtcIso } from "@/lib/voom/timezone";
 import type { CampaignDeliveryView } from "@/lib/voom/types";
@@ -126,6 +134,9 @@ export function AutomatedCampaignModal({ campaignId, initial }: { campaignId: st
 
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <Tag tone={lifecycleTone(view.lifecycle)}>{view.lifecycleLabel}</Tag>
+          {/* Campaigns v3: the campaign's own channel selection, and who wrote it. */}
+          <Tag tone="t-brand">{channelLabel(view.channels)}</Tag>
+          <Tag tone="t-grey">{CAMPAIGN_CREATION_METHOD_LABELS[view.creationMethod]}</Tag>
           <Tag tone="t-grey">{view.counts.instagram} Instagram</Tag>
           <Tag tone="t-grey">{view.counts.email} email{view.counts.email === 1 ? "" : "s"}</Tag>
           {view.counts.needingApproval > 0 && <Tag tone="t-amber">{view.counts.needingApproval} need your review</Tag>}
@@ -722,6 +733,16 @@ function EmailDetails({ action, timeZone, onChanged }: { action: CampaignActionV
       {err && <p role="alert" className="text-[12px] text-red">{err}</p>}
     </div>
   );
+}
+
+/**
+ * Campaigns v3 — the campaign's own channel selection as one short label.
+ * A campaign is one workspace, so this never renders as three products.
+ */
+function channelLabel(channels: readonly CampaignChannel[] | null | undefined): string {
+  const selected = (channels ?? []).filter((channel) => CAMPAIGN_CHANNEL_LABELS[channel]);
+  if (selected.length === 0) return "Instagram + Email";
+  return selected.map((channel) => CAMPAIGN_CHANNEL_LABELS[channel]).join(" + ");
 }
 
 function lifecycleTone(status: string) {

@@ -12,9 +12,16 @@
  */
 
 import {
+  actionChannelFamily,
+  CAMPAIGN_CHANNELS,
   CAMPAIGN_LIFECYCLE_LABELS,
+  type CampaignActionChannel,
   type CampaignActionStatus,
+  type CampaignChannel,
   type CampaignLifecycle,
+  type CampaignTimeline,
+  type CampaignTimelineBucket,
+  type CampaignTimelineEntry,
 } from "./types";
 
 /** Live, derived execution state for one timeline action. */
@@ -182,6 +189,103 @@ function isOverdue(state: ActionExecutionState, scheduledFor: string, now: Date)
 export function lifecycleLabel(status: CampaignLifecycle): string {
   return CAMPAIGN_LIFECYCLE_LABELS[status];
 }
+
+// ─── Campaigns v3: the unified timeline projection ─────────────────────────
+
+/** The minimal action shape the timeline projection needs. */
+export interface TimelineActionInput {
+  id: string;
+  slot: number;
+  channel: CampaignActionChannel;
+  title: string;
+  scheduled_for: string;
+  executionState: ActionExecutionState;
+  canEditContent: boolean;
+  email_campaign_id: string | null;
+  draft_id: string | null;
+}
+
+/**
+ * Which timeline bucket a derived execution state belongs to.
+ *
+ * `proposed` sits with `needs_approval`: in Manual mode a proposal is exactly
+ * that — an item waiting on the user. Nothing here is stored, so the buckets
+ * can never disagree with the real send/publish state they are derived from.
+ */
+export const TIMELINE_BUCKET_FOR_STATE: Record<ActionExecutionState, CampaignTimelineBucket> = {
+  executed: "done",
+  skipped: "done",
+  executing: "active",
+  proposed: "needs_approval",
+  needs_approval: "needs_approval",
+  approved: "scheduled",
+  scheduled: "scheduled",
+  failed: "attention",
+};
+
+const TIMELINE_ORDER: readonly CampaignTimelineBucket[] = [
+  "done",
+  "active",
+  "needs_approval",
+  "scheduled",
+  "attention",
+];
+
+/**
+ * Projects the campaign's actions into ONE chronological timeline across Email
+ * and Instagram: what happened → what is running → what needs approval → what
+ * comes next.
+ *
+ * Pure and deterministic. It duplicates no state: every bucket is a view over
+ * the already-derived execution states, so a client can render the whole
+ * campaign from one payload instead of reconstructing the email delivery and
+ * Instagram publish systems itself.
+ */
+export function buildCampaignTimeline(actions: TimelineActionInput[]): CampaignTimeline {
+  const entries: CampaignTimelineEntry[] = [...actions]
+    .sort((a, b) => Date.parse(a.scheduled_for) - Date.parse(b.scheduled_for) || a.slot - b.slot)
+    .map((action) => {
+      const bucket = TIMELINE_BUCKET_FOR_STATE[action.executionState] ?? "needs_approval";
+      return {
+        actionId: action.id,
+        slot: action.slot,
+        channel: action.channel,
+        channelFamily: (actionChannelFamily(action.channel) ?? "instagram") as CampaignChannel,
+        title: action.title,
+        scheduledFor: action.scheduled_for,
+        executionState: action.executionState,
+        executionLabel: ACTION_EXECUTION_LABELS[action.executionState],
+        bucket,
+        canEditContent: action.canEditContent,
+        emailCampaignId: action.email_campaign_id,
+        draftId: action.draft_id,
+      };
+    });
+
+  const inBucket = (bucket: CampaignTimelineBucket) => entries.filter((entry) => entry.bucket === bucket);
+  const pending = entries.filter((entry) => entry.bucket === "active" || entry.bucket === "scheduled" || entry.bucket === "needs_approval");
+
+  return {
+    entries,
+    done: inBucket("done"),
+    active: inBucket("active"),
+    needsApproval: inBucket("needs_approval"),
+    scheduled: inBucket("scheduled"),
+    attention: inBucket("attention"),
+    next: pending.length ? pending[0] : null,
+  };
+}
+
+/** The campaign's authoritative channels, tolerating historical NULL rows. */
+export function campaignChannelsOf(stored: readonly string[] | null | undefined): CampaignChannel[] {
+  const selected = (stored ?? []).filter((channel): channel is CampaignChannel =>
+    (CAMPAIGN_CHANNELS as readonly string[]).includes(channel),
+  );
+  return selected.length ? selected : [...CAMPAIGN_CHANNELS];
+}
+
+/** Presentation order for the timeline groups: past → present → future. */
+export const TIMELINE_GROUP_ORDER = TIMELINE_ORDER;
 
 export function lifecycleTone(status: CampaignLifecycle): string {
   switch (status) {

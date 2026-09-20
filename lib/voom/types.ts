@@ -108,6 +108,12 @@ export interface CampaignRecord {
   campaign_notes?: string | null;
   generated_summary?: string | null;
   parent_campaign_id?: string | null;
+  /** Campaigns v3 (migration 0045): the campaign's authoritative channels.
+   *  NULL only on historical rows that predate v3 and were never backfilled. */
+  channels?: import("@/lib/campaign/types").CampaignChannel[] | null;
+  /** Campaigns v3 (migration 0045): how the campaign was created. Separate
+   *  from the workspace automation mode (Manual/Assisted/Autopilot). */
+  creation_method?: import("@/lib/campaign/types").CampaignCreationMethod;
   created_at: string;
   updated_at: string;
 }

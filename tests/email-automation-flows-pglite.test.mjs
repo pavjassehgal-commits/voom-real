@@ -812,7 +812,19 @@ test("7. migrations 0040–0044 remain additive and owner-scoped", async () => {
   const dir = "supabase/migrations";
   const files = fs.readdirSync(dir).filter((name) => name.endsWith(".sql")).sort();
 
-  assert.equal(files[files.length - 1], "0044_email_flow_durable_claims.sql", "0044 is the only new migration");
+  // Email Automation shipped in 0040–0044 and is frozen. The only migration
+  // after it is Campaigns v3 (0045), which must leave every email flow table,
+  // function and cron path exactly as 0040–0044 shipped them.
+  assert.ok(files.includes("0044_email_flow_durable_claims.sql"), "0044 is still applied");
+  const afterEmailAutomation = files.filter((name) => name > "0044_email_flow_durable_claims.sql");
+  assert.deepEqual(afterEmailAutomation, ["0045_campaigns_v3_unified_channels.sql"],
+    "0045 Campaigns v3 is the only migration after the Email Automation freeze");
+  const campaignsV3 = fs.readFileSync(path.join(dir, "0045_campaigns_v3_unified_channels.sql"), "utf8").toLowerCase();
+  assert.doesNotMatch(campaignsV3, /voom_email_flow/, "0045 never touches an email flow table");
+  assert.doesNotMatch(campaignsV3, /voom_email_identity|voom_email_brand|voom_email_asset|voom_email_suppression|voom_email_unsubscribe/,
+    "0045 never touches the Branded Email Engine tables");
+  assert.doesNotMatch(campaignsV3, /pg_cron|cron\.schedule/, "0045 schedules no cron");
+  assert.doesNotMatch(campaignsV3, /drop table|drop column|truncate/, "0045 destroys nothing");
   assert.ok(files.includes("0043_plans_credits_safety.sql"));
   assert.ok(files.includes("0042_branded_email_url_regex_fix.sql"));
   assert.ok(files.includes("0041_branded_email_engine.sql"));

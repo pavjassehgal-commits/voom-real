@@ -31,12 +31,15 @@ import {
   localToUtcIso,
 } from "@/lib/voom/timezone";
 import {
+  CAMPAIGN_CHANNELS,
   CAMPAIGN_GOAL_LABELS,
   MAX_CAMPAIGN_ACTIONS,
   MAX_CAMPAIGN_DAYS,
   MAX_EMAIL_ACTIONS,
+  normalizeCampaignChannels,
   type CampaignBrandContext,
   type CampaignBrief,
+  type CampaignChannel,
   type CampaignGoal,
   type CampaignStage,
   type PlannedAction,
@@ -62,6 +65,24 @@ export interface PlanCampaignInput {
   timeZone?: string | null;
   /** Current instant; injectable for tests. */
   now?: Date;
+  /**
+   * Campaigns v3: the campaign's authoritative channel selection. Omitted or
+   * null means "no explicit choice", which keeps the v2 behaviour — the mix is
+   * derived from the goal and the dates across both active channels. An
+   * unusable value is refused by `normalizeCampaignChannels` and treated the
+   * same way, so the planner can never emit a channel nobody selected.
+   */
+  channels?: readonly CampaignChannel[] | null;
+}
+
+/** The channel selection a plan is built inside; never contains anything else. */
+export function resolvePlanChannels(
+  explicit?: readonly CampaignChannel[] | null,
+  brief?: CampaignBrief | null,
+): CampaignChannel[] {
+  const requested = explicit ?? brief?.channels ?? null;
+  const normalized = normalizeCampaignChannels(requested);
+  return normalized.ok ? normalized.channels : [...CAMPAIGN_CHANNELS];
 }
 
 export function planCampaign(input: PlanCampaignInput): PlannedCampaign {
@@ -75,7 +96,12 @@ export function planCampaign(input: PlanCampaignInput): PlannedCampaign {
   const audience = chooseEmailAudience(brief.audienceId ?? null, input.audiences ?? []);
   const perf = input.performance ?? null;
 
-  const mix = channelMix(brief.goal, days);
+  // v3: the campaign's own channel selection is authoritative. The planner is
+  // still the only authority on structure — it now plans that structure inside
+  // the selected channels instead of always assuming both.
+  const channels = resolvePlanChannels(input.channels, brief);
+
+  const mix = channelMix(brief.goal, days, channels);
   const bias = performanceBias(perf);
 
   const emailDays = scheduleEmailDays(mix.email, days, brief.goal);
@@ -136,7 +162,8 @@ export function planCampaign(input: PlanCampaignInput): PlannedCampaign {
       reelCount,
       storyCount,
       instagramCount: counts.instagramCount,
-      narrative: buildNarrative(brief.goal, days, counts.instagramString, counts.emailString),
+      channels,
+      narrative: buildNarrative(brief.goal, days, counts.instagramString, counts.emailString, channels),
       performanceUsed: Boolean(perf),
       performanceNote: perf ? performanceNote(perf) : null,
     },
@@ -276,8 +303,32 @@ interface Mix {
   stories: number;
 }
 
-export function channelMix(goal: CampaignGoal, days: number): Mix {
+/**
+ * The per-channel action counts for a goal and timeframe, inside the campaign's
+ * selected channels.
+ *
+ * v3 keeps every v2 rule intact for an Instagram + Email campaign and adds two
+ * deterministic single-channel branches:
+ *   - Instagram-only: the slots the emails would have carried become Instagram
+ *     presence (posts first, then Stories) so the campaign keeps its rhythm;
+ *   - Email-only: the sequence is spaced across the whole campaign window,
+ *     still capped at MAX_EMAIL_ACTIONS so no inbox is flooded.
+ */
+export function channelMix(
+  goal: CampaignGoal,
+  days: number,
+  channels: readonly CampaignChannel[] = CAMPAIGN_CHANNELS,
+): Mix {
   const span = Math.min(Math.max(days, 1), MAX_CAMPAIGN_DAYS);
+  const selected = new Set(channels.length ? channels : CAMPAIGN_CHANNELS);
+  const wantsEmail = selected.has("email");
+  const wantsInstagram = selected.has("instagram");
+
+  if (!wantsInstagram) {
+    // Email-only campaign: one channel carries the whole sequence.
+    return { email: clamp(Math.round(span / 3), 1, MAX_EMAIL_ACTIONS), posts: 0, reels: 0, stories: 0 };
+  }
+
   let email = 1;
   let posts = 1;
   let reels = 0;
@@ -311,6 +362,15 @@ export function channelMix(goal: CampaignGoal, days: number): Mix {
     reels = span >= 4 ? 1 : 0;
     if (span >= 14) reels += 1;
     stories = span >= 3 ? 1 : 0;
+  }
+
+  if (!wantsEmail) {
+    // Instagram-only campaign: the slots the emails would have carried become
+    // Instagram presence, so those days still carry the campaign.
+    const freed = email;
+    email = 0;
+    posts += Math.ceil(freed / 2);
+    stories += Math.floor(freed / 2);
   }
 
   email = Math.min(email, MAX_EMAIL_ACTIONS);
@@ -661,8 +721,14 @@ function chooseEmailAudience(audienceId: string | null, audiences: PlannerAudien
 
 // ─── Summary ───────────────────────────────────────────────────────────────
 
-function buildNarrative(goal: CampaignGoal, days: number, instagramString: string, emailString: string): string {
-  const lead = `MARA created a ${days}-day ${CAMPAIGN_GOAL_LABELS[goal].toLowerCase()} campaign with ${instagramString} and ${emailString}.`;
+function buildNarrative(
+  goal: CampaignGoal,
+  days: number,
+  instagramString: string,
+  emailString: string,
+  channels: readonly CampaignChannel[] = CAMPAIGN_CHANNELS,
+): string {
+  const goalLabel = CAMPAIGN_GOAL_LABELS[goal].toLowerCase();
   const strategy: Record<CampaignGoal, string> = {
     promote_product: "The sequence opens with an announcement, supports it with benefit and proof content, then follows with conversion-focused reminders.",
     drive_sales: "The sequence opens with an announcement, supports it with benefit and proof content, then follows with conversion-focused reminders.",
@@ -670,6 +736,24 @@ function buildNarrative(goal: CampaignGoal, days: number, instagramString: strin
     re_engage: "The sequence leads with email to win customers back, supported by fresh Instagram reasons to return.",
     awareness: "The sequence builds awareness first on Instagram, then follows with email to turn attention into interest.",
   };
+  const singleChannelStrategy: Record<CampaignGoal, string> = {
+    promote_product: "Every message carries the same offer from a different angle, ending on the clearest call to action.",
+    drive_sales: "The sequence opens with the offer, proves the value, then closes with a direct reminder.",
+    announce: "The announcement lands first, then the follow-ups add the detail that makes it real.",
+    re_engage: "The sequence opens with a personal hello and closes with a clear reason to come back.",
+    awareness: "The sequence builds familiarity first, then gives people one clear next step.",
+  };
+
+  // Truthful about what was actually planned: a single-channel campaign never
+  // claims coverage on the channel that was not selected.
+  if (!channels.includes("email")) {
+    return `MARA created a ${days}-day ${goalLabel} campaign on Instagram with ${instagramString}. ${singleChannelStrategy[goal]}`;
+  }
+  if (!channels.includes("instagram")) {
+    return `MARA created a ${days}-day ${goalLabel} campaign by email with ${emailString}. ${singleChannelStrategy[goal]}`;
+  }
+
+  const lead = `MARA created a ${days}-day ${goalLabel} campaign with ${instagramString} and ${emailString}.`;
   return `${lead} ${strategy[goal]}`;
 }
 
