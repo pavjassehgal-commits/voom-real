@@ -85,7 +85,9 @@ test("content creation goes through the real persisted workflow, not a demo comp
   assert.match(route, /createCalendarItem\(await createClient\(\), user\.id/);
   assert.match(create, /fetch\("\/api\/posts"/);
   assert.match(create, /method: "POST"/);
-  assert.match(create, /Nothing is published to Instagram/);
+  // Multi-Social Core: the modal now names every platform, so the truth line
+  // widened from "Nothing is published to Instagram" to all platforms.
+  assert.match(create, /Nothing is published to any platform/);
   // The demo compose modal was deleted; the calendar only offers the real
   // create modal and renders only real workflow items.
   let composeMissing = false;

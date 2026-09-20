@@ -35,6 +35,9 @@ const addActionSchema = z.object({
   audienceId: z.string().trim().regex(UUID_VALUE_RE).nullable().optional(),
   caption: z.string().trim().max(2200).optional(),
   concept: z.string().trim().max(160).optional(),
+  // Multi-Social Core: TikTok/YouTube structured deliverable.
+  description: z.string().trim().max(2000).optional(),
+  script: z.array(z.string().trim().max(400)).max(12).optional(),
   // Client-minted so a double-submitted form can never add the action twice.
   idempotencyKey: z.string().trim().uuid().optional(),
 }).strict();
@@ -109,6 +112,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       audienceId,
       caption: data.caption,
       concept: data.concept,
+      description: data.description,
+      script: data.script,
       idempotencyKey: data.idempotencyKey ?? crypto.randomUUID(),
       mode: (businessRow?.automation_level as string | null | undefined) ?? null,
       planId: (businessRow?.plan as string | null | undefined) ?? null,

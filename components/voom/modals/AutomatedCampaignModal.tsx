@@ -137,8 +137,10 @@ export function AutomatedCampaignModal({ campaignId, initial }: { campaignId: st
           {/* Campaigns v3: the campaign's own channel selection, and who wrote it. */}
           <Tag tone="t-brand">{channelLabel(view.channels)}</Tag>
           <Tag tone="t-grey">{CAMPAIGN_CREATION_METHOD_LABELS[view.creationMethod]}</Tag>
-          <Tag tone="t-grey">{view.counts.instagram} Instagram</Tag>
-          <Tag tone="t-grey">{view.counts.email} email{view.counts.email === 1 ? "" : "s"}</Tag>
+          {view.counts.instagram > 0 && <Tag tone="t-grey">{view.counts.instagram} Instagram</Tag>}
+          {view.counts.email > 0 && <Tag tone="t-grey">{view.counts.email} email{view.counts.email === 1 ? "" : "s"}</Tag>}
+          {view.counts.tiktok > 0 && <Tag tone="t-grey">{view.counts.tiktok} TikTok</Tag>}
+          {view.counts.youtube > 0 && <Tag tone="t-grey">{view.counts.youtube} YouTube</Tag>}
           {view.counts.needingApproval > 0 && <Tag tone="t-amber">{view.counts.needingApproval} need your review</Tag>}
           {view.counts.executed > 0 && <Tag tone="t-green">{view.counts.executed} done</Tag>}
         </div>
@@ -238,6 +240,7 @@ function TimelineRow({ campaignId, action, timeZone, busy, onDecide, onRegenerat
 }) {
   const when = new Date(action.scheduled_for);
   const isEmail = action.channel === "email";
+  const isSocial = action.channel === "tiktok_video" || action.channel === "youtube_short" || action.channel === "youtube_video";
   const pending = action.executionState === "proposed" || action.executionState === "needs_approval";
   const [panel, setPanel] = useState<"none" | "details" | "edit">("none");
 
@@ -247,7 +250,7 @@ function TimelineRow({ campaignId, action, timeZone, busy, onDecide, onRegenerat
       <Card className="p-3.5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="grid h-8 w-8 flex-none place-items-center rounded-lg bg-surface-2 text-brand">
-            <Icon name={isEmail ? "mail" : action.channel === "instagram_reel" ? "film" : "ig"} size={15} />
+            <Icon name={isEmail ? "mail" : isSocial ? "play" : action.channel === "instagram_reel" ? "film" : "ig"} size={15} />
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -255,6 +258,7 @@ function TimelineRow({ campaignId, action, timeZone, busy, onDecide, onRegenerat
               <span className="text-[11.5px] text-text-3">{when.toLocaleTimeString("en-AE", { timeZone, hour: "numeric", minute: "2-digit" })}</span>
               <Tag tone="t-grey">{ACTION_CHANNEL_LABELS[action.channel]}</Tag>
               {action.instagram?.format && action.channel !== "email" && <Tag tone="t-grey">{labelForFormat(action.instagram.format)}</Tag>}
+              {isSocial && <Tag tone="t-grey">{action.social?.format === "short" ? "Short · 9:16" : "Video · 9:16"}</Tag>}
               {action.contentSource === "mara" && <Tag tone="t-brand">MARA</Tag>}
             </div>
             <b className="mt-0.5 block truncate text-[13.5px]">{action.title}</b>
@@ -288,10 +292,13 @@ function TimelineRow({ campaignId, action, timeZone, busy, onDecide, onRegenerat
               <Btn
                 size="sm"
                 variant="primary"
-                disabled={busy || (!isEmail && Boolean(action.instagram?.needsVisual))}
+                disabled={busy || (!isEmail && Boolean(isSocial ? action.social?.needsAsset : action.instagram?.needsVisual))}
                 onClick={() => onDecide(action, "approve")}
               >
-                {busy ? "Working…" : isEmail ? "Approve email" : action.instagram?.needsVisual ? "Add media first" : "Approve"}
+                {busy ? "Working…"
+                  : isEmail ? "Approve email"
+                  : isSocial ? (action.social?.needsAsset ? "Add video first" : "Approve")
+                  : action.instagram?.needsVisual ? "Add media first" : "Approve"}
               </Btn>
             </div>
           )}
@@ -299,13 +306,19 @@ function TimelineRow({ campaignId, action, timeZone, busy, onDecide, onRegenerat
 
         {!action.canEditContent && (
           <p className="mt-2 text-[11.5px] text-text-3">
-            This action has already been {isEmail ? "sent" : "published or is publishing"}, so its content is locked.
+            {isSocial
+              ? `This action is approved inside Voom. ${action.social?.publishStateLabel ?? "Publishing is not connected yet."}`
+              : `This action has already been ${isEmail ? "sent" : "published or is publishing"}, so its content is locked.`}
           </p>
         )}
 
         {panel === "details" && (
           <div className="mt-3">
-            {action.email ? <EmailDetails action={action} timeZone={timeZone} onChanged={onChanged} /> : <InstagramDetails key={`${action.id}:${action.updated_at}:${action.instagram?.format ?? ""}`} campaignId={campaignId} action={action} timeZone={timeZone} onChanged={onChanged} />}
+            {action.email
+              ? <EmailDetails action={action} timeZone={timeZone} onChanged={onChanged} />
+              : action.social
+                ? <SocialDetails key={`${action.id}:${action.updated_at}`} action={action} timeZone={timeZone} />
+                : <InstagramDetails key={`${action.id}:${action.updated_at}:${action.instagram?.format ?? ""}`} campaignId={campaignId} action={action} timeZone={timeZone} onChanged={onChanged} />}
           </div>
         )}
         {panel === "edit" && (
@@ -343,16 +356,19 @@ function ActionEditor({ campaignId, action, timeZone, onSaved }: {
   onSaved: () => void;
 }) {
   const isEmail = action.channel === "email";
+  const isSocial = action.channel === "tiktok_video" || action.channel === "youtube_short" || action.channel === "youtube_video";
+  const isYouTube = action.channel === "youtube_short" || action.channel === "youtube_video";
   const [subject, setSubject] = useState(action.email?.subject ?? "");
   const [previewText, setPreviewText] = useState(action.email?.previewText ?? "");
   const [body, setBody] = useState(action.email?.body ?? "");
   const [purpose, setPurpose] = useState(action.purpose);
   const [cta, setCta] = useState(action.email?.cta ?? action.instagram?.cta ?? "");
-  const [caption, setCaption] = useState(action.instagram?.caption ?? "");
-  const [concept, setConcept] = useState(action.instagram?.concept ?? action.title);
+  const [caption, setCaption] = useState(action.instagram?.caption ?? action.social?.caption ?? "");
+  const [concept, setConcept] = useState(action.instagram?.concept ?? action.social?.concept ?? action.title);
   const [hook, setHook] = useState(action.instagram?.hook ?? "");
   const [visualDirection, setVisualDirection] = useState(action.instagram?.visualDirection ?? "");
-  const [script, setScript] = useState((action.instagram?.script ?? []).join("\n"));
+  const [description, setDescription] = useState(action.social?.description ?? "");
+  const [script, setScript] = useState((action.instagram?.script ?? action.social?.script ?? []).join("\n"));
   const [format, setFormat] = useState<"post" | "reel" | "story">(action.instagram?.format ?? "post");
   const [date, setDate] = useState(isoToLocalDate(action.scheduled_for, timeZone));
   const [time, setTime] = useState(formatLocalTimeInput(action.scheduled_for, timeZone));
@@ -371,6 +387,12 @@ function ActionEditor({ campaignId, action, timeZone, onSaved }: {
     const payload: Record<string, unknown> = { scheduledFor: localToUtcIso(date, Number.isFinite(minutes) ? minutes : 0, timeZone), purpose };
     if (isEmail) {
       payload.subject = subject; payload.previewText = previewText; payload.body = body; payload.cta = cta;
+    } else if (isSocial) {
+      // Multi-Social Core: TikTok/YouTube deliverable text. No Instagram
+      // CTA/hashtag composition; YouTube carries the description.
+      payload.caption = caption; payload.concept = concept;
+      payload.script = script.split("\n").map((line) => line.trim()).filter(Boolean);
+      if (isYouTube) payload.description = description;
     } else {
       payload.caption = caption; payload.concept = concept; payload.hook = hook; payload.cta = cta;
       payload.visualDirection = visualDirection;
@@ -402,6 +424,29 @@ function ActionEditor({ campaignId, action, timeZone, onSaved }: {
           <Field label="Preview text"><Input value={previewText} onChange={(e) => setPreviewText(e.target.value)} maxLength={500} /></Field>
           <Field label="Body"><Textarea rows={8} value={body} onChange={(e) => setBody(e.target.value)} maxLength={12000} /></Field>
           <Field label="CTA"><Input value={cta} onChange={(e) => setCta(e.target.value)} maxLength={160} /></Field>
+        </>
+      ) : isSocial ? (
+        <>
+          <Field label="Purpose"><Textarea rows={2} value={purpose} onChange={(e) => setPurpose(e.target.value)} maxLength={1000} /></Field>
+          <Field label={isYouTube ? "Title" : "Concept"} hint={isYouTube ? "Search-friendly — front-load the topic." : "A short internal name."}>
+            <Input value={concept} onChange={(e) => setConcept(e.target.value)} maxLength={160} />
+          </Field>
+          <Field label="Caption" hint={action.channel === "tiktok_video" ? "One short TikTok-native line (max 2200 characters)." : "The video caption."}>
+            <Textarea rows={3} value={caption} onChange={(e) => setCaption(e.target.value)} maxLength={2200} />
+          </Field>
+          {isYouTube && (
+            <Field label="Description" hint={action.channel === "youtube_video" ? "2-4 sentences with the payoff and chapters." : "1-2 lines for the Short."}>
+              <Textarea rows={action.channel === "youtube_video" ? 5 : 2} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={5000} />
+            </Field>
+          )}
+          <Field label={action.channel === "tiktok_video" ? "Beat list" : action.channel === "youtube_video" ? "Outline / script" : "Beat list"} hint="One line per beat or section. Planning text only — no video is generated.">
+            <Textarea rows={5} value={script} onChange={(e) => setScript(e.target.value)} placeholder={"Hook…\nSection 1…\nClose…"} />
+          </Field>
+          <p className="rounded-xl bg-surface px-3 py-2 text-[11.5px] leading-relaxed text-text-3">
+            {action.channel === "tiktok_video"
+              ? "TikTok publishing is not connected yet — this action plans and schedules the video inside Voom only."
+              : "YouTube publishing is not connected yet — this action plans and schedules the video inside Voom only."}
+          </p>
         </>
       ) : (
         <>
@@ -587,6 +632,53 @@ function InstagramDetails({ campaignId, action, timeZone, onChanged }: {
       </div>
       {note && <p role="status" className="text-[12px] text-green">{note}</p>}
       {err && <p role="alert" className="text-[12px] text-red">{err}</p>}
+      <p className="text-[11.5px] text-text-3">Proposed time: {new Date(action.scheduled_for).toLocaleString("en-AE", { timeZone, dateStyle: "medium", timeStyle: "short" })}</p>
+    </div>
+  );
+}
+
+/**
+ * Multi-Social Core — read-only deliverable view for a TikTok or YouTube
+ * campaign action. Truthful by construction: the state tag shows the canonical
+ * social publish state (an approved item reads "publishing not connected"),
+ * there is no send/publish control, and no provider reference is ever shown
+ * unless a provider really returned one.
+ */
+function SocialDetails({ action, timeZone }: { action: CampaignActionView; timeZone: string }) {
+  const social = action.social;
+  if (!social) return null;
+  const media = social.media;
+  return (
+    <div className="space-y-2.5 rounded-xl border border-line bg-surface-2 p-3">
+      <div className="flex flex-wrap gap-1.5">
+        <Tag tone={social.draftStatus === "approved" ? "t-green" : social.draftStatus === "rejected" ? "t-red" : "t-amber"}>
+          Draft {social.draftStatus}
+        </Tag>
+        <Tag tone="t-amber">{social.publishStateLabel}</Tag>
+        {social.needsAsset ? <Tag tone="t-amber">No video attached yet</Tag> : <Tag tone="t-green">Video attached</Tag>}
+        {social.providerRef && <Tag tone="t-blue">Provider ref: {social.providerRef}</Tag>}
+      </div>
+      {media?.previewUrl && (
+        media.mimeType.startsWith("video/")
+          ? <video controls className="max-h-64 w-full rounded-lg bg-black object-contain" src={media.previewUrl} />
+          : <div className="relative h-64 w-full rounded-lg bg-surface">
+              <Image unoptimized fill sizes="(max-width: 768px) 100vw, 640px" className="rounded-lg object-contain" src={media.previewUrl} alt={media.displayName} />
+            </div>
+      )}
+      <p className="text-[12.5px] font-semibold text-text-2">{social.title}</p>
+      {social.caption ? <p className="whitespace-pre-wrap text-[12.5px] leading-[1.6] text-text-2">{social.caption}</p> : null}
+      {social.description ? <p className="whitespace-pre-wrap text-[12px] leading-[1.55] text-text-3">Description: {social.description}</p> : null}
+      {social.concept ? <p className="text-[11.5px] leading-[1.55] text-text-3">Concept: {social.concept}</p> : null}
+      {social.script?.length > 0 && (
+        <ol className="list-decimal space-y-1 pl-4 text-[12px] leading-[1.55] text-text-2">
+          {social.script.map((line, index) => <li key={index}>{line}</li>)}
+        </ol>
+      )}
+      <p className="rounded-xl border border-amber/35 bg-amber/10 px-3 py-2 text-[11.5px] leading-relaxed text-amber">
+        {social.channel === "tiktok"
+          ? "TikTok publishing is not connected yet. This action is planned and approved inside Voom; nothing is posted to TikTok and Voom will never claim it was."
+          : "YouTube publishing is not connected yet. This action is planned and approved inside Voom; nothing is posted to YouTube and Voom will never claim it was."}
+      </p>
       <p className="text-[11.5px] text-text-3">Proposed time: {new Date(action.scheduled_for).toLocaleString("en-AE", { timeZone, dateStyle: "medium", timeStyle: "short" })}</p>
     </div>
   );

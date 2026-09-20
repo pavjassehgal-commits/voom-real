@@ -27,37 +27,57 @@ export const CAMPAIGN_GOAL_LABELS: Record<CampaignGoal, string> = {
 };
 
 /**
- * Campaigns v3 — the authoritative CHANNELS one campaign runs on.
+ * Multi-Social Campaigns — the authoritative CHANNELS one campaign runs on.
  *
- * A campaign selects Instagram, Email, or both. Every action inside it must
- * belong to one of its selected channels; the database enforces the same rule
- * (migration 0045), so an invalid combination fails server-side rather than
- * being silently dropped.
+ * A campaign selects any non-empty combination of Instagram, TikTok, YouTube
+ * and Email. Every action inside it must belong to one of its selected
+ * channels; the database enforces the same rule (migrations 0045 + 0046), so
+ * an invalid combination fails server-side rather than being silently
+ * dropped.
  *
- * Only these two values exist. Marketing messaging that Voom has retired can
+ * Only these four values exist. Marketing messaging that Voom has retired can
  * never be selected here, never appears in this list, and can never be written
- * to `voom_campaigns.channels`: the allowlist below is the single authority the
- * routes, the planner and the build RPC all consult.
+ * to `voom_campaigns.channels`: the allowlist below is the single authority
+ * the routes, the planner and the build RPC all consult.
+ *
+ * Selecting TikTok or YouTube grants PLANNING only. Publishing there requires
+ * a real provider connection that does not exist yet — the publisher boundary
+ * (lib/social/publisher.ts) truthfully refuses, and nothing in the campaign
+ * layer can bypass it.
  */
-export const CAMPAIGN_CHANNELS = ["instagram", "email"] as const;
+export const CAMPAIGN_CHANNELS = ["instagram", "tiktok", "youtube", "email"] as const;
 
 export type CampaignChannel = (typeof CAMPAIGN_CHANNELS)[number];
 
 export const CAMPAIGN_CHANNEL_LABELS: Record<CampaignChannel, string> = {
   instagram: "Instagram",
+  tiktok: "TikTok",
+  youtube: "YouTube",
   email: "Email",
 };
 
-/** The three selectable channel combinations, in product display order. */
+/**
+ * Backward-compat alias: the channel selection choices are now any non-empty
+ * subset of `CAMPAIGN_CHANNELS` (a multi-select), so this list only names the
+ * selectable channels in product display order.
+ */
 export const CAMPAIGN_CHANNEL_CHOICES: ReadonlyArray<{
-  id: "instagram" | "email" | "both";
+  id: CampaignChannel;
   channels: readonly CampaignChannel[];
   label: string;
-}> = [
-  { id: "instagram", channels: ["instagram"], label: "Instagram" },
-  { id: "email", channels: ["email"], label: "Email" },
-  { id: "both", channels: ["instagram", "email"], label: "Instagram + Email" },
-];
+}> = CAMPAIGN_CHANNELS.map((channel) => ({
+  id: channel,
+  channels: [channel] as readonly CampaignChannel[],
+  label: CAMPAIGN_CHANNEL_LABELS[channel],
+}));
+
+/**
+ * The legacy default selection for callers that make no explicit choice:
+ * Instagram + Email, exactly as Campaigns v3 behaved. TikTok and YouTube are
+ * never planned unless the user actively selects them — a channel whose
+ * provider is not connected is never chosen silently.
+ */
+export const LEGACY_DEFAULT_CAMPAIGN_CHANNELS: readonly CampaignChannel[] = ["instagram", "email"];
 
 /**
  * Campaigns v3 — HOW a campaign was created.
@@ -85,16 +105,21 @@ export const CAMPAIGN_CREATION_METHOD_LABELS: Record<CampaignCreationMethod, str
 };
 
 /**
- * The only campaign channels Automated Campaigns plan. Retired messaging
- * channels are intentionally absent: they were removed from the active Voom
- * product. Historical rows remain readable through the legacy campaign
- * surfaces, but no new action can carry such a channel.
+ * The campaign action channels Multi-Social Campaigns plan: every valid
+ * channel+format pair from the ONE canonical vocabulary (lib/social/channels)
+ * plus email. Retired messaging channels are intentionally absent: they were
+ * removed from the active Voom product. Historical rows remain readable
+ * through the legacy campaign surfaces, but no new action can carry such a
+ * channel.
  */
 export const CAMPAIGN_ACTION_CHANNELS = [
   "email",
   "instagram_post",
   "instagram_reel",
   "instagram_story",
+  "tiktok_video",
+  "youtube_short",
+  "youtube_video",
 ] as const;
 
 export type CampaignActionChannel = (typeof CAMPAIGN_ACTION_CHANNELS)[number];
@@ -104,6 +129,9 @@ export const ACTION_CHANNEL_LABELS: Record<CampaignActionChannel, string> = {
   instagram_post: "Instagram Post",
   instagram_reel: "Reel",
   instagram_story: "Instagram Story",
+  tiktok_video: "TikTok Video",
+  youtube_short: "YouTube Short",
+  youtube_video: "YouTube Video",
 };
 
 /**
@@ -249,6 +277,16 @@ export interface PlannedAction {
   caption?: string;
   hashtags?: string[];
 
+  // TikTok / YouTube deliverable (Multi-Social Core) -------------------------
+  //
+  // A YouTube Video is a first-class long-form deliverable: it carries a real
+  // title, a full description and a script/outline — never "a Reel renamed".
+  // Planning these never triggers expensive media generation.
+  /** Long-form description (YouTube Video/Short). */
+  description?: string;
+  /** Script / outline lines (YouTube Video, TikTok-native beat, Reels). */
+  script?: string[];
+
   /**
    * Existing Autopilot safety evaluation (lib/mara/autopilot-safety). In
    * Autopilot, only safe actions are auto-approved; anything blocked stays in
@@ -265,6 +303,14 @@ export interface PlannedCampaignSummary {
   reelCount: number;
   storyCount: number;
   instagramCount: number;
+  /** Multi-Social Core: TikTok Video count. */
+  tiktokCount?: number;
+  /** Multi-Social Core: YouTube Short count. */
+  youtubeShortCount?: number;
+  /** Multi-Social Core: full YouTube Video count. */
+  youtubeVideoCount?: number;
+  /** Multi-Social Core: total YouTube actions. */
+  youtubeCount?: number;
   /** Campaigns v3: the channel selection this plan was built inside. */
   channels?: CampaignChannel[];
   /** Compact, factual summary built from the real generated structure. */
@@ -294,13 +340,18 @@ export function isCampaignGoal(value: unknown): value is CampaignGoal {
 /**
  * Maps one action channel to the campaign channel it belongs to.
  *
- * Returns `null` for anything that is not an active campaign action channel,
- * which is how a retired or invented channel is rejected by every caller.
+ * The mapping is derived from the ONE canonical vocabulary
+ * (lib/social/channels.parseActionChannel), so `tiktok_video` → tiktok,
+ * `youtube_short`/`youtube_video` → youtube and any invented or retired
+ * identifier returns `null` and is rejected by every caller.
  */
 export function actionChannelFamily(channel: unknown): CampaignChannel | null {
   if (channel === "email") return "email";
-  if (channel === "instagram_post" || channel === "instagram_reel" || channel === "instagram_story") return "instagram";
-  return null;
+  if (typeof channel !== "string") return null;
+  if (!(CAMPAIGN_ACTION_CHANNELS as readonly string[]).includes(channel)) return null;
+  const separator = channel.lastIndexOf("_");
+  const family = separator > 0 ? channel.slice(0, separator) : "";
+  return (CAMPAIGN_CHANNELS as readonly string[]).includes(family) ? (family as CampaignChannel) : null;
 }
 
 export type CampaignChannelsResult =
@@ -311,16 +362,19 @@ export type CampaignChannelsResult =
  * Validates a campaign's authoritative channel selection against the allowlist.
  *
  * `null`/`undefined` means "the caller made no explicit choice": the result is
- * BOTH active channels, which preserves the existing v2 behaviour where the
- * planner derives the mix from the goal and the dates. Anything else must be a
- * non-empty subset of `CAMPAIGN_CHANNELS` with no repeats — a retired or
- * invented channel is refused here, in the routes, and again in the database.
+ * the LEGACY DEFAULT (Instagram + Email) — exactly what Campaigns v2/v3
+ * callers received before TikTok/YouTube existed. A channel whose provider is
+ * not connected is never planned silently; the user must actively select it.
+ *
+ * Anything else must be a non-empty subset of `CAMPAIGN_CHANNELS` with no
+ * repeats — a retired or invented channel is refused here, in the routes, and
+ * again in the database.
  *
  * The returned order is always the canonical `CAMPAIGN_CHANNELS` order, so the
  * same selection always produces the same stored array.
  */
 export function normalizeCampaignChannels(value: unknown): CampaignChannelsResult {
-  if (value === undefined || value === null) return { ok: true, channels: [...CAMPAIGN_CHANNELS] };
+  if (value === undefined || value === null) return { ok: true, channels: [...LEGACY_DEFAULT_CAMPAIGN_CHANNELS] };
   if (!Array.isArray(value)) return { ok: false, reason: "unknown_channel" };
   if (value.length === 0) return { ok: false, reason: "empty" };
   if (value.length > CAMPAIGN_CHANNELS.length) return { ok: false, reason: "duplicate_channel" };
@@ -423,7 +477,11 @@ export type CampaignContentSource = "deterministic" | "mara" | "edited";
 
 /** The structured MARA content stored on `voom_campaign_actions.mara_content`. */
 export interface CampaignActionContentRecord {
-  format?: "post" | "reel" | "story";
+  /**
+   * The canonical format. Instagram keeps post/reel/story; the Multi-Social
+   * Core adds TikTok's `video` and YouTube's `short`/`video`.
+   */
+  format?: "post" | "reel" | "story" | "video" | "short";
   concept?: string;
   hook?: string;
   cta?: string;
@@ -433,6 +491,8 @@ export interface CampaignActionContentRecord {
   hashtags?: string[];
   audienceNote?: string;
   sendTimeNote?: string;
+  /** Multi-Social Core: the long-form description (YouTube Video/Short). */
+  description?: string;
 }
 
 /** One timeline row as presented (derived execution state included). */
@@ -486,6 +546,38 @@ export interface CampaignActionView extends CampaignActionRecord {
     availableProductionMethods: ("create_with_mara" | "upload_asset" | "film_yourself")[];
     selectedProductionMethod: "create_with_mara" | "upload_asset" | "film_yourself" | null;
     productionStatus: string | null;
+  } | null;
+  /**
+   * Multi-Social Core deliverable, present for TikTok and YouTube actions.
+   *
+   * A YouTube Video is a first-class long-form deliverable (title +
+   * description + concept + script/outline + video asset relationship), not a
+   * renamed short. `publishState` is the canonical social lifecycle state,
+   * derived truthfully: while no real TikTok/YouTube provider integration
+   * exists, an approved item reads `connection_required` — never `published`.
+   */
+  social?: {
+    draftId: string;
+    channel: "tiktok" | "youtube";
+    format: "video" | "short";
+    title: string;
+    caption: string;
+    description: string | null;
+    concept: string | null;
+    script: string[];
+    draftStatus: "draft" | "approved" | "rejected";
+    /** Canonical lifecycle state from lib/social/publish-state. */
+    publishState: string;
+    publishStateLabel: string;
+    /** Real provider reference only; null until a provider confirms. */
+    providerRef: string | null;
+    needsAsset: boolean;
+    media: {
+      previewUrl: string | null;
+      mimeType: string;
+      displayName: string;
+      origin: string;
+    } | null;
   } | null;
 }
 
@@ -573,6 +665,10 @@ export interface AutomatedCampaignView {
     total: number;
     email: number;
     instagram: number;
+    /** Multi-Social Core: TikTok actions. */
+    tiktok: number;
+    /** Multi-Social Core: YouTube actions (Shorts + Videos). */
+    youtube: number;
     approved: number;
     executed: number;
     needingApproval: number;

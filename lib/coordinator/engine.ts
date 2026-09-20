@@ -93,14 +93,18 @@ export function evaluateMarketingNeeds(state: AuthoritativeMarketingState): Coor
     });
   }
 
-  // Priority 3: Calendar Gap Intelligence (Instagram)
-  // Instead of blindly generating N items, see what days in the 7-day horizon are covered
-  // by ANY valid marketing commitment (campaign actions, approved/scheduled calendar items,
-  // pending approval drafts).
+  // Priority 3: Calendar Gap Intelligence (the ONE marketing calendar)
+  // Instead of blindly generating N items, see what days in the 7-day horizon
+  // are covered by ANY valid marketing commitment on ANY channel (Instagram,
+  // TikTok, YouTube campaign actions, approved/scheduled calendar items,
+  // pending approval drafts). Multi-Social Core: a TikTok or YouTube planning
+  // commitment covers its date just like an Instagram one — the coordinator
+  // understands every channel. Gap filling itself still only proposes
+  // Instagram drafts; nothing here creates autonomous TikTok/YouTube work.
   const gaps = identifyCalendarGaps(state);
   if (gaps.length > 0) {
     needs.push({
-      type: "instagram_calendar_gap",
+      type: "content_calendar_gap",
       priority: 30,
       title: `${gaps.length} upcoming content gap${gaps.length === 1 ? "" : "s"} identified`,
       description: `Your marketing calendar has unallocated slots on ${gaps.map((g) => g.date).join(", ")}.`,
@@ -243,19 +247,24 @@ export function identifyCalendarGaps(state: AuthoritativeMarketingState): GapIde
     const date = targetDates[i];
     const existingOnDate = commitmentsByDate.get(date) ?? [];
 
-    // If there is already any valid Instagram action on this date, this date is COVERED!
-    const isCovered = existingOnDate.some((c) => c.channel.startsWith("instagram_"));
+    // Multi-Social Core: a date covered by ANY active social channel
+    // commitment (Instagram, TikTok, YouTube) is COVERED — the coordinator
+    // reads the ONE marketing calendar, so it never stacks Instagram work on
+    // top of a day another channel already fills. Email keeps its own cadence
+    // and does not cover a social slot.
+    const isCovered = existingOnDate.some((c) => isSocialCommitmentChannel(c.channel));
     if (isCovered) {
       continue;
     }
 
-    // Also check: if the total number of Instagram commitments this week already equals or exceeds
-    // the cadence target count, and they are reasonably distributed, do not add more!
-    const totalInstagramCommitments = commitments.filter(
-      (c) => c.channel.startsWith("instagram_") && c.status !== "failed"
+    // Also check: if the total number of social-channel commitments this week
+    // already equals or exceeds the cadence target count, and they are
+    // reasonably distributed, do not add more!
+    const totalSocialCommitments = commitments.filter(
+      (c) => isSocialCommitmentChannel(c.channel) && c.status !== "failed"
     ).length;
 
-    if (totalInstagramCommitments >= targetDates.length) {
+    if (totalSocialCommitments >= targetDates.length) {
       // Fleet has enough marketing coverage already
       continue;
     }
@@ -309,7 +318,7 @@ function generateSummaryMessage(
     return `${count} item${count === 1 ? "" : "s"} need${count === 1 ? "s" : ""} your approval.`;
   }
 
-  if (topNeed.type === "instagram_calendar_gap") {
+  if (topNeed.type === "content_calendar_gap") {
     return `MARA found ${gaps.length} content gap${gaps.length === 1 ? "" : "s"} in your upcoming schedule.`;
   }
 
@@ -332,4 +341,17 @@ function generateSummaryMessage(
   }
 
   return "MARA is preparing upcoming marketing.";
+}
+
+/**
+ * Multi-Social Core vocabulary: the active social channels whose commitments
+ * cover a calendar date. The retired SMS channel is deliberately absent —
+ * historical SMS rows never count as coverage, and email keeps its own
+ * cadence rather than filling a social slot.
+ */
+function isSocialCommitmentChannel(channel: string): boolean {
+  return channel.startsWith("instagram_")
+    || channel === "tiktok_video"
+    || channel === "youtube_short"
+    || channel === "youtube_video";
 }

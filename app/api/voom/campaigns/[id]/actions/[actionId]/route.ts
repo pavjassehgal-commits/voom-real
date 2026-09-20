@@ -34,8 +34,12 @@ const editSchema = z.object({
   concept: z.string().trim().max(160).optional(),
   hook: z.string().trim().max(300).optional(),
   visualDirection: z.string().trim().max(1200).optional(),
-  script: z.array(z.string().trim().max(300)).max(8).optional(),
+  // Instagram Reel shot script (≤8×300) and the Multi-Social beat list
+  // (≤40×400) share one field; the server validates per channel.
+  script: z.array(z.string().trim().max(400)).max(40).optional(),
   format: z.enum(["post", "reel", "story"]).optional(),
+  // Multi-Social Core: the YouTube deliverable description.
+  description: z.string().trim().max(5000).optional(),
   cta: z.string().trim().max(160).optional(),
   ctaUrl: z.string().trim().max(500).nullable().optional(),
   audienceNote: z.string().trim().max(500).optional(),

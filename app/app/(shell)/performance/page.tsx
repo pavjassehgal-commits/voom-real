@@ -66,6 +66,16 @@ export default async function PerformancePage() {
         still returning them. Voom keeps checking and will compare them as soon as real numbers arrive.
       </p>}
     </Card>
+
+    <Card className="mt-4 p-5">
+      <h2 className="font-display text-base font-semibold">TikTok &amp; YouTube</h2>
+      <p className="mt-1.5 text-sm leading-relaxed text-text-2">
+        No performance data exists for TikTok or YouTube — and none is invented here. Voom can plan, approve and
+        schedule TikTok and YouTube content, but their publishing connections do not exist yet, so nothing has been
+        published on those channels to measure. When real connections ship, their measured results will join this
+        page with the same rules: real provider numbers only, never estimates.
+      </p>
+    </Card>
   </div>;
 }
 

@@ -7,15 +7,18 @@ import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { CreateContentModal } from "@/components/voom/modals/CreateContentModal";
 import { PostEditorModal } from "@/components/voom/modals/PostEditorModal";
+import { SocialEditorModal } from "@/components/voom/modals/SocialEditorModal";
 import { Btn, Card, Tag } from "@/components/voom/ui/primitives";
-import type { PostFormat } from "@/lib/post/core";
+import { isSocialVideoDraftKind, type SocialVideoDraftKind } from "@/lib/post/core";
+
+type StudioKind = "instagram_post" | "reel" | "story" | SocialVideoDraftKind;
 
 interface StudioPost {
   id: string;
-  kind: "instagram_post" | "reel" | "story";
+  kind: StudioKind;
   typeLabel: string;
   concept: string;
-  format: PostFormat;
+  format: string;
   originLabel: string;
   internalState: "draft" | "approved" | "scheduled_internal" | "ready_to_publish";
   internalStateLabel: string;
@@ -70,7 +73,7 @@ export default function StudioPage() {
     <div>
       <PageHead
         title="Create content"
-        description="Instagram Posts, Reels and Stories, built and approved inside Voom. Approved items appear on your Content Calendar."
+        description="One Studio for every platform — Instagram Posts, Reels and Stories, TikTok videos, YouTube Shorts and videos — built and approved inside Voom. Approved items appear on your Content Calendar."
         actions={
           <>
             <Btn variant="outline" size="sm" onClick={() => goTo("calendar")}>
@@ -86,23 +89,23 @@ export default function StudioPage() {
       <div className="mb-4 grid gap-3 sm:grid-cols-3">
         <EntryCard
           icon="ig"
-          title="Instagram Post"
-          body="1:1 or 4:5. Create with MARA, or use your own image."
-          cta="Start a post"
+          title="Instagram"
+          body="Posts (1:1 or 4:5), Reels and Stories. Create with MARA, or use your own media. Real publishing through your connected account."
+          cta="Start an Instagram draft"
           onClick={() => open(<CreateContentModal onChanged={() => void load()} />)}
         />
         <EntryCard
           icon="film"
-          title="Reel"
-          body="Import an existing video, or use the existing MARA Reel workflow."
-          cta="Start a Reel"
+          title="TikTok"
+          body="Plan TikTok-native videos: hook, beats and caption. Publishing starts when the TikTok connection ships."
+          cta="Start a TikTok draft"
           onClick={() => open(<CreateContentModal onChanged={() => void load()} />)}
         />
         <EntryCard
-          icon="spark"
-          title="Instagram Story"
-          body="9:16 full-screen image or video. Upload one, or let MARA create the visual."
-          cta="Start a Story"
+          icon="play"
+          title="YouTube"
+          body="Plan Shorts and full videos with title, description and outline. Publishing starts when the YouTube connection ships."
+          cta="Start a YouTube draft"
           onClick={() => open(<CreateContentModal onChanged={() => void load()} />)}
         />
         <EntryCard
@@ -130,7 +133,7 @@ export default function StudioPage() {
         {loading ? <p className="py-8 text-center text-sm text-text-3">Loading your content…</p> : null}
         {!loading && !posts.length ? (
           <p className="py-8 text-center text-sm text-text-3">
-            Nothing here yet. Choose <b>Create content</b> to make your first Instagram Post, Reel or Story.
+            Nothing here yet. Choose <b>Create content</b> and pick a platform — Instagram, TikTok or YouTube.
           </p>
         ) : null}
 
@@ -139,7 +142,9 @@ export default function StudioPage() {
             <button
               key={post.id}
               type="button"
-              onClick={() => open(<PostEditorModal postId={post.id} onChanged={() => void load()} />)}
+              onClick={() => open(isSocialVideoDraftKind(post.kind)
+                ? <SocialEditorModal draftId={post.id} onChanged={() => void load()} />
+                : <PostEditorModal postId={post.id} onChanged={() => void load()} />)}
               className="overflow-hidden rounded-2xl border border-line bg-surface text-left transition hover:border-brand"
             >
               <div className="grid h-[132px] place-items-center bg-surface-2">
@@ -167,9 +172,10 @@ export default function StudioPage() {
         </div>
 
         <p className="mt-4 rounded-xl bg-surface-2 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-text-3">
-          Approved items with a schedule and a visual are published to your connected Instagram account automatically
-          at their scheduled time. Voom marks something “Published” only after Instagram confirms it — nothing is
-          ever posted without your approval.
+          Approved Instagram items with a schedule and a visual are published to your connected Instagram account
+          automatically at their scheduled time — Voom marks something “Published” only after Instagram confirms it.
+          TikTok and YouTube items are planned and approved inside Voom; their publishing connections do not exist
+          yet, so nothing external happens until a real connection ships.
         </p>
       </Card>
     </div>

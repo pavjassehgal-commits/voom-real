@@ -16,6 +16,52 @@ export const REEL_DRAFT_KIND = "reel";
 export const STORY_DRAFT_KIND = "story";
 export type PostDraftKind = typeof POST_DRAFT_KIND | typeof REEL_DRAFT_KIND | typeof STORY_DRAFT_KIND;
 
+/**
+ * Multi-Social Core: the mara_drafts.kind values the unified Studio writes for
+ * TikTok and YouTube. These are PLANNING drafts: they live in Voom, can be
+ * approved and scheduled, and truthfully cannot publish until the real
+ * provider integrations exist. They never touch the Instagram publish queue.
+ */
+export const TIKTOK_VIDEO_DRAFT_KIND = "tiktok_video";
+export const YOUTUBE_SHORT_DRAFT_KIND = "youtube_short";
+export const YOUTUBE_VIDEO_DRAFT_KIND = "youtube_video";
+export type SocialVideoDraftKind =
+  | typeof TIKTOK_VIDEO_DRAFT_KIND
+  | typeof YOUTUBE_SHORT_DRAFT_KIND
+  | typeof YOUTUBE_VIDEO_DRAFT_KIND;
+
+export const SOCIAL_VIDEO_DRAFT_KINDS: readonly string[] = [
+  TIKTOK_VIDEO_DRAFT_KIND,
+  YOUTUBE_SHORT_DRAFT_KIND,
+  YOUTUBE_VIDEO_DRAFT_KIND,
+];
+
+export function isSocialVideoDraftKind(value: unknown): value is SocialVideoDraftKind {
+  return typeof value === "string" && SOCIAL_VIDEO_DRAFT_KINDS.includes(value);
+}
+
+/** Every draft kind the unified Studio creates. */
+export type StudioDraftKind = PostDraftKind | SocialVideoDraftKind;
+
+export function isStudioDraftKind(value: unknown): value is StudioDraftKind {
+  return isPostDraftKind(value) || isSocialVideoDraftKind(value);
+}
+
+/** Display labels for the social video kinds. */
+export const SOCIAL_VIDEO_TYPE_LABELS: Record<SocialVideoDraftKind, string> = {
+  tiktok_video: "TikTok Video",
+  youtube_short: "YouTube Short",
+  youtube_video: "YouTube Video",
+};
+
+/** The Content Calendar channel label for a social video kind (0046 enum). */
+export function socialCalendarChannelFor(kind: string): "TikTok" | "YouTube Short" | "YouTube Video" | null {
+  if (kind === TIKTOK_VIDEO_DRAFT_KIND) return "TikTok";
+  if (kind === YOUTUBE_SHORT_DRAFT_KIND) return "YouTube Short";
+  if (kind === YOUTUBE_VIDEO_DRAFT_KIND) return "YouTube Video";
+  return null;
+}
+
 /** How the visual for this post came to exist (UI / API, not a DB column). */
 export const POST_ORIGINS = ["mara", "own_asset", "existing_content"] as const;
 export type PostOrigin = (typeof POST_ORIGINS)[number];

@@ -167,7 +167,9 @@ test("provider configuration is surfaced truthfully without enabling sending", a
   assert.match(connections, /Configured on server/);
   assert.match(connections, /Approved campaign emails send only through an explicit send action/);
   assert.match(connections, /Delivered requires the verified webhook/);
-  // The active product is Instagram + email only; SMS is named as removed.
-  assert.match(connections, /campaigns run on Instagram and email/);
+  // Multi-Social Core: the active product is Instagram + TikTok + YouTube +
+  // email; SMS stays named as removed. TikTok/YouTube are truthfully
+  // planning-only (no invented provider), Instagram + email stay real.
+  assert.match(connections, /campaigns run on Instagram, TikTok, YouTube and email/);
   assert.doesNotMatch(connections, /ClickSend|Twilio/);
 });

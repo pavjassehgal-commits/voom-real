@@ -271,9 +271,11 @@ test("0021 is marked already-applied; 0018-0020 are untouched and 0022-0028 stay
   assert.deepEqual(files.filter((name) => /^0028_/.test(name)), ["0028_openrouter_video_job_metadata.sql"], "the only 0028 is OpenRouter video job metadata");
   assert.deepEqual(files.filter((name) => /^0029_/.test(name)), ["0029_workflow_timezone_and_slots.sql"], "the only 0029 is the workflow timezone + slot migration");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  // Production is through 0045 (Campaigns v3). Anything newer is a migration
-  // this suite has not been told about — it must be added deliberately.
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 45), "no migration beyond 0045 (the production head) may exist");
+  // Production is through 0045 (Campaigns v3). 0046 (Multi-Social Core) is
+  // checked in but deliberately NOT applied to production yet. Anything newer
+  // is a migration this suite has not been told about — it must be added
+  // deliberately.
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 46), "no migration beyond 0046 (the Multi-Social Core) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],
@@ -396,7 +398,9 @@ test("existing image becomes an Instagram Post and existing video becomes a Reel
   assert.match(route, /const rawOrigin = form\.get\("origin"\)/);
   assert.match(route, /origin: PostOrigin = rawOrigin === "existing_content" \|\| post\.kind === "reel" \? "existing_content" : "own_asset"/);
   const list = await read("app/api/posts/route.ts");
-  assert.match(list, /kind: z\.enum\(\["instagram_post", "reel", "story"\]\)/);
+  // Multi-Social Core: the ONE Studio endpoint accepts the Instagram kinds
+  // plus the TikTok/YouTube planning kinds.
+  assert.match(list, /kind: z\.enum\(\["instagram_post", "reel", "story", "tiktok_video", "youtube_short", "youtube_video"\]\)/);
   assert.match(list, /origin: z\.enum\(POST_ORIGINS\)/);
   const modal = await read("components/voom/modals/CreateContentModal.tsx");
   assert.match(modal, /Import an existing video/);

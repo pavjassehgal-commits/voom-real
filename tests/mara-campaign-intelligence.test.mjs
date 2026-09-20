@@ -138,6 +138,9 @@ function intelligenceFor(plan, mutate) {
           proposedSendAt: null,
         },
         instagram: null,
+        // Multi-Social Core: every payload key exists; non-matching stay null.
+        tiktok: null,
+        youtube: null,
       };
     }
     const index = igSlots.indexOf(action);
@@ -161,6 +164,8 @@ function intelligenceFor(plan, mutate) {
           : [],
         proposedSendAt: null,
       },
+      tiktok: null,
+      youtube: null,
     };
   });
   const payload = {

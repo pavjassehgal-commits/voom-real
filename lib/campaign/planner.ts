@@ -31,8 +31,8 @@ import {
   localToUtcIso,
 } from "@/lib/voom/timezone";
 import {
-  CAMPAIGN_CHANNELS,
   CAMPAIGN_GOAL_LABELS,
+  LEGACY_DEFAULT_CAMPAIGN_CHANNELS,
   MAX_CAMPAIGN_ACTIONS,
   MAX_CAMPAIGN_DAYS,
   MAX_EMAIL_ACTIONS,
@@ -82,7 +82,10 @@ export function resolvePlanChannels(
 ): CampaignChannel[] {
   const requested = explicit ?? brief?.channels ?? null;
   const normalized = normalizeCampaignChannels(requested);
-  return normalized.ok ? normalized.channels : [...CAMPAIGN_CHANNELS];
+  // An unusable value falls back to the legacy Instagram + Email default —
+  // never to a wider selection, so an invalid input can never silently plan
+  // TikTok or YouTube content.
+  return normalized.ok ? normalized.channels : [...LEGACY_DEFAULT_CAMPAIGN_CHANNELS];
 }
 
 export function planCampaign(input: PlanCampaignInput): PlannedCampaign {
@@ -108,6 +111,9 @@ export function planCampaign(input: PlanCampaignInput): PlannedCampaign {
   const postDays = schedulePostDays(mix.posts, days, brief.goal);
   const reelDays = scheduleReelDays(mix.reels, days, brief.goal, bias);
   const storyDays = scheduleStoryDays(mix.stories, days, brief.goal, bias);
+  const tiktokDays = scheduleTiktokDays(mix.tiktok, days, reelDays);
+  const youtubeShortDays = scheduleYouTubeShortDays(mix.youtubeShorts, days, tiktokDays);
+  const youtubeVideoDays = scheduleYouTubeVideoDays(mix.youtubeVideos, days);
 
   const specs: DraftSpec[] = [];
 
@@ -123,6 +129,15 @@ export function planCampaign(input: PlanCampaignInput): PlannedCampaign {
   });
   storyDays.forEach((day, index) => {
     specs.push(buildStorySpec({ brief, brand: input.brand ?? {}, day, days, index, total: storyDays.length, lastDay: last, timeZone }));
+  });
+  tiktokDays.forEach((day, index) => {
+    specs.push(buildTikTokSpec({ brief, brand: input.brand ?? {}, day, days, index, total: tiktokDays.length, timeZone }));
+  });
+  youtubeShortDays.forEach((day, index) => {
+    specs.push(buildYouTubeShortSpec({ brief, brand: input.brand ?? {}, day, days, index, total: youtubeShortDays.length, timeZone }));
+  });
+  youtubeVideoDays.forEach((day, index) => {
+    specs.push(buildYouTubeVideoSpec({ brief, brand: input.brand ?? {}, day, days, index, total: youtubeVideoDays.length, timeZone }));
   });
 
   // One ordered timeline, earliest first; same-day order follows the channel
@@ -150,6 +165,9 @@ export function planCampaign(input: PlanCampaignInput): PlannedCampaign {
   const postCount = actions.filter((a) => a.channel === "instagram_post").length;
   const reelCount = actions.filter((a) => a.channel === "instagram_reel").length;
   const storyCount = actions.filter((a) => a.channel === "instagram_story").length;
+  const tiktokCount = actions.filter((a) => a.channel === "tiktok_video").length;
+  const youtubeShortCount = actions.filter((a) => a.channel === "youtube_short").length;
+  const youtubeVideoCount = actions.filter((a) => a.channel === "youtube_video").length;
 
   const counts = countsWithStrings({ emailCount, postCount, reelCount, storyCount });
 
@@ -162,8 +180,16 @@ export function planCampaign(input: PlanCampaignInput): PlannedCampaign {
       reelCount,
       storyCount,
       instagramCount: counts.instagramCount,
+      tiktokCount,
+      youtubeShortCount,
+      youtubeVideoCount,
+      youtubeCount: youtubeShortCount + youtubeVideoCount,
       channels,
-      narrative: buildNarrative(brief.goal, days, counts.instagramString, counts.emailString, channels),
+      narrative: buildNarrative(brief.goal, days, counts.instagramString, counts.emailString, channels, {
+        tiktokCount,
+        youtubeShortCount,
+        youtubeVideoCount,
+      }),
       performanceUsed: Boolean(perf),
       performanceNote: perf ? performanceNote(perf) : null,
     },
@@ -230,7 +256,10 @@ export function enforceCampaignTiming<T extends { channel: string; dayOffset: nu
   const desiredMinutes: Record<string, number> = {
     email: 9 * 60,
     instagram_story: 10 * 60 + 30,
+    youtube_video: 15 * 60,
+    youtube_short: 16 * 60,
     instagram_reel: 17 * 60,
+    tiktok_video: 18 * 60,
     instagram_post: 19 * 60,
   };
   const groups = new Map<string, Array<{ item: T; index: number; desired: number }>>();
@@ -291,6 +320,9 @@ function actionPriority(channel: string): number {
   if (channel === "email") return 4;
   if (channel === "instagram_post") return 3;
   if (channel === "instagram_reel") return 2;
+  // TikTok/YouTube carry the same discovery weight as a Reel when a same-day
+  // window must be compacted; Stories remain the first to give way.
+  if (channel === "tiktok_video" || channel === "youtube_short" || channel === "youtube_video") return 2;
   return 1;
 }
 
@@ -301,7 +333,16 @@ interface Mix {
   posts: number;
   reels: number;
   stories: number;
+  /** Multi-Social Core: TikTok Videos. */
+  tiktok: number;
+  /** Multi-Social Core: YouTube Shorts. */
+  youtubeShorts: number;
+  /** Multi-Social Core: full YouTube Videos (planning only — never triggers media generation). */
+  youtubeVideos: number;
 }
+
+/** An all-zero mix, so single-channel branches stay readable. */
+const EMPTY_MIX: Mix = { email: 0, posts: 0, reels: 0, stories: 0, tiktok: 0, youtubeShorts: 0, youtubeVideos: 0 };
 
 /**
  * The per-channel action counts for a goal and timeframe, inside the campaign's
@@ -313,20 +354,30 @@ interface Mix {
  *     presence (posts first, then Stories) so the campaign keeps its rhythm;
  *   - Email-only: the sequence is spaced across the whole campaign window,
  *     still capped at MAX_EMAIL_ACTIONS so no inbox is flooded.
+ *
+ * Multi-Social Core adds TikTok and YouTube WITHOUT touching any of those
+ * rules: for a selection that only contains Instagram/Email the returned
+ * counts are bit-identical to v3. TikTok/YouTube counts are additive and
+ * coordinated — a TikTok variation beside the Reel rhythm, a YouTube Short
+ * for discovery, and at most one or two long-form YouTube Videos per
+ * campaign (planning a long-form video is text-only and never enqueues
+ * expensive media generation).
  */
 export function channelMix(
   goal: CampaignGoal,
   days: number,
-  channels: readonly CampaignChannel[] = CAMPAIGN_CHANNELS,
+  channels: readonly CampaignChannel[] = LEGACY_DEFAULT_CAMPAIGN_CHANNELS,
 ): Mix {
   const span = Math.min(Math.max(days, 1), MAX_CAMPAIGN_DAYS);
-  const selected = new Set(channels.length ? channels : CAMPAIGN_CHANNELS);
+  const selected = new Set(channels.length ? channels : LEGACY_DEFAULT_CAMPAIGN_CHANNELS);
   const wantsEmail = selected.has("email");
   const wantsInstagram = selected.has("instagram");
+  const wantsTiktok = selected.has("tiktok");
+  const wantsYoutube = selected.has("youtube");
 
-  if (!wantsInstagram) {
+  if (!wantsInstagram && !wantsTiktok && !wantsYoutube) {
     // Email-only campaign: one channel carries the whole sequence.
-    return { email: clamp(Math.round(span / 3), 1, MAX_EMAIL_ACTIONS), posts: 0, reels: 0, stories: 0 };
+    return { ...EMPTY_MIX, email: clamp(Math.round(span / 3), 1, MAX_EMAIL_ACTIONS) };
   }
 
   let email = 1;
@@ -364,7 +415,20 @@ export function channelMix(
     stories = span >= 3 ? 1 : 0;
   }
 
-  if (!wantsEmail) {
+  if (!wantsInstagram) {
+    // The Instagram shape is not part of this campaign; the social-video
+    // channels below carry the visible sequence instead.
+    posts = 0;
+    reels = 0;
+    stories = 0;
+    if (!wantsEmail) {
+      // A social-video-only campaign carries its whole sequence on those
+      // channels. The email cadence belongs exclusively to campaigns that
+      // selected email — planning an unselected channel would be refused
+      // server-side anyway, so it is never planned.
+      email = 0;
+    }
+  } else if (!wantsEmail) {
     // Instagram-only campaign: the slots the emails would have carried become
     // Instagram presence, so those days still carry the campaign.
     const freed = email;
@@ -373,10 +437,36 @@ export function channelMix(
     stories += Math.floor(freed / 2);
   }
 
+  // ── Multi-Social Core: TikTok and YouTube counts (additive, coordinated) ──
+  let tiktok = 0;
+  let youtubeShorts = 0;
+  let youtubeVideos = 0;
+
+  if (wantsTiktok) {
+    // TikTok mirrors the short-form discovery rhythm: one native variation
+    // once the campaign has room, a second for longer runs.
+    tiktok = span >= 4 ? 1 : 0;
+    if (span >= 14) tiktok += 1;
+    if (!wantsInstagram) {
+      // Without Instagram, TikTok carries more of the visible sequence.
+      tiktok = clamp(tiktok + (span >= 7 ? 1 : 0), 1, 4);
+    }
+  }
+  if (wantsYoutube) {
+    youtubeShorts = span >= 5 ? 1 : 0;
+    if (span >= 14) youtubeShorts += 1;
+    // The long-form depth piece: only when the campaign is long enough to
+    // justify it, and never more than two per campaign.
+    youtubeVideos = span >= 7 ? 1 : 0;
+    if (span >= 21) youtubeVideos += 1;
+  }
+
   email = Math.min(email, MAX_EMAIL_ACTIONS);
-  const total = email + posts + reels + stories;
+  let total = email + posts + reels + stories + tiktok + youtubeShorts + youtubeVideos;
   if (total > MAX_CAMPAIGN_ACTIONS) {
-    // Keep every email; trim Instagram extras first, stories before reels/posts.
+    // Keep every email and the long-form depth piece; trim the short-form
+    // extras first: stories, then extra TikTok/YouTube Shorts, then posts,
+    // then reels.
     let overflow = total - MAX_CAMPAIGN_ACTIONS;
     const trim = (count: number, take: number) => {
       const removed = Math.min(count, take);
@@ -384,10 +474,21 @@ export function channelMix(
       return count - removed;
     };
     stories = trim(stories, overflow);
+    if (overflow > 0) tiktok = trim(tiktok, overflow);
+    if (overflow > 0) youtubeShorts = trim(youtubeShorts, overflow);
     if (overflow > 0) posts = trim(posts, overflow);
     if (overflow > 0) reels = trim(reels, overflow);
+    if (overflow > 0) youtubeVideos = trim(youtubeVideos, overflow);
   }
-  return { email, posts, reels, stories };
+  total = email + posts + reels + stories + tiktok + youtubeShorts + youtubeVideos;
+  // A campaign always has at least one action.
+  if (total === 0) {
+    if (wantsEmail) email = 1;
+    else if (wantsInstagram) posts = 1;
+    else if (wantsTiktok) tiktok = 1;
+    else youtubeShorts = 1;
+  }
+  return { email, posts, reels, stories, tiktok, youtubeShorts, youtubeVideos };
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -448,6 +549,49 @@ function scheduleStoryDays(count: number, days: number, goal: CampaignGoal, bias
   out.add(bias.storyStrong ? 0 : goal === "awareness" ? 0 : 0);
   if (count >= 2) out.add(last);
   return [...out].sort((a, b) => a - b);
+}
+
+/**
+ * TikTok lands right AFTER the Instagram teaser so the coordinated sequence
+ * reads: Reel teaser → TikTok-native variation. Without a Reel in the plan it
+ * opens the short-form rhythm itself.
+ */
+function scheduleTiktokDays(count: number, days: number, reelDays: number[]): number[] {
+  if (count <= 0) return [];
+  const last = days - 1;
+  const out = new Set<number>();
+  const anchor = reelDays[0] !== undefined ? Math.min(reelDays[0] + 1, last) : Math.min(1, last);
+  out.add(anchor);
+  if (count >= 2) out.add(clamp(Math.round(last * 0.8), anchor + 1, last));
+  return [...out].sort((a, b) => a - b).slice(0, count);
+}
+
+/**
+ * The YouTube Short extends the short-form moment into YouTube's discovery
+ * surfaces, after the TikTok variation when both exist.
+ */
+function scheduleYouTubeShortDays(count: number, days: number, tiktokDays: number[]): number[] {
+  if (count <= 0) return [];
+  const last = days - 1;
+  const out = new Set<number>();
+  const anchor = tiktokDays[0] !== undefined ? Math.min(tiktokDays[0] + 1, last) : Math.min(Math.round(last * 0.5), last);
+  out.add(anchor);
+  if (count >= 2) out.add(clamp(Math.round(last * 0.85), anchor + 1, last));
+  return [...out].sort((a, b) => a - b).slice(0, count);
+}
+
+/**
+ * The long-form YouTube Video is the campaign's depth piece: it lands in the
+ * back half, after the short-form pieces have teased it, so the sequence can
+ * point back to it.
+ */
+function scheduleYouTubeVideoDays(count: number, days: number): number[] {
+  if (count <= 0) return [];
+  const last = days - 1;
+  const out = new Set<number>();
+  out.add(clamp(Math.round(last * 0.68), Math.min(2, last), last));
+  if (count >= 2) out.add(last);
+  return [...out].sort((a, b) => a - b).slice(0, count);
 }
 
 interface PerformanceBias {
@@ -712,6 +856,134 @@ function buildStorySpec(ctx: BuildContext & { lastDay: number }): DraftSpec {
   };
 }
 
+// ─── Multi-Social Core: platform-native builders ───────────────────────────
+//
+// Every builder below writes for its platform's own behaviour — never a
+// reposted caption. The TikTok hook, the YouTube Short title and the Reel
+// hook are deliberately different sentences carrying the same core message.
+
+function tiktokTags(brand: CampaignBrandContext, goal: CampaignGoal): string[] {
+  const base = ["#fyp", "#smallbusiness"];
+  const slug = brandName(brand).toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 20);
+  const byGoal: Record<CampaignGoal, string> = {
+    promote_product: "#newdrop",
+    drive_sales: "#deal",
+    announce: "#announcement",
+    re_engage: "#comeback",
+    awareness: "#behindthescenes",
+  };
+  const out = [byGoal[goal], ...base];
+  if (slug) out.push(`#${slug}`);
+  return out.slice(0, 5);
+}
+
+function buildTikTokSpec(ctx: BuildContext): DraftSpec {
+  const { brief, brand, day, days, index, total } = ctx;
+  const stage = stageFor(brief.goal, day, days, index, total);
+  const name = brandName(brand);
+  const offer = offerLine(brief);
+  // TikTok-native: blunt, conversational, sound-forward. Deliberately NOT the
+  // Reel's hook wording.
+  const hook = brief.goal === "awareness"
+    ? `POV: you just found ${name}`
+    : offer
+      ? `stop scrolling — ${offer} is actually happening`
+      : `the thing nobody tells you about ${audienceLine(brief, brand)}`;
+  const beats = [
+    `Beat 1 (0-2s): face-to-camera hook — "${hook}".`,
+    `Beat 2 (2-8s): fast cuts showing ${brief.name}${offer ? ` and the ${offer} detail` : ""}.`,
+    `Beat 3 (8-12s): payoff line on screen, end on the ${name} mark.`,
+  ];
+  const tags = tiktokTags(brand, brief.goal);
+  const caption = `${hook} ${tags.join(" ")}`.slice(0, 400);
+  return {
+    channel: "tiktok_video",
+    dayOffset: day,
+    scheduledFor: scheduledFor(brief.startAt, day, 18, 0, ctx.timeZone),
+    stage,
+    title: `${name} on TikTok: ${brief.goal === "awareness" ? "first impressions" : offer ? "the offer, straight up" : "real talk"}`.slice(0, 160),
+    purpose: `${STAGE_PURPOSE[stage]} TikTok Video ${index + 1} of ${total}; the same core moment retold natively for TikTok's discovery feed — never a reposted Reel.`,
+    concept: beats.join(" "),
+    caption,
+    script: beats,
+    hashtags: tags.map((tag) => tag.replace(/^#/, "")),
+  };
+}
+
+function buildYouTubeShortSpec(ctx: BuildContext): DraftSpec {
+  const { brief, brand, day, days, index, total } = ctx;
+  const stage = stageFor(brief.goal, day, days, index, total);
+  const name = brandName(brand);
+  const offer = offerLine(brief);
+  // Search-friendly: front-load the topic, promise the payoff.
+  const title = brief.goal === "awareness"
+    ? `What ${name} actually does (60 seconds)`
+    : offer
+      ? `${offer}: the 60-second explanation from ${name}`
+      : `Why ${audienceLine(brief, brand)} keep choosing ${name}`;
+  const description = `${title}. A quick look at ${brief.name}${offer ? `, including ${offer}` : ""}. Full story on the ${name} channel.`.slice(0, 500);
+  const hook = `In the next 60 seconds: ${brief.goal === "awareness" ? `what ${name} is and who it is for` : offer ? `exactly how ${offer} works` : `the one reason customers stay`}.`;
+  const script = [
+    `Hook (0-3s): ${hook}`,
+    `Section 1: show ${brief.name} in real use.`,
+    `Section 2: the payoff${offer ? ` — ${offer}` : ""}.`,
+    `Close: point to the full ${name} video and channel.`,
+  ];
+  return {
+    channel: "youtube_short",
+    dayOffset: day,
+    scheduledFor: scheduledFor(brief.startAt, day, 16, 0, ctx.timeZone),
+    stage,
+    title: title.slice(0, 160),
+    purpose: `${STAGE_PURPOSE[stage]} YouTube Short ${index + 1} of ${total}; extends the campaign into YouTube's discovery surfaces and teases the full video.`,
+    concept: hook,
+    caption: description,
+    description,
+    script,
+  };
+}
+
+function buildYouTubeVideoSpec(ctx: BuildContext): DraftSpec {
+  const { brief, brand, day, days, index, total } = ctx;
+  const stage = stageFor(brief.goal, day, days, index, total);
+  const name = brandName(brand);
+  const offer = offerLine(brief);
+  // The depth piece: a real title, description, concept and outline. Planning
+  // this is text-only — it never triggers expensive long-form video
+  // generation.
+  const title = brief.goal === "re_engage"
+    ? `Welcome back: what's new at ${name}`
+    : brief.goal === "awareness"
+      ? `The full ${name} story: what we make and why`
+      : `${brief.name}: the complete walkthrough from ${name}`;
+  const description = [
+    `${title}.`,
+    brand.brandDescription?.trim() ? brand.brandDescription.trim() : `In this video we walk through ${brief.name} start to finish.`,
+    offer ? `Current offer: ${offer}.` : "",
+    `Chapters: intro → the problem → the walkthrough → results → next steps.`,
+  ].filter(Boolean).join(" ").slice(0, 1000);
+  const concept = `A longer-form walkthrough of ${brief.name} for ${audienceLine(brief, brand)}${offer ? `, built around ${offer}` : ""} — the definitive piece the short-form content points back to.`;
+  const script = [
+    `Hook (0-15s): promise the payoff — "${brief.goal === "announce" ? `here is everything about ${brief.name}` : `by the end you will know exactly how to get the most out of ${brief.name}`}".`,
+    `Section 1 — the problem: what ${audienceLine(brief, brand)} struggle with today.`,
+    `Section 2 — the walkthrough: ${brief.name} step by step${offer ? `, including ${offer}` : ""}.`,
+    `Section 3 — the proof: what changes after.`,
+    `Close — one clear next step from ${name}.`,
+  ];
+  return {
+    channel: "youtube_video",
+    dayOffset: day,
+    scheduledFor: scheduledFor(brief.startAt, day, 15, 0, ctx.timeZone),
+    stage,
+    title: title.slice(0, 160),
+    purpose: `${STAGE_PURPOSE[stage]} YouTube Video ${index + 1} of ${total}; the campaign's depth piece — planning it is text-only and never generates expensive long-form media.`,
+    concept: concept.slice(0, 300),
+    caption: description,
+    description,
+    script,
+  };
+}
+
 // ─── Audience selection ────────────────────────────────────────────────────
 
 function chooseEmailAudience(audienceId: string | null, audiences: PlannerAudience[]): PlannerAudience | null {
@@ -726,7 +998,8 @@ function buildNarrative(
   days: number,
   instagramString: string,
   emailString: string,
-  channels: readonly CampaignChannel[] = CAMPAIGN_CHANNELS,
+  channels: readonly CampaignChannel[] = LEGACY_DEFAULT_CAMPAIGN_CHANNELS,
+  socialCounts?: { tiktokCount: number; youtubeShortCount: number; youtubeVideoCount: number },
 ): string {
   const goalLabel = CAMPAIGN_GOAL_LABELS[goal].toLowerCase();
   const strategy: Record<CampaignGoal, string> = {
@@ -744,16 +1017,35 @@ function buildNarrative(
     awareness: "The sequence builds familiarity first, then gives people one clear next step.",
   };
 
-  // Truthful about what was actually planned: a single-channel campaign never
-  // claims coverage on the channel that was not selected.
-  if (!channels.includes("email")) {
-    return `MARA created a ${days}-day ${goalLabel} campaign on Instagram with ${instagramString}. ${singleChannelStrategy[goal]}`;
-  }
-  if (!channels.includes("instagram")) {
-    return `MARA created a ${days}-day ${goalLabel} campaign by email with ${emailString}. ${singleChannelStrategy[goal]}`;
+  // Multi-Social Core: name the TikTok/YouTube pieces truthfully when they
+  // exist, and describe the coordinated arc rather than a platform list.
+  const socialParts: string[] = [];
+  if (socialCounts?.tiktokCount) socialParts.push(`${socialCounts.tiktokCount} TikTok Video${socialCounts.tiktokCount === 1 ? "" : "s"}`);
+  if (socialCounts?.youtubeShortCount) socialParts.push(`${socialCounts.youtubeShortCount} YouTube Short${socialCounts.youtubeShortCount === 1 ? "" : "s"}`);
+  if (socialCounts?.youtubeVideoCount) socialParts.push(`${socialCounts.youtubeVideoCount} full YouTube Video${socialCounts.youtubeVideoCount === 1 ? "" : "s"}`);
+  const socialString = socialParts.join(", ");
+  const hasNewSocial = socialParts.length > 0;
+
+  const pieces: string[] = [];
+  if (channels.includes("instagram")) pieces.push(instagramString);
+  if (hasNewSocial) pieces.push(socialString);
+  if (channels.includes("email")) pieces.push(emailString);
+
+  // Truthful about what was actually planned: a campaign never claims
+  // coverage on a channel that was not selected.
+  if (channels.length === 1) {
+    const only = channels[0];
+    const subject = only === "email" ? `by email with ${emailString}`
+      : only === "instagram" ? `on Instagram with ${instagramString}`
+      : only === "tiktok" ? `on TikTok with ${socialString}`
+      : `on YouTube with ${socialString}`;
+    return `MARA created a ${days}-day ${goalLabel} campaign ${subject}. ${singleChannelStrategy[goal]}`;
   }
 
-  const lead = `MARA created a ${days}-day ${goalLabel} campaign with ${instagramString} and ${emailString}.`;
+  const lead = `MARA created a ${days}-day ${goalLabel} campaign across ${channels.length} channels with ${pieces.join(", ")}.`;
+  if (hasNewSocial) {
+    return `${lead} Each platform gets its own native angle — a teaser, a TikTok variation, the email launch, a YouTube Short and the deeper YouTube video — one coordinated story, never the same copy pasted everywhere.`;
+  }
   return `${lead} ${strategy[goal]}`;
 }
 

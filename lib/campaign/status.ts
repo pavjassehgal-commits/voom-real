@@ -13,8 +13,8 @@
 
 import {
   actionChannelFamily,
-  CAMPAIGN_CHANNELS,
   CAMPAIGN_LIFECYCLE_LABELS,
+  LEGACY_DEFAULT_CAMPAIGN_CHANNELS,
   type CampaignActionChannel,
   type CampaignActionStatus,
   type CampaignChannel,
@@ -33,7 +33,13 @@ export type ActionExecutionState =
   | "executing"
   | "executed"
   | "failed"
-  | "skipped";
+  | "skipped"
+  /**
+   * Multi-Social Core: the content is ready on Voom's side but its channel's
+   * provider is not connected (TikTok/YouTube today), so it truthfully cannot
+   * execute. Blocked is never "published" and never silently dropped.
+   */
+  | "blocked";
 
 export const ACTION_EXECUTION_LABELS: Record<ActionExecutionState, string> = {
   proposed: "Draft",
@@ -44,6 +50,7 @@ export const ACTION_EXECUTION_LABELS: Record<ActionExecutionState, string> = {
   executed: "Done",
   failed: "Needs attention",
   skipped: "Skipped",
+  blocked: "Blocked — provider not connected",
 };
 
 export interface EmailActionFacts {
@@ -77,7 +84,26 @@ export interface InstagramActionFacts {
   scheduledFor: string;
 }
 
-export type ActionFacts = EmailActionFacts | InstagramActionFacts;
+/**
+ * Multi-Social Core facts for a TikTok or YouTube action.
+ *
+ * There is deliberately NO queue status: no TikTok/YouTube provider
+ * integration exists, so there is no execution machinery to derive from. An
+ * approved item is truthfully `blocked` (provider not connected) — it can
+ * never read as scheduled-for-execution, executing, or executed.
+ */
+export interface SocialActionFacts {
+  kind: "social";
+  channel: "tiktok" | "youtube";
+  planStatus: CampaignActionStatus;
+  /** mara_drafts.status, or null when the draft is missing. */
+  draftStatus: "draft" | "approved" | "rejected" | null;
+  /** Whether the draft has its video asset stored. */
+  hasAsset?: boolean;
+  scheduledFor: string;
+}
+
+export type ActionFacts = EmailActionFacts | InstagramActionFacts | SocialActionFacts;
 
 /**
  * How long after an action's proposed time it is "late" rather than still
@@ -87,7 +113,24 @@ export const ACTION_MISSED_GRACE_MINUTES = 20;
 
 export function deriveActionState(facts: ActionFacts): ActionExecutionState {
   if (facts.kind === "email") return deriveEmailState(facts);
+  if (facts.kind === "social") return deriveSocialState(facts);
   return deriveInstagramState(facts);
+}
+
+/**
+ * TikTok/YouTube derivation. Truthfulness rules:
+ *   - a missing draft is a real failure (the plan references nothing);
+ *   - a rejected draft is skipped;
+ *   - an unapproved draft follows the plan status (needs approval / draft);
+ *   - an APPROVED draft is `blocked`: everything on Voom's side is done, and
+ *     the honest reason it cannot run is that the provider is not connected.
+ *     It never becomes scheduled/executing/executed, and it is never faked.
+ */
+function deriveSocialState(facts: SocialActionFacts): ActionExecutionState {
+  if (!facts.draftStatus) return "failed";
+  if (facts.draftStatus === "rejected") return "skipped";
+  if (facts.draftStatus === "approved") return "blocked";
+  return facts.planStatus === "needs_approval" ? "needs_approval" : "proposed";
 }
 
 function deriveEmailState(facts: EmailActionFacts): ActionExecutionState {
@@ -171,8 +214,9 @@ export function deriveCampaignLifecycle(facts: CampaignLifecycleFacts): Campaign
 
   if (states.some((state) => PENDING_APPROVAL.has(state))) return "needs_approval";
 
-  // Everything is approved/scheduled and nothing has run yet.
-  if (states.every((state) => state === "approved" || state === "scheduled")) {
+  // Everything is approved/scheduled (or honestly blocked on an unconnected
+  // provider) and nothing has run yet.
+  if (states.every((state) => state === "approved" || state === "scheduled" || state === "blocked")) {
     return beforeStart ? "scheduled" : "active";
   }
 
@@ -221,6 +265,9 @@ export const TIMELINE_BUCKET_FOR_STATE: Record<ActionExecutionState, CampaignTim
   approved: "scheduled",
   scheduled: "scheduled",
   failed: "attention",
+  // An approved item on an unconnected provider is surfaced in the attention
+  // group: the user should see plainly that it cannot run yet.
+  blocked: "attention",
 };
 
 const TIMELINE_ORDER: readonly CampaignTimelineBucket[] = [
@@ -276,12 +323,18 @@ export function buildCampaignTimeline(actions: TimelineActionInput[]): CampaignT
   };
 }
 
-/** The campaign's authoritative channels, tolerating historical NULL rows. */
+/**
+ * The campaign's authoritative channels, tolerating historical NULL rows.
+ *
+ * A row with no stored selection falls back to the LEGACY Instagram + Email
+ * default — never to the full four-channel list — so a pre-Multi-Social
+ * campaign is never retroactively claimed to include TikTok or YouTube.
+ */
 export function campaignChannelsOf(stored: readonly string[] | null | undefined): CampaignChannel[] {
   const selected = (stored ?? []).filter((channel): channel is CampaignChannel =>
-    (CAMPAIGN_CHANNELS as readonly string[]).includes(channel),
+    (LEGACY_DEFAULT_CAMPAIGN_CHANNELS.concat(["tiktok", "youtube"]) as readonly string[]).includes(channel),
   );
-  return selected.length ? selected : [...CAMPAIGN_CHANNELS];
+  return selected.length ? selected : [...LEGACY_DEFAULT_CAMPAIGN_CHANNELS];
 }
 
 /** Presentation order for the timeline groups: past → present → future. */
@@ -307,6 +360,7 @@ export function actionStateTone(state: ActionExecutionState): string {
     case "approved": return "t-blue";
     case "failed": return "t-red";
     case "needs_approval": return "t-amber";
+    case "blocked": return "t-amber";
     case "skipped": return "t-grey";
     default: return "t-grey";
   }

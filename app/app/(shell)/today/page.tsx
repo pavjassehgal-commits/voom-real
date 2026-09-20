@@ -11,6 +11,8 @@ import { formatLocalDateTime } from "@/lib/voom/timezone";
 import type { EmailFlowSummary } from "@/lib/email-flows/types";
 import { getOperatingData } from "@/lib/voom/operating-data";
 import { createClient } from "@/utils/supabase/server";
+import { createAdminClient } from "@/utils/supabase/admin";
+import { listSocialCalendarItems } from "@/lib/social/server-drafts";
 import type { WorkflowView } from "@/lib/voom/workflow/read";
 import { formatLocalDate } from "@/lib/voom/timezone";
 
@@ -20,6 +22,10 @@ export const dynamic = "force-dynamic";
  * Today is the operational command centre. Every row on this page is a real
  * workflow item from the ONE executable plan — never a disconnected marketing
  * recommendation — and every date is the account's real current local date.
+ *
+ * Multi-Social Core: Today also lists the approved TikTok/YouTube planning
+ * drafts that are dated today, labelled truthfully — they are approved inside
+ * Voom, and publishing those channels is not connected yet.
  */
 export default async function TodayPage() {
   const data = await getOperatingData();
@@ -36,6 +42,13 @@ export default async function TodayPage() {
   // Real lifecycle state for the card below. `available` is false when the
   // 0040 migration is not applied, and then nothing is rendered at all.
   const lifecycle = await readEmailFlowSummary(sessionDb, data.user.id);
+  // Multi-Social Core: approved + scheduled TikTok/YouTube drafts dated today.
+  // A failure here must never blank the page — the Instagram workflow is the
+  // critical path, so the social section degrades to empty.
+  const admin = createAdminClient();
+  const socialToday = await listSocialCalendarItems(admin, data.user.id)
+    .then((items) => items.filter((item) => item.localDate === snapshot.today))
+    .catch(() => []);
 
   return <div>
     <PageHead
@@ -65,6 +78,7 @@ export default async function TodayPage() {
         <Stat label="Published" value={summary.published.length} />
         <Stat label="Missed" value={summary.missed.length} />
         <Stat label="Needs attention" value={summary.failed.length} />
+        {socialToday.length > 0 && <Stat label="TikTok/YouTube today" value={socialToday.length} />}
       </div>
     </Card>
 
@@ -78,6 +92,30 @@ export default async function TodayPage() {
 
     <Section title="Publishing today" icon="clock" href="/app/calendar" action="Open Content Calendar" items={summary.publishingToday}
       empty="Nothing is due to publish today." />
+    {socialToday.length > 0 && (
+      <Card className="mb-4 p-5 sm:p-6">
+        <div className="mb-4 flex items-center gap-2">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-[var(--brand-soft)] text-brand"><Icon name="play" size={18} /></span>
+          <h2 className="font-display text-base font-semibold">Approved for today · TikTok &amp; YouTube</h2>
+          <Tag tone="t-grey">{socialToday.length}</Tag>
+        </div>
+        <div className="space-y-2">
+          {socialToday.map((item) => (
+            <div key={item.draftId} className="flex flex-wrap items-center gap-2.5 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5">
+              <span className="min-w-[110px] text-xs font-semibold text-text-2">{item.dayLabel} · {item.localTime}</span>
+              <Tag tone="t-blue">{item.contentTypeLabel}</Tag>
+              <b className="min-w-0 flex-1 truncate text-sm">{item.concept}</b>
+              <Tag tone="t-amber">Approved — publishing not connected yet</Tag>
+            </div>
+          ))}
+        </div>
+        <p className="mt-3 text-[11.5px] leading-relaxed text-text-3">
+          These items are planned and approved inside Voom. TikTok and YouTube publishing connections do not exist
+          yet, so nothing is posted externally and Voom never claims it was.
+        </p>
+        <Link href="/app/calendar" className="mt-1 inline-flex text-sm font-semibold text-brand hover:underline">Open Content Calendar →</Link>
+      </Card>
+    )}
     <Section title="Needs your approval" icon="warn" href="/app/approvals" action="Open Approvals" items={summary.needsApproval}
       empty="Nothing needs your decision right now." />
     <Section title="Being generated" icon="spark" href="/app/calendar" action="View schedule" items={summary.generating}
