@@ -34,11 +34,14 @@ import {
   localDate,
   localToUtcIso,
 } from "@/lib/voom/timezone";
-import { CAMPAIGN_MIN_LEAD_MINUTES, enforceCampaignTiming } from "./planner";
+import { CAMPAIGN_MIN_LEAD_MINUTES, enforceCampaignTiming, resolvePlanChannels } from "./planner";
 import {
+  actionChannelFamily,
+  CAMPAIGN_ACTION_CHANNELS,
   MAX_CAMPAIGN_ACTIONS,
   type CampaignBrandContext,
   type CampaignBrief,
+  type CampaignChannel,
   type PlannedAction,
   type PlannedCampaignSummary,
   type PlannerAudience,
@@ -209,14 +212,17 @@ export const CAMPAIGN_INTELLIGENCE_SYSTEM_PROMPT = `You are MARA, Voom's practic
 
 The campaign STRUCTURE is already decided and is not yours to change. You receive a skeleton: an ordered list of slots, each with a fixed channel (email, instagram_post, instagram_reel or instagram_story), a fixed campaign day and a proposed time. Your job is the strategy and the content inside that structure.
 
+The campaign also has AUTHORITATIVE CHANNELS in campaign.selectedChannels ("instagram", "email", or both) and a channelPlan. Those channels are the whole campaign. When channelPlan is "instagram_only" or "email_only", never write about, promise, or refer to the channel that is not selected. When it is "multichannel", the two channels are ONE coordinated sequence, not two separate plans.
+
 Return JSON only, matching the requested schema exactly.
 
 Hard rules:
 - Return exactly one action object per skeleton slot, with the SAME slot index and the SAME channel. Never add slots, never drop slots, never change a channel, never reorder.
 - Only fill "email" for email slots and only fill "instagram" for Instagram slots; the other must be null.
+- Follow campaign.channelRules exactly.
 - Write like this specific business. Never invent prices, discounts, offers, opening hours, locations, statistics, reviews, awards, guarantees or claims that are not in the supplied context.
 - ctaUrl must be a real destination that appears in the supplied context, otherwise null. Never invent a URL.
-- Email and Instagram must complement each other, not repeat. An Instagram caption must never restate an email body, and two actions must never carry the same caption, body or CTA. Vary the angle per stage: announce, then explain the benefit, then proof, then a final clear next step.
+- In a multichannel campaign, email and Instagram must complement each other, not repeat: an Instagram caption must never restate an email body. In any campaign, two actions must never carry the same caption, body or CTA. Vary the angle per stage: announce, then explain the benefit, then proof, then a final clear next step.
 - Every email needs a specific subject (never a bare teaser), a preview text that extends it, a concise plain-text body of 80-250 words, and one clear CTA.
 - Every Instagram action needs a concept, a hook, a full caption and a CTA. For a Reel, "script" must be a short shot-by-shot sequence (3-6 lines) and "visualDirection" must describe what to film. For Posts and Stories "script" must be an empty array. Instagram Stories carry no hashtags-heavy essay: keep them short.
 - proposedSendAt, when you set one, must stay inside the same campaign day as that slot's proposed time. Otherwise return null and the proposed time is kept.
@@ -282,6 +288,13 @@ export interface CampaignIntelligenceContextInput {
   performance: PlannerPerformanceInput | null;
   /** Workspace/business timezone used for every proposed instant. */
   timeZone?: string | null;
+  /**
+   * Campaigns v3: the campaign's authoritative channel selection. MARA is told
+   * which channels exist so a single-channel campaign never receives copy that
+   * references the other one, and a two-channel campaign is written as ONE
+   * coordinated sequence rather than two unrelated plans.
+   */
+  channels?: readonly CampaignChannel[] | null;
   now: Date;
   /**
    * Present only for a single-action "Regenerate draft with MARA": the action
@@ -305,6 +318,14 @@ export function buildCampaignIntelligenceContext(input: CampaignIntelligenceCont
   const brandVoice = (input.brand.brandPersonality ?? []).filter(Boolean).slice(0, 8);
   const timeZone = accountTimezone(input.timeZone);
   const today = localDate(input.now, timeZone);
+  // v3: MARA plans inside the campaign's own channel selection. The skeleton
+  // already only contains allowed channels; this makes the selection explicit
+  // so the copy never references a channel the campaign does not run on.
+  const channels = resolvePlanChannels(input.channels, input.brief);
+  const channelsAllowed = CAMPAIGN_ACTION_CHANNELS.filter(
+    (channel) => actionChannelFamily(channel) !== null && channels.includes(actionChannelFamily(channel) as CampaignChannel),
+  );
+  const channelPlan = channels.length > 1 ? "multichannel" : channels[0] === "email" ? "email_only" : "instagram_only";
 
   return {
     task: "fill_campaign_skeleton",
@@ -335,6 +356,11 @@ export function buildCampaignIntelligenceContext(input: CampaignIntelligenceCont
       endsOn: input.brief.endAt,
       timeZone,
       days: input.summary.days,
+      /** v3: the campaign's authoritative channels — never wider than this. */
+      selectedChannels: channels,
+      /** 'instagram_only' | 'email_only' | 'multichannel'. */
+      channelPlan,
+      channelRules: CAMPAIGN_CHANNEL_RULES[channelPlan],
       selectedAudience: input.selectedAudience
         ? { name: input.selectedAudience.name.slice(0, 120), eligibleEmailCount: input.selectedAudience.eligibleEmailCount ?? null }
         : null,
@@ -345,7 +371,7 @@ export function buildCampaignIntelligenceContext(input: CampaignIntelligenceCont
     skeleton: {
       days: input.summary.days,
       maxActions: MAX_CAMPAIGN_ACTIONS,
-      channelsAllowed: ["email", "instagram_post", "instagram_reel", "instagram_story"],
+      channelsAllowed,
       slots: input.skeleton.map((action) => ({
         slot: action.slot,
         channel: action.channel,
@@ -367,6 +393,23 @@ export function buildCampaignIntelligenceContext(input: CampaignIntelligenceCont
       : {}),
   };
 }
+
+/**
+ * Campaigns v3 — what each channel selection means for the copy MARA writes.
+ *
+ * A two-channel campaign is ONE coordinated sequence, not two plans that happen
+ * to share dates: Instagram carries the visible moments and email carries the
+ * detail and the follow-up, each referencing the other's role without repeating
+ * its words.
+ */
+export const CAMPAIGN_CHANNEL_RULES: Record<string, string> = {
+  multichannel:
+    "This campaign runs on Instagram AND email as ONE coordinated sequence. Order the story across both: an awareness Instagram moment, then the email that explains it, then a reminder Instagram moment, then the follow-up email. Each channel does what it is best at — Instagram earns attention, email carries detail and the direct next step. Never restate an email body in a caption or a caption in an email body.",
+  instagram_only:
+    "This campaign runs on Instagram ONLY. Write every action as an Instagram moment. Never mention an email, a newsletter, an inbox, a subject line or 'we'll email you'. Carry the whole sequence visually: announce, explain the benefit, prove it, then close.",
+  email_only:
+    "This campaign runs on email ONLY. Write every action as an email. Never mention a Reel, a Story, a feed post, a caption or 'see our Instagram'. Carry the whole sequence in the inbox: announce, explain the benefit, then close with one clear next step.",
+};
 
 /** Truthful per-mode statement of what this build may and may not do. */
 export const AUTOMATION_MODE_RULES: Record<string, string> = {
@@ -400,6 +443,12 @@ export interface ApplyIntelligenceInput {
   intelligence: MaraCampaignIntelligence | null;
   /** Workspace/business timezone; defaults to the account timezone. */
   timeZone?: string | null;
+  /**
+   * Campaigns v3: the campaign's authoritative channels. Used as a second
+   * defence — an action outside the selection keeps its deterministic draft and
+   * can never be widened by MARA's reply.
+   */
+  channels?: readonly CampaignChannel[] | null;
   now?: Date;
 }
 
@@ -437,6 +486,7 @@ export function applyCampaignIntelligence(input: ApplyIntelligenceInput): ApplyI
   const skeleton = [...input.skeleton].sort((a, b) => a.slot - b.slot);
   const intelligence = input.intelligence;
   const fallbackSlots: number[] = [];
+  const channels = resolvePlanChannels(input.channels, input.brief);
 
   const bySlot = new Map<number, MaraCampaignActionContent>();
   for (const action of intelligence?.actions ?? []) {
@@ -449,6 +499,15 @@ export function applyCampaignIntelligence(input: ApplyIntelligenceInput): ApplyI
   const merged: EnrichedCampaignAction[] = skeleton.map((base) => {
     const candidate = bySlot.get(base.slot);
     const deterministic = withSafety(enrichDeterministic(base), now);
+
+    // v3: the campaign's own channel selection is authoritative. An action
+    // outside it keeps its deterministic draft — MARA can never widen the
+    // channels a campaign runs on.
+    const family = actionChannelFamily(base.channel);
+    if (!family || !channels.includes(family)) {
+      fallbackSlots.push(base.slot);
+      return deterministic;
+    }
 
     // A missing slot, a channel MARA changed, or a payload for the wrong
     // channel: the deterministic draft stands.

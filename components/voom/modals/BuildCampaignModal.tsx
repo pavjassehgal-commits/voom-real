@@ -2,11 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useModal } from "@/lib/voom/modal";
-import { addDays, daysBetween } from "@/lib/voom/timezone";
+import { addDays, daysBetween, localToUtcIso } from "@/lib/voom/timezone";
 import type { AudienceRecord } from "@/lib/contacts/types";
 import {
+  CAMPAIGN_CHANNEL_CHOICES,
   CAMPAIGN_GOALS,
   CAMPAIGN_GOAL_LABELS,
+  type CampaignActionChannel,
+  type CampaignChannel,
   type CampaignGoal,
 } from "@/lib/campaign/types";
 import { Icon } from "../icons";
@@ -14,13 +17,90 @@ import { ModalBody, ModalFoot, ModalHead, ModalShell } from "../ui/Modal";
 import { Btn, Card, Field, Input, Tag, Textarea } from "../ui/primitives";
 
 /**
- * The guided "tell Voom what you want" flow. Four required inputs (idea,
- * goal, start date, end date); everything else is optional. MARA builds the
- * whole Instagram + email timeline on the server. Nothing is sent or
- * published by the build.
+ * The ONE campaign creation flow (Campaigns v3).
+ *
+ * Two creation paths write the same campaign model:
+ *   - Create with MARA: the guided brief; MARA plans a coordinated sequence
+ *     inside the channels you selected.
+ *   - Create myself: you write the actions directly. No provider is called.
+ *
+ * One campaign, one timeline, one workspace — the channels you pick decide which
+ * actions live inside it, not which page you are on. Building only ever creates
+ * drafts: nothing is sent, nothing is published and no paid media credit is
+ * spent here. Your automation mode (Manual / Assisted / Autopilot) is a separate
+ * setting and still decides what happens next.
  */
+
+/** How a campaign is created — deliberately not an automation-mode word. */
+const CREATION_PATHS = [
+  { id: "mara", label: "Create with MARA" },
+  { id: "self", label: "Create myself" },
+] as const;
+
+type CreationPath = (typeof CREATION_PATHS)[number]["id"];
+
+const INSTAGRAM_FORMATS = [
+  { id: "post", label: "Post" },
+  { id: "reel", label: "Reel" },
+  { id: "story", label: "Story" },
+] as const;
+
+type InstagramFormat = (typeof INSTAGRAM_FORMATS)[number]["id"];
+
+interface DraftAction {
+  id: string;
+  family: CampaignChannel;
+  format: InstagramFormat;
+  /** Business-local calendar date. */
+  date: string;
+  /** Business-local wall-clock time. */
+  time: string;
+  title: string;
+  subject: string;
+  previewText: string;
+  body: string;
+  cta: string;
+  caption: string;
+}
+
+type ChannelChoice = (typeof CAMPAIGN_CHANNEL_CHOICES)[number]["id"];
+
+function actionChannelOf(action: DraftAction): CampaignActionChannel {
+  if (action.family === "email") return "email";
+  return `instagram_${action.format}` as CampaignActionChannel;
+}
+
+/** The authoritative channels behind one picker value — and never anything else. */
+function channelsForChoice(choice: ChannelChoice): CampaignChannel[] {
+  const found = CAMPAIGN_CHANNEL_CHOICES.find((option) => option.id === choice);
+  return found ? [...found.channels] : ["instagram", "email"];
+}
+
+/**
+ * A campaign only ever contains actions on channels it selected, so narrowing the
+ * selection re-points any drafted action that would now be invalid instead of
+ * leaving it. This runs inside the same click as the change — no effect, so no
+ * extra render pass and no window where the two disagree.
+ */
+function reconcileActions(actions: DraftAction[], channels: CampaignChannel[]): DraftAction[] {
+  const allowsInstagram = channels.includes("instagram");
+  const allowsEmail = channels.includes("email");
+  return actions.map((action) => {
+    if (action.family === "email" && !allowsEmail) return { ...action, family: "instagram" };
+    if (action.family === "instagram" && !allowsInstagram) return { ...action, family: "email" };
+    return action;
+  });
+}
+
+function timeToMinutes(time: string): number {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time.trim());
+  return match ? Number(match[1]) * 60 + Number(match[2]) : 9 * 60;
+}
+
 export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string) => void }) {
   const { close } = useModal();
+  const [path, setPath] = useState<CreationPath>("mara");
+  const [channelChoice, setChannelChoice] = useState<ChannelChoice>("both");
   const [name, setName] = useState("");
   const [goal, setGoal] = useState<CampaignGoal>("drive_sales");
   // The server's workflow snapshot is the source of truth for the business
@@ -34,8 +114,13 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
   const [notes, setNotes] = useState("");
   const [audienceId, setAudienceId] = useState("");
   const [audiences, setAudiences] = useState<AudienceRecord[]>([]);
+  const [draftActions, setDraftActions] = useState<DraftAction[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  const channels = channelsForChoice(channelChoice);
+  const allowsInstagram = channels.includes("instagram");
+  const allowsEmail = channels.includes("email");
 
   useEffect(() => {
     let cancelled = false;
@@ -77,13 +162,58 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
     return daysBetween(startDate, endDate) + 1;
   }, [startDate, endDate]);
 
-  async function build() {
+  /** Changing the channels and re-pointing any now-invalid draft is one act. */
+  function chooseChannels(choice: ChannelChoice) {
+    const next = channelsForChoice(choice);
+    setChannelChoice(choice);
+    setDraftActions((current) => reconcileActions(current, next));
+  }
+
+  function addAction() {
+    const family: CampaignChannel = allowsInstagram ? "instagram" : "email";
+    setDraftActions((current) => [...current, {
+      id: crypto.randomUUID(),
+      family,
+      format: "post",
+      date: startDate || today,
+      time: family === "email" ? "10:00" : "18:00",
+      title: "",
+      subject: "",
+      previewText: "",
+      body: "",
+      cta: "",
+      caption: "",
+    }]);
+  }
+
+  function patchAction(id: string, patch: Partial<DraftAction>) {
+    setDraftActions((current) => current.map((action) => (action.id === id ? { ...action, ...patch } : action)));
+  }
+
+  function removeAction(id: string) {
+    setDraftActions((current) => current.filter((action) => action.id !== id));
+  }
+
+  async function submit() {
     setError("");
     if (!name.trim()) { setError("Give the campaign a name or a short idea first."); return; }
     if (!today) { setError("Your business calendar is still loading. Please retry in a moment."); return; }
     if (!startDate || !endDate) { setError("Choose a start and end date."); return; }
     if (span < 1) { setError("The end date must be on or after the start date."); return; }
-    if (span > 60) { setError("Keep the campaign to 60 days or fewer for v1."); return; }
+    if (span > 60) { setError("Keep the campaign to 60 days or fewer."); return; }
+
+    if (path === "self") {
+      for (const action of draftActions) {
+        if (!action.title.trim()) { setError("Every action needs a title."); return; }
+        if (!action.date || !action.time) { setError("Every action needs a date and time."); return; }
+        if (action.family === "email" && (!action.subject.trim() || !action.body.trim())) {
+          setError("Every email action needs a subject and a body.");
+          return;
+        }
+      }
+      const emails = draftActions.filter((action) => action.family === "email").length;
+      if (emails > 4) { setError("Keep a campaign to 4 emails or fewer."); return; }
+    }
 
     setBusy(true);
     try {
@@ -101,18 +231,39 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
           notes: notes.trim(),
           audienceId: audienceId || null,
           idempotencyKey,
+          // Campaigns v3: which path created it, and the channels it runs on.
+          creationMethod: path,
+          channels,
+          ...(path === "self"
+            ? {
+                actions: draftActions.map((action) => ({
+                  channel: actionChannelOf(action),
+                  title: action.title.trim(),
+                  scheduledFor: localToUtcIso(action.date, timeToMinutes(action.time), timeZone),
+                  ...(action.family === "email"
+                    ? {
+                        subject: action.subject.trim(),
+                        previewText: action.previewText.trim(),
+                        body: action.body.trim(),
+                        cta: action.cta.trim(),
+                        audienceId: audienceId || null,
+                      }
+                    : { caption: action.caption.trim() }),
+                })),
+              }
+            : {}),
         }),
       });
       const data = await response.json() as { campaignId?: string; message?: string; error?: string };
       if (!response.ok || !data.campaignId) {
-        setError(data.error ?? "MARA couldn't build that campaign. Please retry.");
+        setError(data.error ?? "Voom couldn't create that campaign. Please retry.");
         return;
       }
       window.dispatchEvent(new Event("voom:data-changed"));
       close();
       onBuilt?.(data.campaignId);
     } catch {
-      setError("MARA couldn't build that campaign. Please retry.");
+      setError("Voom couldn't create that campaign. Please retry.");
     } finally {
       setBusy(false);
     }
@@ -121,36 +272,47 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
   return (
     <ModalShell wide>
       <ModalHead
-        title="Build campaign with MARA"
-        sub="Tell Voom what you want · MARA builds the Instagram + email timeline · you review and approve"
+        title="New campaign"
+        sub="One campaign, one timeline · choose your channels, then create it with MARA or write it yourself"
         onClose={close}
       />
       <ModalBody>
         {error && <div role="alert" className="mb-3.5 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-sm text-red">{error}</div>}
 
-        <Field label="Campaign name or short idea" hint="One line is enough — MARA works out the details.">
+        <Field label="How do you want to create it?" hint="Both paths create the same campaign. Your automation mode is a separate setting.">
+          <PillGroup
+            ariaLabel="Creation path"
+            value={path}
+            options={CREATION_PATHS.map((option) => ({ id: option.id, label: option.label }))}
+            onChange={(value) => setPath(value as CreationPath)}
+          />
+        </Field>
+
+        <Field label="Channels" hint="A campaign holds coordinated actions across the channels you select.">
+          <PillGroup
+            ariaLabel="Campaign channels"
+            value={channelChoice}
+            options={CAMPAIGN_CHANNEL_CHOICES.map((choice) => ({ id: choice.id, label: choice.label }))}
+            onChange={(value) => chooseChannels(value as ChannelChoice)}
+          />
+        </Field>
+
+        <Field label="Campaign name or short idea" hint={path === "self" ? "One line is enough." : "One line is enough — MARA works out the details."}>
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
             maxLength={160}
-            placeholder="e.g. Launch our autumn collection with a 10% intro offer"
+            placeholder="e.g. Summer Sale with a 10% intro offer"
           />
         </Field>
 
         <Field label="Goal">
-          <div className="flex flex-wrap gap-1.5">
-            {CAMPAIGN_GOALS.map((value) => (
-              <button
-                type="button"
-                key={value}
-                onClick={() => setGoal(value)}
-                className={`rounded-full border px-3.5 py-1.5 text-[13px] font-semibold transition ${goal === value ? "border-brand bg-[var(--brand-soft)] text-brand" : "border-line bg-surface-2 text-text-2 hover:border-line-2"}`}
-                aria-pressed={goal === value}
-              >
-                {CAMPAIGN_GOAL_LABELS[value]}
-              </button>
-            ))}
-          </div>
+          <PillGroup
+            ariaLabel="Campaign goal"
+            value={goal}
+            options={CAMPAIGN_GOALS.map((value) => ({ id: value, label: CAMPAIGN_GOAL_LABELS[value] }))}
+            onChange={(value) => setGoal(value as CampaignGoal)}
+          />
         </Field>
 
         <div className="grid gap-3 sm:grid-cols-3">
@@ -165,51 +327,226 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
           </div>
         </div>
 
-        <Field label="Offer, discount or details (optional)" hint="If there is an offer, MARA will place it in the conversion emails and reminders.">
-          <Input value={offerDetails} onChange={(e) => setOfferDetails(e.target.value)} maxLength={1000} placeholder="e.g. 10% off for first-time buyers, free delivery over AED 150" />
-        </Field>
+        {path === "mara" && (
+          <>
+            <Field label="Offer, discount or details (optional)" hint="If there is an offer, MARA will place it in the conversion emails and reminders.">
+              <Input value={offerDetails} onChange={(e) => setOfferDetails(e.target.value)} maxLength={1000} placeholder="e.g. 10% off for first-time buyers, free delivery over AED 150" />
+            </Field>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Target audience (optional)" hint="Free-text — who is this for?">
-            <Input value={targetAudience} onChange={(e) => setTargetAudience(e.target.value)} maxLength={1000} placeholder="e.g. lapsed customers from the last 6 months" />
-          </Field>
-          <Field label="Saved audience for emails (optional)">
-            <select
-              className="h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px] text-text outline-none focus:border-brand focus:bg-surface focus:ring-4 focus:ring-[var(--brand-soft)]"
-              value={audienceId}
-              onChange={(e) => setAudienceId(e.target.value)}
-            >
-              <option value="">No saved audience</option>
-              {audiences.map((audience) => (
-                <option key={audience.id} value={audience.id}>{audience.name}</option>
-              ))}
-            </select>
-          </Field>
-        </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Target audience (optional)" hint="Free-text — who is this for?">
+                <Input value={targetAudience} onChange={(e) => setTargetAudience(e.target.value)} maxLength={1000} placeholder="e.g. lapsed customers from the last 6 months" />
+              </Field>
+              <Field label="Saved audience for emails (optional)">
+                <AudienceSelect value={audienceId} audiences={audiences} onChange={setAudienceId} disabled={!allowsEmail} />
+              </Field>
+            </div>
 
-        <Field label="Additional notes for MARA (optional)">
-          <Textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={2000} placeholder="Anything else — a product angle, dates to avoid, tone guidance…" />
-        </Field>
+            <Field label="Additional notes for MARA (optional)">
+              <Textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={2000} placeholder="Anything else — a product angle, dates to avoid, tone guidance…" />
+            </Field>
 
-        <Card className="border-line-2 bg-surface-2 p-3.5">
-          <div className="flex items-start gap-2.5">
-            <Icon name="info" className="mt-0.5 flex-none text-brand" size={16} />
-            <p className="text-[12.5px] leading-[1.6] text-text-2">
-              MARA builds a timed mix of Instagram Posts, Reels, Stories and email drafts using your goal, dates,
-              business context and — when real data exists — your recent Instagram performance. Building only
-              creates drafts: no email is sent, nothing is published, and no paid media credits are spent. Your
-              automation mode decides whether anything is pre-approved; every external action still follows the
-              existing approval and safety rules.
-            </p>
-          </div>
-        </Card>
+            <Card className="border-line-2 bg-surface-2 p-3.5">
+              <div className="flex items-start gap-2.5">
+                <Icon name="info" className="mt-0.5 flex-none text-brand" size={16} />
+                <p className="text-[12.5px] leading-[1.6] text-text-2">
+                  MARA builds a timed sequence inside the channels you selected — for an Instagram + Email campaign that
+                  is one coordinated story (an Instagram moment, the email that explains it, a reminder, the follow-up),
+                  not two separate plans. Building only creates drafts: no email is sent, nothing is published, and no
+                  paid media credits are spent. Your automation mode decides whether anything is pre-approved; every
+                  external action still follows the existing approval and safety rules.
+                </p>
+              </div>
+            </Card>
+          </>
+        )}
+
+        {path === "self" && (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Offer, discount or details (optional)">
+                <Input value={offerDetails} onChange={(e) => setOfferDetails(e.target.value)} maxLength={1000} placeholder="e.g. 10% off for first-time buyers" />
+              </Field>
+              <Field label="Saved audience for emails (optional)">
+                <AudienceSelect value={audienceId} audiences={audiences} onChange={setAudienceId} disabled={!allowsEmail} />
+              </Field>
+            </div>
+
+            <Field label="Campaign notes (optional)">
+              <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={2000} placeholder="Anything you want to remember about this campaign…" />
+            </Field>
+
+            <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <b className="font-display text-[14.5px]">Your actions</b>
+                <p className="text-[12.5px] text-text-3">
+                  Each action belongs to this one campaign and runs on a channel you selected. You can add more later.
+                </p>
+              </div>
+              <Btn variant="outline" size="sm" onClick={addAction} disabled={!today}>
+                <Icon name="plus" size={14} /> Add action
+              </Btn>
+            </div>
+
+            {draftActions.length === 0 ? (
+              <p className="mt-3 rounded-xl border border-line bg-surface-2 px-3.5 py-4 text-center text-[13px] text-text-3">
+                No actions yet. Add the Instagram moments and emails you want, in the order you want them.
+              </p>
+            ) : (
+              <div className="mt-3 space-y-2.5">
+                {draftActions.map((action, index) => (
+                  <Card key={action.id} className="p-3.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <Tag tone="t-grey">Action {index + 1}</Tag>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {allowsInstagram && allowsEmail && (
+                          <PillGroup
+                            compact
+                            ariaLabel={`Action ${index + 1} channel`}
+                            value={action.family}
+                            options={[{ id: "instagram", label: "Instagram" }, { id: "email", label: "Email" }]}
+                            onChange={(value) => patchAction(action.id, { family: value as CampaignChannel })}
+                          />
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeAction(action.id)}
+                          className="rounded-full border border-line px-2.5 py-1 text-[12px] font-semibold text-text-3 hover:border-red/40 hover:text-red"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mt-2.5 grid gap-2.5 sm:grid-cols-[1fr_auto_auto]">
+                      <Field label="Title">
+                        <Input value={action.title} onChange={(e) => patchAction(action.id, { title: e.target.value })} maxLength={160} placeholder={action.family === "email" ? "e.g. Summer Sale starts Tuesday" : "e.g. Summer Sale Reel"} />
+                      </Field>
+                      <Field label="Date">
+                        <Input type="date" value={action.date} min={startDate || today || undefined} max={endDate || undefined} onChange={(e) => patchAction(action.id, { date: e.target.value })} disabled={!today} />
+                      </Field>
+                      <Field label="Time">
+                        <Input type="time" value={action.time} onChange={(e) => patchAction(action.id, { time: e.target.value })} disabled={!today} />
+                      </Field>
+                    </div>
+
+                    {action.family === "instagram" ? (
+                      <>
+                        <Field label="Format">
+                          <PillGroup
+                            compact
+                            ariaLabel={`Action ${index + 1} format`}
+                            value={action.format}
+                            options={INSTAGRAM_FORMATS.map((format) => ({ id: format.id, label: format.label }))}
+                            onChange={(value) => patchAction(action.id, { format: value as InstagramFormat })}
+                          />
+                        </Field>
+                        <Field label="Caption" hint={action.format === "reel" ? "You can add the shot list later in the campaign workspace." : "You can edit this later in the campaign workspace."}>
+                          <Textarea rows={3} value={action.caption} onChange={(e) => patchAction(action.id, { caption: e.target.value })} maxLength={2200} placeholder="What this post says…" />
+                        </Field>
+                      </>
+                    ) : (
+                      <>
+                        <div className="grid gap-2.5 sm:grid-cols-2">
+                          <Field label="Subject">
+                            <Input value={action.subject} onChange={(e) => patchAction(action.id, { subject: e.target.value })} maxLength={300} placeholder="e.g. Our Summer Sale is live" />
+                          </Field>
+                          <Field label="Preview text (optional)">
+                            <Input value={action.previewText} onChange={(e) => patchAction(action.id, { previewText: e.target.value })} maxLength={500} />
+                          </Field>
+                        </div>
+                        <Field label="Body" hint="Sent through your branded email template. Nothing is sent until you explicitly send it.">
+                          <Textarea rows={4} value={action.body} onChange={(e) => patchAction(action.id, { body: e.target.value })} maxLength={12000} placeholder="Write the email…" />
+                        </Field>
+                        <Field label="Call to action (optional)">
+                          <Input value={action.cta} onChange={(e) => patchAction(action.id, { cta: e.target.value })} maxLength={160} placeholder="e.g. Shop the sale" />
+                        </Field>
+                      </>
+                    )}
+                  </Card>
+                ))}
+              </div>
+            )}
+
+            <Card className="mt-3 border-line-2 bg-surface-2 p-3.5">
+              <div className="flex items-start gap-2.5">
+                <Icon name="info" className="mt-0.5 flex-none text-brand" size={16} />
+                <p className="text-[12.5px] leading-[1.6] text-text-2">
+                  Creating a campaign yourself saves drafts only. Each action still needs its normal next step: an email
+                  needs your explicit send, and an Instagram action needs a visual and a schedule. Nothing is sent,
+                  published or paid for here, and your automation mode still decides what is pre-approved.
+                </p>
+              </div>
+            </Card>
+          </>
+        )}
       </ModalBody>
       <ModalFoot className="justify-between">
         <Btn variant="ghost" onClick={close}>Cancel</Btn>
-        <Btn variant="primary" disabled={busy || !today} onClick={() => void build()}>
-          <Icon name="spark" size={14} /> {busy ? "MARA is building…" : "Build campaign with MARA"}
+        <Btn variant="primary" disabled={busy || !today} onClick={() => void submit()}>
+          <Icon name={path === "mara" ? "spark" : "plus"} size={14} />
+          {busy
+            ? (path === "mara" ? "MARA is building…" : "Saving…")
+            : (path === "mara" ? "Build campaign with MARA" : "Create campaign myself")}
         </Btn>
       </ModalFoot>
     </ModalShell>
+  );
+}
+
+/** The segmented pill control the goal picker already uses. */
+function PillGroup({
+  value,
+  options,
+  onChange,
+  ariaLabel,
+  compact,
+}: {
+  value: string;
+  options: ReadonlyArray<{ id: string; label: string }>;
+  onChange: (value: string) => void;
+  ariaLabel: string;
+  compact?: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label={ariaLabel}>
+      {options.map((option) => (
+        <button
+          type="button"
+          key={option.id}
+          onClick={() => onChange(option.id)}
+          aria-pressed={value === option.id}
+          className={`rounded-full border font-semibold transition ${compact ? "px-2.5 py-1 text-[12px]" : "px-3.5 py-1.5 text-[13px]"} ${value === option.id ? "border-brand bg-[var(--brand-soft)] text-brand" : "border-line bg-surface-2 text-text-2 hover:border-line-2"}`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AudienceSelect({
+  value,
+  audiences,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  audiences: AudienceRecord[];
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <select
+      className="h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px] text-text outline-none focus:border-brand focus:bg-surface focus:ring-4 focus:ring-[var(--brand-soft)] disabled:opacity-60"
+      value={disabled ? "" : value}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={disabled}
+    >
+      <option value="">{disabled ? "Email is not selected for this campaign" : "No saved audience"}</option>
+      {!disabled && audiences.map((audience) => (
+        <option key={audience.id} value={audience.id}>{audience.name}</option>
+      ))}
+    </select>
   );
 }

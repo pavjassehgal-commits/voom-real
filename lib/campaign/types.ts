@@ -27,10 +27,68 @@ export const CAMPAIGN_GOAL_LABELS: Record<CampaignGoal, string> = {
 };
 
 /**
- * The only campaign channels Automated Campaigns plan. SMS is intentionally
- * absent: SMS marketing was removed from the active Voom product. Historical
- * SMS rows remain readable through the legacy campaign surfaces, but no new
- * action can carry this channel.
+ * Campaigns v3 — the authoritative CHANNELS one campaign runs on.
+ *
+ * A campaign selects Instagram, Email, or both. Every action inside it must
+ * belong to one of its selected channels; the database enforces the same rule
+ * (migration 0045), so an invalid combination fails server-side rather than
+ * being silently dropped.
+ *
+ * Only these two values exist. Marketing messaging that Voom has retired can
+ * never be selected here, never appears in this list, and can never be written
+ * to `voom_campaigns.channels`: the allowlist below is the single authority the
+ * routes, the planner and the build RPC all consult.
+ */
+export const CAMPAIGN_CHANNELS = ["instagram", "email"] as const;
+
+export type CampaignChannel = (typeof CAMPAIGN_CHANNELS)[number];
+
+export const CAMPAIGN_CHANNEL_LABELS: Record<CampaignChannel, string> = {
+  instagram: "Instagram",
+  email: "Email",
+};
+
+/** The three selectable channel combinations, in product display order. */
+export const CAMPAIGN_CHANNEL_CHOICES: ReadonlyArray<{
+  id: "instagram" | "email" | "both";
+  channels: readonly CampaignChannel[];
+  label: string;
+}> = [
+  { id: "instagram", channels: ["instagram"], label: "Instagram" },
+  { id: "email", channels: ["email"], label: "Email" },
+  { id: "both", channels: ["instagram", "email"], label: "Instagram + Email" },
+];
+
+/**
+ * Campaigns v3 — HOW a campaign was created.
+ *
+ * This is a separate concept from the workspace AUTOMATION MODE
+ * (Manual / Assisted / Autopilot, `lib/voom/automation`) and must never be
+ * conflated with it:
+ *
+ *   creationMethod  who planned the campaign's actions  ('mara' | 'self')
+ *   automationMode  who is allowed to execute them      ('manual' | 'assisted' | 'autopilot')
+ *
+ * The value is deliberately NOT called "manual": Voom's Manual automation mode
+ * already means "the user controls execution", and a MARA-created campaign can
+ * run in Manual mode just as a self-created campaign can run in Autopilot.
+ * Neither creation method grants any execution permission on its own — the
+ * existing mode/entitlement/safety gating is the only thing that does.
+ */
+export const CAMPAIGN_CREATION_METHODS = ["mara", "self"] as const;
+
+export type CampaignCreationMethod = (typeof CAMPAIGN_CREATION_METHODS)[number];
+
+export const CAMPAIGN_CREATION_METHOD_LABELS: Record<CampaignCreationMethod, string> = {
+  mara: "Created with MARA",
+  self: "Created by you",
+};
+
+/**
+ * The only campaign channels Automated Campaigns plan. Retired messaging
+ * channels are intentionally absent: they were removed from the active Voom
+ * product. Historical rows remain readable through the legacy campaign
+ * surfaces, but no new action can carry such a channel.
  */
 export const CAMPAIGN_ACTION_CHANNELS = [
   "email",
@@ -157,6 +215,12 @@ export interface CampaignBrief {
   notes?: string;
   /** Optional owned audience id; email actions target it when present. */
   audienceId?: string | null;
+  /**
+   * Campaigns v3: the campaign's authoritative channel selection. Absent or
+   * null means no explicit choice, so the planner keeps deriving the mix from
+   * the goal and dates across BOTH active channels (the v2 behaviour).
+   */
+  channels?: readonly CampaignChannel[] | null;
 }
 
 /** One planned, not-yet-persisted campaign action. */
@@ -201,6 +265,8 @@ export interface PlannedCampaignSummary {
   reelCount: number;
   storyCount: number;
   instagramCount: number;
+  /** Campaigns v3: the channel selection this plan was built inside. */
+  channels?: CampaignChannel[];
   /** Compact, factual summary built from the real generated structure. */
   narrative: string;
   /** True only when real measured performance shaped the plan. */
@@ -223,6 +289,66 @@ export const MAX_EMAIL_ACTIONS = 4;
 
 export function isCampaignGoal(value: unknown): value is CampaignGoal {
   return typeof value === "string" && (CAMPAIGN_GOALS as readonly string[]).includes(value);
+}
+
+/**
+ * Maps one action channel to the campaign channel it belongs to.
+ *
+ * Returns `null` for anything that is not an active campaign action channel,
+ * which is how a retired or invented channel is rejected by every caller.
+ */
+export function actionChannelFamily(channel: unknown): CampaignChannel | null {
+  if (channel === "email") return "email";
+  if (channel === "instagram_post" || channel === "instagram_reel" || channel === "instagram_story") return "instagram";
+  return null;
+}
+
+export type CampaignChannelsResult =
+  | { ok: true; channels: CampaignChannel[] }
+  | { ok: false; reason: "empty" | "unknown_channel" | "duplicate_channel" };
+
+/**
+ * Validates a campaign's authoritative channel selection against the allowlist.
+ *
+ * `null`/`undefined` means "the caller made no explicit choice": the result is
+ * BOTH active channels, which preserves the existing v2 behaviour where the
+ * planner derives the mix from the goal and the dates. Anything else must be a
+ * non-empty subset of `CAMPAIGN_CHANNELS` with no repeats — a retired or
+ * invented channel is refused here, in the routes, and again in the database.
+ *
+ * The returned order is always the canonical `CAMPAIGN_CHANNELS` order, so the
+ * same selection always produces the same stored array.
+ */
+export function normalizeCampaignChannels(value: unknown): CampaignChannelsResult {
+  if (value === undefined || value === null) return { ok: true, channels: [...CAMPAIGN_CHANNELS] };
+  if (!Array.isArray(value)) return { ok: false, reason: "unknown_channel" };
+  if (value.length === 0) return { ok: false, reason: "empty" };
+  if (value.length > CAMPAIGN_CHANNELS.length) return { ok: false, reason: "duplicate_channel" };
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") return { ok: false, reason: "unknown_channel" };
+    const channel = entry.trim().toLowerCase();
+    if (!(CAMPAIGN_CHANNELS as readonly string[]).includes(channel)) {
+      return { ok: false, reason: "unknown_channel" };
+    }
+    if (seen.has(channel)) return { ok: false, reason: "duplicate_channel" };
+    seen.add(channel);
+  }
+  return { ok: true, channels: CAMPAIGN_CHANNELS.filter((channel) => seen.has(channel)) };
+}
+
+/** Creation method: 'mara' by default, 'self' only when explicitly asked. */
+export function normalizeCampaignCreationMethod(value: unknown): CampaignCreationMethod {
+  return value === "self" ? "self" : "mara";
+}
+
+/** True when an action channel is allowed by a campaign's channel selection. */
+export function isActionChannelAllowed(
+  channel: unknown,
+  channels: readonly CampaignChannel[],
+): boolean {
+  const family = actionChannelFamily(channel);
+  return family !== null && channels.includes(family);
 }
 
 // ─── Persisted / read-model shapes ─────────────────────────────────────────
@@ -254,6 +380,17 @@ export interface CampaignContainerRecord {
   strategy_summary: string | null;
   /** v2: which layer produced the campaign content. */
   generation_source: "deterministic" | "mara" | null;
+  /**
+   * v3: the campaign's authoritative channel selection (migration 0045).
+   * NULL only on historical rows that predate v3 and were never backfilled —
+   * every campaign container has one.
+   */
+  channels: CampaignChannel[] | null;
+  /**
+   * v3: how the campaign was created — 'mara' (planned by MARA) or 'self'
+   * (the user wrote the actions). Independent of the automation mode.
+   */
+  creation_method: CampaignCreationMethod;
   approved_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -367,14 +504,69 @@ export interface CampaignStrategyRecord {
   performanceNote: string | null;
 }
 
+/**
+ * Campaigns v3 — one entry of the unified campaign timeline.
+ *
+ * The timeline is DERIVED, never stored: it is the same action rows the read
+ * model already returns, ordered chronologically across Email and Instagram and
+ * bucketed by what the derived execution state actually means. There is no
+ * second copy of the state to go stale.
+ */
+export type CampaignTimelineBucket =
+  /** What already happened: sent/published, or deliberately skipped. */
+  | "done"
+  /** What is in flight right now: a send or a publish is running. */
+  | "active"
+  /** What needs the user's approval before it can run. */
+  | "needs_approval"
+  /** What is approved/scheduled and has not run yet. */
+  | "scheduled"
+  /** What failed and needs attention. */
+  | "attention";
+
+export interface CampaignTimelineEntry {
+  actionId: string;
+  slot: number;
+  channel: CampaignActionChannel;
+  /** The campaign channel this action belongs to. */
+  channelFamily: CampaignChannel;
+  title: string;
+  scheduledFor: string;
+  executionState: import("./status").ActionExecutionState;
+  executionLabel: string;
+  bucket: CampaignTimelineBucket;
+  canEditContent: boolean;
+  /** Durable execution identity for Performance Intelligence linkage. */
+  emailCampaignId: string | null;
+  draftId: string | null;
+}
+
+export interface CampaignTimeline {
+  /** Every action, chronological; `slot` is the deterministic tie-breaker. */
+  entries: CampaignTimelineEntry[];
+  done: CampaignTimelineEntry[];
+  active: CampaignTimelineEntry[];
+  needsApproval: CampaignTimelineEntry[];
+  scheduled: CampaignTimelineEntry[];
+  attention: CampaignTimelineEntry[];
+  /** The next thing that will happen, or null when nothing is pending. */
+  next: CampaignTimelineEntry | null;
+}
+
 /** The campaign detail's resolved business timezone. */
 export interface AutomatedCampaignView {
   /** Business timezone used to render and edit every proposed time. */
   timeZone: string;
   campaign: CampaignContainerRecord;
+  /** v3: the campaign's authoritative channel selection. */
+  channels: CampaignChannel[];
+  /** v3: 'mara' (planned by MARA) or 'self' (written by the user). */
+  creationMethod: CampaignCreationMethod;
   /** MARA's campaign strategy, or the deterministic fallback block (v2). */
   strategy: CampaignStrategyRecord | null;
   actions: CampaignActionView[];
+  /** v3: the unified chronological timeline across Email and Instagram. */
+  timeline: CampaignTimeline;
   lifecycle: CampaignLifecycle;
   lifecycleLabel: string;
   counts: {

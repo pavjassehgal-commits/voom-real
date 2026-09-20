@@ -387,7 +387,7 @@ test("per-action decisions change approval state only — email still needs its 
 
 // ─── SMS removal from the active product ──────────────────────────────────
 
-test("the campaign builder offers Email + Instagram with no SMS/channel picker at all", async () => {
+test("the campaign builder offers Instagram, Email, or both — and never a retired channel", async () => {
   const modal = await read("components/voom/modals/BuildCampaignModal.tsx");
   assert.match(modal, /Build campaign with MARA/);
   assert.match(modal, /name/);
@@ -395,9 +395,13 @@ test("the campaign builder offers Email + Instagram with no SMS/channel picker a
   assert.match(modal, /startDate/);
   assert.match(modal, /endDate/);
   assert.doesNotMatch(modal, /\bSMS\b|\bsms\b|phone|Twilio|ClickSend/);
-  // There is no multi-select of channels: the plan always covers both active
-  // channels based on goal/dates.
+  // Campaigns v3: the channel selection is a segmented choice over the SAME two
+  // active channels, not a free multi-select that could offer anything else.
   assert.doesNotMatch(modal, /type="checkbox"/);
+  assert.match(modal, /CAMPAIGN_CHANNEL_CHOICES/);
+  assert.match(modal, /Instagram \+ Email/);
+  // Both creation paths post to the one endpoint: one campaign model.
+  assert.match(modal, /creationMethod: path/);
   assert.match(modal, /\/api\/voom\/campaigns\/build/);
 });
 

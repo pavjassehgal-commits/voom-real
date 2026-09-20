@@ -34,6 +34,8 @@ import {
   type EnrichedCampaignAction,
 } from "./strategy";
 import {
+  buildCampaignTimeline,
+  campaignChannelsOf,
   deriveActionState,
   deriveCampaignLifecycle,
   lifecycleLabel,
@@ -47,11 +49,23 @@ import type {
   CampaignActionRecord,
   CampaignActionView,
   CampaignBrief,
+  CampaignChannel,
   CampaignContainerRecord,
+  CampaignCreationMethod,
+  CampaignGoal,
+  CampaignStage,
   CampaignStrategyRecord,
   PlannerPerformanceInput,
 } from "./types";
-import { CAMPAIGN_GOAL_LABELS } from "./types";
+import {
+  actionChannelFamily,
+  CAMPAIGN_GOAL_LABELS,
+  isActionChannelAllowed,
+  MAX_CAMPAIGN_ACTIONS,
+  MAX_EMAIL_ACTIONS,
+  normalizeCampaignChannels,
+  normalizeCampaignCreationMethod,
+} from "./types";
 
 type Db = SupabaseClient;
 type Admin = SupabaseClient;
@@ -67,6 +81,12 @@ export interface BuildAutomatedCampaignInput {
   /** Billing context is explicit in production; omitted in legacy/test seams. */
   planId?: PlanId | string | null;
   allowAutomaticPaidMedia?: boolean | null;
+  /**
+   * Campaigns v3: the campaign's authoritative channels. Omitted or null means
+   * the caller made no explicit choice, so MARA plans across both active
+   * channels exactly as v2 did. An invalid selection is refused.
+   */
+  channels?: readonly CampaignChannel[] | null;
   now?: Date;
   /**
    * Test seam for the text-AI provider. Production omits it and the existing
@@ -89,6 +109,32 @@ export interface BuildResult {
   fallbackSlots: number[];
   /** Why the text provider was not used, or null when it was. */
   intelligenceReason: string | null;
+  /** v3: the campaign's authoritative channels. */
+  channels: CampaignChannel[];
+  /** v3: how the campaign was created. Always "mara" on this path. */
+  creationMethod: CampaignCreationMethod;
+}
+
+/** Raised when a caller asks for channels a campaign cannot run on. */
+export class CampaignChannelsError extends Error {
+  constructor(reason: string) {
+    super("campaign_channels_invalid");
+    this.name = "CampaignChannelsError";
+    this.cause = reason;
+  }
+}
+
+/**
+ * Resolves the authoritative channel selection for a campaign write.
+ *
+ * One allowlist is consulted by the route, the planner, MARA's context and the
+ * build RPC, so a retired or invented channel is refused identically everywhere
+ * and can never reach the database.
+ */
+function resolveChannels(value: readonly CampaignChannel[] | null | undefined): CampaignChannel[] {
+  const normalized = normalizeCampaignChannels(value ?? null);
+  if (!normalized.ok) throw new CampaignChannelsError(normalized.reason);
+  return normalized.channels;
 }
 
 /**
@@ -193,7 +239,11 @@ export async function buildAutomatedCampaign(
     mainGoal: brand.main_goal,
   };
   const plannerPerformance = toPlannerPerformance(performance);
-  const brief = { ...input.brief, audienceId };
+  // v3: the campaign's authoritative channels. Resolved once, before anything
+  // plans, so the skeleton, MARA's context and the persisted container all
+  // agree. An invalid selection fails here rather than being silently widened.
+  const channels = resolveChannels(input.channels ?? input.brief.channels ?? null);
+  const brief = { ...input.brief, audienceId, channels };
 
   // 1) The deterministic skeleton. This is the safe structure: date range,
   //    action count, channels, action types and timing boundaries all come
@@ -205,6 +255,7 @@ export async function buildAutomatedCampaign(
     performance: plannerPerformance,
     timeZone,
     now,
+    channels,
   });
 
   const selectedAudience = audienceId ? audiences.find((audience) => audience.id === audienceId) ?? null : null;
@@ -225,6 +276,7 @@ export async function buildAutomatedCampaign(
     summary: plan.summary,
     performance: plannerPerformance,
     timeZone,
+    channels,
     now,
   });
   const generated = await generateCampaignIntelligence(context, input.deps ?? {});
@@ -239,6 +291,7 @@ export async function buildAutomatedCampaign(
     goalLabel,
     intelligence: generated.ok ? generated.intelligence : null,
     timeZone,
+    channels,
     now,
   });
 
@@ -323,6 +376,9 @@ export async function buildAutomatedCampaign(
         generationSource: merged.source,
         fallbackSlots: merged.fallbackSlots,
         performanceUsed: plan.summary.performanceUsed,
+        // v3: the authoritative channels and how this campaign was created.
+        channels,
+        creationMethod: "mara",
       },
       actions: actionsPayload,
     },
@@ -348,7 +404,432 @@ export async function buildAutomatedCampaign(
     fallbackSlots: merged.fallbackSlots,
     /** Truthful reason when MARA text generation was not used. */
     intelligenceReason: generated.ok ? null : generated.reason,
+    /** v3: the channels this campaign actually runs on. */
+    channels,
+    /** v3: this path is always a MARA-planned campaign. */
+    creationMethod: "mara",
   };
+}
+
+// ─── Campaigns v3: the "create myself" path ────────────────────────────────
+
+/** One action a user writes themselves instead of asking MARA to plan it. */
+export interface SelfCampaignActionInput {
+  /** Instagram Post / Reel / Story, or Email. */
+  channel: CampaignActionChannel;
+  stage?: CampaignStage;
+  title: string;
+  purpose?: string;
+  /** Absolute ISO-8601 instant; resolved in the business timezone. */
+  scheduledFor: string;
+  // Email deliverable ------------------------------------------------------
+  subject?: string;
+  previewText?: string;
+  body?: string;
+  cta?: string;
+  ctaUrl?: string | null;
+  audienceId?: string | null;
+  // Instagram deliverable --------------------------------------------------
+  caption?: string;
+  concept?: string;
+}
+
+export interface CreateSelfCampaignInput {
+  brief: CampaignBrief;
+  /** The user's own actions. May be empty: a campaign can grow action by action. */
+  actions: SelfCampaignActionInput[];
+  /** Saved automation mode; gates approval state exactly as the MARA path. */
+  mode: string | null | undefined;
+  /** Client-minted key; the same key never creates a second campaign. */
+  idempotencyKey: string;
+  timeZone?: string | null;
+  planId?: PlanId | string | null;
+  allowAutomaticPaidMedia?: boolean | null;
+  /** Required in practice: a self-created campaign states its own channels. */
+  channels?: readonly CampaignChannel[] | null;
+  now?: Date;
+}
+
+export interface SelfCampaignResult {
+  campaignId: string;
+  mode: AutomationModeValue;
+  actionCount: number;
+  summary: string;
+  channels: CampaignChannel[];
+  creationMethod: CampaignCreationMethod;
+}
+
+/** A refused self-created campaign write, with a stable machine-readable reason. */
+export class SelfCampaignValidationError extends Error {
+  readonly reason: string;
+
+  constructor(reason: string) {
+    super("campaign_self_validation_failed");
+    this.name = "SelfCampaignValidationError";
+    this.reason = reason;
+  }
+}
+
+/**
+ * Creates a campaign the user wrote themselves — same container, same timeline,
+ * same action rows, same execution identities as a MARA-planned campaign.
+ *
+ * There is ONE campaign model: this is not a second product and not a second
+ * page. It differs from `buildAutomatedCampaign` only in that no provider is
+ * called and no strategy block is invented — `generation_source`, `strategy` and
+ * `strategy_summary` stay NULL because nothing generated them.
+ *
+ * Safety is identical to the MARA path:
+ *   - the campaign's channels are authoritative and validated against the same
+ *     allowlist, so an email action can never be attached to an Instagram-only
+ *     campaign (and the database refuses it again);
+ *   - the automation mode gates approval state with the SAME expression, and the
+ *     Autopilot branch still requires the existing safety evaluation AND the
+ *     existing plan/entitlement context. Being self-created grants nothing,
+ *     exactly as being MARA-created grants nothing;
+ *   - every proposed time goes through the existing schedule guard and must fall
+ *     inside the campaign window;
+ *   - nothing is sent, published, enqueued, generated or spent.
+ */
+export async function createSelfCampaign(
+  db: Db,
+  admin: Admin,
+  ownerId: string,
+  input: CreateSelfCampaignInput,
+): Promise<SelfCampaignResult> {
+  const mode = normalizeAutomationMode(input.mode);
+  const now = input.now ?? new Date();
+  const timeZone = accountTimezone(input.timeZone);
+  const channels = resolveChannels(input.channels ?? input.brief.channels ?? null);
+
+  const hasBillingContext = input.planId !== undefined || input.allowAutomaticPaidMedia !== undefined;
+  const autopilotEntitled = !hasBillingContext
+    || (input.planId != null && canUseAutopilot(normalizePlan(input.planId)) && input.allowAutomaticPaidMedia === true);
+
+  const rawActions = Array.isArray(input.actions) ? input.actions : [];
+  if (rawActions.length > MAX_CAMPAIGN_ACTIONS) {
+    throw new SelfCampaignValidationError("too_many_actions");
+  }
+  if (rawActions.filter((action) => actionChannelFamily(action?.channel) === "email").length > MAX_EMAIL_ACTIONS) {
+    throw new SelfCampaignValidationError("too_many_emails");
+  }
+
+  const [{ data: business }, audiencesResult] = await Promise.all([
+    db.from("businesses").select("timezone").eq("owner_user_id", ownerId).maybeSingle(),
+    listAudiences(db, { owner_id: ownerId, limit: 200 }).catch(() => ({ ok: false as const, data: [] })),
+  ]);
+  const resolvedZone = accountTimezone(
+    (business as { timezone?: string | null } | null)?.timezone ?? timeZone,
+  );
+  const ownedAudiences = audiencesResult.ok ? audiencesResult.data : [];
+
+  const campaignStart = toUtcStart(input.brief.startAt, resolvedZone);
+  const campaignEnd = toUtcEnd(input.brief.endAt, resolvedZone);
+  const startMs = Date.parse(campaignStart);
+  const endMs = Date.parse(campaignEnd);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
+    throw new SelfCampaignValidationError("invalid_dates");
+  }
+
+  // Ordered chronologically before slotting, so the stored slot order matches
+  // the timeline the user sees.
+  const ordered = rawActions.map((action, index) => ({ action, index }));
+  ordered.sort((a, b) => {
+    const at = Date.parse(a.action.scheduledFor ?? "");
+    const bt = Date.parse(b.action.scheduledFor ?? "");
+    return (Number.isFinite(at) ? at : 0) - (Number.isFinite(bt) ? bt : 0) || a.index - b.index;
+  });
+
+  const actionsPayload = ordered.map(({ action }, slot) => {
+    if (!action || typeof action !== "object") throw new SelfCampaignValidationError("invalid_action");
+    if (!isActionChannelAllowed(action.channel, channels)) {
+      // An invalid channel/campaign combination fails here, server-side.
+      throw new SelfCampaignValidationError("channel_not_selected");
+    }
+    const title = String(action.title ?? "").trim();
+    if (!title || title.length > 160) throw new SelfCampaignValidationError("invalid_title");
+
+    const scheduledFor = normalizeScheduledFor(action.scheduledFor, {
+      scheduled_for: "",
+    } as CampaignActionRecord);
+    if (!scheduledFor) throw new SelfCampaignValidationError("invalid_schedule");
+    const guard = checkScheduleInstant(scheduledFor, now, resolvedZone, 10);
+    if (!guard.ok) throw new SelfCampaignValidationError("schedule_in_past");
+    const scheduledMs = Date.parse(guard.publishAt);
+    if (scheduledMs < startMs || scheduledMs > endMs) {
+      throw new SelfCampaignValidationError("schedule_outside_campaign");
+    }
+
+    const purpose = String(action.purpose ?? "").trim().slice(0, 1000);
+    let audienceId: string | null = input.brief.audienceId ?? null;
+    if (action.audienceId && ownedAudiences.some((audience) => audience.id === action.audienceId)) {
+      audienceId = action.audienceId;
+    }
+
+    const evaluation = evaluateAutopilotRecommendation(
+      {
+        title,
+        content: [action.subject, action.previewText, action.body, action.caption, action.concept]
+          .filter((value): value is string => typeof value === "string")
+          .join("\n"),
+        topic: purpose,
+        publishAt: guard.publishAt,
+      },
+      now,
+    );
+    // The identical gating rule the MARA path uses. Creation method changes
+    // nothing here: Manual proposes, Assisted gates, Autopilot approves only
+    // what the existing safety evaluator AND the existing entitlement allow.
+    const safe = autopilotEntitled && evaluation.safe;
+    const status = mode === "autopilot" && safe
+      ? "approved"
+      : mode === "manual"
+        ? "proposed"
+        : "needs_approval";
+
+    const base = {
+      slot,
+      channel: action.channel,
+      stage: normalizeStage(action.stage),
+      title,
+      purpose,
+      scheduledFor: guard.publishAt,
+      status,
+      safetyBlockers: evaluation.blockers,
+      idempotencyKey: actionKey(input.idempotencyKey, slot),
+      // The user wrote this content: it is neither MARA's nor the planner's.
+      contentSource: "edited",
+    };
+
+    if (action.channel === "email") {
+      const subject = String(action.subject ?? "").trim();
+      const body = String(action.body ?? "").trim();
+      if (!subject || subject.length > 300) throw new SelfCampaignValidationError("invalid_subject");
+      if (!body || body.length > 12000) throw new SelfCampaignValidationError("invalid_body");
+      const previewText = String(action.previewText ?? "").trim();
+      if (previewText.length > 500) throw new SelfCampaignValidationError("invalid_preview_text");
+      const cta = String(action.cta ?? "").trim();
+      if (cta.length > 160) throw new SelfCampaignValidationError("invalid_cta");
+      const ctaUrl = typeof action.ctaUrl === "string" ? action.ctaUrl.trim().slice(0, 500) : "";
+      return {
+        ...base,
+        subject,
+        previewText,
+        body,
+        cta,
+        audienceId,
+        content: {
+          cta: cta || null,
+          ctaUrl: ctaUrl || null,
+          audienceNote: null,
+          sendTimeNote: null,
+        },
+      };
+    }
+
+    const caption = String(action.caption ?? "").trim();
+    if (caption.length > 2200) throw new SelfCampaignValidationError("invalid_caption");
+    const concept = String(action.concept ?? "").trim();
+    if (concept.length > 160) throw new SelfCampaignValidationError("invalid_concept");
+    return {
+      ...base,
+      concept: concept || title,
+      caption,
+      hashtags: [] as string[],
+      content: {
+        format: formatForChannel(action.channel),
+        concept: concept || title,
+        cta: null,
+        visualDirection: null,
+        script: [] as string[],
+        hashtags: [] as string[],
+      },
+    };
+  });
+
+  const summary = selfCampaignSummary(input.brief.goal, channels, actionsPayload);
+
+  const { data, error } = await admin.rpc("create_automated_campaign", {
+    p_owner_user_id: ownerId,
+    p_payload: {
+      campaign: {
+        idempotencyKey: input.idempotencyKey,
+        name: input.brief.name,
+        goal: input.brief.goal,
+        startAt: campaignStart,
+        endAt: campaignEnd,
+        offerDetails: input.brief.offerDetails ?? "",
+        audience: input.brief.targetAudience ?? "",
+        audienceId: input.brief.audienceId ?? null,
+        notes: input.brief.notes ?? "",
+        summary,
+        // No generation layer ran, so there is no strategy block and no
+        // generation source to claim.
+        channels,
+        creationMethod: "self",
+      },
+      actions: actionsPayload,
+    },
+  }).single();
+
+  if (error || !data) {
+    logAutomatedBuildFailure(error);
+    throw new AutomatedCampaignBuildError(error?.code ?? null, error);
+  }
+  const container = data as CampaignContainerRecord;
+
+  return {
+    campaignId: container.id,
+    mode,
+    actionCount: actionsPayload.length,
+    summary,
+    channels,
+    creationMethod: "self",
+  };
+}
+
+// ─── Campaigns v3: adding one action to an existing campaign ───────────────
+
+export interface AddCampaignActionInput extends SelfCampaignActionInput {
+  /** Client-minted key; a replayed add returns the action that exists. */
+  idempotencyKey: string;
+  /** Optional approval gating; defaults to the workspace automation mode. */
+  mode?: string | null;
+  planId?: PlanId | string | null;
+  allowAutomaticPaidMedia?: boolean | null;
+  now?: Date;
+}
+
+/**
+ * Appends ONE action to an existing campaign.
+ *
+ * The campaign's stored channels are authoritative and are read from the
+ * container, so an action can never widen the channels its campaign runs on.
+ * The existing schedule guard (migration 0037) and the new channel guard
+ * (migration 0045) both run on this insert, and the guarded RPC keeps it
+ * idempotent per (owner, key).
+ *
+ * Inserts only: nothing is sent, published, enqueued, generated or spent.
+ */
+export async function addCampaignAction(
+  admin: Admin,
+  ownerId: string,
+  campaignId: string,
+  input: AddCampaignActionInput,
+): Promise<{ ok: true; action: CampaignActionRecord } | { ok: false; reason: string }> {
+  const now = input.now ?? new Date();
+  const mode = normalizeAutomationMode(input.mode ?? null);
+
+  const { data: containerRow, error: containerError } = await admin.from("voom_campaigns")
+    .select(CONTAINER_SELECT).eq("owner_user_id", ownerId).eq("id", campaignId).maybeSingle();
+  if (containerError) throw new AutomatedCampaignBuildError(containerError.code ?? null, containerError);
+  const container = containerRow as CampaignContainerRecord | null;
+  if (!container || container.kind !== "multi") return { ok: false, reason: "campaign_not_found" };
+
+  const channels = campaignChannelsOf(container.channels);
+  if (!isActionChannelAllowed(input.channel, channels)) return { ok: false, reason: "channel_not_selected" };
+
+  const { data: business } = await admin.from("businesses").select("timezone").eq("owner_user_id", ownerId).maybeSingle();
+  const timeZone = accountTimezone((business as { timezone?: string | null } | null)?.timezone);
+
+  const title = String(input.title ?? "").trim();
+  if (!title || title.length > 160) return { ok: false, reason: "invalid_title" };
+
+  const scheduledFor = normalizeScheduledFor(input.scheduledFor, { scheduled_for: "" } as CampaignActionRecord);
+  if (!scheduledFor) return { ok: false, reason: "invalid_schedule" };
+  const guard = checkScheduleInstant(scheduledFor, now, timeZone, 10);
+  if (!guard.ok) return { ok: false, reason: "schedule_in_past" };
+  const startMs = container.start_at ? Date.parse(container.start_at) : Number.NaN;
+  const endMs = container.end_at ? Date.parse(container.end_at) : Number.NaN;
+  const scheduledMs = Date.parse(guard.publishAt);
+  if ((Number.isFinite(startMs) && scheduledMs < startMs) || (Number.isFinite(endMs) && scheduledMs > endMs)) {
+    return { ok: false, reason: "schedule_outside_campaign" };
+  }
+
+  const purpose = String(input.purpose ?? "").trim().slice(0, 1000);
+  const evaluation = evaluateAutopilotRecommendation(
+    {
+      title,
+      content: [input.subject, input.previewText, input.body, input.caption, input.concept]
+        .filter((value): value is string => typeof value === "string")
+        .join("\n"),
+      topic: purpose,
+      publishAt: guard.publishAt,
+    },
+    now,
+  );
+  const hasBillingContext = input.planId !== undefined || input.allowAutomaticPaidMedia !== undefined;
+  const autopilotEntitled = !hasBillingContext
+    || (input.planId != null && canUseAutopilot(normalizePlan(input.planId)) && input.allowAutomaticPaidMedia === true);
+  const safe = autopilotEntitled && evaluation.safe;
+  const status = mode === "autopilot" && safe
+    ? "approved"
+    : mode === "manual"
+      ? "proposed"
+      : "needs_approval";
+
+  const payload: Record<string, unknown> = {
+    idempotencyKey: input.idempotencyKey,
+    channel: input.channel,
+    stage: normalizeStage(input.stage),
+    title,
+    purpose,
+    scheduledFor: guard.publishAt,
+    status,
+    safetyBlockers: evaluation.blockers,
+    contentSource: "edited",
+  };
+
+  if (input.channel === "email") {
+    const subject = String(input.subject ?? "").trim();
+    const body = String(input.body ?? "").trim();
+    if (!subject || subject.length > 300) return { ok: false, reason: "invalid_subject" };
+    if (!body || body.length > 12000) return { ok: false, reason: "invalid_body" };
+    payload.subject = subject;
+    payload.previewText = String(input.previewText ?? "").trim().slice(0, 500);
+    payload.body = body;
+    payload.audienceId = input.audienceId ?? container.audience_id ?? null;
+    payload.content = {
+      cta: String(input.cta ?? "").trim().slice(0, 160) || null,
+      ctaUrl: typeof input.ctaUrl === "string" ? input.ctaUrl.trim().slice(0, 500) || null : null,
+      audienceNote: null,
+      sendTimeNote: null,
+    };
+  } else {
+    const caption = String(input.caption ?? "").trim();
+    if (caption.length > 2200) return { ok: false, reason: "invalid_caption" };
+    const concept = String(input.concept ?? "").trim().slice(0, 160);
+    payload.caption = caption;
+    payload.concept = concept || title;
+    payload.content = {
+      format: formatForChannel(input.channel),
+      concept: concept || title,
+      cta: String(input.cta ?? "").trim().slice(0, 160) || null,
+      visualDirection: null,
+      script: [] as string[],
+      hashtags: [] as string[],
+    };
+  }
+
+  const { data, error } = await admin.rpc("add_campaign_action", {
+    p_owner_user_id: ownerId,
+    p_campaign_id: campaignId,
+    p_payload: payload,
+  }).single();
+
+  if (error || !data) {
+    const message = `${error?.code ?? ""} ${error?.message ?? ""}`;
+    if (/campaign_action_channel_not_selected/.test(message)) return { ok: false, reason: "channel_not_selected" };
+    if (/campaign_action_schedule_in_past/.test(message)) return { ok: false, reason: "schedule_in_past" };
+    if (/campaign_action_before_campaign_start|campaign_action_after_campaign_end/.test(message)) {
+      return { ok: false, reason: "schedule_outside_campaign" };
+    }
+    if (/campaign_action_limit_reached/.test(message)) return { ok: false, reason: "too_many_actions" };
+    if (/campaign_not_found/.test(message)) return { ok: false, reason: "campaign_not_found" };
+    logAutomatedBuildFailure(error);
+    throw new AutomatedCampaignBuildError(error?.code ?? null, error);
+  }
+  return { ok: true, action: data as CampaignActionRecord };
 }
 
 // ─── Read model ────────────────────────────────────────────────────────────
@@ -534,11 +1015,29 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
     endAt: container.end_at,
   });
 
+  // v3: ONE chronological timeline across Email and Instagram, derived from the
+  // same action rows — what happened, what is running, what needs approval and
+  // what comes next. Nothing is stored twice, so it cannot go stale.
+  const timeline = buildCampaignTimeline(views.map((view) => ({
+    id: view.id,
+    slot: view.slot,
+    channel: view.channel,
+    title: view.title,
+    scheduled_for: view.scheduled_for,
+    executionState: view.executionState,
+    canEditContent: view.canEditContent,
+    email_campaign_id: view.email_campaign_id,
+    draft_id: view.draft_id,
+  })));
+
   return {
     timeZone,
     campaign: container,
+    channels: campaignChannelsOf(container.channels),
+    creationMethod: normalizeCampaignCreationMethod(container.creation_method),
     strategy: toStrategyRecord(container),
     actions: views,
+    timeline,
     lifecycle,
     lifecycleLabel: lifecycleLabel(lifecycle),
     counts: {
@@ -990,6 +1489,7 @@ export async function regenerateCampaignAction(
     },
     performance: plannerPerformance,
     timeZone,
+    channels: campaignChannelsOf(campaign.channels),
     now,
     focus: {
       slot: 0,
@@ -1012,6 +1512,7 @@ export async function regenerateCampaignAction(
     goalLabel: CAMPAIGN_GOAL_LABELS[goal] ?? "Campaign",
     intelligence: generated.ok ? generated.intelligence : null,
     timeZone,
+    channels: campaignChannelsOf(campaign.channels),
     now,
   });
   const next = merged.actions[0];
@@ -1169,7 +1670,7 @@ function storedHashtags(action: CampaignActionRecord): string[] {
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 const CONTAINER_SELECT =
-  "id,kind,is_automated,parent_campaign_id,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,goal,start_at,end_at,offer_details,campaign_notes,generated_summary,strategy,strategy_summary,generation_source,approved_at,created_at,updated_at";
+  "id,kind,is_automated,parent_campaign_id,name,objective,audience,audience_id,subject,preview_text,content,proposed_send_at,status,goal,start_at,end_at,offer_details,campaign_notes,generated_summary,strategy,strategy_summary,generation_source,channels,creation_method,approved_at,created_at,updated_at";
 const ACTION_SELECT =
   "id,campaign_id,slot,channel,stage,title,purpose,scheduled_for,status,email_campaign_id,draft_id,safety_blockers,mara_content,content_source,created_at,updated_at";
 
@@ -1258,6 +1759,43 @@ function formatForChannel(channel: string): "post" | "reel" | "story" {
   if (channel === "instagram_reel") return "reel";
   if (channel === "instagram_story") return "story";
   return "post";
+}
+
+/** Campaign funnel stage; anything unusable falls back to 'consideration'. */
+function normalizeStage(value: unknown): CampaignStage {
+  return value === "awareness" || value === "conversion" || value === "retention"
+    ? value
+    : "consideration";
+}
+
+/**
+ * The factual one-liner stored on a self-created campaign.
+ *
+ * It describes only what the user actually wrote — no strategy is invented and
+ * no generation layer is claimed, which is why a self-created campaign has no
+ * `strategy` block and a NULL `generation_source`.
+ */
+function selfCampaignSummary(
+  goal: CampaignGoal,
+  channels: readonly CampaignChannel[],
+  actions: ReadonlyArray<{ channel: string }>,
+): string {
+  const goalLabel = CAMPAIGN_GOAL_LABELS[goal] ?? "Campaign";
+  const instagram = actions.filter((action) => actionChannelFamily(action.channel) === "instagram").length;
+  const email = actions.filter((action) => action.channel === "email").length;
+  const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+  const parts: string[] = [];
+  if (channels.includes("instagram")) parts.push(plural(instagram, "Instagram action"));
+  if (channels.includes("email")) parts.push(plural(email, "email"));
+  const channelLine = channels.length > 1
+    ? `on Instagram and email`
+    : channels[0] === "email"
+      ? "by email"
+      : "on Instagram";
+  const planLine = actions.length === 0
+    ? "Add the actions you want, one at a time."
+    : `It contains ${parts.join(" and ")}.`;
+  return `You created this ${goalLabel.toLowerCase()} campaign yourself, ${channelLine}. ${planLine}`.slice(0, 2000);
 }
 
 /** Reads the stored strategy back into the presentation shape. */
