@@ -271,7 +271,9 @@ test("0021 is marked already-applied; 0018-0020 are untouched and 0022-0028 stay
   assert.deepEqual(files.filter((name) => /^0028_/.test(name)), ["0028_openrouter_video_job_metadata.sql"], "the only 0028 is OpenRouter video job metadata");
   assert.deepEqual(files.filter((name) => /^0029_/.test(name)), ["0029_workflow_timezone_and_slots.sql"], "the only 0029 is the workflow timezone + slot migration");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 34), "no migration beyond 0034 may exist");
+  // Production is through 0045 (Campaigns v3). Anything newer is a migration
+  // this suite has not been told about — it must be added deliberately.
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 45), "no migration beyond 0045 (the production head) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],
@@ -310,8 +312,18 @@ test("Create with MARA generates through the media abstraction and stores bytes 
   assert.match(route, /loadPostBrandContext/);
   assert.match(route, /loadPostPlanContext/);
   // Bytes are stored first; the draft row is what makes the visual Ready.
-  assert.match(route, /The bytes are stored BEFORE the post is allowed to show a visual/);
+  // Proven on code order, not on a comment: the provider result is inspected,
+  // then stored through putPostAsset, and only then is the generation row
+  // completed and the calendar synced — a failure before the store leaves no
+  // visual attached.
   assert.match(route, /putPostAsset\(admin, user\.id, id/);
+  const generateAt = route.indexOf("createMediaProvider(config).generateImage(");
+  const inspectAt = route.indexOf("inspectImageBytes(result.bytes)");
+  const storeAt = route.indexOf("await putPostAsset(admin, user.id, id, {");
+  const completedAt = route.indexOf('status: "completed"');
+  const syncAt = route.indexOf("await syncPostToCalendar(admin, user.id, id)");
+  assert.ok(generateAt > -1 && inspectAt > generateAt && storeAt > inspectAt && completedAt > storeAt && syncAt > completedAt,
+    "generate -> inspect -> store bytes -> mark completed -> sync: the visual is stored BEFORE the post may show it");
   assert.doesNotMatch(route, /instagram\.com|graph\.instagram|media_publish/i);
   assert.doesNotMatch(route, /NEXT_PUBLIC_[A-Z_]*(API_KEY|SECRET)/);
 });
@@ -537,7 +549,12 @@ test("no test executes a provider, so no real paid generation runs in the suite"
     // Routes and providers are only ever read as text; the suite never imports
     // a route module or a provider, and never sets provider credentials.
     assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media"|api\/posts|generate\/route)/, `${name} must not import a provider or route`);
-    assert.doesNotMatch(source, /process\.env\.(MEDIA_API_KEY|MEDIA_PROVIDER|MEDIA_IMAGE_MODEL|AI_API_KEY)\s*=/, `${name} must not set provider credentials`);
+    // A provider credential may only ever be set to an obvious decoy (the
+    // secret-exclusivity tests plant look-alikes to prove they are ignored),
+    // and never to something a provider could accept.
+    for (const match of source.matchAll(/process\.env\.(MEDIA_API_KEY|MEDIA_PROVIDER|MEDIA_IMAGE_MODEL|AI_API_KEY)\s*=\s*([^;\n]+)/g)) {
+      assert.match(match[2], /decoy|placeholder|not-a-real|fake/i, `${name} must not set a plausible provider credential (${match[1]} = ${match[2].trim()})`);
+    }
   }
   // Post Studio's own coverage is pure logic plus source-text assertions.
   const studioTests = await read("tests/post-studio.test.mjs");

@@ -103,7 +103,11 @@ test("a visual upload does not overwrite the selected format", async () => {
   assert.doesNotMatch(route, /format:/);
 
   const editor = await read("components/voom/modals/PostEditorModal.tsx");
-  assert.match(editor, /No format is sent: the draft's persisted format wins/);
+  // The upload body carries exactly the file and its origin — no format is
+  // sent, so the draft's persisted format wins.
+  const uploadBody = editor.slice(editor.indexOf("async function uploadFile("), editor.indexOf("async function chooseFormat("));
+  assert.ok(uploadBody.length > 0, "uploadFile precedes chooseFormat");
+  assert.deepEqual([...uploadBody.matchAll(/form\.set\("([a-z_]+)"/g)].map((match) => match[1]), ["file", "origin"]);
   assert.doesNotMatch(editor, /form\.set\("format"/);
 
   // A user at 4:5 who uploads a square photo is still at 4:5 afterwards.
@@ -116,7 +120,12 @@ test("image generation does not overwrite the selected format", async () => {
   // Posts and Reels generate at the draft's own format; a Story is locked to
   // its single legal 9:16 format, which is still never a user overwrite.
   assert.match(route, /const format = post\.kind === "story" \? "9:16" : post\.format;/);
-  assert.match(route, /so generating cannot change the user's choice/);
+  // Generating writes copy, the brief and media rows — never the draft's
+  // channel/format — so it cannot change the user's choice.
+  const draftWrites = [...route.matchAll(/from\("mara_drafts"\)\s*\.update\(\{([^}]*)\}/g)].map((match) => match[1]);
+  assert.ok(draftWrites.length >= 2, "the route updates the draft (brief, copy)");
+  for (const patch of draftWrites) assert.doesNotMatch(patch, /\b(channel|format)\b/, `a draft update never touches the format: {${patch.trim()}}`);
+  assert.doesNotMatch(route, /encodeDraftChannel|normalizePostFormat/);
   assert.doesNotMatch(route, /async function setFormat/);
   assert.doesNotMatch(route, /from\("post_draft_assets"\)\.update\(\{ format \}\)/);
   assert.doesNotMatch(route, /normalizePostFormat/);
@@ -186,7 +195,9 @@ test("Post format needed no schema change; 0022-0027 remain intact and 0028 is v
   assert.deepEqual(files.filter((name) => /^0028_/.test(name)), ["0028_openrouter_video_job_metadata.sql"], "the only 0028 is OpenRouter video job metadata");
   assert.deepEqual(files.filter((name) => /^0029_/.test(name)), ["0029_workflow_timezone_and_slots.sql"], "the only 0029 is the workflow timezone + slot migration");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 34), "no migration beyond 0034 may exist");
+  // Production is through 0045 (Campaigns v3). Anything newer is a migration
+  // this suite has not been told about — it must be added deliberately.
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 45), "no migration beyond 0045 (the production head) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],

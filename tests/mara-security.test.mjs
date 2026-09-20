@@ -27,22 +27,47 @@ test("MARA storage isolates conversations, messages, and drafts by owner", async
   assert.match(migration, /foreign key \(conversation_id, owner_user_id\)/);
 });
 
-test("MARA prompt uses only the authenticated user's persisted brand records", async () => {
+/**
+ * The free-form MARA chat endpoint (POST /api/mara) was retired: it answers
+ * 410 and does no work. MARA now runs through the Marketing Plan workflow
+ * (lib/voom/workflow/service.ts), so the security properties that used to be
+ * asserted on the chat route are asserted on that live path — and on the
+ * stub, which must stay inert.
+ */
+test("the retired MARA chat endpoint is an inert 410 stub and nothing calls it", async () => {
   const route = await read("app/api/mara/route.ts");
-  const prompt = await read("lib/mara/prompt.ts");
-  assert.match(route, /getCurrentUser\(\)/);
-  assert.match(route, /getBusinessRecord\(\)/);
-  assert.match(route, /getProfileRecord\(\)/);
-  for (const field of ["display_name", "brand_name", "brand_description", "industry", "target_customer", "main_goal", "brand_personality", "preferred_channels", "content_frequency", "monthly_ad_budget", "automation_level", "publishing_permission"]) {
-    assert.match(prompt, new RegExp(field));
+  assert.match(route, /status: 410/);
+  assert.match(route, /Use the Marketing Plan workflow/);
+  assert.doesNotMatch(route, /^import /m, "the stub imports nothing: no auth, no database, no provider");
+  assert.doesNotMatch(route, /createAiProvider|createAdminClient|createClient|fetch\(|process\.env|request\.json/);
+  // No screen depends on the dead route.
+  const { readdir } = await import("node:fs/promises");
+  const uiFiles = (await readdir(new URL("../components/voom/", import.meta.url), { recursive: true })).filter((name) => name.endsWith(".tsx"));
+  for (const name of uiFiles) {
+    assert.doesNotMatch(await read(`components/voom/${name}`), /["'`]\/api\/mara["'`?]/, `${name} must not call the retired chat endpoint`);
   }
 });
 
+test("MARA prompt uses only the authenticated user's persisted brand records", async () => {
+  const service = await read("lib/voom/workflow/service.ts");
+  const prompt = await read("lib/voom/workflow/prompt.ts");
+  // The business row is read for the owner only, then projected into the
+  // prompt payload field by field — never a free-form record dump.
+  assert.match(service, /from\("businesses"\)[\s\S]*?\.eq\("owner_user_id", input\.ownerId\)/);
+  for (const field of ["brand_name", "brand_description", "industry", "target_customer", "main_goal", "brand_personality"]) {
+    assert.match(service, new RegExp(`business\\.${field}`), `the prompt payload carries ${field} from the owner's persisted record`);
+  }
+  assert.match(prompt, /authenticated user's own business/);
+  assert.match(prompt, /Ground everything ONLY in the supplied business context/);
+  assert.doesNotMatch(prompt, /process\.env|fetch\(|supabase/i, "the prompt module is pure");
+});
+
 test("AI failures are friendly and provider secrets are never echoed", async () => {
-  const route = await read("app/api/mara/route.ts");
-  assert.match(route, /MARA couldn't answer just now/);
-  assert.match(route, /MARA is busy right now/);
-  assert.doesNotMatch(route, /AI_API_KEY|Authorization.*Bearer/);
+  const service = await read("lib/voom/workflow/service.ts");
+  // Content generation failures surface as fixed codes, never provider text.
+  assert.match(service, /if \(reason instanceof AiError && reason\.code === "rate_limited"\) throw new Error\("content_rate_limited"\)/);
+  assert.match(service, /throw new Error\("content_generation_failed"\)/);
+  assert.doesNotMatch(service, /reason\.message|error\.message|AI_API_KEY|Authorization.*Bearer/);
 
   const provider = await read("lib/ai/openai-compatible.ts");
   assert.match(provider, /async complete/);
@@ -71,16 +96,20 @@ test("approval cannot publish content", async () => {
 
 test("MARA internal tools are allowlisted, owner-derived, validated, bounded, and audited", async () => {
   const tools = await read("lib/mara/tools.ts");
-  const route = await read("app/api/mara/route.ts");
+  const actions = await read("app/api/mara/actions/[id]/route.ts");
   assert.match(tools, /satisfies Record<string, z\.ZodType>/);
   assert.doesNotMatch(tools, /user[_I]d:\s*z\./i);
   assert.match(tools, /owner_user_id: context\.ownerId/);
   assert.match(tools, /mara_tool_runs/);
   assert.match(tools, /idempotencyKey/);
-  assert.match(route, /iteration < 4/);
-  assert.match(route, /> 8/);
-  assert.match(route, /selectRelevantTools/);
-  assert.match(route, /maraToolDefinitions\.filter/);
+  // With the chat loop retired, the ONLY remaining way a tool executes is the
+  // owner's explicit confirmation of a pending action: authenticated, scoped
+  // to the owner's own pending row, and never re-executed once handled.
+  assert.match(actions, /getCurrentUser\(\)/);
+  assert.match(actions, /executeConfirmedAction/);
+  assert.match(actions, /\.eq\("owner_user_id", user\.id\)/);
+  assert.match(tools, /if \(action\.status !== "executing"\) return \{ ok: true, summary: "This action was already handled\." \}/);
+  assert.doesNotMatch(actions, /createAiProvider|selectRelevantTools|maraToolDefinitions/, "confirming an action never re-enters an AI tool loop");
 });
 
 test("internal records use owner RLS and least privilege", async () => {
@@ -139,24 +168,33 @@ test("content drafts render with persistent, explicit actions", async () => {
   assert.match(editor, /Saved inside Voom only\. Nothing is published to Instagram\./);
 });
 
-test("incomplete content generation retries once before returning a clear error", async () => {
-  const route = await read("app/api/mara/route.ts");
-  const prompt = await read("lib/mara/prompt.ts");
-  assert.match(route, /generateMaraResult/);
-  assert.match(route, /previous output was incomplete or invalid/i);
-  assert.match(route, /couldn't generate the complete deliverable/);
-  assert.match(prompt, /exactly seven named days/);
-  for (const requirement of ["full caption", "scene-by-scene", "preview text", "complete send-ready message", "objective, audience, channels"]) {
-    assert.match(prompt, new RegExp(requirement));
-  }
+test("incomplete content generation is validated against a schema and fails with a clear code", async () => {
+  const service = await read("lib/voom/workflow/service.ts");
+  const prompt = await read("lib/voom/workflow/prompt.ts");
+  // Every planned piece is structured output parsed by the schema; an
+  // incomplete or invalid answer cannot become a draft.
+  assert.match(service, /jsonSchema: plannedContentJsonSchema/);
+  assert.match(service, /parse: \(value\) => plannedContentSchema\.parse\(value\)/);
+  assert.match(service, /throw new Error\("content_generation_failed"\)/);
+  assert.match(prompt, /caption: the complete caption in the brand's voice/);
+  assert.match(prompt, /Never invent prices, discounts, offers, opening hours, links, awards, reviews, guarantees or statistics/);
+  // A failed slot is reported, never silently dropped or half-saved.
+  const rolling = await read("lib/voom/workflow/rolling-plan.ts");
+  assert.match(rolling, /result\.failures\.push\(\{ slot: slot\.date, stage: "content", code: codeOf\(reason\) \}\)/);
 });
 
-test("calendar reads and mutations route to tools while weekly-plan generation stays a draft", async () => {
-  const route = await read("app/api/mara/route.ts");
-  assert.match(route, /readsCalendar \|\| changesVoom/);
-  assert.match(route, /what\(\?:'s\| is\)\?/);
-  assert.match(route, /add\|schedule\|reschedule\|move\|delete\|remove/);
-  assert.match(route, /if \(expectedKind/);
+test("plan generation stays a draft; calendar mutations go through owner-scoped explicit actions", async () => {
+  const service = await read("lib/voom/workflow/service.ts");
+  const actions = await read("lib/voom/workflow/actions-server.ts");
+  // The workflow writes drafts only — approval is a separate, explicit step.
+  assert.match(service, /status: "draft"/);
+  assert.match(service, /onConflict: "owner_user_id,source_plan_id,source_plan_item_key"/);
+  // Calendar changes are owner-scoped server actions, never free-form chat.
+  assert.match(actions, /^"use server";/m);
+  assert.match(actions, /const user = await getCurrentUser\(\)/);
+  assert.match(actions, /\.eq\("owner_user_id", ownerId\)\.eq\("id", draftId\)/, "a draft is loaded only when the caller owns it");
+  assert.match(actions, /\.eq\("owner_user_id", ctx\.userId\)/);
+  assert.doesNotMatch(actions, /createAiProvider|selectRelevantTools/, "calendar actions never route through an AI tool loop");
 });
 
 test("Asia/Dubai relative dates resolve deterministically", async () => {

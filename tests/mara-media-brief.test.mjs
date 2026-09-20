@@ -41,7 +41,9 @@ test("0026 and the additive 0028 video metadata migration are bounded", async ()
   assert.deepEqual(files.filter((name) => /^0025_/.test(name)), ["0025_mara_media_video_generation.sql"]);
   assert.deepEqual(files.filter((name) => /^0027_/.test(name)), ["0027_mara_media_provider_diagnostics.sql"], "the only 0027 is provider diagnostics");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 34), "no migration beyond 0034 may exist");
+  // Production is through 0045 (Campaigns v3). Anything newer is a migration
+  // this suite has not been told about — it must be added deliberately.
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 45), "no migration beyond 0045 (the production head) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],
@@ -116,7 +118,13 @@ test("PATCH /api/posts/[id] accepts brief/mediaBrief and saves it", async () => 
 
 test("POST /api/posts/[id]/generate persists brief and reuses persisted brief", async () => {
   const route = await read("app/api/posts/[id]/generate/route.ts");
-  assert.match(route, /What should MARA create\?/);
+  // The request's `brief` is the editor's "What should MARA create?" field:
+  // read from the body, normalised, persisted on the draft, and — when the
+  // request carries none — the persisted brief is what MARA works from.
+  assert.match(route, /body\.brief === "string"/);
+  assert.match(route, /await admin\.from\("mara_drafts"\)\.update\(\{ media_brief: normalized \}\)/);
+  assert.match(route, /effectiveBrief = post\.mediaBrief \?\? ""/);
+  assert.match(route, /brief: effectiveBrief/, "MARA is briefed with the effective brief");
   assert.match(route, /briefInput/);
   assert.match(route, /effectiveBrief/);
   assert.match(route, /media_brief/);

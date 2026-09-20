@@ -253,8 +253,10 @@ function createPorts(store) {
 const safety = await import("../lib/mara/autopilot-safety.ts");
 
 test("6. generated media advances the SAME workflow item (no duplicate drafts)", async () => {
+  // Plans + Credits v1: only Autopilot may reach the paid media stage on its
+  // own, so the "generated once, never twice" guarantee is proven there.
   const store = createStore();
-  const input = { now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "Grow awareness" };
+  const input = { now: NOW, timeZone: TZ, cadence: "daily", mode: "autopilot", goal: "Grow awareness" };
   const first = await rolling.ensureRollingPlan(createPorts(store), input);
   assert.equal(first.created, 7);
   const idsAfterFirst = new Set([...store.drafts.keys()]);
@@ -265,22 +267,55 @@ test("6. generated media advances the SAME workflow item (no duplicate drafts)",
   assert.equal(second.reused, 7);
   assert.equal(store.providerCalls, 7, "no second generation for the same items");
   assert.deepEqual(new Set([...store.drafts.keys()]), idsAfterFirst, "no duplicate drafts, ever");
-  // The item that generated media derives a review/approval stage — same item id.
-  const item = [...store.drafts.values()][0];
-  assert.equal(item.draftId, store.bySlot.get(`${first.planId}:${item.slotKey}`));
-  const facts = {
-    draftStatus: "draft", hasMedia: store.assets.has(item.draftId), mediaStatus: "completed",
-    publishStatus: null, awaitingApproval: store.approvals.has(item.draftId),
-    publishAt: item.publishAt, now: NOW,
-  };
-  assert.equal(state.deriveWorkflowStatus(facts), "needs_approval");
+  // The item that generated media advanced in place — same item id: a safe
+  // one is scheduled, a held one sits in Approvals, none was duplicated.
+  for (const item of store.drafts.values()) {
+    assert.equal(item.draftId, store.bySlot.get(`${first.planId}:${item.slotKey}`));
+    assert.ok(store.assets.has(item.draftId), "the media belongs to the same item");
+    const facts = {
+      draftStatus: item.status, hasMedia: true, mediaStatus: "completed",
+      publishStatus: store.queue.get(item.draftId)?.status ?? null, awaitingApproval: store.approvals.has(item.draftId),
+      publishAt: item.publishAt, now: NOW,
+    };
+    assert.equal(state.deriveWorkflowStatus(facts), store.queue.has(item.draftId) ? "scheduled" : "needs_approval");
+  }
+  assert.equal(first.autoApproved + first.heldForReview, 7);
 });
 
-test("7. Assisted stops at Needs approval — nothing is scheduled or queued", async () => {
+test("6b. Assisted plans the horizon once, generates no media on its own, and a rerun reuses every item (v1)", async () => {
+  const store = createStore();
+  const input = { now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "Grow awareness" };
+  const first = await rolling.ensureRollingPlan(createPorts(store), input);
+  assert.equal(first.stage, "planning_only");
+  assert.equal(first.created, 7);
+  assert.equal(store.providerCalls, 0, "Assisted never generates paid media without an explicit action");
+  const idsAfterFirst = new Set([...store.drafts.keys()]);
+  const second = await rolling.ensureRollingPlan(createPorts(store), input);
+  assert.equal(second.created, 0);
+  assert.equal(second.reused, 7);
+  assert.equal(store.providerCalls, 0);
+  assert.deepEqual(new Set([...store.drafts.keys()]), idsAfterFirst, "no duplicate drafts, ever");
+  // Every item is a planned card offering the production choices; the SAME
+  // item derives Ready for review once the owner produces its media.
+  const item = [...store.drafts.values()][0];
+  assert.equal(item.draftId, store.bySlot.get(`${first.planId}:${item.slotKey}`));
+  const before = { draftStatus: "draft", hasMedia: false, mediaStatus: null, publishStatus: null, awaitingApproval: false, publishAt: item.publishAt, now: NOW };
+  assert.equal(state.deriveWorkflowStatus(before), "planned");
+  assert.ok(nextActions.planItemActions({ contentType: "post", stage: "planned", failedStage: null, mode: "assisted", publishAt: item.publishAt, hasMedia: false })
+    .actions.some((action) => action.id === "produce_with_mara"), "the owner produces media from the planned card");
+  assert.equal(state.deriveWorkflowStatus({ ...before, hasMedia: true, mediaStatus: "completed" }), "ready_for_review");
+});
+
+test("7. Assisted stops at Planned — nothing is generated, scheduled or queued on its own (v1)", async () => {
   const store = createStore();
   const run = await rolling.ensureRollingPlan(createPorts(store), { now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "Grow awareness" });
+  assert.equal(run.created, 7);
   assert.equal(run.autoApproved, 0);
-  assert.equal(run.awaitingApproval, 7);
+  assert.equal(run.mediaQueued, 0, "no paid media stage in Assisted");
+  assert.equal(run.awaitingApproval, 0, "approval is asked for once media exists, not at planning");
+  assert.equal(store.providerCalls, 0);
+  assert.equal(store.media.size, 0);
+  assert.equal(store.approvals.size, 0);
   assert.equal(store.queue.size, 0, "assisted never queues anything on its own");
   for (const item of store.drafts.values()) assert.equal(item.status, "draft");
 });

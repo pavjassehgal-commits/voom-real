@@ -80,9 +80,17 @@ test("rolling plan automation is server-scheduled, cadence-aware, mode-aware, an
     automationModes.AUTOMATION_MODES.filter(automationModes.automationRunsAutomatically),
     ["assisted", "autopilot"],
   );
-  assert.match(automation, /AUTOMATION_MODES\.filter\(automationRunsAutomatically\)/);
+  // The cron entry delegates to the Automation Coordinator (migration 0039),
+  // which selects exactly the modes the shared predicate says run
+  // automatically — Manual rows are never even fetched, and a Manual mode
+  // read back from a row is an exclusion guard, never a pickup.
+  const coordinator = await read("lib/coordinator/service.ts");
+  assert.match(automation, /runFleetCoordinator\(db, now, ownerIds\)/, "the scheduled run is the fleet coordinator");
   assert.doesNotMatch(automation, /"manual"/);
-  assert.match(automation, /for \(const business of businesses/);
+  assert.match(coordinator, /\.in\("automation_level", \["assisted", "autopilot"\]\)/, "only automated accounts are fetched");
+  assert.doesNotMatch(coordinator, /\.in\("automation_level", \[[^\]]*"manual"/, "Manual accounts are never picked up by the scheduled run");
+  assert.match(coordinator, /state\.mode !== "manual" &&/, "a Manual mode can only exclude work, never trigger it");
+  assert.match(coordinator, /for \(const b of businesses/);
   // The old "exactly 3 per week" rule is gone.
   assert.doesNotMatch(automation + service, /automation_week_key|length\(3\)|!== 3/);
   assert.match(service, /onConflict: "owner_user_id,source_plan_id,source_plan_item_key"/);

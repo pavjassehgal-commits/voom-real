@@ -116,37 +116,47 @@ test("2. every mode states plainly whether paid MARA media generation is automat
   for (const mode of MODES) {
     assert.match(copy[mode].label, new RegExp(mode, "i"));
     assert.ok(copy[mode].summary.trim().length > 20, `${mode}: summary explains the mode`);
-    assert.match(copy[mode].media, /paid MARA media generation/i, `${mode}: the paid-media statement names the thing`);
+    assert.match(copy[mode].media, /media generation|paid media|paid images and videos/i, `${mode}: the paid-media statement names the thing`);
   }
 
-  // Manual: no scheduled workflow generation; the user explicitly requests it.
-  assert.match(copy.manual.summary, /nothing runs on a schedule/i);
-  assert.match(copy.manual.summary, /only when you ask/i);
-  assert.match(copy.manual.media, /no scheduled generation/i);
-  assert.match(copy.manual.media, /only from an explicit request/i);
-  assert.doesNotMatch(copy.manual.media, /automatically/i, "Manual never claims automatic generation");
+  // The three summaries are the authoritative v1 sentences, verbatim.
+  assert.equal(copy.manual.summary, "You control execution. MARA helps when you ask.");
+  assert.equal(copy.assisted.summary, "MARA prepares your marketing. You approve execution.");
+  assert.equal(copy.autopilot.summary, "MARA runs your marketing within your limits.");
 
-  // Assisted: plans/drafts are prepared, and paid media generation MAY be
-  // automatic — stated explicitly, with the approval boundary kept truthful.
-  assert.match(copy.assisted.summary, /drafts each slot/i);
-  assert.match(copy.assisted.summary, /waits for your approval/i);
-  assert.match(copy.assisted.media, /can happen automatically/i);
-  assert.match(copy.assisted.media, /before you approve/i);
-  assert.match(copy.assisted.media, /approval is still required before scheduling or publishing/i);
+  // Manual: no automatic generation at all; the user explicitly requests it,
+  // and only a plan with AI media credits can honour the request.
+  assert.match(copy.manual.media, /^No automatic media generation\./);
+  assert.match(copy.manual.media, /only when you ask/i);
+  assert.match(copy.manual.media, /only from an explicit Create with MARA click/i);
+  assert.match(copy.manual.media, /only if your plan includes AI media credits/i);
+  assert.doesNotMatch(copy.manual.media.replace(/^No automatic media generation\./, ""), /automatic/i, "Manual never claims automatic generation");
 
-  // Autopilot: automatic paid generation, safe internal work approved and
-  // scheduled, workflow continues, risky work stops.
-  assert.match(copy.autopilot.summary, /approves and schedules safe internal work/i);
-  assert.match(copy.autopilot.summary, /continues the workflow/i);
-  assert.match(copy.autopilot.summary, /risky stops in Approvals/i);
-  assert.match(copy.autopilot.media, /happens automatically/i);
-  assert.match(copy.autopilot.media, /publishing to Instagram still requires your connected account's publishing permission/i);
+  // Assisted (v1): plans, captions, drafts and proposed schedules are
+  // prepared automatically, then it waits — paid media NEVER happens on its own.
+  assert.match(copy.assisted.media, /prepares plans, captions, email drafts and proposed schedules automatically/i);
+  assert.match(copy.assisted.media, /waits for your approval/i);
+  assert.match(copy.assisted.media, /requires an explicit user action/i);
+  assert.match(copy.assisted.media, /never happens automatically in Assisted/i);
+  assert.doesNotMatch(copy.assisted.media, /can happen automatically|may generate/i, "Assisted no longer promises automatic paid media");
+
+  // Autopilot: MAY generate paid media automatically — never unconditionally:
+  // the plan, the toggle, the credits and the safety rules all have to allow it,
+  // and planning still continues when media is blocked.
+  assert.match(copy.autopilot.media, /auto-approves safe work/i);
+  assert.match(copy.autopilot.media, /may generate paid media automatically/i);
+  assert.match(copy.autopilot.media, /only if your plan supports Autopilot/i);
+  assert.match(copy.autopilot.media, /automatic paid media is enabled/i);
+  assert.match(copy.autopilot.media, /enough Voom credits/i);
+  assert.match(copy.autopilot.media, /safety rules allow the content/i);
+  assert.match(copy.autopilot.media, /Planning continues even when media is blocked/i);
+  assert.doesNotMatch(copy.autopilot.media, /always generates|generates .* automatically\./i, "Autopilot never reads as unconditional");
 });
 
 test("2b. the Autopilot credits warning is exact and lives on the Autopilot card only", () => {
   assert.equal(
     automation.AUTOPILOT_CREDITS_WARNING,
-    "Autopilot may use connected AI provider credits to generate media automatically.",
+    "Autopilot may use your Voom media credits to generate images and videos automatically within your limits.",
   );
   assert.equal(automation.AUTOMATION_MODE_COPY.autopilot.warning, automation.AUTOPILOT_CREDITS_WARNING);
   for (const mode of MODES) {
@@ -220,31 +230,39 @@ test("3. Manual: a scheduled run creates nothing and reaches no paid stage", asy
   assert.equal(calls.autoApproveAndSchedule, 0);
   // The Manual card's claims are exactly these facts.
   const copy = automation.AUTOMATION_MODE_COPY.manual;
-  assert.match(copy.summary, /nothing runs on a schedule/i);
-  assert.match(copy.media, /no scheduled generation/i);
+  assert.equal(copy.summary, "You control execution. MARA helps when you ask.");
+  assert.match(copy.media, /^No automatic media generation\./);
+  assert.equal(automation.automationRunsAutomatically("manual"), false, "Manual is never picked up by the scheduled run");
 });
 
-test("3b. Assisted: paid media generation runs automatically, then stops for approval", async () => {
+test("3b. Assisted: the scheduled run plans and drafts, then waits — no paid media stage, no approval yet (v1)", async () => {
   const { calls, result } = await runMode("assisted");
-  assert.equal(result.stage, "full");
+  assert.equal(result.stage, "planning_only", "Assisted is planning-only: paid media needs an explicit user action");
   assert.ok(calls.createDraft > 0, "Assisted drafts the horizon");
-  assert.ok(calls.ensureMedia > 0, "paid media generation happens without an approval");
+  assert.equal(calls.ensureMedia, 0, "paid media generation never happens on its own in Assisted");
   assert.equal(calls.autoApproveAndSchedule, 0, "Assisted never auto-approves");
-  assert.ok(calls.requestApproval > 0, "every item stops for the owner's approval");
+  // Approval is requested once the owner has produced the item's media on the
+  // planned card; the scheduled run itself asks for nothing.
+  assert.equal(calls.requestApproval, 0);
   assert.equal(result.autoApproved, 0);
-  assert.ok(result.awaitingApproval > 0);
+  assert.equal(result.awaitingApproval, 0);
+  assert.equal(result.mediaQueued, 0);
+  assert.deepEqual(result.failures, []);
   const copy = automation.AUTOMATION_MODE_COPY.assisted;
-  assert.match(copy.media, /can happen automatically/i);
-  assert.match(copy.media, /approval is still required before scheduling or publishing/i);
+  assert.match(copy.media, /never happens automatically in Assisted/i);
+  assert.match(copy.media, /waits for your approval/i);
+  assert.equal(automation.automationRunsAutomatically("assisted"), true, "Assisted still plans on the schedule");
 });
 
 test("3c. Autopilot: automatic paid generation plus auto-approval and scheduling", async () => {
-  const { calls } = await runMode("autopilot");
+  const { calls, result } = await runMode("autopilot");
+  assert.equal(result.stage, "full");
   assert.ok(calls.ensureMedia > 0, "paid media generation happens automatically");
   assert.ok(calls.autoApproveAndSchedule > 0, "safe internal work is approved and scheduled");
   const copy = automation.AUTOMATION_MODE_COPY.autopilot;
-  assert.match(copy.media, /happens automatically/i);
-  assert.match(copy.summary, /approves and schedules safe internal work/i);
+  assert.match(copy.media, /may generate paid media automatically/i);
+  assert.match(copy.media, /auto-approves safe work/i);
+  assert.equal(copy.summary, "MARA runs your marketing within your limits.");
 });
 
 test("3d. the presentation module cannot change behaviour: no I/O, no scheduling", async () => {
@@ -270,16 +288,16 @@ test("4. the control renders the cards from the saved-mode state it also highlig
   assert.match(source, /role="group"/);
   // The state only moves after a successful save, so the active card never
   // claims a mode that failed to persist.
-  assert.match(source, /if \(response\.ok\) setMode\(next\); else setError/);
+  assert.match(source, /if \(response\.ok\) setMode\(next\);\s*else setError/);
   // The active card is marked active in DOM terms as well as visually.
   assert.match(source, /data-active=\{card\.active \? "true" : "false"\}/);
   assert.match(source, /aria-current=\{card\.active \? "true" : undefined\}/);
   // The current-state badge renders only from the saved mode; "Recommended" is
   // a separate badge and the word "Default" is never rendered as a state.
-  assert.match(source, /card\.active && <span/);
-  assert.match(source, />Active<\/span>/);
-  assert.match(source, /card\.recommended && <span/);
-  assert.match(source, />Recommended<\/span>/);
+  assert.match(source, /card\.active && \(?\s*<span/);
+  assert.match(source, />\s*Active\s*<\/span>/);
+  assert.match(source, /card\.recommended && \(?\s*<span/);
+  assert.match(source, />\s*Recommended\s*<\/span>/);
   assert.doesNotMatch(source, /\bDefault\b/, "no 'Default' badge claiming to be the current state");
   assert.match(source, /card\.warning/);
   // No hard-coded mode: neither a literal active card nor a literal "assisted".
@@ -291,9 +309,17 @@ test("4. the control renders the cards from the saved-mode state it also highlig
   assert.doesNotMatch(source, /\/api\/(plan|cron|publish|instagram|campaigns)/, "the control starts no workflow");
 });
 
-test("4b. the Automations page passes the saved mode and keeps the safety copy", async () => {
+test("4b. the Automations page passes the saved mode and the saved plan, and keeps the safety copy", async () => {
   const page = await read("app/app/(shell)/automations/page.tsx");
-  assert.match(page, /<AutomationMode describe initial=\{normalizeAutomationMode\(data\.business\.automation_level\)\} \/>/);
+  // The saved mode AND the saved plan travel to the control: the plan is what
+  // locks the modes a plan does not include (Free = Manual only, Pro adds
+  // Assisted, Max adds Autopilot) — and it is normalised server-side, never
+  // trusted from the client.
+  assert.match(page, /<AutomationMode describe initial=\{normalizeAutomationMode\(data\.business\.automation_level\)\} plan=\{planId\} \/>/);
+  assert.match(page, /const planId = normalizePlan\(/);
+  const control = await read("components/voom/operating/AutomationMode.tsx");
+  assert.match(control, /planConfig\.allowedModes\.includes\(value\)/, "the control locks modes from the shared plan config");
+  assert.match(control, /disabled=\{busy \|\| !allowed\}/, "a mode the plan does not include cannot be selected");
   // The old hard-coded card is gone.
   assert.doesNotMatch(page, /<Mode\b/, "the static Mode card helper is removed");
   assert.doesNotMatch(page, /title="Assisted"[\s\S]*?active/, "Assisted is not pinned active");

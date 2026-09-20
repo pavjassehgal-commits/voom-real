@@ -406,7 +406,10 @@ test("the publishing queue UI recognises and badges Story items", async () => {
 test("the editor shows a 9:16 Story preview and validates Story uploads client-side", async () => {
   const editor = await read("components/voom/modals/PostEditorModal.tsx");
   assert.match(editor, /isStory/);
-  assert.match(editor, /Create Story visual with MARA/);
+  // A Story without a visual offers the MARA image generation (9:16, priced
+  // in credits) — the same primary action as a Post, shown for Stories too.
+  assert.match(editor, /\(isPost \|\| isStory\) && !post\.visualReady \?/);
+  assert.match(editor, /`Generate image with MARA · \$\{CREDIT_COSTS\.image\} credits`/);
   assert.match(editor, /checkStoryFile/);
   assert.match(editor, /STORY_MAX_VIDEO_SECONDS = 60/);
   assert.match(editor, /STORY_ASPECT = 9 \/ 16/);
