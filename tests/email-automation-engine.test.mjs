@@ -237,13 +237,14 @@ function baseTables(overrides = {}) {
 }
 
 /** The engine's send seam: a recorded, offline Resend client. */
-function createProvider({ ok = true, status = 200 } = {}) {
+function createProvider({ ok = true, status = 200, throws = false } = {}) {
   const calls = [];
   return {
     calls,
     client: {
       config: { fromName: "SynraPay", fromAddress: "hello@synrapay.example" },
       async post(path, body, init) {
+        if (throws) throw new Error("connection_lost_after_submit");
         calls.push({ path, body, headers: init?.headers ?? {} });
         return {
           ok,
@@ -256,7 +257,7 @@ function createProvider({ ok = true, status = 200 } = {}) {
 }
 
 /** RPC behaviour mirroring the 0040 contracts already proven against PostgreSQL. */
-function createRpc({ claimKeyMatches = true, advanceOutcome = "advanced" } = {}) {
+function createRpc({ claimKeyMatches = true, advanceOutcome = "advanced", claimError = false } = {}) {
   return async function rpcImpl(name, args, store) {
     switch (name) {
       case "enroll_email_flow_contact": {
@@ -267,16 +268,27 @@ function createRpc({ claimKeyMatches = true, advanceOutcome = "advanced" } = {})
         store.voom_email_flow_enrollments.push({ id: `enroll-${store.voom_email_flow_enrollments.length + 1}`, owner_user_id: OWNER, flow_id: args.p_flow_id, contact_id: args.p_contact_id, revision: 1, status: "active", current_position: 0 });
         return { data: { outcome: "enrolled", enrollmentId: "enroll-new" }, error: null };
       }
-      case "claim_email_flow_step_run": {
+      case "claim_email_flow_step_run_v2": {
+        if (claimError) return { data: null, error: { message: "claim_failed" } };
         const run = store.voom_email_flow_step_runs.find((row) => row.id === args.p_run_id);
         if (!run) return { data: null, error: { message: "step_run_not_found" } };
         const flow = store.voom_email_flows.find((row) => row.id === run.flow_id);
         if (flow.status !== "active") return { data: null, error: { message: "flow_not_active" } };
         run.attempts += 1;
         run.status = "sending";
-        run.idempotency_key = claimKeyMatches ? args.p_attempt_key : "another-worker-owns-this";
+        run.claim_token = claimKeyMatches ? args.p_claim_token : "another-worker-owns-this";
+        run.idempotency_key = args.p_provider_idempotency_key;
         run.content_snapshot = { subject: "Welcome to SynraPay", body: "Hi {firstName},\n\nThanks for subscribing.", revision: 1 };
         return { data: { ...run }, error: null };
+      }
+      case "abandon_stale_email_flow_step_run": {
+        const run = store.voom_email_flow_step_runs.find((row) => row.id === args.p_run_id);
+        if (run?.status === "failed" && run.last_error_code === "provider_outcome_ambiguous") {
+          const enrollment = store.voom_email_flow_enrollments.find((row) => row.id === run.enrollment_id);
+          if (enrollment) enrollment.status = "stopped";
+          return { data: { outcome: "abandoned" }, error: null };
+        }
+        return { data: { outcome: "unchanged" }, error: null };
       }
       case "record_email_flow_step_provider_result": {
         const run = store.voom_email_flow_step_runs.find((row) => row.id === args.p_run_id);
@@ -441,10 +453,10 @@ test("2c. a repeated Coordinator tick cannot create a second flow", async () => 
 
 // ─── 3. Consent is re-checked immediately before every send ────────────────
 
-async function runEngine(tables, { provider = createProvider(), claimKeyMatches = true } = {}) {
-  const admin = createAdmin(tables, createRpc({ claimKeyMatches }));
+async function runEngine(tables, { provider = createProvider(), claimKeyMatches = true, claimError = false, now = NOW } = {}) {
+  const admin = createAdmin(tables, createRpc({ claimKeyMatches, claimError }));
   const summary = await engine.runEmailFlowsForOwner(admin, OWNER, {
-    now: NOW,
+    now,
     send: { client: provider.client },
     maxEnrollmentsPerTick: 5,
   });
@@ -478,7 +490,7 @@ test("3b. an unsubscribe between enrollment and the send blocks it and stops the
   const { admin, summary, provider } = await runEngine(tables);
 
   assert.equal(provider.calls.length, 0, "nothing is sent to an unsubscribed contact");
-  assert.equal(admin.rpcCalls.some((call) => call.name === "claim_email_flow_step_run"), false, "not even claimed");
+  assert.equal(admin.rpcCalls.some((call) => call.name === "claim_email_flow_step_run_v2"), false, "not even claimed");
   const stop = admin.rpcCalls.find((call) => call.name === "stop_email_flow_enrollment");
   assert.ok(stop, "the enrollment is stopped, not left running");
   assert.equal(stop.args.p_reason, "consent_not_subscribed");
@@ -518,7 +530,7 @@ test("3f. without a configured provider nothing is claimed or sent", async () =>
 
   assert.equal(summary.providerConfigured, false);
   assert.equal(provider.calls.length, 0);
-  assert.equal(admin.rpcCalls.some((call) => call.name === "claim_email_flow_step_run"), false, "not even claimed");
+  assert.equal(admin.rpcCalls.some((call) => call.name === "claim_email_flow_step_run_v2"), false, "not even claimed");
   const stop = admin.rpcCalls.find((call) => call.name === "stop_email_flow_enrollment");
   assert.equal(stop.args.p_reason, "email_provider_not_configured");
 });
@@ -558,6 +570,33 @@ test("4c. the last allowed attempt is not retried — the budget ends", async ()
 
   assert.equal(summary.retried, 0, "no further retry once the budget is spent");
   assert.equal(admin.rpcCalls.some((call) => call.name === "reschedule_email_flow_step_run"), false);
+});
+
+test("4d. an ambiguous provider outcome is never retried", async () => {
+  const provider = createProvider({ throws: true });
+  const { admin, summary } = await runEngine(baseTables(), { provider });
+  assert.equal(summary.submitted, 1);
+  assert.equal(summary.retried, 0);
+  assert.equal(admin.rpcCalls.some((call) => call.name === "reschedule_email_flow_step_run"), false);
+  assert.equal(admin.rpcCalls.some((call) => call.name === "abandon_stale_email_flow_step_run"), true);
+});
+
+test("4e. a claim failure produces zero provider calls", async () => {
+  const provider = createProvider();
+  const { summary } = await runEngine(baseTables(), { provider, claimError: true });
+  assert.equal(provider.calls.length, 0);
+  assert.equal(summary.claimed, 0);
+  assert.equal(summary.submitted, 0);
+});
+
+test("4f. an outside-window cron pass never submits", async () => {
+  const provider = createProvider();
+  const outside = new Date("2026-09-20T02:00:00.000Z"); // 06:00 Dubai
+  const tables = baseTables({ voom_email_flow_step_runs: [dueRun({ scheduled_for: "2026-09-20T01:00:00.000Z" })] });
+  const { summary } = await runEngine(tables, { provider, now: outside });
+  assert.equal(provider.calls.length, 0);
+  assert.equal(summary.submitted, 0);
+  assert.equal(summary.skipped, 1);
 });
 
 // ─── 5. Mode gates on execution ────────────────────────────────────────────

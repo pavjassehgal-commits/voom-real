@@ -133,6 +133,7 @@ export interface EmailFlowStepRunRecord {
   provider_message_id: string | null;
   provider_status: string | null;
   idempotency_key: string;
+  claim_token: string | null;
   attempts: number;
   last_error_code: string | null;
   last_error_message: string | null;

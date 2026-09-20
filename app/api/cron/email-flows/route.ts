@@ -5,6 +5,10 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
+export function isAuthorizedEmailFlowCron(request: Request, secret = process.env.CRON_SECRET): boolean {
+  return Boolean(secret) && request.headers.get("authorization") === `Bearer ${secret}`;
+}
+
 /**
  * The lifecycle email worker.
  *
@@ -32,7 +36,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret) return Response.json({ error: "Email automation is not configured." }, { status: 503 });
-  if (request.headers.get("authorization") !== `Bearer ${secret}`) {
+  if (!isAuthorizedEmailFlowCron(request, secret)) {
     return Response.json({ error: "Unauthorized." }, { status: 401 });
   }
 

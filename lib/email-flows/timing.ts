@@ -60,6 +60,13 @@ export function clampToSendWindow(iso: string, timeZone: string): string {
   return at.toISOString();
 }
 
+/** True only while the business-local clock is inside 09:00–18:00. */
+export function isInsideSendWindow(at: Date, timeZone: string): boolean {
+  if (Number.isNaN(at.getTime())) return false;
+  const minutes = localMinutes(at, timeZone);
+  return minutes >= SEND_WINDOW_START_MINUTES && minutes < SEND_WINDOW_END_MINUTES;
+}
+
 /**
  * The earliest instant at or after `after` that is both inside the send window
  * and safely in the future. This is the ONLY way the engine produces a send

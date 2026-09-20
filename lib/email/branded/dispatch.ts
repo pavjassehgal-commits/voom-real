@@ -401,6 +401,7 @@ export async function dispatchBrandedEmail(
   providerStatus: string | null;
   errorCode: string | null;
   errorMessage: string | null;
+  ambiguous: boolean;
 }> {
   const client = deps.client ?? createResendClient();
 
@@ -419,12 +420,14 @@ export async function dispatchBrandedEmail(
   });
 
   const parsed = await safeProviderBody(response);
+  const accepted = response.ok && typeof parsed?.id === "string" && parsed.id.length > 0;
   return {
-    ok: response.ok && typeof parsed?.id === "string" && parsed.id.length > 0,
+    ok: accepted,
     providerMessageId: typeof parsed?.id === "string" ? parsed.id : null,
     providerStatus: typeof parsed?.last_event === "string" ? parsed.last_event : response.ok ? "accepted" : null,
-    errorCode: response.ok ? null : `HTTP_${response.status}`,
-    errorMessage: response.ok ? null : providerErrorMessage(parsed, "Resend couldn't accept that email send."),
+    errorCode: response.ok ? accepted ? null : "provider_outcome_ambiguous" : `HTTP_${response.status}`,
+    errorMessage: response.ok ? accepted ? null : "The provider response did not include a message identifier." : providerErrorMessage(parsed, "Resend couldn't accept that email send."),
+    ambiguous: response.ok && !accepted,
   };
 }
 

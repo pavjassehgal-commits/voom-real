@@ -383,5 +383,5 @@ test("8. nothing in this suite touched the network, a provider or a credit", asy
   assert.equal(typeof send.sendFlowEmail, "function", "the send adapter exists but was never invoked here");
   const source = await import("node:fs").then((fs) => fs.readFileSync(new URL("../lib/email-flows/engine.ts", import.meta.url), "utf8"));
   assert.doesNotMatch(source, /seedream|seedance|openrouter|media-credit|reserveMedia/i, "no media path is reachable from the engine");
-  assert.match(source, /createResendClient|sendFlowEmail/, "the engine sends through the existing email infrastructure only");
+  assert.match(source, /prepareFlowEmail|dispatchPreparedFlowEmail/, "the engine sends through the existing email infrastructure only");
 });
