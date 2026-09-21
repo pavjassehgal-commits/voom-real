@@ -68,12 +68,21 @@ export default async function PerformancePage() {
     </Card>
 
     <Card className="mt-4 p-5">
-      <h2 className="font-display text-base font-semibold">TikTok &amp; YouTube</h2>
+      <h2 className="font-display text-base font-semibold">YouTube</h2>
       <p className="mt-1.5 text-sm leading-relaxed text-text-2">
-        No performance data exists for TikTok or YouTube — and none is invented here. Voom can plan, approve and
-        schedule TikTok and YouTube content, but their publishing connections do not exist yet, so nothing has been
-        published on those channels to measure. When real connections ship, their measured results will join this
-        page with the same rules: real provider numbers only, never estimates.
+        YouTube performance (views, likes, comments for videos Voom published) is collected read-only from the
+        official YouTube Data API and shown on the <Link href="/app/youtube" className="font-medium text-brand hover:underline">YouTube page</Link>.
+        A dash there means YouTube did not return that number — it is never a zero in disguise.
+      </p>
+    </Card>
+
+    <Card className="mt-4 p-5">
+      <h2 className="font-display text-base font-semibold">TikTok</h2>
+      <p className="mt-1.5 text-sm leading-relaxed text-text-2">
+        TikTok performance data is unavailable through Voom&apos;s connection — and none is invented here. Voom
+        requests only the scopes it needs to publish (basic identity + posting) and asks TikTok for no analytics
+        access, so TikTok publishes with no performance numbers. Check TikTok&apos;s own analytics for views and
+        engagement.
       </p>
     </Card>
   </div>;

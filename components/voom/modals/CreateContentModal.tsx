@@ -89,7 +89,7 @@ export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
             <Choice
               icon="film"
               title="TikTok"
-              body="Plan TikTok-native videos. Publishing starts when the TikTok connection ships."
+              body="Plan TikTok-native videos with real publishing through your connected account."
               onClick={() => { setPlatform("tiktok"); setStep("choose"); }}
             />
             <Choice
@@ -129,12 +129,13 @@ export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
             <Choice
               icon="film"
               title="TikTok Video"
-              body="A short-form vertical video planned TikTok-native: blunt hook, fast beats, one-line caption. Create it yourself now; MARA planning for TikTok arrives with the connection."
+              body="A short-form vertical video planned TikTok-native: blunt hook, fast beats, one-line caption. Create it yourself now; MARA plans TikTok inside multi-channel campaigns."
               onClick={() => setStep("tiktok_video")}
             />
             <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-text-3">
-              TikTok publishing is not connected yet. Voom plans, approves and schedules your TikTok content and tells
-              you plainly that it cannot publish — it never fakes a publication.
+              Approved and scheduled TikTok videos publish through Voom&apos;s durable queue at their scheduled time.
+              Voom reports Published only after TikTok&apos;s own post-status confirms it — it never fakes a
+              publication.
             </p>
           </div>
         ) : null}
@@ -242,8 +243,7 @@ export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
               busy={busy}
             />
             <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-text-3">
-              MARA already plans TikTok beats inside multi-channel campaigns. Standalone MARA planning for TikTok
-              arrives with the TikTok publishing connection.
+              MARA already plans TikTok beats inside multi-channel campaigns.
             </p>
           </div>
         ) : null}

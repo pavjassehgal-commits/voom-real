@@ -562,16 +562,18 @@ test("migration 0045 stores the channels, refuses invalid combinations and is ad
   assert.doesNotMatch(sql, /5\s*(credits|voom credits)|40\s*(credits|voom credits)/i, "media costs are untouched");
 });
 
-test("migrations 0001–0045 are untouched and 0046–0048 are the only new ones", async () => {
+test("migrations 0001–0045 are untouched and 0046–0049 are the only new ones", async () => {
   const { readdir } = await import("node:fs/promises");
   const files = (await readdir(new URL("supabase/migrations/", root))).filter((name) => name.endsWith(".sql")).sort();
 
-  // Multi-Social Core (0046), YouTube provider (0047), and its focused OAuth
-  // ACL fix (0048) are the only migrations after Campaigns v3.
-  assert.equal(files[files.length - 1], "0048_youtube_oauth_state_acl.sql", "0048 (YouTube OAuth ACL fix) is the newest migration");
-  assert.equal(files[files.length - 2], "0047_youtube_provider.sql", "0047 (YouTube provider) precedes it");
-  assert.equal(files[files.length - 3], "0046_multi_social_core.sql", "0046 (Multi-Social Core) precedes 0047");
-  assert.equal(files[files.length - 4], "0045_campaigns_v3_unified_channels.sql", "0045 remains intact");
+  // Multi-Social Core (0046), YouTube provider (0047), its focused OAuth
+  // ACL fix (0048) and the TikTok provider (0049) are the only migrations
+  // after Campaigns v3.
+  assert.equal(files[files.length - 1], "0049_tiktok_provider.sql", "0049 (TikTok provider) is the newest migration");
+  assert.equal(files[files.length - 2], "0048_youtube_oauth_state_acl.sql", "0048 (YouTube OAuth ACL fix) precedes it");
+  assert.equal(files[files.length - 3], "0047_youtube_provider.sql", "0047 (YouTube provider) precedes 0048");
+  assert.equal(files[files.length - 4], "0046_multi_social_core.sql", "0046 (Multi-Social Core) precedes 0047");
+  assert.equal(files[files.length - 5], "0045_campaigns_v3_unified_channels.sql", "0045 remains intact");
   for (const expected of [
     "0033_automated_campaigns.sql",
     "0034_automated_campaign_shape_check_fix.sql",
