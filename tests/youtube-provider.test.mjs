@@ -1445,10 +1445,10 @@ async function saveConnection(ownerId, overrides = {}) {
   });
 }
 
-test("migration 0047 applies cleanly and is the checked-in head", async () => {
+test("migrations 0047-0048 apply cleanly and 0048 is the checked-in head", async () => {
   const { applied } = await liteDb();
   assert.ok(applied.includes("0047_youtube_provider.sql"), "0047 applied through PGlite");
-  assert.equal(applied[applied.length - 1], "0047_youtube_provider.sql");
+  assert.equal(applied[applied.length - 1], "0048_youtube_oauth_state_acl.sql");
   const tables = await all(
     "select table_name from information_schema.tables where table_schema = 'public' and table_name like 'youtube_%' order by table_name",
   );
@@ -2488,6 +2488,16 @@ test("migration 0047 is additive and touches no Instagram, email or Campaigns ob
   assert.match(header, /rollback/, "the migration documents its rollback");
   assert.match(header, /do not apply to production/i, "the production posture is documented in the header");
   assert.match(header, /never re-runs anything from 0001-0046/i, "0001-0046 are declared untouched");
+});
+
+test("migration 0048 grants only the server privileges needed for OAuth state", async () => {
+  const sql = (await read("supabase/migrations/0048_youtube_oauth_state_acl.sql"))
+    .replace(/^\s*--.*$/gm, "")
+    .toLowerCase();
+  assert.match(sql, /grant select on table public\.youtube_connections to service_role/);
+  assert.match(sql, /grant select, insert, update on table public\.youtube_oauth_states to service_role/);
+  assert.doesNotMatch(sql, /\b(?:anon|authenticated)\b[^;]*\bgrant\b|grant[^;]*\b(?:anon|authenticated)\b/);
+  assert.doesNotMatch(sql, /drop\s|delete\s|truncate\s|alter table/);
 });
 
 test("the publish-flow module buffers no whole video and every route stays server-side", async () => {

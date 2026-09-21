@@ -275,7 +275,7 @@ test("0021 is marked already-applied; 0018-0020 are untouched and 0022-0028 stay
   // checked in but deliberately NOT applied to production yet. Anything newer
   // is a migration this suite has not been told about — it must be added
   // deliberately.
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 47), "no migration beyond 0047 (the YouTube provider) may exist");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 48), "no migration beyond 0048 (the YouTube OAuth ACL fix) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],
