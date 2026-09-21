@@ -256,7 +256,7 @@ test("0045 backfills existing Campaigns v2 rows and leaves every one of them rea
   // ── Migrate ──
   const applied = await applyPending();
   assert.ok(applied.includes(MIGRATION_0045), "0045 is applied to the legacy database");
-  assert.equal(applied[applied.length - 1], "0047_youtube_provider.sql", "0047 (the YouTube provider) is the checked-in successor head");
+  assert.equal(applied[applied.length - 1], "0048_youtube_oauth_state_acl.sql", "0048 (the YouTube OAuth ACL fix) is the checked-in successor head");
 
   const q = async (sql, params = []) => (await legacy.query(sql, params)).rows;
 

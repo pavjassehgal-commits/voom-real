@@ -818,8 +818,8 @@ test("7. migrations 0040–0044 remain additive and owner-scoped", async () => {
   // path exactly as 0040–0044 shipped them.
   assert.ok(files.includes("0044_email_flow_durable_claims.sql"), "0044 is still applied");
   const afterEmailAutomation = files.filter((name) => name > "0044_email_flow_durable_claims.sql");
-  assert.deepEqual(afterEmailAutomation, ["0045_campaigns_v3_unified_channels.sql", "0046_multi_social_core.sql", "0047_youtube_provider.sql"],
-    "0045 Campaigns v3, 0046 Multi-Social Core and 0047 YouTube provider are the only migrations after the Email Automation freeze");
+  assert.deepEqual(afterEmailAutomation, ["0045_campaigns_v3_unified_channels.sql", "0046_multi_social_core.sql", "0047_youtube_provider.sql", "0048_youtube_oauth_state_acl.sql"],
+    "0045 Campaigns v3, 0046 Multi-Social Core, 0047 YouTube provider and 0048 OAuth ACL fix are the only migrations after the Email Automation freeze");
   // Executed statements only: 0047 documents its rollback plan in comments
   // (`-- drop table ...`), which must not be confused with destruction.
   const stripSql = (name) => fs.readFileSync(path.join(dir, name), "utf8")

@@ -814,7 +814,7 @@ test("migration 0046 backfills Instagram rows and keeps every channel on one cal
   );
 
   const applied = await applyPending();
-  assert.equal(applied[applied.length - 1], "0047_youtube_provider.sql", "0047 (the YouTube provider) is the final checked-in migration");
+  assert.equal(applied[applied.length - 1], "0048_youtube_oauth_state_acl.sql", "0048 (the YouTube OAuth ACL fix) is the final checked-in migration");
 
   const legacy = await one(
     "select social_channel, social_format from public.mara_drafts where title = 'Legacy Reel'",
