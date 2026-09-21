@@ -520,8 +520,8 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
                         )}
                         <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-text-3">
                           {action.family === "tiktok"
-                            ? "TikTok publishing is not connected yet — this action is planned, approved and scheduled inside Voom, and Voom will tell you plainly when it cannot publish."
-                            : "YouTube publishing is not connected yet — this action is planned, approved and scheduled inside Voom, and Voom will tell you plainly when it cannot publish."}
+                            ? "Approved and scheduled — this action rides the durable TikTok publish queue, and Voom reports Published only after TikTok's own post-status confirms it."
+                            : "Approved and scheduled — this action rides the durable YouTube publish queue, and Voom reports Published only after YouTube confirms the video is processed."}
                         </p>
                       </>
                     ) : (

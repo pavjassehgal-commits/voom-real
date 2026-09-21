@@ -7,17 +7,22 @@
  * (tiktok_video / youtube_short / youtube_video, handled here).
  *
  * Truthfulness rules enforced in this module:
- *   - approval NEVER means publication, on any channel. For TikTok there is
- *     no publish queue, no provider call and no connection at all.
+ *   - approval NEVER means publication, on any channel.
  *   - YouTube is REAL (YouTube Provider Integration v1): approving and
  *     scheduling a YouTube draft mirrors it into the durable
  *     `youtube_publish_queue` (migration 0047) through the SAME idempotent
  *     upsert the publisher boundary uses. Only the cron worker can move a
  *     queue row to published, and only with YouTube's own video id plus
  *     uploadStatus='processed'. This module performs NO Google call.
- *   - the view and calendar labels are QUEUE-DRIVEN for YouTube: an item
- *     reads scheduled / uploading / processing / published / failed exactly
- *     as the durable queue says — never optimistic, never invented.
+ *   - TikTok is REAL (TikTok Provider Integration v1): approving and
+ *     scheduling a TikTok draft mirrors it into the durable
+ *     `tiktok_publish_queue` (migration 0049) through the same idempotent
+ *     upsert. Only the cron worker can move a queue row to published, and
+ *     only with TikTok's own PUBLISH_COMPLETE post status. This module
+ *     performs NO TikTok call.
+ *   - the view and calendar labels are QUEUE-DRIVEN for both: an item reads
+ *     scheduled / uploading / processing / published / failed exactly as the
+ *     durable queue says — never optimistic, never invented.
  *   - policy-sensitive metadata (privacy, made-for-kids) is never guessed:
  *     unresolved declarations park the queue row in `needs_declaration`.
  *   - video assets reuse the existing private `post_draft_assets` storage
@@ -38,7 +43,15 @@ import {
   type SocialVideoDraftKind,
 } from "@/lib/post/core";
 import { accountTimezone, formatLocalTime, isoToLocalDate, relativeDayLabel } from "@/lib/voom/timezone";
-import { publishStateFromYouTubeQueue, type SocialPublishState } from "@/lib/social/publish-state";
+import { publishStateFromTikTokQueue, publishStateFromYouTubeQueue, type SocialPublishState } from "@/lib/social/publish-state";
+import {
+  cancelTikTokPublishItem,
+  enqueueTikTokPublishItem,
+  getTikTokQueueItemForDraft,
+  getTikTokQueueItemsForDrafts,
+  type TikTokQueueRow,
+} from "@/lib/tiktok/publish-queue";
+import { isTikTokPrivacy } from "@/lib/tiktok/publishing";
 import {
   cancelYouTubePublishItem,
   enqueueYouTubePublishItem,
@@ -75,7 +88,13 @@ export interface SocialDraftView {
   madeForKids: boolean | null;
   /** Explicit privacy choice, or null when not yet declared. */
   privacy: "public" | "private" | "unlisted" | null;
-  /** The durable YouTube queue state (YouTube drafts only), when a row exists. */
+  /**
+   * Explicit TikTok privacy choice (TikTok's own four values), or null when
+   * not yet declared. TikTok has NO default privacy level, so null is a real,
+   * visible state that parks the queue row in `needs_declaration`.
+   */
+  tiktokPrivacy: string | null;
+  /** The durable provider queue state, when a queue row exists. */
   queueStatus: string | null;
   /** The queue's truthful failure message, when it carries one. */
   queueFailureMessage: string | null;
@@ -101,6 +120,8 @@ export interface CreateSocialDraftInput {
   /** Explicit YouTube declarations (policy-sensitive; never defaulted here). */
   madeForKids?: boolean | null;
   privacy?: "public" | "private" | "unlisted" | null;
+  /** Explicit TikTok privacy declaration (policy-sensitive; never defaulted here). */
+  tiktokPrivacy?: string | null;
 }
 
 /** Creates one TikTok/YouTube planning draft. Inserts only. */
@@ -123,6 +144,7 @@ export async function createSocialDraft(
       : [],
     ...(typeof input.madeForKids === "boolean" ? { madeForKids: input.madeForKids } : {}),
     ...(input.privacy === "public" || input.privacy === "private" || input.privacy === "unlisted" ? { privacy: input.privacy } : {}),
+    ...(typeof input.tiktokPrivacy === "string" && isTikTokPrivacy(input.tiktokPrivacy) ? { tiktokPrivacy: input.tiktokPrivacy } : {}),
   };
   const { data, error } = await admin.from("mara_drafts").insert({
     conversation_id: conversationId,
@@ -160,9 +182,12 @@ export async function getSocialDraft(
   if (!isSocialVideoDraftKind(row.kind)) return null;
   const { data: asset } = await admin.from("post_draft_assets")
     .select("display_name,mime_type").eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
-  const queue = kindPair(row.kind as SocialVideoDraftKind).channel === "youtube"
+  const channel = kindPair(row.kind as SocialVideoDraftKind).channel;
+  const queue = channel === "youtube"
     ? await getYouTubeQueueItemForDraft(admin, ownerId, draftId).catch(() => null)
-    : null;
+    : channel === "tiktok"
+      ? await getTikTokQueueItemForDraft(admin, ownerId, draftId).catch(() => null)
+      : null;
   return toSocialDraftView(row, (asset as Record<string, unknown> | null) ?? null, queue);
 }
 
@@ -177,15 +202,27 @@ export async function listSocialDrafts(admin: AdminClient, ownerId: string): Pro
   const youtubeIds = rows
     .filter((row) => kindPair(row.kind as SocialVideoDraftKind).channel === "youtube")
     .map((row) => String(row.id));
-  const queueByDraft = await getYouTubeQueueItemsForDrafts(admin, ownerId, youtubeIds).catch(() => new Map<string, YouTubeQueueRow>());
+  const tiktokIds = rows
+    .filter((row) => kindPair(row.kind as SocialVideoDraftKind).channel === "tiktok")
+    .map((row) => String(row.id));
+  const [youtubeQueues, tiktokQueues] = await Promise.all([
+    getYouTubeQueueItemsForDrafts(admin, ownerId, youtubeIds).catch(() => new Map<string, YouTubeQueueRow>()),
+    getTikTokQueueItemsForDrafts(admin, ownerId, tiktokIds).catch(() => new Map<string, TikTokQueueRow>()),
+  ]);
   return Promise.all(rows.map(async (row) => {
     const { data: asset } = await admin.from("post_draft_assets")
       .select("display_name,mime_type").eq("owner_user_id", ownerId).eq("draft_id", String(row.id)).maybeSingle();
-    return toSocialDraftView(row, (asset as Record<string, unknown> | null) ?? null, queueByDraft.get(String(row.id)) ?? null);
+    const channel = kindPair(row.kind as SocialVideoDraftKind).channel;
+    const queue = channel === "youtube"
+      ? youtubeQueues.get(String(row.id)) ?? null
+      : channel === "tiktok"
+        ? tiktokQueues.get(String(row.id)) ?? null
+        : null;
+    return toSocialDraftView(row, (asset as Record<string, unknown> | null) ?? null, queue);
   }));
 }
 
-function toSocialDraftView(row: Record<string, unknown>, asset: Record<string, unknown> | null, queue: YouTubeQueueRow | null): SocialDraftView {
+function toSocialDraftView(row: Record<string, unknown>, asset: Record<string, unknown> | null, queue: YouTubeQueueRow | TikTokQueueRow | null): SocialDraftView {
   const kind = row.kind as SocialVideoDraftKind;
   const pair = kindPair(kind);
   const meta = (row.content_meta && typeof row.content_meta === "object" ? row.content_meta : {}) as Record<string, unknown>;
@@ -193,13 +230,14 @@ function toSocialDraftView(row: Record<string, unknown>, asset: Record<string, u
   const scheduledAt = row.proposed_publish_at ? String(row.proposed_publish_at) : null;
   const madeForKids = typeof meta.madeForKids === "boolean" ? meta.madeForKids : null;
   const privacy = meta.privacy === "public" || meta.privacy === "private" || meta.privacy === "unlisted" ? meta.privacy : null;
+  const tiktokPrivacy = typeof meta.tiktokPrivacy === "string" && isTikTokPrivacy(meta.tiktokPrivacy) ? meta.tiktokPrivacy : null;
 
-  // Truthful state. TikTok has no provider integration: an approved item is
-  // `connection_required`, never scheduled-for-execution, never published.
-  // YouTube reads its DURABLE QUEUE: the state the provider machinery really
-  // established — scheduled, uploading (submitting), provider_processing,
-  // published (only with YouTube's own video id + 'processed' evidence),
-  // failed, needs-declaration — never an optimistic invention.
+  // Truthful state. Both social video channels read their DURABLE QUEUE: the
+  // state the provider machinery really established — scheduled, uploading /
+  // posting (submitting), provider_processing, published (only with the
+  // provider's own confirmation: YouTube's video id + 'processed', or
+  // TikTok's own PUBLISH_COMPLETE), failed, needs-declaration — never an
+  // optimistic invention.
   let publishState: SocialPublishState;
   let publishStateLabel: string;
   if (status === "rejected") {
@@ -212,7 +250,7 @@ function toSocialDraftView(row: Record<string, unknown>, asset: Record<string, u
     const queueState = queue ? publishStateFromYouTubeQueue(queue.status) : null;
     if (queueState && queueState !== "draft") {
       publishState = queueState;
-      publishStateLabel = youTubeQueueLabel(queue!.status, queue!.provider_privacy_status);
+      publishStateLabel = youTubeQueueLabel(queue!.status, "provider_privacy_status" in queue! ? queue!.provider_privacy_status : null);
     } else {
       publishState = "approved";
       publishStateLabel = scheduledAt
@@ -220,8 +258,16 @@ function toSocialDraftView(row: Record<string, unknown>, asset: Record<string, u
         : "Approved — add a schedule to queue publishing";
     }
   } else {
-    publishState = "connection_required";
-    publishStateLabel = "Approved — publishing not connected yet";
+    const queueState = queue ? publishStateFromTikTokQueue(queue.status) : null;
+    if (queueState && queueState !== "draft") {
+      publishState = queueState;
+      publishStateLabel = tikTokQueueLabel(queue!.status);
+    } else {
+      publishState = "approved";
+      publishStateLabel = scheduledAt
+        ? "Approved — waiting to be queued"
+        : "Approved — add a schedule to queue publishing";
+    }
   }
 
   return {
@@ -243,12 +289,29 @@ function toSocialDraftView(row: Record<string, unknown>, asset: Record<string, u
     providerRef: typeof row.provider_ref === "string" && row.provider_ref ? row.provider_ref : null,
     madeForKids,
     privacy,
+    tiktokPrivacy,
     queueStatus: queue ? String(queue.status) : null,
     queueFailureMessage: queue && queue.failure_message ? String(queue.failure_message) : null,
     asset: asset ? { displayName: String(asset.display_name ?? ""), mimeType: String(asset.mime_type ?? "") } : null,
     createdAt: String(row.created_at ?? ""),
     updatedAt: String(row.updated_at ?? ""),
   };
+}
+
+/** The truthful, provider-honest label for one TikTok queue state. */
+function tikTokQueueLabel(queueStatus: string): string {
+  switch (queueStatus) {
+    case "scheduled": return "Scheduled — publishes through the TikTok queue";
+    case "waiting_for_media": return "Waiting for the video file";
+    case "needs_declaration": return "Needs a privacy choice (TikTok has no default privacy)";
+    case "permission_required": return "TikTok connection needs attention";
+    case "posting": return "Uploading to TikTok";
+    case "provider_processing": return "TikTok is processing the video";
+    case "published": return "Published on TikTok";
+    case "failed": return "TikTok publishing failed";
+    case "cancelled": return "Cancelled";
+    default: return "Queued";
+  }
 }
 
 /** The truthful, provider-honest label for one YouTube queue state. */
@@ -282,6 +345,8 @@ export interface UpdateSocialDraftInput {
   /** Explicit YouTube declarations (policy-sensitive; never defaulted here). */
   madeForKids?: boolean | null;
   privacy?: "public" | "private" | "unlisted" | null;
+  /** Explicit TikTok privacy declaration (policy-sensitive; never defaulted here). */
+  tiktokPrivacy?: string | null;
 }
 
 /**
@@ -292,13 +357,14 @@ export interface UpdateSocialDraftInput {
  * un-approving removes that mirror.
  *
  * For YOUTUBE drafts it additionally mirrors the decision into the durable
- * `youtube_publish_queue` through the same idempotent upsert the publisher
+ * `youtube_publish_queue`, and for TIKTOK drafts into the durable
+ * `tiktok_publish_queue`, through the same idempotent upsert the publisher
  * boundary uses: approved + scheduled enqueues (or refreshes) ONE queue row
  * per (owner, draft); un-approving, rejecting or removing the schedule
  * cancels it — never a row the provider already owns. This module performs
- * NO Google call: only the cron worker uploads, and only YouTube's own
- * confirmation ever establishes Published. TikTok keeps the truthful
- * no-execution path.
+ * NO provider call: only the cron workers upload, and only each provider's
+ * own confirmation (YouTube 'processed' / TikTok PUBLISH_COMPLETE) ever
+ * establishes Published.
  */
 export async function updateSocialDraft(
   admin: AdminClient,
@@ -324,6 +390,9 @@ export async function updateSocialDraft(
   // to undeclared (which parks the queue row visibly — never a silent guess).
   const madeForKids = input.madeForKids !== undefined ? input.madeForKids : existing.madeForKids;
   const privacy = input.privacy !== undefined ? input.privacy : existing.privacy;
+  const tiktokPrivacy = input.tiktokPrivacy !== undefined
+    ? (isTikTokPrivacy(input.tiktokPrivacy) ? input.tiktokPrivacy : null)
+    : existing.tiktokPrivacy;
 
   const meta: Record<string, unknown> = {
     ...(description ? { description } : {}),
@@ -331,6 +400,7 @@ export async function updateSocialDraft(
     script,
     ...(typeof madeForKids === "boolean" ? { madeForKids } : {}),
     ...(privacy ? { privacy } : {}),
+    ...(tiktokPrivacy ? { tiktokPrivacy } : {}),
   };
 
   const { error } = await admin.from("mara_drafts").update({
@@ -378,6 +448,17 @@ export async function updateSocialDraft(
       madeForKids,
       privacy,
       format: existing.format === "short" ? "short" : "video",
+    }).catch(() => undefined);
+  }
+
+  // TikTok execution mirror: the durable publish queue (migration 0049).
+  if (existing.channel === "tiktok") {
+    await syncSocialDraftToTikTokQueue(admin, ownerId, draftId, {
+      status,
+      scheduledAt,
+      title,
+      caption,
+      tiktokPrivacy,
     }).catch(() => undefined);
   }
 
@@ -451,12 +532,87 @@ export async function syncSocialDraftToYouTubeQueue(
 }
 
 /**
+ * The ONE place a TikTok draft meets its durable queue row.
+ *
+ * Rules (mirroring the YouTube sync, with TikTok's own truths):
+ *   - approved + scheduled → idempotent upsert (ONE row per owner+draft;
+ *     provider-owned rows are returned untouched by the RPC itself);
+ *   - anything else → cancel, which the RPC refuses for rows the provider
+ *     already owns (posting/processing/published) — history is preserved;
+ *   - TikTok has NO default privacy level: the privacy resolves explicit
+ *     item value first, then the owner's explicit connection default; an
+ *     unresolved choice stays null and the row parks in
+ *     `needs_declaration` — Voom never invents a policy-sensitive value.
+ *     The live creator-info options TikTok returns still win at publish time
+ *     (an unaudited client may be refused even an offered non-private level).
+ *   - the post title is the CAPTION (TikTok's own limit: 2200 characters);
+ *   - interaction/brand disclosures are not yet surfaced in the UI and are
+ *     passed as null (omitted from the request — TikTok's own defaults apply);
+ *   - a missing video asset holds the row truthfully in waiting_for_media.
+ * This module performs NO TikTok call: only the cron worker uploads, and
+ * only TikTok's own PUBLISH_COMPLETE ever establishes Published.
+ */
+export async function syncSocialDraftToTikTokQueue(
+  admin: AdminClient,
+  ownerId: string,
+  draftId: string,
+  draft: {
+    status: "draft" | "approved" | "rejected";
+    scheduledAt: string | null;
+    title: string;
+    caption: string;
+    tiktokPrivacy: string | null;
+  },
+): Promise<void> {
+  if (draft.status !== "approved" || !draft.scheduledAt) {
+    try { await cancelTikTokPublishItem(admin, ownerId, draftId); } catch { /* best effort */ }
+    return;
+  }
+
+  // Owner-level explicit default (nullable — no default is a real state:
+  // TikTok has no default privacy level).
+  const { data: connection } = await admin.from("tiktok_connections")
+    .select("default_privacy")
+    .eq("owner_user_id", ownerId).maybeSingle();
+  const connectionDefault = connection && typeof connection.default_privacy === "string" && isTikTokPrivacy(connection.default_privacy)
+    ? connection.default_privacy
+    : null;
+  const privacy = draft.tiktokPrivacy ?? connectionDefault;
+
+  const { data: asset } = await admin.from("post_draft_assets")
+    .select("id,status").eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
+  const waitingForMedia = !asset || asset.status !== "uploaded";
+
+  const { data: calendar } = await admin.from("content_calendar_items")
+    .select("id").eq("owner_user_id", ownerId).eq("source_draft_id", draftId).maybeSingle();
+
+  // The TikTok post title is the caption; TikTok's own limit is 2200 chars.
+  const title = draft.caption.trim().slice(0, 2200) || draft.title.trim().slice(0, 2200) || "Untitled";
+
+  await enqueueTikTokPublishItem(admin, {
+    ownerId,
+    draftId,
+    calendarItemId: calendar ? String(calendar.id) : null,
+    title,
+    privacyLevel: privacy,
+    disableComment: null,
+    disableDuet: null,
+    disableStitch: null,
+    brandContentToggle: null,
+    brandOrganicToggle: null,
+    isAigc: null,
+    scheduledAt: draft.scheduledAt,
+    waitingForMedia,
+  });
+}
+
+/**
  * The ONE marketing calendar shows every channel. TikTok/YouTube items are
  * read straight from the owner's approved + scheduled social drafts and
  * rendered with the business timezone, exactly like the Instagram workflow
- * items. YouTube labels are QUEUE-DRIVEN (the durable publish queue is the
- * execution truth); TikTok keeps the truthful "publishing not connected yet"
- * label. This module makes no provider call.
+ * items. TikTok and YouTube labels are QUEUE-DRIVEN (each durable publish
+ * queue is the execution truth for its channel). This module makes no
+ * provider call.
  */
 export interface SocialCalendarItemView {
   draftId: string;
@@ -495,26 +651,34 @@ export async function listSocialCalendarItems(
     .select("id,source_draft_id").eq("owner_user_id", ownerId).in("source_draft_id", ids);
   const mirror = new Map((calendar ?? []).map((row) => [String(row.source_draft_id), String(row.id)]));
 
-  // YouTube calendar items are QUEUE-DRIVEN: the durable publish queue is the
-  // truth about execution, so the calendar shows scheduled / uploading /
-  // processing / published exactly as the queue says. TikTok items keep the
-  // truthful planning-only label — no TikTok execution machinery exists.
+  // TikTok and YouTube calendar items are QUEUE-DRIVEN: each durable publish
+  // queue is the truth about execution, so the calendar shows scheduled /
+  // uploading / processing / published exactly as the queue says.
   const youtubeIds = rows
     .filter((row) => kindPair(row.kind as SocialVideoDraftKind).channel === "youtube")
     .map((row) => String(row.id));
-  const queueByDraft = await getYouTubeQueueItemsForDrafts(admin, ownerId, youtubeIds)
-    .catch(() => new Map<string, YouTubeQueueRow>());
+  const tiktokIds = rows
+    .filter((row) => kindPair(row.kind as SocialVideoDraftKind).channel === "tiktok")
+    .map((row) => String(row.id));
+  const [youtubeQueueByDraft, tiktokQueueByDraft] = await Promise.all([
+    getYouTubeQueueItemsForDrafts(admin, ownerId, youtubeIds).catch(() => new Map<string, YouTubeQueueRow>()),
+    getTikTokQueueItemsForDrafts(admin, ownerId, tiktokIds).catch(() => new Map<string, TikTokQueueRow>()),
+  ]);
 
   return rows.map((row) => {
     const kind = row.kind as SocialVideoDraftKind;
     const pair = kindPair(kind);
     const scheduledAt = String(row.proposed_publish_at);
-    const queue = pair.channel === "youtube" ? queueByDraft.get(String(row.id)) ?? null : null;
-    const statusLabel = pair.channel === "youtube"
-      ? queue
-        ? youTubeQueueLabel(queue.status, queue.provider_privacy_status)
-        : "Approved — waiting to be queued"
-      : "Approved — publishing not connected yet";
+    const queue = pair.channel === "youtube"
+      ? youtubeQueueByDraft.get(String(row.id)) ?? null
+      : pair.channel === "tiktok"
+        ? tiktokQueueByDraft.get(String(row.id)) ?? null
+        : null;
+    const statusLabel = queue
+      ? pair.channel === "youtube"
+        ? youTubeQueueLabel(queue.status, "provider_privacy_status" in queue ? queue.provider_privacy_status : null)
+        : tikTokQueueLabel(queue.status)
+      : "Approved — waiting to be queued";
     return {
       draftId: String(row.id),
       calendarItemId: mirror.get(String(row.id)) ?? null,

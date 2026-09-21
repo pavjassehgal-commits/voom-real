@@ -9,20 +9,22 @@
  *              encrypted OAuth tokens server-side only, the authoritative
  *              channel identity YouTube returned, the scopes Google actually
  *              granted, and the truthful audit-restriction note).
- *   tiktok     truthfully `not_configured`: no OAuth integration exists yet.
+ *   tiktok     the REAL connection (tiktok_connections, migration 0049:
+ *              encrypted OAuth tokens server-side only, the authoritative
+ *              open_id TikTok itself returned, the scopes TikTok actually
+ *              granted, and the truthful content-sharing-audit note).
  *   email      the existing Resend server configuration.
  *
  * Rules:
  *   - No token, secret or encrypted value ever leaves the server through
  *     this module; the view below is sanitized presentation metadata only.
- *   - Nothing here invents a TikTok token, scope or account id. The
- *     `provider` metadata bag stays empty for unconfigured channels.
  */
 
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getResendAvailability } from "@/lib/email/config";
+import { hasPublishPermission } from "@/lib/tiktok/scopes";
 import { YOUTUBE_UPLOAD_SCOPE } from "@/lib/youtube/scopes";
 import { SOCIAL_CHANNELS, type SocialChannel } from "./channels";
 
@@ -88,16 +90,20 @@ export interface SocialConnectionsDeps {
   youtubeConfigured?: boolean;
   /** Google's API-project audit state, surfaced truthfully in the provider bag. */
   youtubeProjectAudited?: boolean;
+  /** Whether server-side TikTok OAuth credentials are configured. */
+  tiktokConfigured?: boolean;
+  /** Voom's TikTok app content-sharing-audit state, surfaced truthfully. */
+  tiktokAppAudited?: boolean;
 }
 
 /**
  * Builds the full channel-neutral connection view.
  *
- * Instagram comes from the real `instagram_connections` row and YouTube from
- * the real `youtube_connections` row (migration 0047) — both through
- * sanitized, owner-scoped reads. TikTok stays `not_configured` until its
- * real OAuth integration exists — the truthful state, not a mocked
- * connection.
+ * Instagram, TikTok and YouTube each come from their real connection row
+ * (instagram_connections; tiktok_connections, migration 0049;
+ * youtube_connections, migration 0047) — all through sanitized,
+ * owner-scoped reads. An unconfigured deployment reports
+ * `not_configured` truthfully — never a mocked connection.
  */
 export async function getSocialConnections(deps: SocialConnectionsDeps): Promise<SocialConnectionView[]> {
   const { db, ownerId, instagramConfigured } = deps;
@@ -159,14 +165,100 @@ export async function getSocialConnections(deps: SocialConnectionsDeps): Promise
     provider: {},
   };
 
+  const tiktok = await tikTokConnectionView(db, ownerId, deps.tiktokConfigured === true, deps.tiktokAppAudited === true);
   const youtube = await youTubeConnectionView(db, ownerId, deps.youtubeConfigured === true, deps.youtubeProjectAudited === true);
 
   return [
     instagram,
-    unconfiguredConnection("tiktok"),
+    tiktok,
     youtube,
     email,
   ];
+}
+
+/**
+ * The REAL TikTok connection view, from the sanitized `tiktok_connections`
+ * row (migration 0049). Truthfulness rules:
+ *   - `connected` requires the row's own status AND the video.publish scope
+ *     TikTok actually granted — never an assumed capability;
+ *   - the provider bag carries only sanitized metadata (open_id, granted
+ *     scopes, expiry, explicit privacy default, audit state) — never tokens;
+ *   - TikTok's unaudited-app restriction (posts restricted to SELF_ONLY
+ *     viewership, 5 posting users per 24h) is surfaced plainly instead of
+ *     promising public posting TikTok would refuse. The LIVE provider
+ *     response always remains authoritative.
+ */
+async function tikTokConnectionView(
+  db: SupabaseClient,
+  ownerId: string,
+  configured: boolean,
+  appAudited: boolean,
+): Promise<SocialConnectionView> {
+  if (!configured) {
+    return {
+      channel: "tiktok",
+      state: "not_configured",
+      detail: "TikTok integration is not configured on the server yet. Content can be planned, approved and scheduled inside Voom; nothing is published to TikTok until it is.",
+      canPublish: false,
+      account: null,
+      provider: {},
+    };
+  }
+  const { data, error } = await db.from("tiktok_connections")
+    .select("open_id,display_name,avatar_url,creator_username,status,scopes,access_token_expires_at,default_privacy")
+    .eq("owner_user_id", ownerId)
+    .maybeSingle();
+  if (error) {
+    return {
+      channel: "tiktok",
+      state: "disconnected",
+      detail: "Voom could not read the TikTok connection. Publishing is paused until it can.",
+      canPublish: false,
+      account: null,
+      provider: {},
+    };
+  }
+  if (!data) {
+    return {
+      channel: "tiktok",
+      state: "disconnected",
+      detail: "No TikTok account is connected yet. Connect an account to enable real publishing; until then nothing is published to TikTok.",
+      canPublish: false,
+      account: null,
+      provider: { appAudited },
+    };
+  }
+  const row = data as Record<string, unknown>;
+  const scopes = Array.isArray(row.scopes) ? (row.scopes as string[]) : [];
+  const status = String(row.status ?? "");
+  const connected = status === "connected" && hasPublishPermission(scopes);
+  const auditNote = appAudited
+    ? null
+    : " Until Voom's TikTok app passes TikTok's content-sharing audit, TikTok restricts posts through it to private (Only me) viewership; Voom reports what TikTok actually accepts.";
+  return {
+    channel: "tiktok",
+    state: connected ? "connected" : "disconnected",
+    detail: connected
+      ? `Connected. Publishing rides the durable TikTok queue and reports Published only after TikTok's own post-status confirms PUBLISH_COMPLETE.${auditNote ?? ""}`
+      : status === "revoked"
+        ? "TikTok authorization was revoked. Reconnect the account to resume publishing; your posts on TikTok are untouched."
+        : status === "disconnected"
+          ? "The TikTok account was disconnected. Historical Voom records remain; your posts on TikTok are untouched."
+          : `The TikTok connection is not active (${status || "unknown"}). Reconnect to resume real publishing.${auditNote ?? ""}`,
+    canPublish: connected,
+    account: {
+      handle: row.creator_username ? String(row.creator_username) : null,
+      name: row.display_name ? String(row.display_name) : null,
+      kind: "account",
+    },
+    provider: {
+      openId: row.open_id ? String(row.open_id) : null,
+      grantedScopes: scopes,
+      accessTokenExpiresAt: row.access_token_expires_at ? String(row.access_token_expires_at) : null,
+      defaultPrivacy: row.default_privacy ? String(row.default_privacy) : null,
+      appAudited,
+    },
+  };
 }
 
 /**

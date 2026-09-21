@@ -10,10 +10,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 /**
  * Multi-Social Core — read/edit/approve ONE TikTok or YouTube planning draft.
  *
- * Editing text, setting a schedule, declaring the YouTube audience/privacy
- * and recording an approval all stay inside Voom. Approval is NOT
- * publication on either channel:
- *   - TikTok has no provider integration at all — nothing external happens.
+ * Editing text, setting a schedule, declaring the TikTok privacy or the
+ * YouTube audience/privacy and recording an approval all stay inside Voom.
+ * Approval is NOT publication on either channel:
+ *   - TikTok approval + schedule mirrors the item into the durable
+ *     tiktok_publish_queue (migration 0049); only the cron worker uploads,
+ *     and only TikTok's own PUBLISH_COMPLETE post status ever establishes
+ *     Published.
  *   - YouTube approval + schedule mirrors the item into the durable
  *     youtube_publish_queue (migration 0047); only the cron worker uploads,
  *     and only YouTube's own confirmation (a real video id with
@@ -31,6 +34,12 @@ const patchSchema = z.object({
   /** Explicit YouTube declarations. null CLEARS a declaration (never a guess). */
   madeForKids: z.boolean().nullable().optional(),
   privacy: z.enum(["public", "private", "unlisted"]).nullable().optional(),
+  /**
+   * Explicit TikTok privacy declaration (TikTok's own four values).
+   * null CLEARS the declaration (never a guess) — TikTok has no default
+   * privacy level, so an undeclared item waits visibly.
+   */
+  tiktokPrivacy: z.enum(["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"]).nullable().optional(),
 }).strict();
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -66,14 +75,16 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   try {
     const draft = await updateSocialDraft(createAdminClient(), user.id, id, parsed.data);
     if (!draft) return Response.json({ error: "That content was not found." }, { status: 404 });
-    // Truthful approval messaging per channel: TikTok stays inside Voom;
-    // YouTube approval enqueues durable execution that only the worker (with
-    // YouTube's own confirmation) can ever call Published.
+    // Truthful approval messaging per channel: approval enqueues durable
+    // execution on the channel's own queue; only the worker — with the
+    // provider's own confirmation — can ever call it Published.
     const approvalMessage = draft.channel === "youtube"
       ? draft.scheduledAt
         ? "Approved. It is on the durable YouTube publish queue and uploads at the scheduled time — Published appears only after YouTube confirms the video is processed."
         : "Approved inside Voom. Add a schedule to put it on the YouTube publish queue — nothing has been published."
-      : "Approved inside Voom. TikTok publishing is not connected, so nothing was published.";
+      : draft.scheduledAt
+        ? "Approved. It is on the durable TikTok publish queue and publishes at the scheduled time — Published appears only after TikTok confirms."
+        : "Approved inside Voom. Add a schedule to put it on the TikTok publish queue — nothing has been published.";
     return Response.json({
       draft,
       message: parsed.data.decision === "approved"

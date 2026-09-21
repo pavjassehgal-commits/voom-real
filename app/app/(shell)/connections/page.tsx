@@ -4,6 +4,8 @@ import { Icon } from "@/components/voom/icons";
 import { Card, Tag } from "@/components/voom/ui/primitives";
 import { getResendAvailability } from "@/lib/email/config";
 import { getOperatingData } from "@/lib/voom/operating-data";
+import { readTikTokConfig } from "@/lib/tiktok/config";
+import { getTikTokConnection } from "@/lib/tiktok/data";
 import { readYouTubeConfig } from "@/lib/youtube/config";
 import { getYouTubeConnection } from "@/lib/youtube/data";
 import { getCurrentUser } from "@/lib/voom/server-data";
@@ -12,11 +14,11 @@ import { createAdminClient } from "@/utils/supabase/admin";
 export const dynamic = "force-dynamic";
 
 // Multi-Social Core: Voom plans on four channels — Instagram, TikTok, YouTube
-// and email. Instagram, YouTube and email have real integrations; TikTok is
-// planning-only until its publishing connection ships, and the tile says so
-// truthfully. The YouTube tile reads the REAL youtube_connections row
-// (migration 0047) — connected means YouTube's own channel identity and the
-// upload scope Google actually granted, never an assumed capability.
+// and email. ALL FOUR have real integrations. The TikTok tile reads the REAL
+// tiktok_connections row (migration 0049) — connected means TikTok's own
+// account identity and the video.publish scope TikTok actually granted,
+// never an assumed capability. The YouTube tile reads the REAL
+// youtube_connections row (migration 0047) the same way.
 // SMS marketing was removed from the product, so no SMS connection tile
 // exists any more (historical SMS data stays read-only).
 export default async function ConnectionsPage() {
@@ -27,11 +29,16 @@ export default async function ConnectionsPage() {
   const email = getResendAvailability();
 
   const youTubeConfig = readYouTubeConfig();
+  const tikTokConfig = readTikTokConfig();
   const user = await getCurrentUser();
   const youTube = user
     ? await getYouTubeConnection(createAdminClient(), user.id, Boolean(youTubeConfig), youTubeConfig?.projectAudited === true).catch(() => null)
     : null;
   const youTubeConnected = Boolean(youTube?.connected) && Boolean(youTube?.scopes.includes("https://www.googleapis.com/auth/youtube.upload"));
+  const tikTok = user
+    ? await getTikTokConnection(createAdminClient(), user.id, Boolean(tikTokConfig), tikTokConfig?.appAudited === true).catch(() => null)
+    : null;
+  const tikTokConnected = Boolean(tikTok?.connected) && Boolean(tikTok?.scopes.includes("video.publish"));
 
   return (
     <div>
@@ -47,10 +54,15 @@ export default async function ConnectionsPage() {
         <Connection
           icon="film"
           name="TikTok"
-          description="Planning connected: create, approve and schedule TikTok-native videos inside Voom. Publishing is not connected yet — Voom will tell you plainly when it can publish, and never claims a post went live without provider confirmation."
+          description={tikTokConnected
+            ? `Connected${tikTok?.displayName ? `: ${tikTok.displayName}` : ""}. Approved, scheduled videos publish through the durable TikTok queue; Published appears only after TikTok's own post-status confirms.${tikTok && !tikTok.appAudited ? " TikTok currently restricts unaudited-app posts to private (Only me) viewership — Voom reports exactly what TikTok accepts." : ""}`
+            : tikTok?.configured
+              ? "Real TikTok publishing is available: connect your account to publish videos through Voom's durable queue. Until you connect, TikTok content can be planned, approved and scheduled inside Voom — nothing is published."
+              : "Planning connected: TikTok-native videos with caption, concept and script. The server-side TikTok integration is not configured yet, so nothing is published to TikTok."}
           selected={selected.has("tiktok")}
-          connected={false}
-          statusLabel="Planning only"
+          connected={tikTokConnected}
+          statusLabel={tikTok?.configured ? "Not connected" : "Planning only"}
+          href={tikTok?.configured ? "/app/tiktok" : undefined}
         />
         <Connection
           icon="play"
@@ -76,10 +88,10 @@ export default async function ConnectionsPage() {
         />
       </div>
       <p className="mt-4 max-w-2xl text-xs leading-relaxed text-text-3">
-        Voom campaigns run on Instagram, TikTok, YouTube and email. Instagram and YouTube publish for real through
-        their connected accounts — and only report Published after the provider itself confirms. TikTok content can
-        be planned, approved and scheduled now; its publishing connection does not exist yet, so Voom never marks it
-        published. SMS marketing is no longer part of the product.
+        Voom campaigns run on Instagram, TikTok, YouTube and email. All four publish for real through their
+        connected accounts — and each reports Published only after the provider itself confirms (Instagram&apos;s
+        media id, TikTok&apos;s own PUBLISH_COMPLETE, YouTube&apos;s processed video). SMS marketing is no longer
+        part of the product.
       </p>
     </div>
   );

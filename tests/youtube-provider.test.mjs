@@ -1445,10 +1445,11 @@ async function saveConnection(ownerId, overrides = {}) {
   });
 }
 
-test("migrations 0047-0048 apply cleanly and 0048 is the checked-in head", async () => {
+test("migrations 0047-0049 apply cleanly and 0049 is the checked-in head", async () => {
   const { applied } = await liteDb();
   assert.ok(applied.includes("0047_youtube_provider.sql"), "0047 applied through PGlite");
-  assert.equal(applied[applied.length - 1], "0048_youtube_oauth_state_acl.sql");
+  assert.ok(applied.includes("0049_tiktok_provider.sql"), "0049 (TikTok) applied through PGlite");
+  assert.equal(applied[applied.length - 1], "0049_tiktok_provider.sql");
   const tables = await all(
     "select table_name from information_schema.tables where table_schema = 'public' and table_name like 'youtube_%' order by table_name",
   );
@@ -2132,8 +2133,18 @@ test("quota exhaustion in the worker parks the row at the Pacific reset without 
 });
 
 test("reconciliation publishes on YouTube's own 'processed' evidence and fails truthfully on rejection", async () => {
-  const { admin } = await liteDb();
+  const { admin, db } = await liteDb();
   await clearClaimable();
+  // Test isolation: earlier tests in this file intentionally leave
+  // provider-owned rows behind (published rows are guard-protected and the
+  // later daily-verification test depends on them), but the reconciliation
+  // claim also picks up stale `provider_processing` / stale `uploading`
+  // rows. This test must see ONLY its own rows, so the leftover
+  // non-published provider-owned rows are removed here (test data only —
+  // nothing about the production worker or queue changes).
+  await db.query(
+    `delete from public.youtube_publish_queue where status in ('provider_processing', 'uploading')`,
+  );
 
   const processingDraft = await makeDraft(OWNER_A);
   const processingRow = await queueMod.enqueueYouTubePublishItem(admin, enqueueInput(processingDraft));
@@ -2356,7 +2367,8 @@ test("the social drafts route records declarations without inventing them, and i
   assert.match(route, /madeForKids: z\.boolean\(\)\.nullable\(\)\.optional\(\)/, "the audience declaration is a real boolean or explicitly null");
   assert.match(route, /privacy: z\.enum\(\["public", "private", "unlisted"\]\)\.nullable\(\)\.optional\(\)/, "privacy is one of YouTube's three values or null");
   assert.match(route, /durable YouTube publish queue|YouTube publish queue/i, "approval messages describe the real queue");
-  assert.match(route, /not connected/i, "TikTok keeps its truthful refusal message");
+  assert.match(route, /durable TikTok publish queue/i, "TikTok approval messages describe its real queue");
+  assert.match(route, /PUBLISH_COMPLETE/i, "TikTok published requires its own provider evidence");
 });
 
 test("the YouTube hub and editor surfaces tell the provider truth", async () => {
@@ -2388,13 +2400,14 @@ test("the YouTube hub and editor surfaces tell the provider truth", async () => 
 });
 
 test("state mapping keeps the four provider truths distinct across the product", () => {
-  // The channel matrix itself: YouTube is a real publishing channel now —
-  // gated at runtime by the connection, never by a planning-only flag —
-  // while TikTok truthfully stays unconnected.
+  // The channel matrix itself: YouTube AND TikTok are real publishing
+  // channels — gated at runtime by the connection, never by a planning-only
+  // flag.
   assert.equal(channelsMod.CHANNEL_PUBLISHING_AVAILABILITY.youtube.publishable, true);
   assert.equal(channelsMod.isChannelPublishable("youtube"), true);
-  assert.equal(channelsMod.CHANNEL_PUBLISHING_AVAILABILITY.tiktok.publishable, false);
+  assert.equal(channelsMod.CHANNEL_PUBLISHING_AVAILABILITY.tiktok.publishable, true);
   assert.match(channelsMod.CHANNEL_PUBLISHING_AVAILABILITY.youtube.reason, /durable YouTube publish queue/i);
+  assert.match(channelsMod.CHANNEL_PUBLISHING_AVAILABILITY.tiktok.reason, /durable TikTok publish queue/i);
   assert.deepEqual([...channelsMod.formatsForChannel("youtube")].sort(), ["short", "video"]);
 
   const { publishStateFromYouTubeQueue } = publishStateMod;
@@ -2431,9 +2444,14 @@ test("state mapping keeps the four provider truths distinct across the product",
   // Approved with NO queue row: still blocked — nothing will happen until the
   // durable queue mirror exists.
   assert.equal(deriveActionState(facts(null)), "blocked");
-  // TikTok keeps its planning-only truth.
+  // TikTok reads its OWN queue now: no queue row stays blocked (nothing
+  // executes yet), and its durable queue states derive exactly like
+  // YouTube's do.
   assert.equal(deriveActionState({ ...facts(null), channel: "tiktok" }), "blocked");
-  assert.equal(deriveActionState({ ...facts("published"), channel: "tiktok", queueStatus: null }), "blocked", "TikTok can never claim execution");
+  assert.equal(deriveActionState({ ...facts("published"), channel: "tiktok", queueStatus: null }), "blocked", "TikTok can never claim execution without its queue row");
+  assert.equal(deriveActionState({ ...facts("published"), channel: "tiktok", queueStatus: "published" }), "executed", "TikTok executed requires its queue's PUBLISH_COMPLETE-backed row");
+  assert.equal(deriveActionState({ ...facts("provider_processing"), channel: "tiktok", queueStatus: "posting" }), "executing");
+  assert.equal(deriveActionState({ ...facts("needs_declaration"), channel: "tiktok", queueStatus: "needs_declaration" }), "blocked");
 });
 
 test("the campaign layer derives YouTube execution from the QUEUE, never from the approval alone", async () => {
@@ -2441,9 +2459,11 @@ test("the campaign layer derives YouTube execution from the QUEUE, never from th
   assert.match(server, /youtube_publish_queue/, "the campaign view reads the real queue");
   assert.match(server, /publishStateFromYouTubeQueue/, "publish state comes from the queue mapping");
   assert.match(server, /provider_ref/, "the provider's own reference is surfaced");
-  assert.match(server, /canEditContent = !\(youtubeQueue && \["uploading", "provider_processing", "published"\]/,
-    "content locks while YouTube owns the item");
+  assert.match(server, /canEditContent = !\(lockedQueueStatus && \["uploading", "posting", "provider_processing", "published"\]/,
+    "content locks while the provider owns the item");
   assert.match(server, /publishStateFromYouTubeQueue\(youtubeQueue\.status\)/, "the publish label comes from the queue state");
+  assert.match(server, /tiktok_publish_queue/, "the campaign view reads the real TikTok queue too");
+  assert.match(server, /publishStateFromTikTokQueue/, "TikTok publish state comes from its queue mapping");
 });
 
 // ---------------------------------------------------------------------------

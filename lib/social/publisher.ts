@@ -5,7 +5,7 @@
  *
  *   SocialPublisher ──► InstagramPublisher   (the existing, proven flow)
  *                   ──► YouTubePublisher     (real: the 0047 durable queue)
- *                   ──► TikTokPublisher      (truthfully unavailable)
+ *                   ──► TikTokPublisher      (real: the 0049 durable queue)
  *
  * The rest of Voom never touches provider upload mechanics; it hands content
  * to this boundary and receives ONE truthful outcome shape.
@@ -13,10 +13,6 @@
  * Truthfulness contract (enforced by the test suite):
  *   - An adapter may ONLY report `published` together with a real provider
  *     publication reference that the provider itself returned.
- *   - TikTok has no real integration yet. Its adapter returns
- *     `connection_required` / `provider_not_supported` — never a fake
- *     success, never a fabricated provider id, never invented API behavior.
- *     No endpoint, scope, token or webhook is imagined anywhere in this file.
  *   - The Instagram adapter does NOT re-implement the sensitive token and
  *     publish code. It delegates to the existing durable architecture:
  *     `instagram_publish_queue` + the port-based publish flow
@@ -28,13 +24,25 @@
  *     already means "YouTube returned a real video id AND its own
  *     processingDetails.uploadStatus='processed'". Enqueued is never
  *     published; approval is never publication.
+ *   - The TikTok adapter mirrors both: it delegates to the durable
+ *     `tiktok_publish_queue` (migration 0049) + the Direct Post flow
+ *     (lib/tiktok/publish-flow.ts) whose `published` state already means
+ *     "TikTok's own post-status endpoint returned PUBLISH_COMPLETE".
+ *     Policy-sensitive metadata (privacy, interaction disclosures) is passed
+ *     through exactly as declared (or null): TikTok has NO default privacy
+ *     level, so an undeclared item parks in `needs_declaration` instead of
+ *     being guessed.
+ *   - Called with a null port, each adapter degrades to the truthful
+ *     unavailable adapter — the boundary can never fake a success either
+ *     way.
  *
- * This module imports no network client. The Instagram enqueue dependency is
+ * This module imports no network client. The enqueue dependencies are
  * injected, so the whole boundary is executable offline by the Node suite.
  */
 
 import "server-only";
 
+import { isTikTokPrivacy } from "@/lib/tiktok/publishing";
 import {
   CHANNEL_PUBLISHING_AVAILABILITY,
   isSocialMediaChannel,
@@ -68,6 +76,25 @@ export interface SocialPublishRequest {
     privacyStatus?: string | null;
     madeForKids?: boolean | null;
     categoryId?: string | null;
+    waitingForMedia?: boolean;
+  };
+  /**
+   * TikTok's Direct Post metadata, supplied by the caller from the draft's
+   * own structured content (never invented here). Policy-sensitive values
+   * (privacy, interaction/brand disclosures) may be null: TikTok has no
+   * default privacy level, so the queue then parks the item in
+   * `needs_declaration` instead of guessing.
+   */
+  tiktok?: {
+    /** The post title/caption (TikTok's own limit: 2200 characters). */
+    title?: string;
+    privacyLevel?: string | null;
+    disableComment?: boolean | null;
+    disableDuet?: boolean | null;
+    disableStitch?: boolean | null;
+    brandContentToggle?: boolean | null;
+    brandOrganicToggle?: boolean | null;
+    isAigc?: boolean | null;
     waitingForMedia?: boolean;
   };
 }
@@ -174,12 +201,11 @@ export function createInstagramPublisher(port: InstagramEnqueuePort): SocialPubl
 }
 
 /**
- * The truthful adapter for a channel whose real provider integration does not
- * exist yet. It makes no network call, stores no token, invents no API, and
- * can never report success. When the real TikTok / YouTube integrations are
- * built (in their own focused tasks, against the authoritative provider
- * documentation), each gets a real adapter implementing the same contract —
- * nothing else in Voom changes.
+ * The truthful adapter for a channel whose queue port is not configured. It
+ * makes no network call, stores no token, invents no API, and can never
+ * report success. Every real channel (Instagram, TikTok, YouTube) degrades
+ * to this adapter when its enqueue port is absent, so an unconfigured
+ * deployment is always told the truth instead of faking ability.
  */
 export function createUnavailablePublisher(channel: SocialMediaChannel, opts?: { notConfigured?: boolean }): SocialPublisher {
   const availability = CHANNEL_PUBLISHING_AVAILABILITY[channel];
@@ -194,11 +220,6 @@ export function createUnavailablePublisher(channel: SocialMediaChannel, opts?: {
       };
     },
   };
-}
-
-/** TikTok adapter — truthful until the real integration ships. */
-export function createTikTokPublisher(): SocialPublisher {
-  return createUnavailablePublisher("tiktok");
 }
 
 /**
@@ -312,6 +333,116 @@ export function createYouTubePublisher(port: YouTubeEnqueuePort | null): SocialP
   };
 }
 
+/**
+ * The dependency the TikTok adapter needs: the durable TikTok publish queue
+ * (migration 0049). Like the other ports, this adapter performs NO TikTok
+ * call itself — enqueuing puts the item on the queue the cron worker claims,
+ * and only that worker (with TikTok's own PUBLISH_COMPLETE post status) can
+ * ever move the row to `published`.
+ */
+export interface TikTokEnqueuePort {
+  enqueueTikTokPublishItem(input: {
+    ownerId: string;
+    draftId: string;
+    calendarItemId: string | null;
+    title: string;
+    privacyLevel: string | null;
+    disableComment: boolean | null;
+    disableDuet: boolean | null;
+    disableStitch: boolean | null;
+    brandContentToggle: boolean | null;
+    brandOrganicToggle: boolean | null;
+    isAigc: boolean | null;
+    scheduledAt: string;
+    waitingForMedia?: boolean;
+  }): Promise<{ id: string } | null>;
+}
+
+/**
+ * TikTokPublisher — the real adapter (TikTok Provider Integration v1).
+ *
+ * Truthfulness is structural, mirroring the YouTube adapter:
+ *   - TikTok Video is the only format: TikTok has no carousel/story API for
+ *     this integration and none is invented;
+ *   - enqueued is NOT published: the durable queue's own state machine, and
+ *     TikTok's PUBLISH_COMPLETE inside the worker, decide what happens next;
+ *   - TikTok has NO default privacy level: a missing/invalid privacy choice
+ *     is passed through as null and the queue parks the item visibly in
+ *     `needs_declaration` instead of being guessed — Voom never picks a
+ *     policy-sensitive value for the creator;
+ *   - the unaudited-client restriction is NOT overridden anywhere in this
+ *     path: the provider's live answer wins at publish time.
+ *
+ * Called with `null` (no queue port configured), it degrades to the truthful
+ * unavailable adapter — the boundary can never fake a success either way.
+ */
+export function createTikTokPublisher(port: TikTokEnqueuePort | null): SocialPublisher {
+  if (!port) return createUnavailablePublisher("tiktok");
+  return {
+    channel: "tiktok",
+    isAvailable: () => true,
+    async publish(request) {
+      if (request.format !== "video") {
+        return {
+          status: "failed",
+          channel: "tiktok",
+          code: "unsupported_format",
+          message: `TikTok publishes video only; the format "${request.format}" cannot be used.`,
+        };
+      }
+      const tt = request.tiktok ?? {};
+      const title = (typeof tt.title === "string" ? tt.title.trim() : "")
+        || request.caption.trim().split("\n")[0]?.trim().slice(0, 2200)
+        || "";
+      if (!title) {
+        return {
+          status: "failed",
+          channel: "tiktok",
+          code: "title_required",
+          message: "TikTok requires a caption (up to 2200 characters) before this item can publish.",
+        };
+      }
+      const privacy = typeof tt.privacyLevel === "string" && isTikTokPrivacy(tt.privacyLevel)
+        ? tt.privacyLevel
+        : null;
+      const boolOr = (value: unknown): boolean | null => (typeof value === "boolean" ? value : null);
+      const row = await port.enqueueTikTokPublishItem({
+        ownerId: request.ownerId,
+        draftId: request.draftId,
+        calendarItemId: request.calendarItemId ?? null,
+        title: title.slice(0, 2200),
+        privacyLevel: privacy,
+        disableComment: boolOr(tt.disableComment),
+        disableDuet: boolOr(tt.disableDuet),
+        disableStitch: boolOr(tt.disableStitch),
+        brandContentToggle: boolOr(tt.brandContentToggle),
+        brandOrganicToggle: boolOr(tt.brandOrganicToggle),
+        isAigc: boolOr(tt.isAigc),
+        scheduledAt: request.scheduledAt,
+        waitingForMedia: tt.waitingForMedia === true,
+      });
+      if (!row) {
+        return {
+          status: "failed",
+          channel: "tiktok",
+          code: "enqueue_failed",
+          message: "Voom could not place this item on the TikTok publish queue.",
+        };
+      }
+      // Truthful: enqueued is NOT published. Only TikTok's own PUBLISH_COMPLETE
+      // inside the worker ever establishes Published.
+      return {
+        status: "enqueued",
+        channel: "tiktok",
+        queueRef: row.id,
+        message: privacy === null
+          ? "On the TikTok publish queue, but it needs a privacy choice before TikTok allows the post (TikTok has no default privacy)."
+          : "On the TikTok publish queue. Publishing happens at the scheduled time; Published appears only after TikTok confirms.",
+      };
+    },
+  };
+}
+
 export interface SocialPublisherRegistry {
   instagram: SocialPublisher;
   tiktok: SocialPublisher;
@@ -319,18 +450,19 @@ export interface SocialPublisherRegistry {
 }
 
 /**
- * Builds the registry: Instagram and YouTube real (each delegating to its
- * own durable publish queue), TikTok the truthful placeholder until its real
- * integration ships. A null/absent YouTube port keeps the truthful
- * unavailable adapter, so an unconfigured deployment never fakes ability.
+ * Builds the registry: Instagram, TikTok and YouTube all real (each
+ * delegating to its own durable publish queue). A null/absent port keeps the
+ * truthful unavailable adapter, so an unconfigured deployment never fakes
+ * ability.
  */
 export function createSocialPublisherRegistry(
   instagramPort: InstagramEnqueuePort,
   youtubePort?: YouTubeEnqueuePort | null,
+  tiktokPort?: TikTokEnqueuePort | null,
 ): SocialPublisherRegistry {
   return {
     instagram: createInstagramPublisher(instagramPort),
-    tiktok: createTikTokPublisher(),
+    tiktok: createTikTokPublisher(tiktokPort ?? null),
     youtube: createYouTubePublisher(youtubePort ?? null),
   };
 }

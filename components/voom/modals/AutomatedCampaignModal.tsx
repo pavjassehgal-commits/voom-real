@@ -444,8 +444,8 @@ function ActionEditor({ campaignId, action, timeZone, onSaved }: {
           </Field>
           <p className="rounded-xl bg-surface px-3 py-2 text-[11.5px] leading-relaxed text-text-3">
             {action.channel === "tiktok_video"
-              ? "TikTok publishing is not connected yet — this action plans and schedules the video inside Voom only."
-              : "YouTube publishing is not connected yet — this action plans and schedules the video inside Voom only."}
+              ? "Approved with a schedule, this video joins the durable TikTok publish queue — Published appears only after TikTok's own post-status confirms it."
+              : "Approved with a schedule, this video joins the durable YouTube publish queue — Published appears only after YouTube confirms the video is processed."}
           </p>
         </>
       ) : (
@@ -676,8 +676,8 @@ function SocialDetails({ action, timeZone }: { action: CampaignActionView; timeZ
       )}
       <p className="rounded-xl border border-amber/35 bg-amber/10 px-3 py-2 text-[11.5px] leading-relaxed text-amber">
         {social.channel === "tiktok"
-          ? "TikTok publishing is not connected yet. This action is planned and approved inside Voom; nothing is posted to TikTok and Voom will never claim it was."
-          : "YouTube publishing is not connected yet. This action is planned and approved inside Voom; nothing is posted to YouTube and Voom will never claim it was."}
+          ? "This action rides the durable TikTok publish queue. Nothing is posted until the scheduled time, and Voom reports Published only after TikTok's own post-status endpoint confirms it."
+          : "This action rides the durable YouTube publish queue. Nothing is posted until the scheduled time, and Voom reports Published only after YouTube confirms the video is processed."}
       </p>
       <p className="text-[11.5px] text-text-3">Proposed time: {new Date(action.scheduled_for).toLocaleString("en-AE", { timeZone, dateStyle: "medium", timeStyle: "short" })}</p>
     </div>

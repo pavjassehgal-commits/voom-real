@@ -97,14 +97,14 @@ export default function StudioPage() {
         <EntryCard
           icon="film"
           title="TikTok"
-          body="Plan TikTok-native videos: hook, beats and caption. Publishing starts when the TikTok connection ships."
+          body="Plan TikTok-native videos: hook, beats and caption. Approved, scheduled videos publish through the durable TikTok queue — Published appears only after TikTok's own post-status confirms."
           cta="Start a TikTok draft"
           onClick={() => open(<CreateContentModal onChanged={() => void load()} />)}
         />
         <EntryCard
           icon="play"
           title="YouTube"
-          body="Plan Shorts and full videos with title, description and outline. Publishing starts when the YouTube connection ships."
+          body="Plan Shorts and full videos with title, description and outline. Approved, scheduled videos publish through the durable YouTube queue — Published appears only after YouTube confirms processing."
           cta="Start a YouTube draft"
           onClick={() => open(<CreateContentModal onChanged={() => void load()} />)}
         />
@@ -172,10 +172,9 @@ export default function StudioPage() {
         </div>
 
         <p className="mt-4 rounded-xl bg-surface-2 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-text-3">
-          Approved Instagram items with a schedule and a visual are published to your connected Instagram account
-          automatically at their scheduled time — Voom marks something “Published” only after Instagram confirms it.
-          TikTok and YouTube items are planned and approved inside Voom; their publishing connections do not exist
-          yet, so nothing external happens until a real connection ships.
+          Approved items with a schedule and a visual publish to your connected accounts at their scheduled time —
+          Voom marks something “Published” only after the provider itself confirms it: Instagram&apos;s media id,
+          TikTok&apos;s own PUBLISH_COMPLETE post status, or YouTube&apos;s processed video.
         </p>
       </Card>
     </div>

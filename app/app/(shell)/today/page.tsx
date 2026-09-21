@@ -105,13 +105,14 @@ export default async function TodayPage() {
               <span className="min-w-[110px] text-xs font-semibold text-text-2">{item.dayLabel} · {item.localTime}</span>
               <Tag tone="t-blue">{item.contentTypeLabel}</Tag>
               <b className="min-w-0 flex-1 truncate text-sm">{item.concept}</b>
-              <Tag tone="t-amber">Approved — publishing not connected yet</Tag>
+              <Tag tone="t-blue">{item.statusLabel}</Tag>
             </div>
           ))}
         </div>
         <p className="mt-3 text-[11.5px] leading-relaxed text-text-3">
-          These items are planned and approved inside Voom. TikTok and YouTube publishing connections do not exist
-          yet, so nothing is posted externally and Voom never claims it was.
+          These items are planned and approved inside Voom. Each one reads exactly what its channel&apos;s durable
+          publish queue says — Scheduled means waiting for its time (not submitted), and Published appears only
+          after the provider itself confirms (TikTok&apos;s own PUBLISH_COMPLETE; YouTube&apos;s processed video).
         </p>
         <Link href="/app/calendar" className="mt-1 inline-flex text-sm font-semibold text-brand hover:underline">Open Content Calendar →</Link>
       </Card>

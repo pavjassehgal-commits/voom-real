@@ -247,11 +247,11 @@ test("0021 matches production and 0022-0028 migrations stay scoped", async () =>
   assert.deepEqual(files.filter((name) => /^0028_/.test(name)), ["0028_openrouter_video_job_metadata.sql"], "the only 0028 is OpenRouter video job metadata");
   assert.deepEqual(files.filter((name) => /^0029_/.test(name)), ["0029_workflow_timezone_and_slots.sql"], "the only 0029 is the workflow timezone + slot migration");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  // Production is through 0045 (Campaigns v3). 0046 (Multi-Social Core) and 0047 (YouTube) are
-  // checked in but deliberately NOT applied to production yet. Anything newer
-  // is a migration this suite has not been told about — it must be added
-  // deliberately.
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 48), "no migration beyond 0048 (the YouTube OAuth ACL fix) may exist");
+  // Production is through 0045 (Campaigns v3). 0046 (Multi-Social Core), 0047 (YouTube),
+  // 0048 (YouTube OAuth ACL) and 0049 (TikTok provider) are checked in but
+  // deliberately NOT applied to production yet. Anything newer is a migration
+  // this suite has not been told about — it must be added deliberately.
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 49), "no migration beyond 0049 (the TikTok provider) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],

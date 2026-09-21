@@ -7,13 +7,15 @@ import { ModalBody, ModalFoot, ModalHead, ModalShell } from "@/components/voom/u
 /**
  * Multi-Social Core — the editor for ONE TikTok or YouTube draft.
  *
- * Text, schedule, the explicit YouTube declarations (audience + privacy) and
- * the approval decision are recorded here. The banner states the truth per
- * channel: TikTok publishing is not connected, so approval never publishes
- * anything there; YouTube approval + schedule places the item on the durable
- * YouTube publish queue, and only YouTube's own confirmation (a real video id
- * with processing finished) ever makes it Published. No credit is spent and
- * no media is generated from this editor.
+ * Text, schedule, the explicit declarations (TikTok privacy; YouTube
+ * audience + privacy) and the approval decision are recorded here. The
+ * banner states the truth per channel: approval + schedule places the item
+ * on the channel's DURABLE publish queue, and only the provider's own
+ * confirmation (TikTok's PUBLISH_COMPLETE; YouTube's video id with
+ * processing finished) ever makes it Published. TikTok has no default
+ * privacy level, so an undeclared TikTok item waits visibly instead of
+ * publishing with a value nobody chose. No credit is spent and no media is
+ * generated from this editor.
  */
 
 interface SocialDraft {
@@ -32,6 +34,8 @@ interface SocialDraft {
   publishStateLabel: string;
   madeForKids: boolean | null;
   privacy: "public" | "private" | "unlisted" | null;
+  /** TikTok's own four privacy values, or null when not declared. */
+  tiktokPrivacy: string | null;
   queueStatus: string | null;
   queueFailureMessage: string | null;
   asset: { displayName: string; mimeType: string } | null;
@@ -54,6 +58,7 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
   const [schedule, setSchedule] = useState("");
   const [madeForKids, setMadeForKids] = useState("");
   const [privacy, setPrivacy] = useState("");
+  const [tiktokPrivacy, setTiktokPrivacy] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -70,6 +75,7 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
       setSchedule(toLocalInput(body.draft.scheduledAt));
       setMadeForKids(body.draft.madeForKids === null || body.draft.madeForKids === undefined ? "" : String(body.draft.madeForKids));
       setPrivacy(body.draft.privacy ?? "");
+      setTiktokPrivacy(body.draft.tiktokPrivacy ?? "");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Voom couldn't load that content.");
     }
@@ -95,6 +101,9 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
                 privacy: privacy === "" ? null : privacy,
               }
             : {}),
+          ...(draft.channel === "tiktok"
+            ? { tiktokPrivacy: tiktokPrivacy === "" ? null : tiktokPrivacy }
+            : {}),
           script: script.split("\n").map((line) => line.trim()).filter(Boolean),
           scheduledAt: schedule ? new Date(schedule).toISOString() : null,
           ...(decision ? { decision } : {}),
@@ -105,6 +114,7 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
       setDraft(body.draft);
       setMadeForKids(body.draft.madeForKids === null || body.draft.madeForKids === undefined ? "" : String(body.draft.madeForKids));
       setPrivacy(body.draft.privacy ?? "");
+      setTiktokPrivacy(body.draft.tiktokPrivacy ?? "");
       onChanged?.();
       window.dispatchEvent(new Event("voom:data-changed"));
     } catch (reason) {
@@ -139,11 +149,11 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
       <ModalBody>
         <div role="status" className="mb-3.5 rounded-xl border border-amber/35 bg-amber/10 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-amber">
           {draft.channel === "tiktok"
-            ? "TikTok publishing is not connected yet. You can plan, approve and schedule this video inside Voom; Voom will never claim it was published."
+            ? "Approving with a schedule puts this video on Voom's durable TikTok publish queue. The worker publishes at the scheduled time and Voom reports Published only after TikTok's own post-status confirms it — approval is never publication. Until Voom's app passes TikTok's content-sharing audit, TikTok restricts posts to private (Only me) viewership."
             : "Approving with a schedule puts this video on Voom's durable YouTube publish queue. The worker uploads at the scheduled time and Voom reports Published only after YouTube confirms the video is processed — approval is never publication."}
         </div>
 
-        {draft.channel === "youtube" && draft.queueFailureMessage ? (
+        {draft.queueFailureMessage ? (
           <div role="alert" className="mb-3.5 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-red">
             {draft.queueFailureMessage}
           </div>
@@ -212,7 +222,33 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
           </div>
         )}
 
-        <Field label="Schedule (optional)" hint={draft.channel === "youtube" ? "When the YouTube queue worker uploads this video. Times use your device clock." : "When this should go out once publishing is available. Times use your device clock."}>
+        {draft.channel === "tiktok" && (
+          <Field
+            label="Privacy (required by TikTok)"
+            hint="Who may see the post. TikTok has no default privacy level: Voom never guesses — an undeclared item waits visibly instead of publishing. The options TikTok returns for your account at publish time still win."
+          >
+            <select
+              value={tiktokPrivacy}
+              onChange={(e) => setTiktokPrivacy(e.target.value)}
+              className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm"
+            >
+              <option value="">Not declared yet</option>
+              <option value="PUBLIC_TO_EVERYONE">Everyone</option>
+              <option value="MUTUAL_FOLLOW_FRIENDS">Friends of friends (mutual follow)</option>
+              <option value="FOLLOWER_OF_CREATOR">Followers</option>
+              <option value="SELF_ONLY">Only me (private)</option>
+            </select>
+          </Field>
+        )}
+
+        <Field
+          label="Schedule (optional)"
+          hint={draft.channel === "youtube"
+            ? "When the YouTube queue worker uploads this video. Times use your device clock."
+            : draft.channel === "tiktok"
+              ? "When the TikTok queue worker publishes this video. Times use your device clock."
+              : "When this should go out once publishing is available. Times use your device clock."}
+        >
           <Input type="datetime-local" value={schedule} onChange={(e) => setSchedule(e.target.value)} />
         </Field>
       </ModalBody>
