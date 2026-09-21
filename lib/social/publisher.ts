@@ -4,8 +4,8 @@
  * Conceptually:
  *
  *   SocialPublisher ──► InstagramPublisher   (the existing, proven flow)
+ *                   ──► YouTubePublisher     (real: the 0047 durable queue)
  *                   ──► TikTokPublisher      (truthfully unavailable)
- *                   ──► YouTubePublisher     (truthfully unavailable)
  *
  * The rest of Voom never touches provider upload mechanics; it hands content
  * to this boundary and receives ONE truthful outcome shape.
@@ -13,7 +13,7 @@
  * Truthfulness contract (enforced by the test suite):
  *   - An adapter may ONLY report `published` together with a real provider
  *     publication reference that the provider itself returned.
- *   - TikTok and YouTube have no real integration yet. Their adapters return
+ *   - TikTok has no real integration yet. Its adapter returns
  *     `connection_required` / `provider_not_supported` — never a fake
  *     success, never a fabricated provider id, never invented API behavior.
  *     No endpoint, scope, token or webhook is imagined anywhere in this file.
@@ -22,6 +22,12 @@
  *     `instagram_publish_queue` + the port-based publish flow
  *     (lib/instagram/publish-flow.ts) whose `published` state already means
  *     "Meta returned a real media id".
+ *   - The YouTube adapter follows the same shape: it delegates to the durable
+ *     `youtube_publish_queue` (migration 0047) + the port-based resumable
+ *     upload flow (lib/youtube/publish-flow.ts) whose `published` state
+ *     already means "YouTube returned a real video id AND its own
+ *     processingDetails.uploadStatus='processed'". Enqueued is never
+ *     published; approval is never publication.
  *
  * This module imports no network client. The Instagram enqueue dependency is
  * injected, so the whole boundary is executable offline by the Node suite.
@@ -50,6 +56,20 @@ export interface SocialPublishRequest {
   scheduledAt: string;
   /** Content Calendar row this execution mirrors, when one exists. */
   calendarItemId?: string | null;
+  /**
+   * YouTube's required videos.insert metadata, supplied by the caller from
+   * the draft's own structured content (never invented here). Policy-sensitive
+   * values (privacy, made-for-kids) may be null: the YouTube queue then parks
+   * the item in `needs_declaration` instead of guessing.
+   */
+  youtube?: {
+    title?: string;
+    description?: string;
+    privacyStatus?: string | null;
+    madeForKids?: boolean | null;
+    categoryId?: string | null;
+    waitingForMedia?: boolean;
+  };
 }
 
 /**
@@ -181,9 +201,115 @@ export function createTikTokPublisher(): SocialPublisher {
   return createUnavailablePublisher("tiktok");
 }
 
-/** YouTube adapter — truthful until the real integration ships. */
-export function createYouTubePublisher(): SocialPublisher {
-  return createUnavailablePublisher("youtube");
+/**
+ * The dependency the YouTube adapter needs: the durable YouTube publish
+ * queue (migration 0047). Like the Instagram port, this adapter performs NO
+ * Google call itself — enqueuing puts the item on the queue the cron worker
+ * claims, and only that worker (with YouTube's own video id and 'processed'
+ * upload status) can ever move the row to `published`.
+ */
+export interface YouTubeEnqueuePort {
+  enqueueYouTubePublishItem(input: {
+    ownerId: string;
+    draftId: string;
+    calendarItemId: string | null;
+    youtubeFormat: "short" | "video";
+    title: string;
+    description: string;
+    privacyStatus: string | null;
+    madeForKids: boolean | null;
+    categoryId?: string | null;
+    scheduledAt: string;
+    waitingForMedia?: boolean;
+  }): Promise<{ id: string } | null>;
+}
+
+/** Canonical format → the YouTube queue's format vocabulary. */
+export function youTubeFormatForFormat(format: string): "short" | "video" | null {
+  if (format === "short") return "short";
+  if (format === "video") return "video";
+  return null;
+}
+
+/**
+ * YouTubePublisher — the real adapter (YouTube Provider Integration v1).
+ *
+ * Truthfulness is structural, mirroring the Instagram adapter:
+ *   - a YouTube Short and a full YouTube Video are BOTH real videos.insert
+ *     uploads — Google has no separate Shorts endpoint and none is invented;
+ *   - enqueued is NOT published: the durable queue's own state machine, and
+ *     YouTube's confirmation inside the worker, decide what happens next;
+ *   - policy-sensitive metadata is passed through exactly as declared (or
+ *     null): a missing audience declaration parks the item visibly instead
+ *     of being guessed.
+ *
+ * Called with `null` (no queue port configured), it degrades to the truthful
+ * unavailable adapter — the boundary can never fake a success either way.
+ */
+export function createYouTubePublisher(port: YouTubeEnqueuePort | null): SocialPublisher {
+  if (!port) return createUnavailablePublisher("youtube");
+  return {
+    channel: "youtube",
+    isAvailable: () => true,
+    async publish(request) {
+      const youtubeFormat = youTubeFormatForFormat(request.format);
+      if (!youtubeFormat) {
+        return {
+          status: "failed",
+          channel: "youtube",
+          code: "unsupported_format",
+          message: `YouTube cannot publish the format "${request.format}".`,
+        };
+      }
+      const yt = request.youtube ?? {};
+      const title = (typeof yt.title === "string" ? yt.title.trim() : "")
+        || request.caption.trim().split("\n")[0]?.trim().slice(0, 100)
+        || "";
+      if (!title) {
+        return {
+          status: "failed",
+          channel: "youtube",
+          code: "title_required",
+          message: "YouTube requires a title (up to 100 characters) before this item can publish.",
+        };
+      }
+      const privacy = yt.privacyStatus === "public" || yt.privacyStatus === "private" || yt.privacyStatus === "unlisted"
+        ? yt.privacyStatus
+        : null;
+      const madeForKids = typeof yt.madeForKids === "boolean" ? yt.madeForKids : null;
+      const row = await port.enqueueYouTubePublishItem({
+        ownerId: request.ownerId,
+        draftId: request.draftId,
+        calendarItemId: request.calendarItemId ?? null,
+        youtubeFormat,
+        title: title.slice(0, 100),
+        description: typeof yt.description === "string" ? yt.description.slice(0, 5000) : "",
+        privacyStatus: privacy,
+        madeForKids,
+        categoryId: typeof yt.categoryId === "string" && yt.categoryId ? yt.categoryId : null,
+        scheduledAt: request.scheduledAt,
+        waitingForMedia: yt.waitingForMedia === true,
+      });
+      if (!row) {
+        return {
+          status: "failed",
+          channel: "youtube",
+          code: "enqueue_failed",
+          message: "Voom could not place this item on the YouTube publish queue.",
+        };
+      }
+      // Truthful: enqueued is NOT published. Only YouTube's own confirmation
+      // inside the worker ever establishes Published.
+      return {
+        status: "enqueued",
+        channel: "youtube",
+        queueRef: row.id,
+        message: madeForKids === null || privacy === null
+          ? "On the YouTube publish queue, but it needs its made-for-kids declaration and privacy before YouTube allows the upload."
+          : "On the YouTube publish queue. Publishing happens at the scheduled time; Published appears only after YouTube confirms the video is processed.",
+      };
+    },
+  };
 }
 
 export interface SocialPublisherRegistry {
@@ -192,12 +318,20 @@ export interface SocialPublisherRegistry {
   youtube: SocialPublisher;
 }
 
-/** Builds the registry: Instagram real, TikTok/YouTube truthful placeholders. */
-export function createSocialPublisherRegistry(instagramPort: InstagramEnqueuePort): SocialPublisherRegistry {
+/**
+ * Builds the registry: Instagram and YouTube real (each delegating to its
+ * own durable publish queue), TikTok the truthful placeholder until its real
+ * integration ships. A null/absent YouTube port keeps the truthful
+ * unavailable adapter, so an unconfigured deployment never fakes ability.
+ */
+export function createSocialPublisherRegistry(
+  instagramPort: InstagramEnqueuePort,
+  youtubePort?: YouTubeEnqueuePort | null,
+): SocialPublisherRegistry {
   return {
     instagram: createInstagramPublisher(instagramPort),
     tiktok: createTikTokPublisher(),
-    youtube: createYouTubePublisher(),
+    youtube: createYouTubePublisher(youtubePort ?? null),
   };
 }
 

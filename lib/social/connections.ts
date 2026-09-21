@@ -5,22 +5,25 @@
  *
  *   instagram  the REAL connection (instagram_connections, encrypted tokens
  *              server-side only) — exactly as production ships it today.
+ *   youtube    the REAL connection (youtube_connections, migration 0047:
+ *              encrypted OAuth tokens server-side only, the authoritative
+ *              channel identity YouTube returned, the scopes Google actually
+ *              granted, and the truthful audit-restriction note).
  *   tiktok     truthfully `not_configured`: no OAuth integration exists yet.
- *   youtube    truthfully `not_configured`: no OAuth integration exists yet.
  *   email      the existing Resend server configuration.
  *
  * Rules:
- *   - No token, secret or provider identifier ever leaves the server through
- *     this module; the view below is presentation metadata only.
- *   - Nothing here invents a TikTok/YouTube token, scope or account id. The
- *     `provider` metadata bag stays empty for unconfigured channels and is
- *     reserved for each provider's own real integration later.
+ *   - No token, secret or encrypted value ever leaves the server through
+ *     this module; the view below is sanitized presentation metadata only.
+ *   - Nothing here invents a TikTok token, scope or account id. The
+ *     `provider` metadata bag stays empty for unconfigured channels.
  */
 
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getResendAvailability } from "@/lib/email/config";
+import { YOUTUBE_UPLOAD_SCOPE } from "@/lib/youtube/scopes";
 import { SOCIAL_CHANNELS, type SocialChannel } from "./channels";
 
 /** The truthful connection states, shared with the UI. */
@@ -81,15 +84,20 @@ export interface SocialConnectionsDeps {
   ownerId: string;
   /** Whether server-side Instagram credentials are configured (env present). */
   instagramConfigured: boolean;
+  /** Whether server-side YouTube (Google OAuth) credentials are configured. */
+  youtubeConfigured?: boolean;
+  /** Google's API-project audit state, surfaced truthfully in the provider bag. */
+  youtubeProjectAudited?: boolean;
 }
 
 /**
  * Builds the full channel-neutral connection view.
  *
- * Instagram comes from the real `instagram_connections` row (through the
- * existing reader, which already returns sanitized metadata only). TikTok and
- * YouTube are `not_configured` until their real OAuth integrations exist —
- * the truthful state, not a mocked connection.
+ * Instagram comes from the real `instagram_connections` row and YouTube from
+ * the real `youtube_connections` row (migration 0047) — both through
+ * sanitized, owner-scoped reads. TikTok stays `not_configured` until its
+ * real OAuth integration exists — the truthful state, not a mocked
+ * connection.
  */
 export async function getSocialConnections(deps: SocialConnectionsDeps): Promise<SocialConnectionView[]> {
   const { db, ownerId, instagramConfigured } = deps;
@@ -151,12 +159,98 @@ export async function getSocialConnections(deps: SocialConnectionsDeps): Promise
     provider: {},
   };
 
+  const youtube = await youTubeConnectionView(db, ownerId, deps.youtubeConfigured === true, deps.youtubeProjectAudited === true);
+
   return [
     instagram,
     unconfiguredConnection("tiktok"),
-    unconfiguredConnection("youtube"),
+    youtube,
     email,
   ];
+}
+
+/**
+ * The REAL YouTube connection view, from the sanitized `youtube_connections`
+ * row (migration 0047). Truthfulness rules:
+ *   - `connected` requires the row's own status AND the upload scope Google
+ *     actually granted — never an assumed capability;
+ *   - the provider bag carries only sanitized metadata (channel id, granted
+ *     scopes, expiry, explicit defaults, audit state) — never tokens;
+ *   - Google's unaudited-project restriction is surfaced plainly instead of
+ *     promising public publishing Google would lock to private.
+ */
+async function youTubeConnectionView(
+  db: SupabaseClient,
+  ownerId: string,
+  configured: boolean,
+  projectAudited: boolean,
+): Promise<SocialConnectionView> {
+  if (!configured) {
+    return {
+      channel: "youtube",
+      state: "not_configured",
+      detail: "YouTube integration is not configured on the server yet. Content can be planned, approved and scheduled inside Voom; nothing is published to YouTube until it is.",
+      canPublish: false,
+      account: null,
+      provider: {},
+    };
+  }
+  const { data, error } = await db.from("youtube_connections")
+    .select("channel_id,channel_title,channel_handle,status,scopes,access_token_expires_at,default_privacy,default_made_for_kids")
+    .eq("owner_user_id", ownerId)
+    .maybeSingle();
+  if (error) {
+    return {
+      channel: "youtube",
+      state: "disconnected",
+      detail: "Voom could not read the YouTube connection. Publishing is paused until it can.",
+      canPublish: false,
+      account: null,
+      provider: {},
+    };
+  }
+  if (!data) {
+    return {
+      channel: "youtube",
+      state: "disconnected",
+      detail: "No YouTube channel is connected yet. Connect a channel to enable real publishing; until then nothing is published to YouTube.",
+      canPublish: false,
+      account: null,
+      provider: { projectAudited },
+    };
+  }
+  const row = data as Record<string, unknown>;
+  const scopes = Array.isArray(row.scopes) ? (row.scopes as string[]) : [];
+  const status = String(row.status ?? "");
+  const connected = status === "connected" && scopes.includes(YOUTUBE_UPLOAD_SCOPE);
+  const auditNote = projectAudited
+    ? null
+    : " Google locks uploads from unaudited API projects to private viewing mode; Voom reports the privacy YouTube actually applied.";
+  return {
+    channel: "youtube",
+    state: connected ? "connected" : "disconnected",
+    detail: connected
+      ? `Connected. Publishing rides the durable YouTube queue and reports Published only after YouTube confirms the video is processed.${auditNote ?? ""}`
+      : status === "revoked"
+        ? "YouTube authorization was revoked. Reconnect the channel to resume publishing; your videos on YouTube are untouched."
+        : status === "disconnected"
+          ? "The YouTube channel was disconnected. Historical Voom records remain; your videos on YouTube are untouched."
+          : `The YouTube connection is not active (${status || "unknown"}). Reconnect to resume real publishing.${auditNote ?? ""}`,
+    canPublish: connected,
+    account: {
+      handle: row.channel_handle ? String(row.channel_handle) : null,
+      name: row.channel_title ? String(row.channel_title) : null,
+      kind: "channel",
+    },
+    provider: {
+      channelId: row.channel_id ? String(row.channel_id) : null,
+      grantedScopes: scopes,
+      accessTokenExpiresAt: row.access_token_expires_at ? String(row.access_token_expires_at) : null,
+      defaultPrivacy: row.default_privacy ? String(row.default_privacy) : null,
+      defaultMadeForKids: typeof row.default_made_for_kids === "boolean" ? row.default_made_for_kids : null,
+      projectAudited,
+    },
+  };
 }
 
 /** Quick lookup helper for UI surfaces. */

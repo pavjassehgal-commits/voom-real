@@ -22,7 +22,7 @@ import {
   type ReelProductionMethod,
 } from "@/lib/mara/reel-production";
 import { checkScheduleInstant } from "@/lib/voom/schedule-guard";
-import { SOCIAL_PUBLISH_STATE_LABELS, publishStateForUnconnectedProvider } from "@/lib/social/publish-state";
+import { SOCIAL_PUBLISH_STATE_LABELS, publishStateForUnconnectedProvider, publishStateFromYouTubeQueue } from "@/lib/social/publish-state";
 import { getSocialDraft, updateSocialDraft } from "@/lib/social/server-drafts";
 import { canUseAutopilot, normalizePlan, type PlanId } from "@/lib/billing/plans";
 import { accountTimezone, daysBetween, isoToLocalDate, localToUtcIso } from "@/lib/voom/timezone";
@@ -871,7 +871,7 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
   const emailIds = actions.map((a) => a.email_campaign_id).filter((x): x is string => Boolean(x));
   const draftIds = actions.map((a) => a.draft_id).filter((x): x is string => Boolean(x));
 
-  const [childrenResult, sendsResult, draftsResult, queueResult, assetsResult, productionResult] = await Promise.all([
+  const [childrenResult, sendsResult, draftsResult, queueResult, assetsResult, productionResult, youtubeQueueResult] = await Promise.all([
     emailIds.length
       ? db.from("voom_campaigns").select("id,status,subject,preview_text,content,audience_id").eq("owner_user_id", ownerId).in("id", emailIds)
       : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
@@ -879,7 +879,7 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
       ? db.from("campaign_sends").select("campaign_id,internal_status,updated_at").eq("owner_user_id", ownerId).in("campaign_id", emailIds)
       : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
     draftIds.length
-      ? db.from("mara_drafts").select("id,kind,status,title,content,proposed_publish_at").eq("owner_user_id", ownerId).in("id", draftIds)
+      ? db.from("mara_drafts").select("id,kind,status,title,content,proposed_publish_at,provider_ref").eq("owner_user_id", ownerId).in("id", draftIds)
       : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
     draftIds.length
       ? db.from("instagram_publish_queue").select("draft_id,status").eq("owner_user_id", ownerId).in("draft_id", draftIds)
@@ -889,6 +889,11 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
       : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
     draftIds.length
       ? db.from("mara_pending_actions").select("id,status,sanitized_arguments,new_value,created_at").eq("owner_user_id", ownerId).eq("tool_name", "choose_reel_production").in("status", ["pending", "confirmed", "executing", "failed"])
+      : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
+    // The durable YouTube publish queue (migration 0047). Owner-scoped RLS
+    // read, exactly like the Instagram queue above.
+    draftIds.length
+      ? db.from("youtube_publish_queue").select("draft_id,status,youtube_video_id,provider_privacy_status").eq("owner_user_id", ownerId).in("draft_id", draftIds)
       : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
   ]);
 
@@ -924,6 +929,14 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
   }
   const queueByDraft = new Map<string, string>();
   for (const row of queueResult.data ?? []) queueByDraft.set(String(row.draft_id), String(row.status));
+  const youtubeQueueByDraft = new Map<string, { status: string; videoId: string | null; providerPrivacy: string | null }>();
+  for (const row of youtubeQueueResult.data ?? []) {
+    youtubeQueueByDraft.set(String(row.draft_id), {
+      status: String(row.status),
+      videoId: typeof row.youtube_video_id === "string" ? row.youtube_video_id : null,
+      providerPrivacy: typeof row.provider_privacy_status === "string" ? row.provider_privacy_status : null,
+    });
+  }
 
   const views: CampaignActionView[] = actions.map((action) => {
     const content = normalizeActionContent(action.mara_content);
@@ -975,31 +988,45 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
 
     // ── Multi-Social Core: TikTok / YouTube actions ────────────────────────
     //
-    // Draft-backed like Instagram, but with NO provider queue: no TikTok or
-    // YouTube integration exists, so the derived state is the honest one —
-    // approved items read `blocked` (provider not connected) and can never
-    // read as scheduled-for-execution, executing, or executed.
+    // Draft-backed like Instagram. TikTok still has NO provider queue, so an
+    // approved TikTok item truthfully reads `blocked` (provider not
+    // connected). YouTube is REAL: its state derives from the durable
+    // youtube_publish_queue row exactly like Instagram's derives from its
+    // queue — approved+scheduled reads scheduled, an in-flight upload reads
+    // executing, and executed requires YouTube's own video id plus
+    // 'processed' evidence. No queue row means nothing executes yet.
     if (isSocialVideoChannel(action.channel) && action.draft_id) {
       const draft = drafts.get(action.draft_id);
       const postView = postViews.get(action.draft_id);
       const draftStatus = String(draft?.status ?? "draft") as "draft" | "approved" | "rejected";
       const hasAsset = postView?.visualReady ?? assets.has(action.draft_id);
+      const isYouTube = action.channel !== "tiktok_video";
+      const youtubeQueue = isYouTube ? youtubeQueueByDraft.get(action.draft_id) ?? null : null;
       const state = deriveActionState({
         kind: "social",
-        channel: action.channel === "tiktok_video" ? "tiktok" : "youtube",
+        channel: isYouTube ? "youtube" : "tiktok",
         planStatus: action.status,
         draftStatus: draft ? draftStatus : null,
         hasAsset,
+        queueStatus: youtubeQueue ? youtubeQueue.status : null,
         scheduledFor: action.scheduled_for,
       });
       base.executionState = state;
       base.executionLabel = ACTION_EXECUTION_LABELS[state];
-      // No provider ever owns this content yet, so it stays editable.
-      base.canEditContent = true;
-      const publishState = publishStateForUnconnectedProvider(draft ? draftStatus : null);
+      // Truthful lock: once YouTube owns the content (uploading, processing
+      // or published) it can no longer be rewritten. TikTok stays editable
+      // because no provider owns it yet.
+      base.canEditContent = !(youtubeQueue && ["uploading", "provider_processing", "published"].includes(youtubeQueue.status));
+      // The canonical publish state: YouTube reads its durable queue;
+      // TikTok keeps the truthful unconnected-provider derivation.
+      const ytQueueState = youtubeQueue ? publishStateFromYouTubeQueue(youtubeQueue.status) : null;
+      const publishState = ytQueueState && ytQueueState !== "draft"
+        ? ytQueueState
+        : publishStateForUnconnectedProvider(draft ? draftStatus : null);
+      const providerRef = isYouTube && typeof draft?.provider_ref === "string" && draft.provider_ref ? draft.provider_ref : null;
       base.social = {
         draftId: action.draft_id,
-        channel: action.channel === "tiktok_video" ? "tiktok" : "youtube",
+        channel: isYouTube ? "youtube" : "tiktok",
         format: action.channel === "youtube_short" ? "short" : "video",
         title: action.title,
         caption: draft ? String(draft.content ?? "") : "",
@@ -1009,7 +1036,8 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
         draftStatus,
         publishState,
         publishStateLabel: SOCIAL_PUBLISH_STATE_LABELS[publishState],
-        providerRef: null,
+        // A provider reference only exists when YouTube really returned one.
+        providerRef,
         needsAsset: !hasAsset,
         media: postView?.visual
           ? {

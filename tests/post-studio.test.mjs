@@ -271,11 +271,11 @@ test("0021 is marked already-applied; 0018-0020 are untouched and 0022-0028 stay
   assert.deepEqual(files.filter((name) => /^0028_/.test(name)), ["0028_openrouter_video_job_metadata.sql"], "the only 0028 is OpenRouter video job metadata");
   assert.deepEqual(files.filter((name) => /^0029_/.test(name)), ["0029_workflow_timezone_and_slots.sql"], "the only 0029 is the workflow timezone + slot migration");
   const numbered = files.filter((name) => /^\d{4}_/.test(name));
-  // Production is through 0045 (Campaigns v3). 0046 (Multi-Social Core) is
+  // Production is through 0045 (Campaigns v3). 0046 (Multi-Social Core) and 0047 (YouTube) are
   // checked in but deliberately NOT applied to production yet. Anything newer
   // is a migration this suite has not been told about — it must be added
   // deliberately.
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 46), "no migration beyond 0046 (the Multi-Social Core) may exist");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 47), "no migration beyond 0047 (the YouTube provider) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],

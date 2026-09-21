@@ -5,12 +5,15 @@ import { Btn, Field, Input, Tag, Textarea } from "@/components/voom/ui/primitive
 import { ModalBody, ModalFoot, ModalHead, ModalShell } from "@/components/voom/ui/Modal";
 
 /**
- * Multi-Social Core — the editor for ONE TikTok or YouTube planning draft.
+ * Multi-Social Core — the editor for ONE TikTok or YouTube draft.
  *
- * Everything here stays inside Voom: text, schedule and the approval
- * decision. The banner states the truth plainly: TikTok/YouTube publishing is
- * not connected yet, so approval never publishes anything. No credit is spent
- * and no media is generated from this editor.
+ * Text, schedule, the explicit YouTube declarations (audience + privacy) and
+ * the approval decision are recorded here. The banner states the truth per
+ * channel: TikTok publishing is not connected, so approval never publishes
+ * anything there; YouTube approval + schedule places the item on the durable
+ * YouTube publish queue, and only YouTube's own confirmation (a real video id
+ * with processing finished) ever makes it Published. No credit is spent and
+ * no media is generated from this editor.
  */
 
 interface SocialDraft {
@@ -27,6 +30,10 @@ interface SocialDraft {
   status: "draft" | "approved" | "rejected";
   scheduledAt: string | null;
   publishStateLabel: string;
+  madeForKids: boolean | null;
+  privacy: "public" | "private" | "unlisted" | null;
+  queueStatus: string | null;
+  queueFailureMessage: string | null;
   asset: { displayName: string; mimeType: string } | null;
 }
 
@@ -45,6 +52,8 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
   const [description, setDescription] = useState("");
   const [script, setScript] = useState("");
   const [schedule, setSchedule] = useState("");
+  const [madeForKids, setMadeForKids] = useState("");
+  const [privacy, setPrivacy] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -59,6 +68,8 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
       setDescription(body.draft.description ?? "");
       setScript((body.draft.script ?? []).join("\n"));
       setSchedule(toLocalInput(body.draft.scheduledAt));
+      setMadeForKids(body.draft.madeForKids === null || body.draft.madeForKids === undefined ? "" : String(body.draft.madeForKids));
+      setPrivacy(body.draft.privacy ?? "");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Voom couldn't load that content.");
     }
@@ -77,7 +88,13 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
         body: JSON.stringify({
           title: title.trim(),
           caption: caption.trim(),
-          ...(draft.channel === "youtube" ? { description: description.trim() } : {}),
+          ...(draft.channel === "youtube"
+            ? {
+                description: description.trim(),
+                madeForKids: madeForKids === "" ? null : madeForKids === "true",
+                privacy: privacy === "" ? null : privacy,
+              }
+            : {}),
           script: script.split("\n").map((line) => line.trim()).filter(Boolean),
           scheduledAt: schedule ? new Date(schedule).toISOString() : null,
           ...(decision ? { decision } : {}),
@@ -86,6 +103,8 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
       const body = await response.json() as { draft?: SocialDraft; error?: string };
       if (!response.ok || !body.draft) throw new Error(body.error ?? "Voom couldn't save that content.");
       setDraft(body.draft);
+      setMadeForKids(body.draft.madeForKids === null || body.draft.madeForKids === undefined ? "" : String(body.draft.madeForKids));
+      setPrivacy(body.draft.privacy ?? "");
       onChanged?.();
       window.dispatchEvent(new Event("voom:data-changed"));
     } catch (reason) {
@@ -114,15 +133,21 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
     <ModalShell wide maxWidth={640}>
       <ModalHead
         title={draft.typeLabel}
-        sub="Planned inside Voom · nothing is published anywhere from this editor"
+        sub="Planned inside Voom · approval is never publication"
         onClose={() => window.history.back()}
       />
       <ModalBody>
         <div role="status" className="mb-3.5 rounded-xl border border-amber/35 bg-amber/10 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-amber">
           {draft.channel === "tiktok"
             ? "TikTok publishing is not connected yet. You can plan, approve and schedule this video inside Voom; Voom will never claim it was published."
-            : "YouTube publishing is not connected yet. You can plan, approve and schedule this video inside Voom; Voom will never claim it was published."}
+            : "Approving with a schedule puts this video on Voom's durable YouTube publish queue. The worker uploads at the scheduled time and Voom reports Published only after YouTube confirms the video is processed — approval is never publication."}
         </div>
+
+        {draft.channel === "youtube" && draft.queueFailureMessage ? (
+          <div role="alert" className="mb-3.5 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-red">
+            {draft.queueFailureMessage}
+          </div>
+        ) : null}
 
         {error ? <div role="alert" className="mb-3.5 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-sm text-red">{error}</div> : null}
 
@@ -159,7 +184,35 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
           <Textarea rows={5} value={script} onChange={(e) => setScript(e.target.value)} placeholder={"Hook…\nSection 1…\nClose…"} />
         </Field>
 
-        <Field label="Schedule (optional)" hint="When this should go out once publishing is available. Times use your device clock.">
+        {draft.channel === "youtube" && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Audience (required by YouTube)" hint="YouTube's COPPA declaration. Voom never guesses this — undeclared items wait visibly instead of publishing.">
+              <select
+                value={madeForKids}
+                onChange={(e) => setMadeForKids(e.target.value)}
+                className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm"
+              >
+                <option value="">Not declared yet</option>
+                <option value="false">Not made for kids</option>
+                <option value="true">Made for kids</option>
+              </select>
+            </Field>
+            <Field label="Privacy" hint="The privacy YouTube is asked to apply. Google may lock unaudited API projects to private; Voom shows what YouTube actually applied.">
+              <select
+                value={privacy}
+                onChange={(e) => setPrivacy(e.target.value)}
+                className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm"
+              >
+                <option value="">Not declared yet</option>
+                <option value="private">Private</option>
+                <option value="unlisted">Unlisted</option>
+                <option value="public">Public</option>
+              </select>
+            </Field>
+          </div>
+        )}
+
+        <Field label="Schedule (optional)" hint={draft.channel === "youtube" ? "When the YouTube queue worker uploads this video. Times use your device clock." : "When this should go out once publishing is available. Times use your device clock."}>
           <Input type="datetime-local" value={schedule} onChange={(e) => setSchedule(e.target.value)} />
         </Field>
       </ModalBody>
