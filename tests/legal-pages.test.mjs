@@ -42,7 +42,7 @@ test("legal pages never gate on auth, redirect to login or /app, or touch the da
 
 test("support email is defined once, centrally, and referenced through the constant", async () => {
   const contact = await read("lib/legal/contact.ts");
-  assert.match(contact, /export const SUPPORT_EMAIL = "support@voom\.app";/);
+  assert.match(contact, /export const SUPPORT_EMAIL = "pavjassehgal@gmail\.com";/);
   assert.match(contact, /LEGAL_LAST_UPDATED/);
 
   const sources = await Promise.all([
@@ -51,13 +51,13 @@ test("support email is defined once, centrally, and referenced through the const
   ]);
   for (const source of sources) {
     // The address itself must never be hardcoded outside lib/legal/contact.ts.
+    assert.doesNotMatch(source, /pavjassehgal@gmail\.com/);
+    // Unowned domains and email addresses must not appear.
     assert.doesNotMatch(source, /support@voom\.app/);
+    assert.doesNotMatch(source, /privacy@voom\.app/);
+    assert.doesNotMatch(source, /voom\.app/);
   }
   assert.match(sources[3], /SUPPORT_EMAIL/, "app/components/legal.tsx must import the constant");
-  // privacy@voom.app was explicitly not confirmed to exist — it must appear nowhere.
-  for (const source of sources) {
-    assert.doesNotMatch(source, /privacy@voom\.app/);
-  }
 });
 
 test("legal shell is Voom-styled, mobile responsive, and cross-links the three pages", async () => {
