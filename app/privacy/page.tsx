@@ -11,102 +11,198 @@ import {
 export const metadata: Metadata = {
   title: "Privacy Policy — Voom",
   description:
-    "How Voom collects, uses, shares, and protects data — including account and business data, Instagram connections, AI processing, email delivery, and your deletion rights.",
+    "How Voom collects, uses, shares, and protects data — including account and business data, connected social channels, OAuth credentials, content publishing, AI processing, email delivery, and your deletion rights.",
 };
 
 export default function PrivacyPage() {
   return (
     <LegalPage
       title="Privacy Policy"
-      lead="This Privacy Policy explains what data Voom collects when you use the Voom marketing platform (the Service), why we collect it, who we share it with, and the choices and rights you have. Voom is a marketing platform for small businesses, powered by MARA, an AI marketing manager that plans, drafts, and reports on your campaigns."
+      lead="This Privacy Policy explains what data Voom collects when you use the Voom automated marketing platform (the Service), why we collect it, who we share it with, and the choices and rights you have. Voom helps businesses plan, create, schedule, and publish marketing content across connected channels, powered by MARA, an AI marketing manager."
     >
       <LegalSection title="Account and business data">
         <p>
           When you create a Voom account we store your email address and the
           display name you choose. Your password is handled by our
-          authentication provider (Supabase), which stores only a secure hash —
-          Voom staff cannot see your password.
+          authentication provider (Supabase), which stores only a secure
+          hash — Voom staff cannot see your password.
         </p>
         <p>
           As you set up and use the Service we also store your business
           profile, which may include your brand name, brand description,
-          website, industry, target customers, marketing goals, brand
-          personality, preferred channels, content frequency, monthly ad budget
-          range, and automation preferences, together with your onboarding
-          answers and product settings.
+          website, industry, target customer profile, marketing goals, brand
+          personality, preferred channels, content cadence and frequency,
+          monthly ad budget range, and automation preferences (such as Manual,
+          Assisted, or Autopilot), together with your onboarding answers and
+          workspace settings.
         </p>
       </LegalSection>
 
-      <LegalSection title="Instagram connection data">
+      <LegalSection title="Connected social accounts and OAuth credentials">
         <p>
-          If you choose to connect an Instagram account, the connection is
-          authorized through Instagram (Meta) using OAuth. The permissions
-          requested are <b>instagram_business_basic</b>,{" "}
-          <b>instagram_business_content_publish</b> and{" "}
-          <b>instagram_business_manage_insights</b>. For a connected account we
-          store the Instagram user ID, username, display name, account type,
-          profile picture URL, the permissions granted, and the token expiry
-          date. The Instagram access token is stored encrypted at rest
-          (AES-256-GCM) with an encryption key held server-side.
+          Voom enables you to connect social media and content distribution
+          channels so you can prepare, schedule, and publish marketing content
+          and review performance analytics. Connecting a channel requires your
+          explicit authorization through that provider&apos;s standard OAuth flow.
         </p>
         <p>
-          We use the connection to read basic account information, your
-          Instagram media, and insights (reach, views, likes, comments, saves,
-          shares and interactions) for content Voom published for you, so Voom
-          can show your performance inside the Service and use it when planning
-          future content. Voom never reads another business&apos;s data.
+          <b>Meta / Instagram:</b> When you connect Instagram, authorization is
+          granted through Meta OAuth. Permissions requested include{" "}
+          <b>instagram_business_basic</b>,{" "}
+          <b>instagram_business_content_publish</b>, and{" "}
+          <b>instagram_business_manage_insights</b>. For connected Instagram
+          accounts, we store the Instagram user ID, username, display name,
+          account type, profile picture URL, granted permissions, and token
+          expiry date. We use this connection to publish user-approved posts,
+          Reels, and stories, and to retrieve performance insights (such as
+          reach, impressions, views, likes, comments, saves, shares, and
+          interactions) where permitted by Meta APIs.
         </p>
-        <LegalNote>
-          Voom does not currently publish to Instagram on your behalf.
-          Approving content in Voom approves a draft only — no post or Reel is
-          published to Instagram by Voom today. You can disconnect Instagram at
-          any time from Connections, which removes the stored token.
-        </LegalNote>
+        <p>
+          <b>Google / YouTube:</b> When you connect YouTube, authorization is
+          granted through Google OAuth under least-privilege scopes:{" "}
+          <b>https://www.googleapis.com/auth/youtube.upload</b> (to upload and
+          publish approved videos) and{" "}
+          <b>https://www.googleapis.com/auth/youtube.readonly</b> (to read
+          authoritative channel identity, video processing status, and public
+          statistics such as view, like, and comment counts). Voom deliberately
+          does not request scopes to edit or delete existing videos on your
+          channel, and does not request monetary or revenue analytics scopes.
+        </p>
+        <p>
+          <b>TikTok:</b> Voom&apos;s TikTok integration is being configured and
+          tested in the TikTok developer sandbox. When authorized via TikTok
+          OAuth under minimal required scopes (including basic user profile and
+          video publishing), Voom uses TikTok&apos;s official Content Posting API
+          to prepare, schedule, and publish video content directly to your
+          TikTok account while respecting your chosen privacy level and posting
+          preferences.
+        </p>
+        <p>
+          <b>OAuth Token Security:</b> All provider OAuth access tokens, refresh
+          tokens, and credentials are encrypted at rest using AES-256-GCM with
+          encryption keys maintained securely on the server side. Tokens and
+          provider secrets are never intentionally exposed or transmitted to
+          browser clients.
+        </p>
+      </LegalSection>
+
+      <LegalSection title="Google API Services and Limited Use disclosure">
+        <p>
+          Voom&apos;s use and transfer to any other app of information received
+          from Google APIs will adhere to the{" "}
+          <a
+            href="https://developers.google.com/terms/api-services-user-data-policy"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-brand underline underline-offset-2 transition hover:decoration-2"
+          >
+            Google API Services User Data Policy
+          </a>
+          , including the Limited Use requirements.
+        </p>
+        <p>
+          By connecting or publishing to YouTube through Voom, you also
+          acknowledge and agree to be bound by the{" "}
+          <a
+            href="https://www.youtube.com/t/terms"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-brand underline underline-offset-2 transition hover:decoration-2"
+          >
+            YouTube Terms of Service
+          </a>{" "}
+          and the{" "}
+          <a
+            href="https://policies.google.com/privacy"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-brand underline underline-offset-2 transition hover:decoration-2"
+          >
+            Google Privacy Policy
+          </a>
+          . You can view or revoke Voom&apos;s access to your Google account at
+          any time via the{" "}
+          <a
+            href="https://myaccount.google.com/permissions"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-brand underline underline-offset-2 transition hover:decoration-2"
+          >
+            Google Security Settings
+          </a>{" "}
+          page.
+        </p>
+      </LegalSection>
+
+      <LegalSection title="Scheduled and published content metadata">
+        <p>
+          To maintain your content calendar and deliver automated marketing, we
+          store metadata about planned and published actions. This includes
+          publishing queue items, scheduled publication dates and times,
+          execution statuses (such as queued, submitted, processing, published,
+          or failed), provider publication references (such as Instagram media
+          IDs, YouTube video IDs, or TikTok publish identifiers), and delivery
+          event logs.
+        </p>
+        <p>
+          Where provider APIs permit and permissions are granted, we retrieve
+          and store available performance metrics (such as impressions, reach,
+          views, likes, comments, saves, and shares) for published items so you
+          can track campaign results in Voom and MARA can reference historical
+          performance when suggesting future marketing plans. Voom never reads or
+          shares another business&apos;s performance data.
+        </p>
       </LegalSection>
 
       <LegalSection title="Marketing plans and content you create">
         <p>
           We store the content you and MARA create in Voom so the Service can
           operate. This includes your MARA conversations and messages, drafts
-          (such as Instagram captions, Reel concepts and scripts, emails, and campaign plans), weekly marketing plans and content
-          calendars, approval decisions and pending actions, and campaign
-          records with their delivery statuses.
+          (such as social captions, video concepts and scripts, email copy, and
+          campaign plans), weekly marketing plans and content calendars,
+          approval decisions and pending actions, automation settings, and
+          campaign execution records.
         </p>
       </LegalSection>
 
       <LegalSection title="Media you provide or generate">
         <p>
-          When you upload real-world assets for Reel production, those files
-          are stored and associated with your account and the related draft. If
-          you use MARA media generation, we also store the prompts you supply
-          and the images or videos that are generated for you.
+          When you upload real-world media assets (photos, videos, audio, logos,
+          or brand collateral) for content production, those files are securely
+          stored and associated with your account and the related draft. If you
+          use MARA media generation, we also store the prompts you supply and
+          the images or videos generated for you.
         </p>
       </LegalSection>
 
       <LegalSection title="Contacts and audiences">
         <p>
-          If you use Voom to manage outreach, we store the contacts and
-          audiences you add, including contact names, email addresses, phone
-          numbers, subscription status, and audience membership. This includes
-          contacts you import from a CSV file. Email campaigns are only
-          offered for contacts marked as subscribed with a valid email
-          destination, and each send only happens after you explicitly approve
-          and trigger it. Voom no longer offers SMS marketing; phone numbers
-          and SMS consent captured by older accounts remain stored on the
-          contact record for historical reference but cannot be messaged.
+          If you use Voom to manage email outreach, we store the contacts and
+          audiences you add, including contact names, email addresses,
+          subscription status, and audience membership. This includes contacts
+          you import from CSV files. Email campaigns are only offered for
+          contacts marked as subscribed with a valid email destination, and each
+          send only happens after explicit user approval or in accordance with
+          automation flows you have configured and enabled.
+        </p>
+        <p>
+          Voom no longer offers SMS marketing; phone numbers and SMS consent
+          captured by older accounts remain stored on the contact record for
+          historical reference only and cannot be messaged.
         </p>
       </LegalSection>
 
       <LegalSection title="Email delivery data">
         <p>
-          Campaign emails are delivered through Resend. When you send a
-          campaign we pass the message content and the recipient email address
-          to Resend so it can be delivered, and we receive delivery status
-          events back (such as delivered or bounced) to keep your campaign
-          records accurate. Account emails (such as signup confirmation) are
-          sent through our authentication provider. SMS marketing was removed
-          from Voom; historical SMS delivery records, where they exist, remain
-          stored read-only and are never used for new sends.
+          Campaign and automation emails are delivered through Resend. When you
+          send an email campaign we pass the message content and the recipient
+          email address to Resend for delivery, and we receive delivery status
+          events (such as delivered, opened, or bounced) to keep your campaign
+          records accurate. Account transactional emails (such as signup
+          confirmations) are sent through our authentication provider. SMS
+          marketing was removed from Voom; historical SMS delivery records, where
+          they exist, remain stored read-only and are never used for new sends.
         </p>
       </LegalSection>
 
@@ -138,13 +234,14 @@ export default function PrivacyPage() {
             </>,
             <>
               <b className="text-text">Vercel</b> — hosting, compute, and
-              scheduled jobs (such as the weekly planning run) that keep the
-              Service available.
+              scheduled background jobs (such as publish queue processing and
+              planning runs) that keep the Service available.
             </>,
           ]}
         />
         <p>
-          These providers and the delivery and AI providers listed above may
+          These infrastructure providers, connected social networks (Meta,
+          Google, TikTok), email delivery services, and AI providers may
           process data in countries other than your own.
         </p>
       </LegalSection>
@@ -152,11 +249,13 @@ export default function PrivacyPage() {
       <LegalSection title="How we use data and who we share it with">
         <p>
           We use your data to provide, operate, and secure the Service: to run
-          your account, generate AI output you ask for, send the campaigns you
-          explicitly approve, maintain accurate delivery records, prevent abuse,
-          and respond to your requests. Where GDPR or similar laws apply, we
-          rely on performance of our contract with you, compliance with legal
-          obligations, legitimate interests in running and securing the
+          your account, generate AI marketing content you request, schedule and
+          publish approved posts and videos to your connected channels, dispatch
+          email campaigns you approve or configure, maintain accurate delivery
+          and audit records, display performance metrics, prevent abuse, and
+          respond to your support requests. Where GDPR or similar laws apply,
+          we rely on performance of our contract with you, compliance with
+          legal obligations, legitimate interests in running and securing the
           Service, and — for outgoing marketing sends — the consent your
           business records for each contact.
         </p>
@@ -167,6 +266,29 @@ export default function PrivacyPage() {
             We do not sell your personal data, and we do not share it for
             third-party advertising.
           </b>
+        </p>
+      </LegalSection>
+
+      <LegalSection title="Disconnecting integrations and provider revocation">
+        <p>
+          You can disconnect any connected social platform (Instagram, YouTube,
+          TikTok) at any time from the Connections page in Voom. Disconnecting
+          an integration immediately deletes or disables Voom&apos;s stored OAuth
+          credentials locally, stops all future publishing and data
+          synchronization, and withdraws pending unpublished items from the queue.
+        </p>
+        <LegalNote>
+          Disconnecting an integration disables Voom&apos;s future access to your
+          account, but does not automatically delete or remove content that has
+          already been published to your social channels. Content published to
+          Instagram, YouTube, or TikTok remains on those platforms until you
+          manage or remove it there directly.
+        </LegalNote>
+        <p>
+          You can also independently revoke Voom&apos;s access at any time
+          through each provider&apos;s account permissions settings: Google
+          Security Settings for YouTube, Meta Apps and Websites settings for
+          Instagram, and TikTok account security settings for TikTok.
         </p>
       </LegalSection>
 
@@ -182,8 +304,9 @@ export default function PrivacyPage() {
       <LegalSection title="Retention">
         <p>
           We keep your data while your account is active so the Service can
-          function, until you delete it or ask us to. Instagram tokens are kept
-          until you disconnect or they expire. When data is deleted at your
+          function, until you delete it or ask us to delete it. Stored social
+          OAuth tokens are deleted or invalidated when you disconnect an
+          integration or when they expire. When data is deleted at your
           request, residual copies may remain in backups for a limited period
           before being overwritten. We may retain de-identified, aggregate
           statistics that no longer identify you or your business.
@@ -203,19 +326,20 @@ export default function PrivacyPage() {
       <LegalSection title="Security">
         <p>
           We protect data in transit with HTTPS, scope database access with
-          row-level security, encrypt Instagram tokens at rest, and keep
-          provider secrets on the server side only. No method of transmission
-          or storage is completely secure, and we cannot guarantee absolute
-          security; if we become aware of a breach affecting your data we will
-          notify you.
+          row-level security, encrypt OAuth tokens and secrets at rest with
+          AES-256-GCM, and keep all provider credentials server-side only. No
+          method of transmission or storage is completely secure, and we cannot
+          guarantee absolute security; if we become aware of a security incident
+          affecting your data, we will notify you in accordance with applicable
+          laws.
         </p>
       </LegalSection>
 
       <LegalSection title="Your rights and choices">
         <LegalList
           items={[
-            "Access and correct your profile, business, and contact data in the app at any time.",
-            "Disconnect Instagram at any time from Connections, which removes the stored token.",
+            "Access and correct your profile, business settings, and contact data in the app at any time.",
+            "Disconnect social integrations (Instagram, YouTube, TikTok) at any time from Connections, which revokes future provider access and removes stored credentials locally.",
             "Delete contacts and stop future sends from your contacts workspace.",
             "Request deletion of your account data — see the Data Deletion page for the process and timing.",
             "Depending on your location, you may also have rights to access, rectification, erasure, restriction, portability, and objection, and the right to lodge a complaint with a supervisory authority. If you are in California, you have the right to know and delete personal information and to opt out of its sale — Voom does not sell personal information.",
@@ -230,18 +354,24 @@ export default function PrivacyPage() {
 
       <LegalSection title="If you are a contact of a Voom customer">
         <p>
-          If you received an email (or, from an older Voom account, an SMS) that was sent through Voom by a
-          business, that business controls your contact record. You can ask
-          them to remove you, or contact us at <LegalEmailLink /> and we will
-          forward your request to the sending business and remove your
-          destination from the delivery records we control where feasible.
+          If you received an email (or, from an older Voom account, an SMS) that
+          was sent through Voom by a business, that business controls your
+          contact record. You can use the unsubscribe link in the email, ask the
+          business directly to remove you, or contact us at <LegalEmailLink />{" "}
+          and we will forward your request to the sending business and remove
+          your destination from the delivery records we control where feasible.
         </p>
       </LegalSection>
 
-      <LegalSection title="Children">
+      <LegalSection title="Children's privacy and eligibility">
         <p>
-          Voom is a business tool and is not intended for anyone under 16. We
-          do not knowingly collect data from children under 16.
+          Voom is a business software-as-a-service (SaaS) marketing platform
+          intended strictly for commercial use by businesses and authorized
+          representatives who are at least 16 years old (or the legal age of
+          majority in their jurisdiction). The Service is not intended for or
+          directed toward children under 16, and we do not knowingly collect
+          data from children under 16. If you believe a minor has provided us
+          with personal information, please contact us at <LegalEmailLink />.
         </p>
       </LegalSection>
 

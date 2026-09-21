@@ -11,4 +11,4 @@
 export const SUPPORT_EMAIL = "support@voom.app";
 
 /** Date the legal pages were last materially updated (shown on every page). */
-export const LEGAL_LAST_UPDATED = "September 5, 2026";
+export const LEGAL_LAST_UPDATED = "September 21, 2026";

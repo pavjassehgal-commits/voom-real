@@ -81,13 +81,18 @@ test("Privacy Policy truthfully covers current Voom data flows", async () => {
   const privacy = await flatRead("app/privacy/page.tsx");
   // Every category of data the product actually handles today.
   assert.match(privacy, /Account and business data/);
-  assert.match(privacy, /Instagram connection data/);
+  assert.match(privacy, /Connected social accounts/);
   assert.match(privacy, /instagram_business_basic/);
   assert.match(privacy, /instagram_business_content_publish/);
   // Performance Intelligence reads per-media insights, so the insights
   // permission is requested and disclosed.
   assert.match(privacy, /instagram_business_manage_insights/);
   assert.match(privacy, /AES-256-GCM/);
+  assert.match(privacy, /Google API Services User Data Policy/);
+  assert.match(privacy, /Limited Use/);
+  assert.match(privacy, /YouTube/);
+  assert.match(privacy, /TikTok/);
+  assert.match(privacy, /Scheduled and published content metadata/);
   assert.match(privacy, /Marketing plans and content/);
   assert.match(privacy, /content calendars/);
   assert.match(privacy, /Media you provide or generate/);
@@ -106,10 +111,13 @@ test("Privacy Policy truthfully covers current Voom data flows", async () => {
   assert.match(privacy, /Retention/);
   assert.match(privacy, /Security/);
   assert.match(privacy, /deletion/i);
+  assert.match(privacy, /Children's privacy and eligibility/i);
 
   // Required honest statements.
   assert.match(privacy, /do not sell your personal data/i);
-  assert.match(privacy, /does not currently publish to Instagram/);
+  // Must NOT claim that Voom does not publish to Instagram or social platforms.
+  assert.doesNotMatch(privacy, /does not currently publish to Instagram/);
+  assert.doesNotMatch(privacy, /never publishes to social platforms/i);
   assert.match(privacy, /does not train its own models/);
   // No false guarantees of absolute security.
   assert.match(privacy, /cannot guarantee absolute security/);
@@ -120,7 +128,11 @@ test("Terms cover service scope, responsibilities, AI review, and honest billing
   const terms = await flatRead("app/terms/page.tsx");
   assert.match(terms, /The Service/);
   assert.match(terms, /MARA/);
+  assert.match(terms, /Manual/);
+  assert.match(terms, /Assisted/);
+  assert.match(terms, /Autopilot/);
   assert.match(terms, /Connected third-party accounts/);
+  assert.match(terms, /YouTube Terms of Service/);
   assert.match(terms, /Your responsibilities/);
   assert.match(terms, /consent required under the anti-spam/);
   assert.match(terms, /AI content and human review/);
@@ -135,9 +147,9 @@ test("Terms cover service scope, responsibilities, AI review, and honest billing
   assert.match(terms, /SMS marketing is\s*\n?\s*no longer part of Voom|no longer part of Voom/);
   // Billing must remain honest: currently free, demonstration pricing, nothing charged.
   assert.match(terms, /currently provided free of charge/);
-  assert.match(terms, /no payment is taken/);
-  // Instagram publishing must not be claimed as live.
-  assert.match(terms, /does not currently publish to Instagram/);
+  assert.match(terms, /no payment or credit card is collected/i);
+  // Outdated non-publishing claim must be gone.
+  assert.doesNotMatch(terms, /does not currently publish to Instagram/);
 });
 
 test("Data Deletion describes a manual, conservative, contactable process", async () => {

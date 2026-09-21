@@ -16,9 +16,9 @@ export default function Home() {
           Marketing that runs itself.
         </h1>
         <p className="max-w-md text-text-2">
-          Voom pairs your business with MARA, an AI marketing manager that
-          plans, drafts, and reports on your campaigns — so you don&apos;t
-          have to.
+          Voom is an automated marketing platform powered by MARA, an AI
+          marketing manager that plans, drafts, schedules, and publishes your
+          marketing across connected channels.
         </p>
         <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
           <Link
@@ -36,8 +36,21 @@ export default function Home() {
         </div>
       </main>
 
-      <footer className="border-t border-line px-6 py-5 text-center text-xs text-text-3">
-        Voom — placeholder build. No live integrations.
+      <footer className="border-t border-line px-5 py-6 sm:px-6">
+        <div className="mx-auto flex w-full max-w-3xl flex-col items-center justify-between gap-3 text-xs text-text-3 sm:flex-row">
+          <span className="flex-none">Voom — Automated Marketing Platform</span>
+          <nav className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1">
+            <Link href="/privacy" className="transition hover:text-text-2">
+              Privacy Policy
+            </Link>
+            <Link href="/terms" className="transition hover:text-text-2">
+              Terms of Service
+            </Link>
+            <Link href="/data-deletion" className="transition hover:text-text-2">
+              Data Deletion
+            </Link>
+          </nav>
+        </div>
       </footer>
     </div>
   );
