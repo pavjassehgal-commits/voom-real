@@ -186,6 +186,11 @@ alter table public.tiktok_oauth_states enable row level security;
 -- service-role-only (no grant to authenticated at all), exactly like the
 -- YouTube integration.
 revoke all on table public.tiktok_connections, public.tiktok_connection_secrets, public.tiktok_oauth_states from public, anon, authenticated;
+-- The connect/callback server code uses the service client for these direct
+-- table operations. Keep the browser roles completely out of OAuth state;
+-- connection metadata remains owner-filtered by its RLS policy.
+grant select on table public.tiktok_connections to service_role;
+grant select, insert, update on table public.tiktok_oauth_states to service_role;
 grant select on table public.tiktok_connections to authenticated;
 
 drop policy if exists "tiktok_connections_select_own" on public.tiktok_connections;

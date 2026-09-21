@@ -185,6 +185,9 @@ export class TikTokClient {
       client_secret: this.config.clientSecret,
       code,
       grant_type: "authorization_code",
+      // TikTok binds the authorization code to the exact registered callback.
+      // Keep this server-side validated value in lockstep with authorizationUrl.
+      redirect_uri: this.config.redirectUri,
     });
     return this.tokenRequest("https://open.tiktokapis.com/v2/oauth/token/", body, "code_exchange");
   }
