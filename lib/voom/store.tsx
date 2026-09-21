@@ -42,6 +42,7 @@ const NAV_PATHS: Record<string, string> = {
   connections: "/app/connections",
   contacts: "/app/contacts",
   instagram: "/app/instagram",
+  youtube: "/app/youtube",
   pricing: "/app/pricing",
   settings: "/app/settings",
 };

@@ -184,8 +184,49 @@ export function publishStateFromEmailSend(
 }
 
 /**
+ * Maps the durable YouTube publish queue state (migration 0047 vocabulary)
+ * onto the canonical lifecycle. The queue only exists once an item is
+ * approved and scheduled, so its states live in the execution half of the
+ * machine. `published` here already means "YouTube returned a real video id
+ * AND its own processingDetails.uploadStatus='processed'" — the truthfulness
+ * guarantee the YouTube publisher enforces is preserved:
+ *
+ *   uploading           → submitting          (bytes in flight; NOT accepted)
+ *   provider_processing → provider_processing (accepted; NOT published)
+ *   needs_declaration   → blocked             (owner must declare audience/privacy)
+ */
+export function publishStateFromYouTubeQueue(
+  queueStatus:
+    | "scheduled"
+    | "waiting_for_media"
+    | "needs_declaration"
+    | "permission_required"
+    | "uploading"
+    | "provider_processing"
+    | "published"
+    | "failed"
+    | "cancelled"
+    | string
+    | null,
+): SocialPublishState | null {
+  switch (queueStatus) {
+    case "scheduled": return "scheduled";
+    case "waiting_for_media": return "blocked";
+    case "needs_declaration": return "blocked";
+    case "permission_required": return "connection_required";
+    case "uploading": return "submitting";
+    case "provider_processing": return "provider_processing";
+    case "published": return "published";
+    case "failed": return "failed";
+    case "cancelled": return "draft";
+    case null: return null;
+    default: return null;
+  }
+}
+
+/**
  * The truthful canonical state for content on a channel whose provider
- * integration does not exist yet (TikTok, YouTube today). Planning and
+ * integration does not exist yet (TikTok today). Planning and
  * approval are real; execution is honestly `connection_required` — never
  * `published`, never `scheduled` pretending it will run.
  */

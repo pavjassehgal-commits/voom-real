@@ -562,14 +562,16 @@ test("migration 0045 stores the channels, refuses invalid combinations and is ad
   assert.doesNotMatch(sql, /5\s*(credits|voom credits)|40\s*(credits|voom credits)/i, "media costs are untouched");
 });
 
-test("migrations 0001–0045 are untouched and 0046 is the only new one", async () => {
+test("migrations 0001–0045 are untouched and 0046–0047 are the only new ones", async () => {
   const { readdir } = await import("node:fs/promises");
   const files = (await readdir(new URL("supabase/migrations/", root))).filter((name) => name.endsWith(".sql")).sort();
 
-  // Multi-Social Core adds exactly one migration; production is still through
-  // 0045 until 0046 is deliberately applied.
-  assert.equal(files[files.length - 1], "0046_multi_social_core.sql", "0046 is the only new migration");
-  assert.equal(files[files.length - 2], "0045_campaigns_v3_unified_channels.sql", "production is still through 0045");
+  // The Multi-Social Core (0046) and the YouTube provider (0047) are the only
+  // migrations after Campaigns v3; production is still through 0045 until
+  // 0046 and 0047 are deliberately applied.
+  assert.equal(files[files.length - 1], "0047_youtube_provider.sql", "0047 (YouTube provider) is the newest migration");
+  assert.equal(files[files.length - 2], "0046_multi_social_core.sql", "0046 (Multi-Social Core) precedes it");
+  assert.equal(files[files.length - 3], "0045_campaigns_v3_unified_channels.sql", "production is still through 0045");
   for (const expected of [
     "0033_automated_campaigns.sql",
     "0034_automated_campaign_shape_check_fix.sql",
