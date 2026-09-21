@@ -327,9 +327,22 @@ export async function runTikTokPublishFlow(
       }
       return fail("post_init_failed", `TikTok rejected the post start${api && api.reason ? `: ${api.reason}` : ""}`);
     }
-    await ports
-      .persistPublish(item, started.publishId, started.uploadUrl, asset.byteSize)
-      .catch(() => {});
+    // This is the durability boundary: TikTok now owns a provider job, so
+    // no upload byte may leave Voom until its identity and upload session are
+    // durable. If the write fails, park the claimed row fail-closed. In
+    // particular, do not retry init: the in-memory publish id cannot make a
+    // later worker safely distinguish this job from a new one.
+    try {
+      await ports.persistPublish(item, started.publishId, started.uploadUrl, asset.byteSize);
+    } catch {
+      await ports.markFailed(item, {
+        code: "publish_ambiguous",
+        message: "TikTok accepted the post start but Voom could not durably record its publish id. Voom stopped before uploading and will not create a duplicate post.",
+        status: "failed",
+        retryAt: null,
+      });
+      return fail("publish_ambiguous", "TikTok accepted the post start but Voom could not durably record it; no upload was sent and the item is parked to prevent a duplicate");
+    }
     uploadUrl = started.uploadUrl;
     item = { ...item, publishId: started.publishId, contentLength: asset.byteSize, bytesSent: 0, uploadUrl: started.uploadUrl };
   }
