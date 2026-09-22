@@ -13,14 +13,12 @@
  *     Historical SMS rows stay readable through the legacy surfaces only.
  *   - Email is a channel but has no social format: its deliverable is the
  *     existing campaign email system (subject/body/CTA), not a media format.
- *   - TikTok is a first-class PLANNING channel: being able to plan and
- *     approve content there does NOT mean Voom can publish there. YouTube is
- *     a real publishing channel (lib/youtube): approval still never means
- *     publication — items ride the durable YouTube publish queue and only
- *     YouTube's own confirmation establishes Published. Publishing
- *     truthfulness lives in `lib/social/publisher.ts`, which refuses
- *     disconnected providers. Nothing in this file invents a provider API,
- *     scope, token or status.
+ *   - TikTok and YouTube are real publishing channels (lib/tiktok,
+ *     lib/youtube): approval still never means publication on either —
+ *     items ride the durable provider publish queues, and only the provider's
+ *     own confirmation establishes Published. Publishing truthfulness lives
+ *     in `lib/social/publisher.ts`, which refuses disconnected providers.
+ *     Nothing in this file invents a provider API, scope, token or status.
  *
  * Pure and dependency-free: the Node test suite executes this module for real.
  */
@@ -210,11 +208,9 @@ export function actionChannelLabel(value: unknown): string {
 /**
  * A truthful, product-level availability statement per channel.
  *
- * Instagram, YouTube and Email have real provider integrations. TikTok is a
- * planning-and-approval channel only until its real integration ships — Voom
- * says so plainly instead of pretending. YouTube publishability is still
- * gated at runtime by the real connection: this flag says the integration
- * exists, never that a publication happened.
+ * Instagram, TikTok, YouTube and Email have real provider integrations.
+ * Publishability is still gated at runtime by the real connection: this flag
+ * says the integration exists, never that a publication happened.
  */
 export const CHANNEL_PUBLISHING_AVAILABILITY: Record<
   SocialChannel,
@@ -225,8 +221,8 @@ export const CHANNEL_PUBLISHING_AVAILABILITY: Record<
     reason: "Real Instagram publishing through the connected professional account.",
   },
   tiktok: {
-    publishable: false,
-    reason: "TikTok publishing is not connected yet. Content can be planned, approved and scheduled inside Voom; nothing is published to TikTok.",
+    publishable: true,
+    reason: "Real TikTok publishing through the connected account: approved, scheduled items go on the durable TikTok publish queue, and Published appears only after TikTok's own post-status endpoint confirms PUBLISH_COMPLETE.",
   },
   youtube: {
     publishable: true,

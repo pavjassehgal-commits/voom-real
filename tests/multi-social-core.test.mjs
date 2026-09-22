@@ -165,12 +165,12 @@ test("only a provider confirmation while submitting/processing can establish pub
 
 // ─── 3. The publisher boundary is truthful ──────────────────────────────────
 
-test("TikTok refuses, YouTube refuses without its queue and enqueues durably with it — no fake success", async () => {
+test("TikTok and YouTube both refuse without their queues and both enqueue durably with them — no fake success", async () => {
   const { createTikTokPublisher, createYouTubePublisher, createSocialPublisherRegistry, publishSocialContent } = await publisherReady;
 
-  const tiktok = createTikTokPublisher();
+  const tiktok = createTikTokPublisher(null);
   assert.equal(tiktok.channel, "tiktok");
-  assert.equal(tiktok.isAvailable(), false, "no TikTok integration exists, so it is never available");
+  assert.equal(tiktok.isAvailable(), false, "no TikTok queue port is wired, so it is never available");
 
   const request = {
     ownerId: "11111111-1111-4111-8111-111111111111",
@@ -228,6 +228,33 @@ test("TikTok refuses, YouTube refuses without its queue and enqueues durably wit
   assert.equal(ytEnqueued[1].privacyStatus, null);
   assert.equal(ytEnqueued[1].madeForKids, null);
 
+  // TikTok WITH the real port (migration 0049's durable queue) enqueues —
+  // and enqueued is NOT published: only TikTok's own PUBLISH_COMPLETE post
+  // status can ever establish that, inside the worker.
+  const ttEnqueued = [];
+  const tiktokWired = createTikTokPublisher({
+    enqueueTikTokPublishItem: async (input) => { ttEnqueued.push(input); return { id: "tt-queue-1" }; },
+  });
+  assert.equal(tiktokWired.channel, "tiktok");
+  assert.equal(tiktokWired.isAvailable(), true);
+  const ttOutcome = await tiktokWired.publish({
+    ...request,
+    format: "video",
+    tiktok: { privacyLevel: "SELF_ONLY", disableDuet: true },
+  });
+  assert.equal(ttOutcome.status, "enqueued");
+  assert.notEqual(ttOutcome.status, "published");
+  assert.equal(ttEnqueued.length, 1);
+  assert.equal(ttEnqueued[0].privacyLevel, "SELF_ONLY", "the declared privacy is passed through exactly");
+  assert.equal(ttEnqueued[0].disableDuet, true, "the declared duet choice is passed through exactly");
+  // Video only; and a title is required before anything can enqueue.
+  assert.equal((await tiktokWired.publish({ ...request, format: "image" })).code, "unsupported_format");
+  assert.equal((await tiktokWired.publish({ ...request, caption: "   " })).code, "title_required");
+  // Undeclared TikTok privacy passes through as null — the queue parks it
+  // in needs_declaration and the worker demands the provider's live options.
+  await tiktokWired.publish({ ...request, format: "video", tiktok: {} });
+  assert.equal(ttEnqueued[1].privacyLevel, null);
+
   // A YouTube format that does not exist is refused, never coerced.
   const badFormat = await youtube.publish({ ...request, channel: "youtube", format: "reel" });
   assert.equal(badFormat.status, "failed");
@@ -256,6 +283,21 @@ test("TikTok refuses, YouTube refuses without its queue and enqueues durably wit
   assert.equal(ytRouted.status, "enqueued");
   assert.equal(ytEnqueued.length, 3);
   assert.equal(enqueued.length, 0, "the Instagram queue was never touched for YouTube content");
+
+  // And the router sends TikTok content to the TikTok queue — never to
+  // Instagram's or YouTube's.
+  const ttRouted = await publishSocialContent(wired, { ...request, format: "video" });
+  assert.equal(ttRouted.status, "connection_required", "the registry without a TikTok port still refuses truthfully");
+  const allWired = createSocialPublisherRegistry(
+    { enqueuePublishItem: async (input) => { enqueued.push(input); return { id: "queue-1" }; } },
+    { enqueueYouTubePublishItem: async (input) => { ytEnqueued.push(input); return { id: "yt-queue-2" }; } },
+    { enqueueTikTokPublishItem: async (input) => { ttEnqueued.push(input); return { id: "tt-queue-3" }; } },
+  );
+  const ttCountBefore = ttEnqueued.length;
+  const ttRoutedWired = await publishSocialContent(allWired, { ...request, format: "video" });
+  assert.equal(ttRoutedWired.status, "enqueued");
+  assert.equal(ttEnqueued.length, ttCountBefore + 1, "the TikTok queue received exactly the TikTok item");
+  assert.equal(enqueued.length, 0, "the Instagram queue was never touched for TikTok content");
 });
 
 test("the Instagram adapter reuses the existing queue and cannot fake published", async () => {
@@ -814,7 +856,7 @@ test("migration 0046 backfills Instagram rows and keeps every channel on one cal
   );
 
   const applied = await applyPending();
-  assert.equal(applied[applied.length - 1], "0048_youtube_oauth_state_acl.sql", "0048 (the YouTube OAuth ACL fix) is the final checked-in migration");
+  assert.equal(applied[applied.length - 1], "0049_tiktok_provider.sql", "0049 (the TikTok provider) is the final checked-in migration");
 
   const legacy = await one(
     "select social_channel, social_format from public.mara_drafts where title = 'Legacy Reel'",
@@ -983,15 +1025,17 @@ test("the social layer invents no provider endpoints, tokens or analytics", asyn
   assert.match(connections, /youtube_connections/, "the YouTube view reads the REAL connection table (migration 0047)");
 });
 
-test("the social drafts layer never executes: TikTok has no path, YouTube only mirrors its durable queue", async () => {
+test("the social drafts layer never executes: TikTok and YouTube only mirror their durable queues", async () => {
   const serverDrafts = await read("lib/social/server-drafts.ts");
   assert.doesNotMatch(serverDrafts, /instagram_publish_queue/, "no Instagram queue row is ever created for TikTok/YouTube");
   assert.doesNotMatch(serverDrafts, /publishSocialContent/, "the drafts layer never runs the publisher boundary itself");
   assert.doesNotMatch(serverDrafts, /https?:\/\/|\bfetch\(/, "the drafts layer makes no provider call of any kind");
-  // TikTok truthfully stays execution-free; its approved items read
-  // connection_required with the honest label.
-  assert.match(serverDrafts, /connection_required/, "an approved TikTok item reads connection_required");
-  assert.match(serverDrafts, /publishing not connected yet/i, "the TikTok label says the truth");
+  // TikTok's ONLY execution touchpoint is the idempotent mirror into the
+  // durable queue (migration 0049) — the same boundary the publisher uses.
+  // No TikTok call, no token, no upload exists in this layer.
+  assert.match(serverDrafts, /syncSocialDraftToTikTokQueue/, "TikTok approval mirrors into the durable publish queue");
+  assert.match(serverDrafts, /enqueueTikTokPublishItem/, "the TikTok mirror is the queue RPC, nothing else");
+  assert.match(serverDrafts, /cancelTikTokPublishItem/, "un-approving or unscheduling withdraws the TikTok queue row");
   // YouTube's ONLY execution touchpoint is the idempotent mirror into the
   // durable queue (migration 0047) — the same boundary the publisher uses.
   // No Google call, no token, no upload exists in this layer.
@@ -1008,7 +1052,7 @@ test("the social drafts layer never executes: TikTok has no path, YouTube only m
   // (Comments may name the queue; executable code may not reach it.)
   assert.doesNotMatch(
     route.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*(\/\/).*$/gm, ""),
-    /publishSocialContent|enqueuePublishItem|enqueueYouTubePublishItem|instagram_publish_queue|youtube_publish_queue|createSocialPublisherRegistry|publishInstagram/i,
+    /publishSocialContent|enqueuePublishItem|enqueueYouTubePublishItem|enqueueTikTokPublishItem|syncSocialDraftToTikTokQueue|instagram_publish_queue|youtube_publish_queue|tiktok_publish_queue|createSocialPublisherRegistry|publishInstagram/i,
     "the edit/approve route has no direct execution path",
   );
 });
@@ -1056,7 +1100,17 @@ test("the ONE Studio and calendar surfaces present every channel truthfully", as
   assert.match(studio, /isSocialVideoDraftKind/, "the Studio routes by kind");
   assert.match(calendar, /YouTube Short|YouTube Video/, "the calendar filters include the social formats");
   assert.match(calendar, /publishing not connected/i, "social cells say the truth");
-  assert.match(connections, /Planning only/, "TikTok/YouTube tiles say Planning only");
-  assert.match(connections, /not connected yet/i, "the connections page never claims a connection");
-  assert.match(performance, /no performance data exists for TikTok or YouTube/i, "no fabricated analytics");
+  // The tiles read the REAL connection rows — a connection is claimed only
+  // when the provider's row says so, and an unconfigured deployment still
+  // says Planning only rather than implying anything.
+  assert.match(connections, /getTikTokConnection/, "the TikTok tile reads the real connection row");
+  assert.match(connections, /getYouTubeConnection/, "the YouTube tile reads the real connection row");
+  assert.match(connections, /Planning only/, "an unconfigured deployment still says Planning only");
+  assert.match(connections, /not configured yet/i, "an unconfigured integration is said as such, never claimed");
+  // No fabricated analytics: TikTok honestly has none (the connection asks
+  // for no analytics scope); YouTube's numbers are the official read-only
+  // API, and a dash means the provider returned no number.
+  assert.match(performance, /TikTok performance data is unavailable/i, "TikTok performance is honestly unavailable");
+  assert.match(performance, /none is invented/i, "the page says nothing is invented");
+  assert.match(performance, /official YouTube Data API/, "YouTube numbers come from the official read-only API");
 });

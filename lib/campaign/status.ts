@@ -35,9 +35,10 @@ export type ActionExecutionState =
   | "failed"
   | "skipped"
   /**
-   * Multi-Social Core: the content is ready on Voom's side but its channel's
-   * provider is not connected (TikTok/YouTube today), so it truthfully cannot
-   * execute. Blocked is never "published" and never silently dropped.
+   * Multi-Social Core: the content is ready on Voom's side but cannot run
+   * yet — the channel's provider is not connected, a required declaration is
+   * missing (TikTok privacy; YouTube audience), or an approved item has no
+   * queue row. Blocked is never "published" and never silently dropped.
    */
   | "blocked";
 
@@ -87,13 +88,12 @@ export interface InstagramActionFacts {
 /**
  * Multi-Social Core facts for a TikTok or YouTube action.
  *
- * TikTok has NO queue status: no TikTok provider integration exists, so
- * there is no execution machinery to derive from — an approved TikTok item
- * is truthfully `blocked` (provider not connected).
- *
- * YouTube DOES: `queueStatus` carries the durable youtube_publish_queue
- * state (migration 0047), and the derivation below reads execution truth
- * from it exactly like the Instagram derivation reads its queue.
+ * BOTH channels carry a durable queue status: `queueStatus` is the
+ * tiktok_publish_queue state (migration 0049) for TikTok actions and the
+ * youtube_publish_queue state (migration 0047) for YouTube actions, and the
+ * derivation below reads execution truth from it exactly like the Instagram
+ * derivation reads its queue. An approved item with NO queue row is
+ * truthfully `blocked` (nothing executes yet).
  */
 export interface SocialActionFacts {
   kind: "social";
@@ -103,7 +103,7 @@ export interface SocialActionFacts {
   draftStatus: "draft" | "approved" | "rejected" | null;
   /** Whether the draft has its video asset stored. */
   hasAsset?: boolean;
-  /** youtube_publish_queue.status for YouTube actions; always null for TikTok. */
+  /** The channel's durable publish queue status, when a row exists. */
   queueStatus?: string | null;
   scheduledFor: string;
 }
@@ -126,13 +126,13 @@ export function deriveActionState(facts: ActionFacts): ActionExecutionState {
  * TikTok/YouTube derivation. Truthfulness rules:
  *   - a missing draft is a real failure (the plan references nothing);
  *   - a rejected draft is skipped;
- *   - TikTok: an APPROVED draft is `blocked` — everything on Voom's side is
- *     done, and the honest reason it cannot run is that the provider is not
- *     connected. It never becomes scheduled/executing/executed.
- *   - YouTube: the durable queue is the execution truth. Only its states
- *     derive scheduled/executing/executed, and `executed` only from
- *     `published` — which the database itself restricts to a real YouTube
- *     video id with uploadStatus='processed'.
+ *   - the channel's DURABLE QUEUE is the execution truth for both channels.
+ *     Only its states derive scheduled/executing/executed, and `executed`
+ *     only from `published` — which the database itself restricts to the
+ *     provider's own confirmation (YouTube: real video id with
+ *     uploadStatus='processed'; TikTok: its own PUBLISH_COMPLETE status).
+ *   - an APPROVED draft with no queue row is `blocked` — everything on
+ *     Voom's side is done but nothing executes yet.
  */
 function deriveSocialState(facts: SocialActionFacts): ActionExecutionState {
   if (!facts.draftStatus) return "failed";
@@ -151,9 +151,23 @@ function deriveSocialState(facts: SocialActionFacts): ActionExecutionState {
       default: break;
     }
   }
+  if (facts.channel === "tiktok" && facts.queueStatus) {
+    switch (facts.queueStatus) {
+      case "published": return "executed";
+      case "posting":
+      case "provider_processing": return "executing";
+      case "failed": return "failed";
+      case "cancelled": return "skipped";
+      case "scheduled":
+      case "waiting_for_media": return "scheduled";
+      case "needs_declaration":
+      case "permission_required": return "blocked";
+      default: break;
+    }
+  }
   if (facts.draftStatus === "approved") {
-    // Approved with no YouTube queue row: everything on Voom's side is done
-    // but nothing executes yet (no schedule, or TikTok). Truthfully blocked.
+    // Approved with no queue row: everything on Voom's side is done but
+    // nothing executes yet (no schedule). Truthfully blocked.
     return "blocked";
   }
   return facts.planStatus === "needs_approval" ? "needs_approval" : "proposed";

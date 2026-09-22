@@ -19,9 +19,11 @@ import type { SocialCalendarItemView } from "@/lib/social/server-drafts";
  * The Content Calendar is the authoritative visual schedule of the ONE
  * executable content workflow, across every channel. Instagram cells are real
  * workflow items with their real local scheduled time and real status; TikTok
- * and YouTube cells are the approved + scheduled planning drafts, labelled
- * truthfully as approved-but-not-published. Clicking a cell opens the real
- * draft. There is no sample dataset and no hardcoded month.
+ * and YouTube cells are the approved + scheduled drafts, labelled QUEUE-DRIVEN
+ * (each channel's durable publish queue is the execution truth: scheduled /
+ * uploading / processing / published — never an optimistic invention).
+ * Clicking a cell opens the real draft. There is no sample dataset and no
+ * hardcoded month.
  */
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];

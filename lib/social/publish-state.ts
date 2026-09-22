@@ -225,8 +225,49 @@ export function publishStateFromYouTubeQueue(
 }
 
 /**
+ * Maps the durable TikTok publish queue state (migration 0049 vocabulary)
+ * onto the canonical lifecycle. The queue only exists once an item is
+ * approved and scheduled, so its states live in the execution half of the
+ * machine. `published` here already means "TikTok's own post-status
+ * endpoint returned PUBLISH_COMPLETE" — the truthfulness guarantee the
+ * TikTok queue enforces in the database is preserved:
+ *
+ *   posting             → submitting          (bytes in flight; NOT accepted)
+ *   provider_processing → provider_processing (accepted; NOT published)
+ *   needs_declaration   → blocked             (owner must declare privacy)
+ */
+export function publishStateFromTikTokQueue(
+  queueStatus:
+    | "scheduled"
+    | "waiting_for_media"
+    | "needs_declaration"
+    | "permission_required"
+    | "posting"
+    | "provider_processing"
+    | "published"
+    | "failed"
+    | "cancelled"
+    | string
+    | null,
+): SocialPublishState | null {
+  switch (queueStatus) {
+    case "scheduled": return "scheduled";
+    case "waiting_for_media": return "blocked";
+    case "needs_declaration": return "blocked";
+    case "permission_required": return "connection_required";
+    case "posting": return "submitting";
+    case "provider_processing": return "provider_processing";
+    case "published": return "published";
+    case "failed": return "failed";
+    case "cancelled": return "draft";
+    case null: return null;
+    default: return null;
+  }
+}
+
+/**
  * The truthful canonical state for content on a channel whose provider
- * integration does not exist yet (TikTok today). Planning and
+ * integration does not exist. Planning and
  * approval are real; execution is honestly `connection_required` — never
  * `published`, never `scheduled` pretending it will run.
  */
