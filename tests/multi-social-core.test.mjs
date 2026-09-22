@@ -856,7 +856,7 @@ test("migration 0046 backfills Instagram rows and keeps every channel on one cal
   );
 
   const applied = await applyPending();
-  assert.equal(applied[applied.length - 1], "0049_tiktok_provider.sql", "0049 (the TikTok provider) is the final checked-in migration");
+  assert.equal(applied[applied.length - 1], "0050_verified_email_access.sql", "0050 adds verified-email RLS without rewriting existing product rows");
 
   const legacy = await one(
     "select social_channel, social_format from public.mara_drafts where title = 'Legacy Reel'",

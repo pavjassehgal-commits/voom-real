@@ -1445,11 +1445,11 @@ async function saveConnection(ownerId, overrides = {}) {
   });
 }
 
-test("migrations 0047-0049 apply cleanly and 0049 is the checked-in head", async () => {
+test("migrations 0047-0050 apply cleanly including verified-email access", async () => {
   const { applied } = await liteDb();
   assert.ok(applied.includes("0047_youtube_provider.sql"), "0047 applied through PGlite");
   assert.ok(applied.includes("0049_tiktok_provider.sql"), "0049 (TikTok) applied through PGlite");
-  assert.equal(applied[applied.length - 1], "0049_tiktok_provider.sql");
+  assert.equal(applied[applied.length - 1], "0050_verified_email_access.sql");
   const tables = await all(
     "select table_name from information_schema.tables where table_schema = 'public' and table_name like 'youtube_%' order by table_name",
   );

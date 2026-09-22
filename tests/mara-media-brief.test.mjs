@@ -46,7 +46,9 @@ test("0026 and the additive 0028 video metadata migration are bounded", async ()
   // provider) are checked in but NOT applied to production. Anything newer
   // is a migration this suite has not been told about — it must be added
   // deliberately.
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 49), "no migration beyond 0049 (the TikTok provider) may exist");
+  // Auth adds 0050: restrictive verified-email RLS only, no product data changes.
+  assert.ok(files.includes("0050_verified_email_access.sql"));
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 50), "no migration beyond 0050 (verified-email access) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],

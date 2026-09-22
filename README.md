@@ -43,7 +43,7 @@ app/
   layout.tsx        Root layout — fonts (Bricolage Grotesque, Public Sans), metadata
   globals.css        Design tokens (colours, brand gradient) and Tailwind entry
   page.tsx            /       — landing placeholder
-  login/page.tsx      /login  — login placeholder (no auth wired up)
+  login/page.tsx      /login  — Supabase password sign-in
   app/page.tsx        /app    — dashboard placeholder
   components/
     Logo.tsx          Shared Voom wordmark used across pages
@@ -247,3 +247,11 @@ window anyway, so a finer cadence would only add load. The route is race-safe
 `CRON_SECRET` is unset and 401 on a mismatch, and is deliberately **not** in
 `vercel.json` — Vercel Hobby's minimum cadence cannot express it, and the route
 was not triggered manually in Production while this was built.
+
+## Authentication release gate
+
+Email verification, resend and password recovery use Supabase Auth PKCE. Product
+access requires an authoritative confirmed email at both server and RLS boundaries.
+Before deployment or migration 0050, read the [auth audit](docs/auth/audit.md) and
+[Production preflight / SMTP / rollout runbook](docs/auth/production-rollout.md).
+Do not assume legacy confirmation timestamps prove historical email ownership.

@@ -14,6 +14,7 @@
  */
 import "./helpers/server-only-shim.mjs";
 
+import { futureCampaignFixture } from "./helpers/future-campaign-fixture.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -33,9 +34,9 @@ const KEY_ASSISTED = "77777777-7777-4777-8777-777777777777";
 const KEY_AUTOPILOT = "88888888-8888-4888-8888-888888888888";
 const KEY_LOCKED = "99999999-9999-4999-8999-999999999999";
 
-const START_UTC = new Date("2026-09-22T00:00+04:00").toISOString();
-const END_UTC = new Date("2026-10-01T23:59+04:00").toISOString();
-const NOW = new Date("2026-09-20T12:00:00.000Z");
+const START_UTC = new Date(futureCampaignFixture("2026-09-22T00:00+04:00")).toISOString();
+const END_UTC = new Date(futureCampaignFixture("2026-10-01T23:59+04:00")).toISOString();
+const NOW = new Date(futureCampaignFixture("2026-09-20T12:00:00.000Z"));
 
 const BRAND = {
   brandName: "SynraPay",
@@ -48,8 +49,8 @@ const BRAND = {
 const BRIEF = {
   name: "SynraPay website is now LIVE",
   goal: "announce",
-  startAt: "2026-09-22",
-  endAt: "2026-10-01",
+  startAt: futureCampaignFixture("2026-09-22"),
+  endAt: futureCampaignFixture("2026-10-01"),
   offerDetails: "",
   targetAudience: "Existing SynraPay merchants",
   notes: "",
@@ -62,9 +63,9 @@ async function getDb() {
   if (!db) {
     ({ db } = await createSupabaseLite());
     await db.exec(`
-      insert into auth.users (id, email) values
-        ('${OWNER_A}', 'owner.a@example.com'),
-        ('${OWNER_B}', 'owner.b@example.com');
+      insert into auth.users (id, email, email_confirmed_at) values
+        ('${OWNER_A}', 'owner.a@example.com', now()),
+        ('${OWNER_B}', 'owner.b@example.com', now());
       insert into public.businesses (owner_user_id, brand_name, industry, automation_level) values
         ('${OWNER_A}', 'SynraPay', 'Fintech', 'assisted'),
         ('${OWNER_B}', 'Other Studio', 'Fashion', 'manual');
@@ -419,7 +420,7 @@ test("editing one action rewrites only that action's draft", async () => {
     subject: "Edited subject line",
     previewText: "Edited preview",
     body: "Hi,\n\nThis body was edited by the merchant before approval.\n\nCTA: Open the dashboard",
-    scheduledFor: "2026-09-23T07:00:00.000Z",
+    scheduledFor: futureCampaignFixture("2026-09-23T07:00:00.000Z"),
     content: { cta: "Open the dashboard", ctaUrl: null, audienceNote: "Existing SynraPay merchants." },
     contentSource: "edited",
   };
@@ -430,7 +431,7 @@ test("editing one action rewrites only that action's draft", async () => {
   assert.equal(updated.id, email.id);
   assert.equal(updated.content_source, "edited");
   assert.equal(updated.mara_content.cta, "Open the dashboard");
-  assert.equal(new Date(updated.scheduled_for).toISOString(), "2026-09-23T07:00:00.000Z");
+  assert.equal(new Date(updated.scheduled_for).toISOString(), futureCampaignFixture("2026-09-23T07:00:00.000Z"));
 
   const child = await one("select subject, preview_text, content, proposed_send_at from public.voom_campaigns where id = $1", [email.email_campaign_id]);
   assert.equal(child.subject, "Edited subject line");
@@ -458,7 +459,7 @@ test("editing an Instagram action keeps the caption limits and mirrors the calen
     title: "Edited concept",
     caption: "Edited caption written by the merchant before approval.",
     queueCaption: "Edited caption written by the merchant before approval.",
-    scheduledFor: "2026-09-24T15:00:00.000Z",
+    scheduledFor: futureCampaignFixture("2026-09-24T15:00:00.000Z"),
     content: { hook: "Edited hook" },
     contentSource: "edited",
   };
@@ -467,7 +468,7 @@ test("editing an Instagram action keeps the caption limits and mirrors the calen
   const draft = await one("select title, content, proposed_publish_at from public.mara_drafts where id = $1", [action.draft_id]);
   assert.equal(draft.title, "Edited concept");
   assert.match(draft.content, /Edited caption written by the merchant/);
-  assert.equal(new Date(draft.proposed_publish_at).toISOString(), "2026-09-24T15:00:00.000Z");
+  assert.equal(new Date(draft.proposed_publish_at).toISOString(), futureCampaignFixture("2026-09-24T15:00:00.000Z"));
 
   const calendar = await one("select title, content from public.content_calendar_items where owner_user_id = $1 and source_draft_id = $2", [OWNER_A, action.draft_id]);
   assert.equal(calendar.title, "Edited concept", "the approved calendar mirror stays truthful");
@@ -684,11 +685,14 @@ test("another workspace cannot read or rewrite these campaign rows", async () =>
 
 test("the v2 tables are RLS-protected and service-role written only", async () => {
   const policies = await all(
-    `select tablename, policyname, cmd, roles::text as roles, qual
+    `select tablename, policyname, permissive, cmd, roles::text as roles, qual
        from pg_policies where tablename in ('voom_campaign_generations', 'voom_campaign_actions') order by tablename`,
   );
-  const generations = policies.filter((row) => row.tablename === "voom_campaign_generations");
-  assert.equal(generations.length, 1, "the generation table has exactly one policy");
+  const verification = policies.filter(row => row.policyname === "voom_verified_email");
+  assert.equal(verification.length, 2, "both tables additionally require verified email");
+  assert.ok(verification.every(row => row.permissive === "RESTRICTIVE"));
+  const generations = policies.filter((row) => row.tablename === "voom_campaign_generations" && row.permissive === "PERMISSIVE");
+  assert.equal(generations.length, 1, "the generation table has exactly one permissive ownership policy");
   assert.equal(generations[0].cmd, "SELECT");
   assert.match(generations[0].qual, /auth\.uid\(\).*owner_user_id|owner_user_id.*auth\.uid\(\)/);
   assert.match(generations[0].roles, /authenticated/);

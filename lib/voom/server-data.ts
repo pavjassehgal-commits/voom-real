@@ -1,14 +1,13 @@
 import { cache } from "react";
 import { createClient } from "@/utils/supabase/server";
+import { getAuthUser } from "@/lib/auth/server";
+import { isVerifiedUser } from "@/lib/auth/policy";
 import type { BusinessRecord, ProfileRecord } from "./types";
 
 export const getCurrentUser = cache(async (): Promise<{ id: string; email: string | null } | null> => {
-  const supabase = await createClient();
-  const { data, error } = await supabase.auth.getClaims();
-  if (error || !data?.claims) return null;
-  const claims = data.claims as { sub?: string; email?: string };
-  if (!claims.sub) return null;
-  return { id: claims.sub, email: claims.email ?? null };
+  const user = await getAuthUser();
+  if (!isVerifiedUser(user)) return null;
+  return { id: user.id, email: user.email ?? null };
 });
 
 export const getBusinessRecord = cache(async (): Promise<BusinessRecord | null> => {

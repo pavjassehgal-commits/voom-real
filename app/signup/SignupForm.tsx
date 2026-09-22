@@ -23,52 +23,13 @@ function SubmitButton() {
 export default function SignupForm() {
   const [state, formAction] = useActionState(signup, initialState);
 
-  if (state.success) {
-    return (
-      <div
-        role="status"
-        className="w-full max-w-sm rounded-2xl border border-line bg-surface p-7 text-center shadow-[0_1px_2px_rgba(0,0,0,.5),0_12px_32px_-16px_rgba(0,0,0,.8)]"
-      >
-        <div
-          className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full"
-          style={{ background: "var(--brand-soft)" }}
-        >
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="var(--brand)"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="h-6 w-6"
-          >
-            <rect x="2" y="5" width="20" height="14" rx="3" />
-            <path d="M3 7l9 6 9-6" />
-          </svg>
-        </div>
-        <h1 className="font-display text-xl font-semibold tracking-tight">
-          Check your email
-        </h1>
-        <p className="mt-2 text-sm text-text-2">
-          We&apos;ve sent a confirmation link to your inbox. Click it to
-          activate your account and sign in.
-        </p>
-        <p className="mt-6 text-xs text-text-3">
-          <Link href="/login" className="hover:text-text-2">
-            Back to login
-          </Link>
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="w-full max-w-sm rounded-2xl border border-line bg-surface p-7 shadow-[0_1px_2px_rgba(0,0,0,.5),0_12px_32px_-16px_rgba(0,0,0,.8)]">
       <h1 className="font-display text-xl font-semibold tracking-tight">
         Create your Voom account
       </h1>
       <p className="mt-1 text-sm text-text-2">
-        MARA is ready when you are.
+        Create an account, then verify your email to get started.
       </p>
 
       <form action={formAction} className="mt-6 flex flex-col gap-4">
@@ -114,9 +75,10 @@ export default function SignupForm() {
             name="password"
             type="password"
             required
-            minLength={8}
+            minLength={12}
+            maxLength={128}
             autoComplete="new-password"
-            placeholder="At least 8 characters"
+            placeholder="12–128 characters"
             aria-invalid={state.fieldErrors?.password ? "true" : undefined}
             aria-describedby={
               state.fieldErrors?.password ? "password-error" : undefined
@@ -139,7 +101,8 @@ export default function SignupForm() {
             name="confirmPassword"
             type="password"
             required
-            minLength={8}
+            minLength={12}
+            maxLength={128}
             autoComplete="new-password"
             placeholder="Re-enter your password"
             aria-invalid={

@@ -256,7 +256,7 @@ test("0045 backfills existing Campaigns v2 rows and leaves every one of them rea
   // ── Migrate ──
   const applied = await applyPending();
   assert.ok(applied.includes(MIGRATION_0045), "0045 is applied to the legacy database");
-  assert.equal(applied[applied.length - 1], "0049_tiktok_provider.sql", "0049 (the TikTok provider) is the checked-in successor head");
+  assert.equal(applied[applied.length - 1], "0050_verified_email_access.sql", "0050 adds verified-email RLS without rewriting existing product rows");
 
   const q = async (sql, params = []) => (await legacy.query(sql, params)).rows;
 
