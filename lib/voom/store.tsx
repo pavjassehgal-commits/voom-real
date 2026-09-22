@@ -27,6 +27,7 @@ import type {
 } from "./types";
 import { saveOnboarding as saveOnboardingAction, saveBrandSettings as saveBrandSettingsAction, saveMediaSpendSettings as saveMediaSpendAction, restartOnboarding as restartOnboardingAction } from "./mutations";
 import { normalizeMediaSpendSettings, type MediaSpendSettings } from "@/lib/mara/media-spend";
+import { brandFromBusiness, deriveHandle, type Brand } from "./brand-state";
 
 const NAV_PATHS: Record<string, string> = {
   dash: "/app/today",
@@ -62,62 +63,6 @@ function emptyOnboard(): OnboardingAnswers {
     freq: "",
     auto: "",
     permission: "",
-    color: "#e8481f",
-  };
-}
-
-interface Brand {
-  name: string;
-  handle: string;
-  industry: string;
-  audience: string[];
-  goals: string[];
-  tone: string[];
-  channels: string[];
-  budget: string;
-  freq: string;
-  auto: string;
-  permission: string;
-  color: string;
-}
-
-function deriveHandle(name: string): string {
-  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 18);
-  return slug ? "@" + slug : "";
-}
-
-function emptyBrand(): Brand {
-  return {
-    name: "",
-    handle: "",
-    industry: "",
-    audience: [],
-    goals: [],
-    tone: [],
-    channels: [],
-    budget: "",
-    freq: "",
-    auto: "",
-    permission: "",
-    color: "#e8481f",
-  };
-}
-
-function brandFromBusiness(business: BusinessRecord | null): Brand {
-  if (!business) return emptyBrand();
-  const name = business.brand_name?.trim() ?? "";
-  return {
-    name,
-    handle: deriveHandle(name),
-    industry: business.industry ?? "",
-    audience: business.target_customer ?? [],
-    goals: business.main_goal ? [business.main_goal] : [],
-    tone: business.brand_personality ?? [],
-    channels: business.preferred_channels ?? [],
-    budget: business.monthly_ad_budget ?? "",
-    freq: business.content_frequency ?? "",
-    auto: business.automation_level ?? "",
-    permission: business.publishing_permission ?? "",
     color: "#e8481f",
   };
 }
@@ -161,7 +106,7 @@ function initialState(init: { displayName: string | null; email: string | null; 
     sideOpen: false,
     menuOpen: false,
     igConnected: false,
-    plan: normalizePlan((init.business as any)?.plan),
+    plan: normalizePlan(init.business?.plan),
     brand: brandFromBusiness(init.business),
     mediaSpend: normalizeMediaSpendSettings(init.business),
     onboard: { ...emptyOnboard(), displayName: init.displayName?.trim() ?? "" },
@@ -305,6 +250,7 @@ export function VoomProvider({
           name: input.brandName.trim(),
           handle: deriveHandle(input.brandName.trim()),
           industry: input.industry,
+          desc: input.brandDescription.trim(),
           audience: input.targetCustomer,
           goals: input.mainGoal ? [input.mainGoal] : [],
           tone: input.brandPersonality,
@@ -406,6 +352,7 @@ export function VoomProvider({
           name: payload.brandName.trim(),
           handle: deriveHandle(payload.brandName.trim()),
           industry: payload.industry,
+          desc: payload.brandDescription,
           audience: payload.targetCustomer,
           goals: payload.mainGoal ? [payload.mainGoal] : [],
           tone: payload.brandPersonality,

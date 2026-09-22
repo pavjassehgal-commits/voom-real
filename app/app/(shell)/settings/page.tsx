@@ -8,7 +8,7 @@ import { MANUAL_NEVER_AUTO_SPENDS } from "@/lib/mara/media-spend";
 import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { AdSepNote } from "@/components/voom/ui/Notes";
-import { Btn, Card, Chip, Field, Input, Tag } from "@/components/voom/ui/primitives";
+import { Btn, Card, Chip, Field, Input, Tag, Textarea } from "@/components/voom/ui/primitives";
 import { getPlanConfig } from "@/lib/billing/plans";
 import type { CreditSummary } from "@/lib/billing/ledger";
 import { EmailIdentityCard } from "@/components/voom/modals/EmailIdentityCard";
@@ -19,6 +19,9 @@ export default function SettingsPage() {
 
   const [nameInput, setNameInput] = useState(displayName);
   const [brandNameInput, setBrandNameInput] = useState(brand.name);
+  // Loaded from the persisted businesses.brand_description, so saving any
+  // other field round-trips the existing value instead of wiping it.
+  const [descInput, setDescInput] = useState(brand.desc);
   const [industryInput, setIndustryInput] = useState(brand.industry);
   const [audience, setAudience] = useState(brand.audience);
   const [restarting, setRestarting] = useState(false);
@@ -64,7 +67,7 @@ export default function SettingsPage() {
     const payload: BusinessProfileInput = {
       displayName: nameInput,
       brandName: brandNameInput,
-      brandDescription: "",
+      brandDescription: descInput,
       industry: industryInput,
       targetCustomer: audience,
       mainGoal: brand.goals[0] ?? "",
@@ -165,6 +168,14 @@ export default function SettingsPage() {
             </Field>
           </div>
         </div>
+        <Field label="Describe your brand" hint="What you do, who you serve and what makes you different. MARA reads this before she writes or plans anything. Clear the field to remove the description.">
+          <Textarea
+            rows={5}
+            value={descInput}
+            onChange={(e) => setDescInput(e.target.value)}
+            placeholder="For example: We're a small café near the marina. Most of our customers are regulars who work nearby, and weekends are our busiest time."
+          />
+        </Field>
         <Field label="Kind of business">
           <select
             className="h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px]"
