@@ -11,6 +11,7 @@ import { PlanItemCard } from "@/components/voom/operating/PlanItemCard";
 // TEMPORARY: planning-only preview control, dev-flag gated. Remove with
 // lib/voom/planning-only-preview.ts when the experiment ends.
 import { PlanningOnlyPreviewCard } from "@/components/voom/operating/PlanningOnlyPreview";
+import type { PlanReplenishOutcome } from "@/lib/voom/workflow/marketing-plan";
 
 /**
  * The preview control is a developer/test-only affordance. It stays available
@@ -35,31 +36,50 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
   // AI Media Spend Control: the truthful reason a run left items waiting for
   // media (automatic generation off, or the month's budget reached).
   const [spendNotice, setSpendNotice] = useState("");
+  const [outcome, setOutcome] = useState<PlanReplenishOutcome | null>(null);
 
   const refresh = useCallback((next: WorkflowSnapshot) => setSnapshot(next), []);
 
   async function build(next: Cadence) {
-    setBusy(true); setError(""); setSpendNotice("");
-    const response = await fetch("/api/plan", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cadence: next }),
-    });
-    const body = await response.json() as { snapshot?: WorkflowSnapshot; error?: string; mediaSpendNotice?: string | null; run?: { blockedReason?: string | null } };
-    if (response.ok && body.snapshot) {
-      setSnapshot(body.snapshot);
-      setCadence(body.snapshot.cadence);
-      setSpendNotice(body.mediaSpendNotice ?? "");
-      window.dispatchEvent(new Event("voom:data-changed"));
-    } else setError(body.error ?? "Voom couldn't build your plan right now.");
-    setBusy(false);
+    setBusy(true); setError(""); setSpendNotice(""); setOutcome(null);
+    try {
+      const response = await fetch("/api/plan", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cadence: next }),
+      });
+      const body = await response.json() as {
+        snapshot?: WorkflowSnapshot;
+        outcome?: PlanReplenishOutcome;
+        error?: string;
+        mediaSpendNotice?: string | null;
+      };
+      const authoritativeOutcome = body.outcome ?? {
+        state: "failed", added: 0, horizonStart: null, horizonEnd: null, addedChannelFormats: [],
+      } satisfies PlanReplenishOutcome;
+      setOutcome(authoritativeOutcome);
+      if (response.ok && body.snapshot && authoritativeOutcome.state !== "failed") {
+        setSnapshot(body.snapshot);
+        setCadence(body.snapshot.cadence);
+        setSpendNotice(body.mediaSpendNotice ?? "");
+        window.dispatchEvent(new Event("voom:data-changed"));
+      } else if (authoritativeOutcome.state === "failed") {
+        setError(body.error ?? "Your existing plan hasn't been changed. Try again.");
+      }
+    } catch {
+      setOutcome({ state: "failed", added: 0, horizonStart: null, horizonEnd: null, addedChannelFormats: [] });
+      setError("Your existing plan hasn't been changed. Try again.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   const byDay = groupByDay(snapshot.items);
   const mix = mixLine(snapshot.items);
 
   return <div>
-    {snapshot.selectedChannels.length === 0 && <p role="status" className="mb-4 rounded-xl border border-amber/35 bg-amber/10 px-4 py-3 text-sm text-amber">
-      No supported social channel is selected, so Voom will not invent Instagram work. Choose Instagram, TikTok or YouTube in your brand preferences before building. Connection status affects publishing readiness, not planning eligibility. <a href="/app/settings" className="font-semibold underline">Update channel preferences</a> or <a href="/app/connections" className="font-semibold underline">review publishing connections</a>.
-    </p>}
+    {snapshot.selectedChannels.length === 0 && <div role="status" className="mb-4 rounded-xl border border-amber/35 bg-amber/10 px-4 py-3 text-sm text-amber">
+      <p className="font-semibold">Choose your marketing channels</p>
+      <p>Select at least one social channel before building your Marketing Plan. <a href="/app/settings" className="font-semibold underline">Update channel preferences</a>.</p>
+    </div>}
     <Card className="mb-4 p-4 sm:p-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
@@ -68,7 +88,7 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
           {mix && <p className="mt-0.5 text-[12px] text-text-3">{mix}</p>}
         </div>
         <Btn variant="outline" size="sm" disabled={busy} onClick={() => void build(cadence)}>
-          <Icon name="spark" size={14} />{busy ? "Building…" : snapshot.items.length ? "Replenish plan" : "Build plan"}
+          <Icon name="spark" size={14} />{busy ? "Building…" : outcome?.state === "already_up_to_date" ? "✓ Plan up to date" : snapshot.items.length ? "Replenish plan" : "Build plan"}
         </Btn>
       </div>
       {/* Truthful per-mode statement of what Replenish does. In Manual it
@@ -93,7 +113,9 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
     {/* TEMPORARY: planning-only preview control — dev-flag gated. */}
     {SHOW_PLANNING_PREVIEW && <PlanningOnlyPreviewCard className="mb-4" />}
 
-    {error && <p role="alert" className="mb-4 rounded-xl border border-red/35 bg-red/10 px-4 py-3 text-sm text-red">{error}</p>}
+    {outcome && outcome.state !== "no_supported_social_channels_selected" && <PlanOutcomeNotice outcome={outcome} error={error} />}
+
+    {error && !outcome && <p role="alert" className="mb-4 rounded-xl border border-red/35 bg-red/10 px-4 py-3 text-sm text-red">{error}</p>}
 
     {/* A blocked automatic generation is not an error: the plan and its drafts
         were created, and only the media waits for the owner's decision. */}
@@ -126,6 +148,23 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
       </Btn>
     </Card>}
   </div>;
+}
+
+function PlanOutcomeNotice({ outcome, error }: { outcome: PlanReplenishOutcome; error: string }) {
+  if (outcome.state === "failed") return <div role="alert" className="mb-4 rounded-xl border border-red/35 bg-red/10 px-4 py-3 text-sm text-red">
+    <p className="font-semibold">{"We couldn't replenish your plan"}</p>
+    <p>{error || "Your existing plan hasn't been changed. Try again."}</p>
+  </div>;
+  if (outcome.state === "already_up_to_date") return <div role="status" className="mb-4 rounded-xl border border-green/35 bg-green/10 px-4 py-3 text-sm text-green">
+    <p className="font-semibold">Your marketing plan is already up to date</p>
+    <p>You have complete marketing coverage{outcome.horizonEnd ? ` through ${formatLocalDate(outcome.horizonEnd)}` : " for the next 7 days"}. {"Voom will add more content when it's needed."}</p>
+  </div>;
+  if (outcome.state === "added") return <div role="status" className="mb-4 rounded-xl border border-green/35 bg-green/10 px-4 py-3 text-sm text-green">
+    <p className="font-semibold">Your plan is ready ✓</p>
+    <p>Added {outcome.added} recommendation{outcome.added === 1 ? "" : "s"} for the next 7 days.</p>
+    {outcome.addedChannelFormats.length > 0 && <p className="mt-1 text-xs">{outcome.addedChannelFormats.join(" · ")}</p>}
+  </div>;
+  return null;
 }
 
 function groupByDay(items: WorkflowView[]): [string, WorkflowView[]][] {
