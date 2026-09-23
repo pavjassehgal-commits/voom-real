@@ -1,6 +1,7 @@
 import { PageHead } from "@/components/voom/shell/AppShell";
 import { PlanWorkspace } from "@/components/voom/operating/PlanWorkspace";
 import { getOperatingData } from "@/lib/voom/operating-data";
+import { marketingPlanSnapshot } from "@/lib/voom/workflow/marketing-plan";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +9,6 @@ export default async function PlanPage() {
   const data = await getOperatingData();
   return <div>
     <PageHead title="Marketing Plan" description="The rolling content schedule Voom is actually executing, starting today." />
-    {data && <PlanWorkspace initial={data.snapshot} />}
+    {data && <PlanWorkspace initial={marketingPlanSnapshot(data.snapshot)} />}
   </div>;
 }

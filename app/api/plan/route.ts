@@ -1,6 +1,11 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { mediaSpendRunNotice } from "@/lib/mara/media-spend";
 import { loadWorkflowSnapshot } from "@/lib/voom/workflow/read";
+import {
+  failedPlanReplenishOutcome,
+  marketingPlanSnapshot,
+  planReplenishOutcome,
+} from "@/lib/voom/workflow/marketing-plan";
 import { runOwnerWorkflow } from "@/lib/voom/workflow/service";
 import { normalizeCadence, CADENCES } from "@/lib/voom/cadence";
 import { createAdminClient } from "@/utils/supabase/admin";
@@ -17,7 +22,7 @@ export const maxDuration = 300;
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
-  const snapshot = await loadWorkflowSnapshot(createAdminClient(), user.id);
+  const snapshot = marketingPlanSnapshot(await loadWorkflowSnapshot(createAdminClient(), user.id));
   return Response.json({ snapshot }, { headers: { "Cache-Control": "no-store" } });
 }
 
@@ -64,20 +69,31 @@ export async function POST(request: Request) {
   const { count } = await admin.from("mara_media_generations")
     .select("id", { count: "exact", head: true }).eq("owner_user_id", user.id).gte("created_at", since);
   if ((count ?? 0) >= 30) {
-    return Response.json({ error: "Voom is already building your content. Give it a few minutes." }, { status: 429 });
+    return Response.json({
+      outcome: failedPlanReplenishOutcome(),
+      error: "Your existing plan hasn't been changed. Try again.",
+    }, { status: 429 });
   }
 
   try {
     // An explicit owner request is the "replenish" trigger. The service reads
     // the account's saved mode itself; Manual stays Manual throughout.
     const run = await runOwnerWorkflow(admin, { ownerId: user.id, cadence, stage, trigger: "replenish" });
-    const snapshot = await loadWorkflowSnapshot(admin, user.id);
+    const snapshot = marketingPlanSnapshot(await loadWorkflowSnapshot(admin, user.id));
+    const outcome = planReplenishOutcome(run, snapshot);
     // AI Media Spend Control: a refused automatic generation is NOT a failed
     // run — the plan, copy and drafts were created and only the media waits.
     // The owner is told the truthful reason (disabled / budget reached).
     const mediaSpendNotice = mediaSpendRunNotice(run.failures);
-    return Response.json({ run, snapshot, mediaSpendNotice });
+    const response = { run, snapshot, outcome, mediaSpendNotice };
+    if (outcome.state === "failed") {
+      return Response.json({ ...response, error: "Your existing plan hasn't been changed. Try again." }, { status: 503 });
+    }
+    return Response.json(response);
   } catch {
-    return Response.json({ error: "Voom couldn't build your plan right now. Your existing work is safe—please retry." }, { status: 503 });
+    return Response.json({
+      outcome: failedPlanReplenishOutcome(),
+      error: "Your existing plan hasn't been changed. Try again.",
+    }, { status: 503 });
   }
 }
