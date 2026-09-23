@@ -48,7 +48,7 @@ test("Production Plans + Credits Safety Guard", async (t) => {
   
   const ownerId = "00000000-0000-4000-a000-000000000001";
 
-  await db.query(`insert into auth.users (id) values ($1)`, [ownerId]);
+  await db.query(`insert into auth.users (id, email, email_confirmed_at) values ($1, 'confirmed@example.test', now())`, [ownerId]);
   await db.query(`insert into public.businesses (owner_user_id, plan, automation_level) values ($1, 'free', 'manual')`, [ownerId]);
 
   async function setAuth(uid, role) {
@@ -169,7 +169,7 @@ test("Production Plans + Credits Safety Guard", async (t) => {
     assert.equal(res2.already, true);
     
     // But since it's refunded, it's not charged!
-    const summary = await admin.rpc("voom_plan_allowance", { p_owner_user_id: ownerId });
+    await admin.rpc("voom_plan_allowance", { p_owner_user_id: ownerId });
     // Not explicitly testing the summary value here, just that it doesn't double-charge.
   });
 

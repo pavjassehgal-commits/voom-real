@@ -20,7 +20,7 @@ function SubmitButton() {
   );
 }
 
-export default function LoginForm({ initialError }: { initialError?: string }) {
+export default function LoginForm({ initialError, next }: { initialError?: string; next: string }) {
   const [state, formAction] = useActionState(login, initialState);
   const formError = state.formError ?? initialError;
 
@@ -34,6 +34,7 @@ export default function LoginForm({ initialError }: { initialError?: string }) {
       </p>
 
       <form action={formAction} className="mt-6 flex flex-col gap-4">
+        <input type="hidden" name="next" value={next} />
         {formError && (
           <p
             role="alert"
@@ -93,6 +94,8 @@ export default function LoginForm({ initialError }: { initialError?: string }) {
 
         <SubmitButton />
       </form>
+
+      <p className="mt-4 flex justify-between text-xs text-text-2"><Link href="/forgot-password">Forgot password?</Link><Link href="/verify-email">Verify email</Link></p>
 
       <p className="mt-6 text-center text-xs text-text-3">
         Don&apos;t have an account?{" "}

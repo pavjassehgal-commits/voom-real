@@ -1,25 +1,25 @@
 import { redirect } from "next/navigation";
-import { createClient } from "@/utils/supabase/server";
+import { getAuthUser } from "@/lib/auth/server";
+import { isVerifiedUser, safeNext } from "@/lib/auth/policy";
 import Logo from "../components/Logo";
 import LoginForm from "./LoginForm";
 
 const SAFE_ERRORS: Record<string, string> = {
   confirm_failed:
-    "Your confirmation link is invalid or has expired. Please log in, or sign up again to receive a new link.",
+    "Your confirmation link is invalid or has expired. Please sign in, or request a new link from the Verify email screen.",
 };
 
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; next?: string }>;
 }) {
-  const supabase = await createClient();
-  const { data } = await supabase.auth.getClaims();
-  if (data?.claims) {
+  const user = await getAuthUser();
+  if (isVerifiedUser(user)) {
     redirect("/app");
   }
 
-  const { error } = await searchParams;
+  const { error, next } = await searchParams;
   const initialError = error ? SAFE_ERRORS[error] : undefined;
 
   return (
@@ -27,7 +27,7 @@ export default async function LoginPage({
       <div className="mb-8">
         <Logo />
       </div>
-      <LoginForm initialError={initialError} />
+      <LoginForm initialError={initialError} next={safeNext(next)} />
     </div>
   );
 }

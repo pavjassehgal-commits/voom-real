@@ -815,12 +815,12 @@ test("7. migrations 0040–0044 remain additive and owner-scoped", async () => {
   // Email Automation shipped in 0040–0044 and is frozen. The migrations after
   // it are Campaigns v3 (0045), the Multi-Social Core (0046), the YouTube
   // provider (0047), its OAuth ACL fix (0048) and the TikTok provider (0049);
-  // all must leave every email flow table, function and cron path exactly as
-  // 0040–0044 shipped them.
+  // 0050 additionally restricts user access to verified emails; no flow data,
+  // function, cron path or service-role grant is rewritten.
   assert.ok(files.includes("0044_email_flow_durable_claims.sql"), "0044 is still applied");
   const afterEmailAutomation = files.filter((name) => name > "0044_email_flow_durable_claims.sql");
-  assert.deepEqual(afterEmailAutomation, ["0045_campaigns_v3_unified_channels.sql", "0046_multi_social_core.sql", "0047_youtube_provider.sql", "0048_youtube_oauth_state_acl.sql", "0049_tiktok_provider.sql"],
-    "0045 Campaigns v3, 0046 Multi-Social Core, 0047 YouTube provider, 0048 OAuth ACL fix and 0049 TikTok provider are the only migrations after the Email Automation freeze");
+  assert.deepEqual(afterEmailAutomation, ["0045_campaigns_v3_unified_channels.sql", "0046_multi_social_core.sql", "0047_youtube_provider.sql", "0048_youtube_oauth_state_acl.sql", "0049_tiktok_provider.sql", "0050_verified_email_access.sql"],
+    "0045 Campaigns v3, 0046 Multi-Social Core, 0047 YouTube provider, 0048 OAuth ACL fix 0049 TikTok provider and 0050 verified-email access are the only migrations after the Email Automation freeze");
   // Executed statements only: 0047 documents its rollback plan in comments
   // (`-- drop table ...`), which must not be confused with destruction.
   const stripSql = (name) => fs.readFileSync(path.join(dir, name), "utf8")
