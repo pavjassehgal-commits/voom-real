@@ -23,6 +23,7 @@ import type {
   BusinessProfileInput,
   BusinessRecord,
   OnboardingAnswers,
+  OnboardingInput,
   Toast,
 } from "./types";
 import { saveOnboarding as saveOnboardingAction, saveBrandSettings as saveBrandSettingsAction, saveMediaSpendSettings as saveMediaSpendAction, restartOnboarding as restartOnboardingAction } from "./mutations";
@@ -63,7 +64,6 @@ function emptyOnboard(): OnboardingAnswers {
     freq: "",
     auto: "",
     permission: "",
-    color: "#e8481f",
   };
 }
 
@@ -259,7 +259,6 @@ export function VoomProvider({
           freq: input.contentFrequency,
           auto: input.automationLevel,
           permission: input.publishingPermission,
-          color: s.brand.color,
         },
       }));
       toast("Brand profile saved");
@@ -321,7 +320,7 @@ export function VoomProvider({
       const o = state.onboard;
       setState((s) => ({ ...s, onboardSaving: true, onboardError: null }));
 
-      const payload: BusinessProfileInput = {
+      const payload: OnboardingInput = {
         displayName: o.displayName,
         brandName: skipped ? "" : o.name,
         brandDescription: skipped ? "" : o.desc,
@@ -334,6 +333,9 @@ export function VoomProvider({
         contentFrequency: skipped ? "" : o.freq,
         automationLevel: skipped ? "" : o.auto,
         publishingPermission: skipped ? "" : o.permission,
+        // Stored through the existing email brand profile path, never on
+        // `businesses` (see OnboardingInput).
+        website: skipped ? "" : o.site,
       };
 
       const result = await saveOnboardingAction(payload);
@@ -341,6 +343,7 @@ export function VoomProvider({
         setState((s) => ({ ...s, onboardSaving: false, onboardError: result.error }));
         return false;
       }
+      if (result.notice) toast(result.notice, "info");
 
       const displayName = payload.displayName.trim();
       setState((s) => ({
@@ -361,12 +364,11 @@ export function VoomProvider({
           freq: payload.contentFrequency,
           auto: payload.automationLevel,
           permission: payload.publishingPermission,
-          color: o.color,
         },
       }));
       return true;
     },
-    [state.onboard],
+    [state.onboard, toast],
   );
 
   const restartOnboarding = useCallback<VoomActions["restartOnboarding"]>(async () => {

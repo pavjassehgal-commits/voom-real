@@ -6,6 +6,12 @@ export interface OnboardingAnswers {
   displayName: string;
   desc: string;
   name: string;
+  /**
+   * Optional website. Persisted through the existing email brand profile
+   * (`voom_email_brands.website`, migration 0041) — the only place Voom
+   * genuinely uses a website (marketing-email link and default CTA
+   * destination). No other consumer exists, so nothing else claims to use it.
+   */
   site: string;
   industry: string;
   customer: string[];
@@ -16,7 +22,6 @@ export interface OnboardingAnswers {
   freq: string;
   auto: string;
   permission: string;
-  color: string;
 }
 
 export interface Toast {
@@ -69,6 +74,17 @@ export interface BusinessProfileInput {
   contentFrequency: string;
   automationLevel: string;
   publishingPermission: string;
+}
+
+/**
+ * What the onboarding wizard saves. Everything in `BusinessProfileInput`
+ * lands on `businesses`; the optional website goes through the existing
+ * `upsert_email_brand` path into `voom_email_brands.website` (its only real
+ * consumer is the Branded Email Engine). Saving the website is best-effort:
+ * it can never fail the onboarding itself.
+ */
+export interface OnboardingInput extends BusinessProfileInput {
+  website?: string;
 }
 
 export type CampaignStatus = "draft" | "approved" | "rejected";

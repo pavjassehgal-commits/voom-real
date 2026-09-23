@@ -20,8 +20,10 @@ type Kind = "instagram_post" | "reel" | "story" | "tiktok_video" | "youtube_shor
  *
  * Everything it creates stays internal: a draft, an approval, an internal
  * schedule, and a Content Calendar entry. It never calls Instagram, TikTok or
- * YouTube. TikTok and YouTube formats are planning drafts — their publishing
- * connections do not exist yet, and the flow says so plainly.
+ * YouTube itself. Approved, scheduled items publish later through each
+ * channel's durable publish queue (lib/social/publisher.ts), and Published
+ * appears only after the provider's own confirmation — the flow says so
+ * plainly and never claims a publication.
  */
 export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
   const { open, close } = useModal();
@@ -155,8 +157,9 @@ export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
               onClick={() => setStep("youtube_video")}
             />
             <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-text-3">
-              YouTube publishing is not connected yet. Voom plans, approves and schedules your YouTube content and
-              tells you plainly that it cannot publish — it never fakes a publication.
+              Approved and scheduled Shorts and videos publish through Voom&apos;s durable YouTube queue at their
+              scheduled time, once your channel is connected. Voom reports Published only after YouTube confirms
+              the video is processed — it never fakes a publication.
             </p>
           </div>
         ) : null}

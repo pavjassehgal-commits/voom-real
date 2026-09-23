@@ -27,7 +27,6 @@ export interface Brand {
   freq: string;
   auto: string;
   permission: string;
-  color: string;
 }
 
 export function deriveHandle(name: string): string {
@@ -49,7 +48,6 @@ export function emptyBrand(): Brand {
     freq: "",
     auto: "",
     permission: "",
-    color: "#e8481f",
   };
 }
 
@@ -69,6 +67,5 @@ export function brandFromBusiness(business: BusinessRecord | null): Brand {
     freq: business.content_frequency ?? "",
     auto: business.automation_level ?? "",
     permission: business.publishing_permission ?? "",
-    color: "#e8481f",
   };
 }

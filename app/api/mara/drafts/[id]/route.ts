@@ -2,6 +2,21 @@ import { getBusinessRecord, getCurrentUser, getProfileRecord } from "@/lib/voom/
 import { executeMaraTool } from "@/lib/mara/tools";
 import { createClient } from "@/utils/supabase/server";
 
+/**
+ * LEGACY — retained deliberately, not dead.
+ *
+ * No in-app surface calls this route any more (the MARA chat loop was retired;
+ * drafts are reviewed on Approvals through /api/mara/actions/[id] and the
+ * posts / social-drafts routes). It is kept because:
+ *   1. it is an authenticated, owner-scoped HTTP endpoint that still behaves
+ *      correctly — approval here only creates a pending action that the owner
+ *      must confirm; nothing is published;
+ *   2. it is the ONLY remaining entry point into `executeMaraTool`, and
+ *      tests/mara-security.test.mjs ("approval cannot publish content") pins
+ *      that exact contract by reading this file.
+ * Removing it is a separate decision that must move that regression guard
+ * onto another surface first.
+ */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {

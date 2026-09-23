@@ -40,10 +40,11 @@ export const CAMPAIGN_GOAL_LABELS: Record<CampaignGoal, string> = {
  * to `voom_campaigns.channels`: the allowlist below is the single authority
  * the routes, the planner and the build RPC all consult.
  *
- * Selecting TikTok or YouTube grants PLANNING only. Publishing there requires
- * a real provider connection that does not exist yet — the publisher boundary
- * (lib/social/publisher.ts) truthfully refuses, and nothing in the campaign
- * layer can bypass it.
+ * Selecting TikTok or YouTube plans real publishing: approved, scheduled
+ * actions ride the durable provider queues behind the publisher boundary
+ * (lib/social/publisher.ts), which refuses a disconnected provider truthfully
+ * and reports Published only on the provider's own confirmation. Nothing in
+ * the campaign layer can bypass it.
  */
 export const CAMPAIGN_CHANNELS = ["instagram", "tiktok", "youtube", "email"] as const;
 

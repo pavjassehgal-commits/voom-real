@@ -32,9 +32,10 @@ import { Btn, Card, Field, Input, Tag, Textarea } from "../ui/primitives";
  * spent here. Your automation mode (Manual / Assisted / Autopilot) is a separate
  * setting and still decides what happens next.
  *
- * TikTok and YouTube are planning channels: content can be drafted, approved
- * and scheduled, but Voom truthfully cannot publish there until the real
- * provider integrations exist — the UI says so plainly.
+ * Instagram, TikTok and YouTube all publish for real through their connected
+ * accounts: approved, scheduled actions ride each channel's durable publish
+ * queue, and Voom reports Published only after the provider itself confirms.
+ * A channel without a connection is refused truthfully — never faked.
  */
 
 /** How a campaign is created — deliberately not an automation-mode word. */
@@ -321,7 +322,7 @@ export function BuildCampaignModal({ onBuilt }: { onBuilt?: (campaignId: string)
 
         <Field
           label="Channels"
-          hint="Pick any combination — one campaign, one coordinated timeline. TikTok and YouTube plan and schedule inside Voom; publishing there starts when their connections ship."
+          hint="Pick any combination — one campaign, one coordinated timeline. Instagram, TikTok and YouTube publish through your connected accounts; email sends only on an explicit send."
         >
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Campaign channels">
             {CAMPAIGN_CHANNELS.map((channel) => {

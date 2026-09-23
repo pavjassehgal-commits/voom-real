@@ -61,20 +61,26 @@ export interface SocialConnectionView {
     kind: string | null;
   } | null;
   /**
-   * Provider-specific metadata, isolated per channel and empty until the real
-   * integration exists. Deliberately `unknown`-valued: no TikTok/YouTube
-   * field is invented before its provider work ships.
+   * Provider-specific sanitized metadata, isolated per channel (channel id /
+   * open_id, granted scopes, expiry, explicit defaults, audit state) and empty
+   * where the server integration is not configured. Deliberately
+   * `unknown`-valued: nothing here is ever invented.
    */
   provider: Record<string, unknown>;
 }
 
-/** The truthful static view for a channel Voom has not integrated yet. */
+/**
+ * The truthful static view for a channel whose server-side integration is not
+ * configured in this deployment (missing provider credentials). Every channel
+ * has a real integration in the codebase; this describes configuration, not a
+ * missing feature.
+ */
 export function unconfiguredConnection(channel: SocialChannel): SocialConnectionView {
   const label = channel === "tiktok" ? "TikTok" : channel === "youtube" ? "YouTube" : channel;
   return {
     channel,
     state: "not_configured",
-    detail: `${label} is not connected yet. Voom can plan, approve and schedule ${label} content; publishing becomes available when the real ${label} integration ships. Nothing is published anywhere until then.`,
+    detail: `${label} integration is not configured on this server yet. Content can be planned, approved and scheduled inside Voom; nothing is published to ${label} until it is.`,
     canPublish: false,
     account: null,
     provider: {},
