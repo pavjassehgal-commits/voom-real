@@ -1037,12 +1037,16 @@ test("the social drafts layer never executes: TikTok and YouTube only mirror the
   // No Google call, no token, no upload exists in this layer.
   assert.match(serverDrafts, /enqueueYouTubePublishItem/, "YouTube approval mirrors into the durable publish queue");
   assert.match(serverDrafts, /cancelYouTubePublishItem/, "un-approving or unscheduling withdraws the queue row");
+  assert.match(serverDrafts, /isProviderOwnedSocialQueue/, "provider-owned uploads and published history cannot be edited or cancelled");
+  assert.match(serverDrafts, /social_draft_queue_cancel_not_confirmed/, "a false cancellation result cannot become success");
   assert.match(serverDrafts, /needs_declaration/, "undeclared policy-sensitive metadata parks visibly, never guessed");
   assert.match(serverDrafts, /owner_user_id/, "every read and write is owner-scoped");
 
   const route = await read("app/api/social-drafts/[id]/route.ts");
   assert.match(route, /UUID_RE/, "the route validates the draft id");
   assert.match(route, /getCurrentUser/, "the route is authenticated");
+  assert.match(route, /social_draft_provider_owned/);
+  assert.match(route, /status: 409/, "provider-owned history is an explicit conflict, not a fake cancellation success");
   // The route records decisions and declarations — its CODE must never DO
   // provider work itself: no publisher, no queue RPC, no Google call.
   // (Comments may name the queue; executable code may not reach it.)

@@ -94,9 +94,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         error: `Approval was recorded, but Voom couldn't confirm the durable ${channel} queue sync. Nothing was published. Retry saving or scheduling to safely sync it.`,
       }, { status: 503 });
     }
-    if (code.includes("publish_cancel_failed")) {
+    if (code === "social_draft_provider_owned") {
       return Response.json({
-        error: "Voom couldn't confirm the durable queue cancellation. Nothing was published. Retry saving the draft to safely sync its queue state.",
+        error: "The provider already owns this video, so Voom made no changes. Uploading, processing, and published content cannot be cancelled or rewritten.",
+      }, { status: 409 });
+    }
+    if (code.includes("publish_cancel_failed") || code === "social_draft_queue_cancel_not_confirmed") {
+      return Response.json({
+        error: "Voom couldn't confirm the durable queue cancellation. No draft or calendar changes were saved. Retry when the queue is available.",
       }, { status: 503 });
     }
     if (code === "social_calendar_sync_failed") {

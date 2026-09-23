@@ -681,6 +681,78 @@ test("TikTok/YouTube approval never reports queued success when durable queue sy
   }
 });
 
+test("queue cancellation errors leave draft and Calendar unchanged, and provider-owned video history cannot be edited", async () => {
+  for (const [kind, channel, format, queueStatus, id] of [
+    ["tiktok_video", "tiktok", "video", "scheduled", "cancel-error-tiktok"],
+    ["youtube_video", "youtube", "video", "scheduled", "cancel-error-youtube"],
+  ]) {
+    const draft = {
+      id, owner_user_id: OWNER, conversation_id: "social-studio", kind,
+      channel: `${channel} native video`, title: "Current video", content: "Current caption",
+      proposed_publish_at: timezone.localToUtcIso("2026-09-14", 18 * 60 + 30, TZ), status: "approved",
+      social_channel: channel, social_format: format, content_meta: {},
+      created_at: NOW.toISOString(), updated_at: NOW.toISOString(),
+    };
+    const admin = createMemoryAdmin(adminSeed({ preferredChannels: [channel], drafts: [draft] }));
+    admin.tables.get(`${channel}_publish_queue`).push({ owner_user_id: OWNER, draft_id: id, status: queueStatus });
+    admin.tables.get("content_calendar_items").push({ owner_user_id: OWNER, source_draft_id: id, status: "scheduled" });
+
+    await assert.rejects(
+      () => socialDrafts.updateSocialDraft(admin, OWNER, id, { decision: "draft" }),
+      new RegExp(`${channel}_publish_cancel_failed`),
+    );
+    assert.equal(admin.tables.get("mara_drafts")[0].status, "approved", "a failed cancel cannot mutate approval state");
+    assert.equal(admin.tables.get("content_calendar_items")[0].status, "scheduled", "a failed cancel cannot remove the calendar mirror");
+    assert.equal(admin.tables.get(`${channel}_publish_queue`)[0].status, "scheduled");
+  }
+
+  for (const [kind, channel, format, queueStatus, id] of [
+    ["tiktok_video", "tiktok", "video", "posting", "owned-tiktok"],
+    ["youtube_video", "youtube", "video", "uploading", "owned-youtube"],
+  ]) {
+    const draft = {
+      id, owner_user_id: OWNER, conversation_id: "social-studio", kind,
+      channel: `${channel} native video`, title: "Provider-owned video", content: "Published history",
+      proposed_publish_at: timezone.localToUtcIso("2026-09-14", 18 * 60 + 30, TZ), status: "approved",
+      social_channel: channel, social_format: format, content_meta: {},
+      created_at: NOW.toISOString(), updated_at: NOW.toISOString(),
+    };
+    const admin = createMemoryAdmin(adminSeed({ preferredChannels: [channel], drafts: [draft] }));
+    admin.tables.get(`${channel}_publish_queue`).push({ owner_user_id: OWNER, draft_id: id, status: queueStatus });
+
+    await assert.rejects(
+      () => socialDrafts.updateSocialDraft(admin, OWNER, id, { title: "Must not rewrite provider-owned history" }),
+      /social_draft_provider_owned/,
+    );
+    assert.equal(admin.tables.get("mara_drafts")[0].title, "Provider-owned video");
+    assert.equal(admin.tables.get(`${channel}_publish_queue`)[0].status, queueStatus);
+  }
+
+  const racedDraft = {
+    id: "cancel-race-tiktok", owner_user_id: OWNER, conversation_id: "social-studio", kind: "tiktok_video",
+    channel: "TikTok · 9:16", title: "Concurrent video", content: "Concurrent caption",
+    proposed_publish_at: timezone.localToUtcIso("2026-09-14", 18 * 60 + 30, TZ), status: "approved",
+    social_channel: "tiktok", social_format: "video", content_meta: {},
+    created_at: NOW.toISOString(), updated_at: NOW.toISOString(),
+  };
+  const racedAdmin = createMemoryAdmin(adminSeed({ preferredChannels: ["TikTok"], drafts: [racedDraft] }));
+  racedAdmin.tables.get("tiktok_publish_queue").push({
+    owner_user_id: OWNER, draft_id: racedDraft.id, status: "scheduled",
+  });
+  racedAdmin.rpc = async (name) => {
+    if (name === "cancel_tiktok_publish_queue_item") {
+      racedAdmin.tables.get("tiktok_publish_queue")[0].status = "posting";
+      return { data: false, error: null };
+    }
+    return { data: null, error: { message: "RPC not configured in this test" } };
+  };
+  await assert.rejects(
+    () => socialDrafts.updateSocialDraft(racedAdmin, OWNER, racedDraft.id, { decision: "draft" }),
+    /social_draft_provider_owned/,
+  );
+  assert.equal(racedAdmin.tables.get("mara_drafts")[0].status, "approved", "a raced provider claim cannot be reported as cancelled");
+});
+
 test("Calendar labels TikTok/YouTube from their durable queues and exposes only safe asset metadata", async () => {
   const scheduledAt = timezone.localToUtcIso("2026-09-14", 18 * 60 + 30, TZ);
   const drafts = [

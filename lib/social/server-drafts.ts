@@ -109,6 +109,12 @@ function kindPair(kind: SocialVideoDraftKind): { channel: "tiktok" | "youtube"; 
   return { channel: "youtube", format: "video" };
 }
 
+function isProviderOwnedSocialQueue(channel: "tiktok" | "youtube", status: string | null): boolean {
+  return channel === "youtube"
+    ? status === "uploading" || status === "provider_processing" || status === "published"
+    : status === "posting" || status === "provider_processing" || status === "published";
+}
+
 export interface CreateSocialDraftInput {
   kind: SocialVideoDraftKind;
   title: string;
@@ -239,11 +245,12 @@ export async function getSocialDraft(
 
 /** Lists the owner's TikTok/YouTube drafts, newest first. */
 export async function listSocialDrafts(admin: AdminClient, ownerId: string): Promise<SocialDraftView[]> {
-  const { data } = await admin.from("mara_drafts").select(DRAFT_COLUMNS)
+  const { data, error } = await admin.from("mara_drafts").select(DRAFT_COLUMNS)
     .eq("owner_user_id", ownerId)
     .in("kind", ["tiktok_video", "youtube_short", "youtube_video"])
     .order("created_at", { ascending: false })
     .limit(50);
+  if (error) throw new Error("social_drafts_read_failed");
   const rows = (data ?? []) as Record<string, unknown>[];
   const youtubeIds = rows
     .filter((row) => kindPair(row.kind as SocialVideoDraftKind).channel === "youtube")
@@ -256,8 +263,9 @@ export async function listSocialDrafts(admin: AdminClient, ownerId: string): Pro
     getTikTokQueueItemsForDrafts(admin, ownerId, tiktokIds),
   ]);
   return Promise.all(rows.map(async (row) => {
-    const { data: asset } = await admin.from("post_draft_assets")
+    const { data: asset, error: assetError } = await admin.from("post_draft_assets")
       .select("display_name,mime_type").eq("owner_user_id", ownerId).eq("draft_id", String(row.id)).maybeSingle();
+    if (assetError) throw new Error("social_draft_asset_read_failed");
     const channel = kindPair(row.kind as SocialVideoDraftKind).channel;
     const queue = channel === "youtube"
       ? youtubeQueues.get(String(row.id)) ?? null
@@ -395,6 +403,24 @@ export interface UpdateSocialDraftInput {
   tiktokPrivacy?: string | null;
 }
 
+async function cancelAndVerifyYouTubeQueue(admin: AdminClient, ownerId: string, draftId: string): Promise<void> {
+  if (await cancelYouTubePublishItem(admin, ownerId, draftId)) return;
+  const remaining = await getYouTubeQueueItemForDraft(admin, ownerId, draftId);
+  if (remaining && isProviderOwnedSocialQueue("youtube", remaining.status)) {
+    throw new Error("social_draft_provider_owned");
+  }
+  if (remaining) throw new Error("social_draft_queue_cancel_not_confirmed");
+}
+
+async function cancelAndVerifyTikTokQueue(admin: AdminClient, ownerId: string, draftId: string): Promise<void> {
+  if (await cancelTikTokPublishItem(admin, ownerId, draftId)) return;
+  const remaining = await getTikTokQueueItemForDraft(admin, ownerId, draftId);
+  if (remaining && isProviderOwnedSocialQueue("tiktok", remaining.status)) {
+    throw new Error("social_draft_provider_owned");
+  }
+  if (remaining) throw new Error("social_draft_queue_cancel_not_confirmed");
+}
+
 /**
  * Edits and/or (un)approves one social draft.
  *
@@ -420,6 +446,10 @@ export async function updateSocialDraft(
 ): Promise<SocialDraftView | null> {
   const existing = await getSocialDraft(admin, ownerId, draftId);
   if (!existing) return null;
+
+  if (isProviderOwnedSocialQueue(existing.channel, existing.queueStatus)) {
+    throw new Error("social_draft_provider_owned");
+  }
 
   const title = input.title !== undefined ? input.title.trim().slice(0, 160) : existing.title;
   if (!title) throw new Error("social_title_required");
@@ -450,6 +480,13 @@ export async function updateSocialDraft(
     ...(privacy ? { privacy } : {}),
     ...(tiktokPrivacy ? { tiktokPrivacy } : {}),
   };
+
+  const needsQueueCancellation = status !== "approved" || !scheduledAt;
+  if (needsQueueCancellation && existing.channel === "youtube") {
+    await cancelAndVerifyYouTubeQueue(admin, ownerId, draftId);
+  } else if (needsQueueCancellation && existing.channel === "tiktok") {
+    await cancelAndVerifyTikTokQueue(admin, ownerId, draftId);
+  }
 
   const { error } = await admin.from("mara_drafts").update({
     title,
@@ -488,7 +525,7 @@ export async function updateSocialDraft(
   }
 
   // YouTube execution mirror: the durable publish queue (migration 0047).
-  if (existing.channel === "youtube") {
+  if (existing.channel === "youtube" && !needsQueueCancellation) {
     await syncSocialDraftToYouTubeQueue(admin, ownerId, draftId, {
       status,
       scheduledAt,
@@ -501,8 +538,8 @@ export async function updateSocialDraft(
     });
   }
 
-  // TikTok execution mirror: the durable publish queue (migration 0049).
-  if (existing.channel === "tiktok") {
+  // TikTok execution mirror: the durable provider queue (migration 0049).
+  if (existing.channel === "tiktok" && !needsQueueCancellation) {
     await syncSocialDraftToTikTokQueue(admin, ownerId, draftId, {
       status,
       scheduledAt,
@@ -544,14 +581,15 @@ export async function syncSocialDraftToYouTubeQueue(
   },
 ): Promise<void> {
   if (draft.status !== "approved" || !draft.scheduledAt) {
-    await cancelYouTubePublishItem(admin, ownerId, draftId);
+    await cancelAndVerifyYouTubeQueue(admin, ownerId, draftId);
     return;
   }
 
   // Owner-level explicit defaults (nullable — no default is a real state).
-  const { data: connection } = await admin.from("youtube_connections")
+  const { data: connection, error: connectionError } = await admin.from("youtube_connections")
     .select("default_privacy,default_made_for_kids")
     .eq("owner_user_id", ownerId).maybeSingle();
+  if (connectionError) throw new Error("youtube_connection_read_failed");
   const declaration = resolveAudienceDeclaration({
     itemMadeForKids: draft.madeForKids,
     itemPrivacy: draft.privacy,
@@ -559,12 +597,14 @@ export async function syncSocialDraftToYouTubeQueue(
     defaultPrivacy: connection ? connection.default_privacy as string | null : null,
   });
 
-  const { data: asset } = await admin.from("post_draft_assets")
+  const { data: asset, error: assetError } = await admin.from("post_draft_assets")
     .select("id,status").eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
+  if (assetError) throw new Error("youtube_asset_read_failed");
   const waitingForMedia = !asset || asset.status !== "uploaded";
 
-  const { data: calendar } = await admin.from("content_calendar_items")
+  const { data: calendar, error: calendarError } = await admin.from("content_calendar_items")
     .select("id").eq("owner_user_id", ownerId).eq("source_draft_id", draftId).maybeSingle();
+  if (calendarError) throw new Error("youtube_calendar_read_failed");
 
   const queued = await enqueueYouTubePublishItem(admin, {
     ownerId,
@@ -618,26 +658,29 @@ export async function syncSocialDraftToTikTokQueue(
   },
 ): Promise<void> {
   if (draft.status !== "approved" || !draft.scheduledAt) {
-    await cancelTikTokPublishItem(admin, ownerId, draftId);
+    await cancelAndVerifyTikTokQueue(admin, ownerId, draftId);
     return;
   }
 
   // Owner-level explicit default (nullable — no default is a real state:
   // TikTok has no default privacy level).
-  const { data: connection } = await admin.from("tiktok_connections")
+  const { data: connection, error: connectionError } = await admin.from("tiktok_connections")
     .select("default_privacy")
     .eq("owner_user_id", ownerId).maybeSingle();
+  if (connectionError) throw new Error("tiktok_connection_read_failed");
   const connectionDefault = connection && typeof connection.default_privacy === "string" && isTikTokPrivacy(connection.default_privacy)
     ? connection.default_privacy
     : null;
   const privacy = draft.tiktokPrivacy ?? connectionDefault;
 
-  const { data: asset } = await admin.from("post_draft_assets")
+  const { data: asset, error: assetError } = await admin.from("post_draft_assets")
     .select("id,status").eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
+  if (assetError) throw new Error("tiktok_asset_read_failed");
   const waitingForMedia = !asset || asset.status !== "uploaded";
 
-  const { data: calendar } = await admin.from("content_calendar_items")
+  const { data: calendar, error: calendarError } = await admin.from("content_calendar_items")
     .select("id").eq("owner_user_id", ownerId).eq("source_draft_id", draftId).maybeSingle();
+  if (calendarError) throw new Error("tiktok_calendar_read_failed");
 
   // The TikTok post title is the caption; TikTok's own limit is 2200 chars.
   const title = draft.caption.trim().slice(0, 2200) || draft.title.trim().slice(0, 2200) || "Untitled";
