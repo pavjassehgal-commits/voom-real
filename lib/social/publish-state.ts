@@ -264,18 +264,3 @@ export function publishStateFromTikTokQueue(
     default: return null;
   }
 }
-
-/**
- * The truthful canonical state for content on a channel whose provider
- * integration does not exist. Planning and
- * approval are real; execution is honestly `connection_required` — never
- * `published`, never `scheduled` pretending it will run.
- */
-export function publishStateForUnconnectedProvider(
-  draftStatus: "draft" | "approved" | "rejected" | null,
-): SocialPublishState {
-  const pre = publishStateFromDraftStatus(draftStatus);
-  // An approved/scheduled item on an unconnected channel is exactly what
-  // `connection_required` means: everything on Voom's side is done.
-  return pre === "approved" ? "connection_required" : pre;
-}

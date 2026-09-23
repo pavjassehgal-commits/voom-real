@@ -29,10 +29,12 @@ export async function GET() {
  * chooses a mode, so a Manual account is never coerced into an Assisted-style
  * run. The central policy (`mayAutomaticallyGeneratePaidMedia`) then decides
  * what an explicit Replenish may do:
- *   Manual    → planning-only: drafts + copy, NO paid media, NO approval, NO
- *               scheduling. Media starts only from Create with MARA.
- *   Assisted  → unchanged: media, then Needs approval.
- *   Autopilot → unchanged: media, then safety-checked auto-approval.
+ *   Manual    → planning-only: drafts + copy, NO paid media, approval,
+ *               scheduling or queueing. Media starts only from Create with MARA.
+ *   Assisted  → drafts + copy, then waits for the owner to produce media
+ *               before approval; no automatic paid media.
+ *   Autopilot → may generate media within the existing budget/permission
+ *               guards, then safety-checks before approval and scheduling.
  */
 export async function POST(request: Request) {
   const user = await getCurrentUser();

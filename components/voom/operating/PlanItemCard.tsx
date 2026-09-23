@@ -3,6 +3,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useModal } from "@/lib/voom/modal";
+import { SocialEditorModal } from "@/components/voom/modals/SocialEditorModal";
 import { Icon } from "@/components/voom/icons";
 import { Btn, Card, Input, Tag } from "@/components/voom/ui/primitives";
 import type { WorkflowView, WorkflowSnapshot } from "@/lib/voom/workflow/read";
@@ -30,7 +32,18 @@ import {
  * place via the server actions; nothing creates a duplicate draft.
  */
 
-export function PlanItemCard({
+export function PlanItemCard(props: {
+  item: WorkflowView;
+  mode: WorkflowMode;
+  timeZone: string;
+  onChanged: (snapshot: WorkflowSnapshot) => void;
+}) {
+  return props.item.channel === "instagram"
+    ? <InstagramPlanItemCard {...props} />
+    : <NativeSocialPlanItemCard {...props} />;
+}
+
+function InstagramPlanItemCard({
   item, mode, timeZone, onChanged,
 }: {
   item: WorkflowView;
@@ -44,9 +57,9 @@ export function PlanItemCard({
   const [rescheduling, setRescheduling] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  const production = reelProductionFacts(item);
+  const production = item.format === "reel" ? reelProductionFacts(item) : null;
   const resolved: PlanItemFacts = {
-    contentType: item.contentType,
+    contentType: item.format as "post" | "reel" | "story",
     stage: item.status,
     failedStage: item.failedStage,
     mode,
@@ -220,6 +233,50 @@ export function PlanItemCard({
 
       {message && <p role="status" className={`mt-2.5 text-[12.5px] ${messageTone === "ok" ? "text-green" : "text-red"}`}>{message}</p>}
       {(resolved2.stageLabel === "Generating" || resolved2.stageLabel === "Waiting for media") && <p className="mt-2 text-[11.5px] text-text-3">This card updates itself while MARA works. Nothing is published.</p>}
+    </div>
+  </Card>;
+}
+
+function NativeSocialPlanItemCard({ item, onChanged }: {
+  item: WorkflowView;
+  onChanged: (snapshot: WorkflowSnapshot) => void;
+}) {
+  const { open } = useModal();
+
+  async function refresh() {
+    const response = await fetch("/api/plan", { cache: "no-store" });
+    const body = await response.json() as { snapshot?: WorkflowSnapshot };
+    if (body.snapshot) onChanged(body.snapshot);
+  }
+
+  return <Card className="overflow-hidden">
+    <div className="border-l-[3px] p-4 sm:p-5" style={{ borderColor: stageColor(item.status) }}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Tag tone="t-brand">{item.channelLabel}</Tag>
+            <Tag tone="t-blue">{item.contentTypeLabel}</Tag>
+            <Tag tone={stageTone(item.status)}>{item.statusLabel}</Tag>
+          </div>
+          <b className="mt-1.5 block text-[15px] leading-snug">{item.concept}</b>
+        </div>
+        <span className="shrink-0 rounded-lg border border-line bg-surface-2 px-2.5 py-1 text-[11.5px] font-semibold text-text-2">{item.dayLabel} · {item.localTime}</span>
+      </div>
+      <div className="mt-3 grid gap-1 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[12px] text-text-2">
+        <span>Source: {item.sourceLabel}</span>
+        <span>{item.hasMedia
+          ? `Video attached${item.mediaDisplayName ? `: ${item.mediaDisplayName}` : ""}${item.mediaMimeType ? ` · ${item.mediaMimeType}` : ""}`
+          : "No video file attached yet"}</span>
+        {item.description && <span className="line-clamp-2">Description: {item.description}</span>}
+        {item.script.length > 0 && <span>{item.script.length} script/outline beat{item.script.length === 1 ? "" : "s"}</span>}
+      </div>
+      {item.caption && <p className="mt-3 line-clamp-3 whitespace-pre-wrap text-[12.5px] leading-relaxed text-text-3">{item.caption}</p>}
+      {item.failureMessage && item.status === "failed" && <p role="alert" className="mt-2 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-[12.5px] text-red">{item.failureMessage}</p>}
+      <div className="mt-3">
+        <Btn variant="outline" size="sm" onClick={() => open(<SocialEditorModal draftId={item.draftId} onChanged={() => void refresh()} />)}>
+          Open {item.channelLabel} draft
+        </Btn>
+      </div>
     </div>
   </Card>;
 }

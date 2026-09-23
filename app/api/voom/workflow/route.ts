@@ -25,7 +25,17 @@ export async function GET() {
       listSocialCalendarItems(admin, user.id),
     ]);
     return Response.json({ snapshot, socialItems }, { headers: { "Cache-Control": "no-store" } });
-  } catch {
+  } catch (reason) {
+    const code = reason instanceof Error ? reason.message : "";
+    if (code.endsWith("publish_queue_read_failed")) {
+      const channel = code.startsWith("youtube_") ? "YouTube" : "TikTok";
+      return Response.json({
+        error: `Voom couldn't confirm the durable ${channel} queue state. Its items are not being assumed scheduled or published; refresh to retry.`,
+      }, { status: 503 });
+    }
+    if (code.startsWith("social_calendar_")) {
+      return Response.json({ error: "Voom couldn't load the native-channel calendar details. No queue status or publication is being assumed; refresh to retry." }, { status: 503 });
+    }
     return Response.json({ error: "Your schedule couldn't load. Please retry." }, { status: 503 });
   }
 }

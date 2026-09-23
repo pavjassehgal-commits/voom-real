@@ -50,7 +50,12 @@ export async function GET() {
       })),
     ].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
     return Response.json({ posts: merged }, { headers: { "Cache-Control": "no-store" } });
-  } catch {
+  } catch (reason) {
+    const code = reason instanceof Error ? reason.message : "";
+    if (code.endsWith("publish_queue_read_failed")) {
+      const channel = code.startsWith("youtube_") ? "YouTube" : "TikTok";
+      return Response.json({ error: `Voom couldn't confirm the durable ${channel} queue state. No queued or published status is being assumed; refresh and retry.` }, { status: 503 });
+    }
     return Response.json({ error: "Voom couldn't load your content. Please retry." }, { status: 503 });
   }
 }

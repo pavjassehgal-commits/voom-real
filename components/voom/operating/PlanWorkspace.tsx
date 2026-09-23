@@ -43,7 +43,7 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
     const response = await fetch("/api/plan", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cadence: next }),
     });
-    const body = await response.json() as { snapshot?: WorkflowSnapshot; error?: string; mediaSpendNotice?: string | null };
+    const body = await response.json() as { snapshot?: WorkflowSnapshot; error?: string; mediaSpendNotice?: string | null; run?: { blockedReason?: string | null } };
     if (response.ok && body.snapshot) {
       setSnapshot(body.snapshot);
       setCadence(body.snapshot.cadence);
@@ -57,6 +57,9 @@ export function PlanWorkspace({ initial }: { initial: WorkflowSnapshot }) {
   const mix = mixLine(snapshot.items);
 
   return <div>
+    {snapshot.selectedChannels.length === 0 && <p role="status" className="mb-4 rounded-xl border border-amber/35 bg-amber/10 px-4 py-3 text-sm text-amber">
+      No supported social channel is selected, so Voom will not invent Instagram work. Choose Instagram, TikTok or YouTube in your brand preferences before building. Connection status affects publishing readiness, not planning eligibility. <a href="/app/settings" className="font-semibold underline">Update channel preferences</a> or <a href="/app/connections" className="font-semibold underline">review publishing connections</a>.
+    </p>}
     <Card className="mb-4 p-4 sm:p-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
@@ -134,14 +137,10 @@ function groupByDay(items: WorkflowView[]): [string, WorkflowView[]][] {
   return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
 
-/** Compact strategic-mix line: what the horizon actually contains. */
+/** Compact native mix line: exactly which selected channel/format owns each slot. */
 function mixLine(items: WorkflowView[]): string | null {
   if (!items.length) return null;
-  const counts = { post: 0, reel: 0, story: 0 } as Record<string, number>;
-  for (const item of items) counts[item.contentType] += 1;
-  const parts: string[] = [];
-  if (counts.post) parts.push(`${counts.post} post${counts.post === 1 ? "" : "s"}`);
-  if (counts.reel) parts.push(`${counts.reel} reel${counts.reel === 1 ? "" : "s"}`);
-  if (counts.story) parts.push(`${counts.story} stor${counts.story === 1 ? "y" : "ies"}`);
-  return `This week's mix: ${parts.join(" · ")}`;
+  const counts = new Map<string, number>();
+  for (const item of items) counts.set(item.contentTypeLabel, (counts.get(item.contentTypeLabel) ?? 0) + 1);
+  return `This week's mix: ${[...counts.entries()].map(([label, count]) => `${count} ${label}${count === 1 ? "" : "s"}`).join(" · ")}`;
 }

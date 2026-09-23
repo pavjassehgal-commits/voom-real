@@ -60,11 +60,55 @@ function createMockMarketingState(overrides = {}) {
   return { ...defaultState, ...overrides };
 }
 
-test("State & Gap: empty upcoming week identifies useful Instagram gaps", () => {
+test("State & Gap: an empty social week identifies cadence gaps", () => {
   const state = createMockMarketingState({ commitments: [] });
   const gaps = identifyCalendarGaps(state);
   assert.ok(gaps.length > 0, "Should identify gaps when calendar is empty");
   assert.equal(gaps.length, 3, "3x_week cadence should identify up to 3 gaps");
+});
+
+test("Coverage: Instagram, TikTok and YouTube commitments cover their dates; email does not", () => {
+  const socialCommitment = (id, date, channel, format, status = "approved") => ({
+    id,
+    source: "workflow_plan",
+    sourceId: `plan-${id}`,
+    channel,
+    format,
+    title: `${channel} commitment`,
+    publishAt: `${date}T14:00:00.000Z`,
+    localDate: date,
+    localTime: `${date}T14:00:00.000Z`,
+    status,
+  });
+  const fullCoverage = createMockMarketingState({ commitments: [
+    socialCommitment("tt", "2026-09-16", "tiktok_video", "video"),
+    socialCommitment("yt", "2026-09-18", "youtube_short", "short"),
+    socialCommitment("ig", "2026-09-21", "instagram_reel", "reel"),
+    socialCommitment("email", "2026-09-16", "email", "post"),
+  ] });
+  assert.deepEqual(identifyCalendarGaps(fullCoverage), [], "social channel commitments share one calendar coverage model");
+
+  const emailOnly = createMockMarketingState({ commitments: [
+    socialCommitment("email-only", "2026-09-16", "email", "post"),
+  ] });
+  assert.equal(identifyCalendarGaps(emailOnly).length, 3, "email remains outside social cadence coverage");
+});
+
+test("Coverage: duplicate social commitments on one date do not suppress other cadence gaps", () => {
+  const sameDate = ["instagram_post", "tiktok_video", "youtube_short"].map((channel, index) => ({
+    id: `duplicate-${index}`,
+    source: "campaign",
+    sourceId: `campaign-${index}`,
+    channel,
+    format: channel === "youtube_short" ? "short" : channel === "instagram_post" ? "post" : "video",
+    title: `${channel} item`,
+    publishAt: "2026-09-16T14:00:00.000Z",
+    localDate: "2026-09-16",
+    localTime: "10:00 am",
+    status: "approved",
+  }));
+  const gaps = identifyCalendarGaps(createMockMarketingState({ commitments: sameDate }));
+  assert.deepEqual(gaps.map((gap) => gap.date), ["2026-09-18", "2026-09-21"]);
 });
 
 test("Coverage: existing campaign actions count as coverage", () => {
@@ -101,9 +145,9 @@ test("Coverage: existing campaign actions count as coverage", () => {
         channel: "instagram_story",
         format: "story",
         title: "Campaign Story",
-        publishAt: "2026-09-20T14:00:00.000Z",
-        localDate: "2026-09-20",
-        localTime: "2026-09-20T14:00:00.000Z",
+        publishAt: "2026-09-21T14:00:00.000Z",
+        localDate: "2026-09-21",
+        localTime: "2026-09-21T14:00:00.000Z",
         status: "scheduled",
       },
     ],

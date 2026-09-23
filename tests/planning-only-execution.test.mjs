@@ -99,11 +99,11 @@ function createPorts(store, options = {}) {
     },
 
     async createDraft({ planId, slot, content }) {
-      const key = `${planId}:${slot.date}`;
+      const key = `${planId}:${slot.slotKey}`;
       if (store.bySlot.has(key)) return store.drafts.get(store.bySlot.get(key));
       const draftId = `draft-${++store.seq}`;
       const item = {
-        draftId, planId, slotKey: slot.date, contentType: slot.contentType,
+        draftId, planId, slotKey: slot.slotKey, channel: slot.channel, format: slot.format, contentType: slot.contentType,
         concept: content.concept, caption: content.caption, publishAt: slot.publishAt, status: "draft",
       };
       store.drafts.set(draftId, item);
@@ -161,7 +161,7 @@ function approveItem(store, draftId) {
 function seedExistingSlot(store) {
   store.plans.set("plan-1", { id: "plan-1", validFrom: "2026-09-12", validUntil: "2026-09-18", plannedPosts: [] });
   const item = {
-    draftId: "draft-seeded", planId: "plan-1", slotKey: "2026-09-12", contentType: "post",
+    draftId: "draft-seeded", planId: "plan-1", slotKey: "2026-09-12", channel: "instagram", format: "post", contentType: "post",
     concept: "Seeded existing post", caption: "An existing caption in the brand voice. Visit us this week.",
     publishAt: tz.localToUtcIso("2026-09-12", 18 * 60 + 30, TZ), status: "draft",
   };
@@ -172,7 +172,7 @@ function seedExistingSlot(store) {
 
 const planningInput = {
   now: NOW, timeZone: TZ, cadence: "daily", mode: "autopilot",
-  goal: "awareness", stage: "planning_only",
+  goal: "awareness", stage: "planning_only", selectedChannels: ["instagram"],
 };
 
 /** Nothing paid, approved, scheduled, queued or published may exist. */
@@ -213,7 +213,10 @@ test("planning-only: daily + one existing slot produces seven total rolling slot
   assert.equal(store.drafts.size, 7);
   assert.deepEqual(
     [...store.drafts.values()].map((item) => item.slotKey).sort(),
-    EXPECTED_DATES,
+    [
+      EXPECTED_DATES[0],
+      ...EXPECTED_DATES.slice(1).map((date, i) => `${date}|instagram_${["reel", "story", "post", "reel", "story", "post"][i]}`),
+    ],
   );
 
   // MARA copy is generated only for the missing slots.
@@ -332,7 +335,7 @@ test("planning-only respects the account cadence, timezone and rolling horizon",
 test("without a stage the full workflow still generates, approves and queues", async () => {
   const store = createStore();
   const result = await rolling.ensureRollingPlan(createPorts(store), {
-    now: NOW, timeZone: TZ, cadence: "daily", mode: "autopilot", goal: "awareness",
+    now: NOW, timeZone: TZ, cadence: "daily", mode: "autopilot", goal: "awareness", selectedChannels: ["instagram"],
   });
 
   assert.equal(result.stage, "full");
@@ -357,7 +360,7 @@ test("without a stage the full workflow still generates, approves and queues", a
   for (const stage of ["full", "bogus-stage"]) {
     const other = createStore();
     const rerun = await rolling.ensureRollingPlan(createPorts(other), {
-      now: NOW, timeZone: TZ, cadence: "daily", mode: "autopilot", goal: "awareness", stage,
+      now: NOW, timeZone: TZ, cadence: "daily", mode: "autopilot", goal: "awareness", selectedChannels: ["instagram"], stage,
     });
     assert.equal(rerun.stage, "full", `stage ${JSON.stringify(stage)} must keep full behaviour`);
     assert.equal(rerun.mediaQueued, 7);

@@ -235,15 +235,17 @@ export async function listTikTokPublishQueue(db: SupabaseClient, ownerId: string
 }
 
 export async function getTikTokQueueItemForDraft(db: SupabaseClient, ownerId: string, draftId: string): Promise<TikTokQueueRow | null> {
-  const { data } = await db.from(TIKTOK_PUBLISH_QUEUE_TABLE).select(TIKTOK_QUEUE_COLUMNS)
+  const { data, error } = await db.from(TIKTOK_PUBLISH_QUEUE_TABLE).select(TIKTOK_QUEUE_COLUMNS)
     .eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
+  if (error) throw new Error("tiktok_publish_queue_read_failed");
   return normalizeRow(data);
 }
 
 export async function getTikTokQueueItemsForDrafts(db: SupabaseClient, ownerId: string, draftIds: string[]): Promise<Map<string, TikTokQueueRow>> {
   if (!draftIds.length) return new Map();
-  const { data } = await db.from(TIKTOK_PUBLISH_QUEUE_TABLE).select(TIKTOK_QUEUE_COLUMNS)
+  const { data, error } = await db.from(TIKTOK_PUBLISH_QUEUE_TABLE).select(TIKTOK_QUEUE_COLUMNS)
     .eq("owner_user_id", ownerId).in("draft_id", draftIds);
+  if (error) throw new Error("tiktok_publish_queue_read_failed");
   const map = new Map<string, TikTokQueueRow>();
   for (const row of rowsOf(data)) map.set(row.draft_id, row);
   return map;

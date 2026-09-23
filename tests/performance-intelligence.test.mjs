@@ -762,9 +762,12 @@ function stubMara(captured) {
       const angle = captured.length;
       return request.parse({
         concept: `${winner} — angle ${angle}`,
+        hook: "A clear opening hook.",
         caption: `A ${payload.contentType} about ${winner} (angle ${angle}).`,
         cta: "Talk to us",
-        hashtags: payload.contentType === "instagram_story" ? [] : ["#steady"],
+        hashtags: payload.contentType === "instagram_story" ? [] : ["steady"],
+        description: "",
+        script: ["Open with the idea", "Show one useful detail", "Close with a simple next step"],
         visualBrief: "Warm natural light, clean composition, no text.",
       });
     },
@@ -795,8 +798,8 @@ test("MARA's planning request carries the measured context, and only reads it on
     mode: "assisted", trigger: "scheduled",
     planningDeps: { provider: stubMara(captured), performanceContext: async () => { loads += 1; return context; } },
   });
-  const first = await ports.generateContent({ date: "2026-09-14", index: 0, contentType: "reel", publishAt: "2026-09-14T15:00:00.000Z" });
-  const second = await ports.generateContent({ date: "2026-09-16", index: 1, contentType: "post", publishAt: "2026-09-16T15:00:00.000Z" });
+  const first = await ports.generateContent({ date: "2026-09-14", slotKey: "2026-09-14|instagram_reel", index: 0, channel: "instagram", format: "reel", contentType: "reel", publishAt: "2026-09-14T15:00:00.000Z" });
+  const second = await ports.generateContent({ date: "2026-09-16", slotKey: "2026-09-16|instagram_post", index: 1, channel: "instagram", format: "post", contentType: "post", publishAt: "2026-09-16T15:00:00.000Z" });
 
   assert.equal(loads, 1, "the account's measured results are read once per plan run, not per slot");
   assert.equal(captured.length, 2);
@@ -821,7 +824,7 @@ test("MARA's planning request carries the measured context, and only reads it on
     mode: "assisted", trigger: "scheduled",
     planningDeps: { provider: stubMara(quiet), performanceContext: async () => null },
   });
-  const quietContent = await quietPorts.generateContent({ date: "2026-09-14", index: 0, contentType: "post", publishAt: "2026-09-14T15:00:00.000Z" });
+  const quietContent = await quietPorts.generateContent({ date: "2026-09-14", slotKey: "2026-09-14|instagram_post", index: 0, channel: "instagram", format: "post", contentType: "post", publishAt: "2026-09-14T15:00:00.000Z" });
   assert.equal(JSON.parse(quiet[0].messages[1].content).recentPerformance, null);
   assert.match(quietContent.concept, /our usual themes/);
 });
@@ -857,7 +860,7 @@ test("the next rolling 7-day plan changes when real performance evidence exists"
       async savePlanItems() {},
     };
     const result = await rolling.ensureRollingPlan(ports, {
-      now: NOW, timeZone: TZ, cadence: "3x_week", mode: "assisted", goal: "Get more enquiries", stage: "planning_only",
+      now: NOW, timeZone: TZ, cadence: "3x_week", mode: "assisted", goal: "Get more enquiries", stage: "planning_only", selectedChannels: ["instagram"],
     });
     return { result, drafts: [...store.drafts.values()], captured, providerCalls: store.providerCalls };
   };

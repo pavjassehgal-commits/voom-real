@@ -22,6 +22,10 @@ import test from "node:test";
 const tz = await import("../lib/voom/timezone.ts");
 const cadenceMod = await import("../lib/voom/cadence.ts");
 const rolling = await import("../lib/voom/workflow/rolling-plan.ts");
+
+function ensureInstagramPlan(ports, input) {
+  return rolling.ensureRollingPlan(ports, { ...input, selectedChannels: input.selectedChannels ?? ["instagram"] });
+}
 const stateMod = await import("../lib/voom/workflow/state.ts");
 const safety = await import("../lib/mara/autopilot-safety.ts");
 const flow = await import("../lib/instagram/publish-flow.ts");
@@ -40,7 +44,7 @@ function createStore() {
   return {
     plans: new Map(),
     drafts: new Map(),      // draftId -> item
-    bySlot: new Map(),      // `${planId}:${slotDate}` -> draftId
+    bySlot: new Map(),      // `${planId}:${slotKey}` -> draftId
     media: new Map(),       // draftId -> { status }
     assets: new Set(),      // draftIds with stored bytes
     approvals: new Map(),   // draftId -> { status }
@@ -92,12 +96,12 @@ function createPorts(store, options = {}) {
     },
 
     async createDraft({ planId, slot, content }) {
-      const key = `${planId}:${slot.date}`;
-      // Idempotent on (plan, local slot date) exactly like the real upsert.
+      const key = `${planId}:${slot.slotKey}`;
+      // Idempotent on (plan, canonical slot identity) exactly like the real upsert.
       if (store.bySlot.has(key)) return store.drafts.get(store.bySlot.get(key));
       const draftId = `draft-${++store.seq}`;
       const item = {
-        draftId, planId, slotKey: slot.date, contentType: slot.contentType,
+        draftId, planId, slotKey: slot.slotKey, channel: slot.channel, format: slot.format, contentType: slot.contentType,
         concept: content.concept, caption: content.caption, publishAt: slot.publishAt, status: "draft",
       };
       store.drafts.set(draftId, item);
@@ -253,7 +257,7 @@ function toFlowItem(row) {
 
 test("Autopilot + daily cadence produces a 7-day executable plan starting today", async () => {
   const store = createStore();
-  const result = await rolling.ensureRollingPlan(createPorts(store), {
+  const result = await ensureInstagramPlan(createPorts(store), {
     now: NOW, timeZone: TZ, cadence: "daily", mode: "autopilot", goal: "awareness",
   });
 
@@ -333,11 +337,11 @@ test("Autopilot + daily cadence produces a 7-day executable plan starting today"
 test("a second automation run on the same day reuses every item and creates nothing", async () => {
   const store = createStore();
   const input = { now: NOW, timeZone: TZ, cadence: "daily", mode: "autopilot", goal: "awareness" };
-  await rolling.ensureRollingPlan(createPorts(store), input);
+  await ensureInstagramPlan(createPorts(store), input);
   const generationsAfterFirst = store.generationCalls;
   const imagesAfterFirst = store.providerImageCalls;
 
-  const second = await rolling.ensureRollingPlan(createPorts(store), input);
+  const second = await ensureInstagramPlan(createPorts(store), input);
   assert.equal(second.created, 0);
   assert.equal(second.reused, 7);
   assert.equal(store.drafts.size, 7, "no duplicate plan items");
@@ -348,9 +352,9 @@ test("a second automation run on the same day reuses every item and creates noth
 test("the horizon rolls forward: a run one day later tops the plan back up", async () => {
   const store = createStore();
   const base = { timeZone: TZ, cadence: "daily", mode: "autopilot", goal: "awareness" };
-  await rolling.ensureRollingPlan(createPorts(store), { ...base, now: NOW });
+  await ensureInstagramPlan(createPorts(store), { ...base, now: NOW });
   const tomorrow = new Date(NOW.getTime() + 86400000);
-  const next = await rolling.ensureRollingPlan(createPorts(store), { ...base, now: tomorrow });
+  const next = await ensureInstagramPlan(createPorts(store), { ...base, now: tomorrow });
   // Six existing days are reused; only the newly-visible day is created.
   assert.equal(next.reused, 6);
   assert.equal(next.created, 1);
@@ -365,7 +369,7 @@ test("each cadence produces its own number and distribution of items", async () 
   const expected = { daily: 7, "5x_week": 5, "3x_week": 3, weekly: 1 };
   for (const [cadence, count] of Object.entries(expected)) {
     const store = createStore();
-    const result = await rolling.ensureRollingPlan(createPorts(store), {
+    const result = await ensureInstagramPlan(createPorts(store), {
       now: NOW, timeZone: TZ, cadence, mode: "autopilot", goal: "awareness",
     });
     assert.equal(result.created, count, `${cadence} must create ${count} items`);
@@ -379,7 +383,7 @@ test("each cadence produces its own number and distribution of items", async () 
 
 test("Manual mode creates nothing automatically", async () => {
   const store = createStore();
-  const result = await rolling.ensureRollingPlan(createPorts(store), {
+  const result = await ensureInstagramPlan(createPorts(store), {
     now: NOW, timeZone: TZ, cadence: "daily", mode: "manual", goal: "awareness",
   });
   assert.equal(result.created, 0);
@@ -405,7 +409,7 @@ function produceMediaExplicitly(store, draftId) {
 
 test("Assisted prepares content and waits; the owner's media + approval advance the SAME item (v1)", async () => {
   const store = createStore();
-  const result = await rolling.ensureRollingPlan(createPorts(store), {
+  const result = await ensureInstagramPlan(createPorts(store), {
     now: NOW, timeZone: TZ, cadence: "3x_week", mode: "assisted", goal: "awareness",
   });
   assert.equal(result.created, 3);
@@ -441,7 +445,7 @@ test("Assisted prepares content and waits; the owner's media + approval advance 
 
 test("editing the caption and time before approval updates the same workflow item", async () => {
   const store = createStore();
-  await rolling.ensureRollingPlan(createPorts(store), {
+  await ensureInstagramPlan(createPorts(store), {
     now: NOW, timeZone: TZ, cadence: "weekly", mode: "assisted", goal: "awareness",
   });
   const [draftId] = [...store.drafts.keys()];
@@ -469,7 +473,7 @@ test("Autopilot never bypasses the safety evaluator: risky content stays in Appr
   const risky = (slot) => slot.index === 0
     ? "Get 30% off everything today — guaranteed best prices in Dubai!"
     : "A calm look at our work today. Visit us this week.";
-  const result = await rolling.ensureRollingPlan(createPorts(store, { captionFor: risky }), {
+  const result = await ensureInstagramPlan(createPorts(store, { captionFor: risky }), {
     now: NOW, timeZone: TZ, cadence: "3x_week", mode: "autopilot", goal: "awareness",
   });
   assert.equal(result.heldForReview, 1);
@@ -485,8 +489,8 @@ test("Autopilot never bypasses the safety evaluator: risky content stays in Appr
 
 test("a media failure does not kill the workflow and is visible with a failed stage", async () => {
   const store = createStore();
-  const result = await rolling.ensureRollingPlan(
-    createPorts(store, { mediaOutcome: (item) => item.slotKey === "2026-09-13" ? { ok: false, code: "provider_down" } : { ok: true } }),
+  const result = await ensureInstagramPlan(
+    createPorts(store, { mediaOutcome: (item) => item.slotKey === "2026-09-13|instagram_reel" ? { ok: false, code: "provider_down" } : { ok: true } }),
     { now: NOW, timeZone: TZ, cadence: "daily", mode: "autopilot", goal: "awareness" },
   );
   // The rest of the horizon still completes.
@@ -494,7 +498,7 @@ test("a media failure does not kill the workflow and is visible with a failed st
   assert.equal(result.failures.length, 1);
   assert.equal(result.failures[0].stage, "media");
 
-  const failed = [...store.drafts.values()].find((item) => item.slotKey === "2026-09-13");
+  const failed = [...store.drafts.values()].find((item) => item.slotKey === "2026-09-13|instagram_reel");
   assert.equal(viewFor(store, failed.draftId), "failed");
   assert.ok(!store.queue.has(failed.draftId), "an item with no media is never enqueued to Instagram");
   assert.equal(store.queue.size, 6);
@@ -504,18 +508,18 @@ test("a retry after a media failure does not double-charge, and a publish failur
   const store = createStore();
   let fail = true;
   const ports = createPorts(store, { mediaOutcome: () => (fail ? { ok: false, code: "provider_down" } : { ok: true }) });
-  await rolling.ensureRollingPlan(ports, { now: NOW, timeZone: TZ, cadence: "weekly", mode: "autopilot", goal: "awareness" });
+  await ensureInstagramPlan(ports, { now: NOW, timeZone: TZ, cadence: "weekly", mode: "autopilot", goal: "awareness" });
   assert.equal(store.providerImageCalls, 1);
 
   // Retry: the media succeeds this time, and exactly one more paid call is made.
   fail = false;
-  await rolling.ensureRollingPlan(ports, { now: NOW, timeZone: TZ, cadence: "weekly", mode: "autopilot", goal: "awareness" });
+  await ensureInstagramPlan(ports, { now: NOW, timeZone: TZ, cadence: "weekly", mode: "autopilot", goal: "awareness" });
   assert.equal(store.providerImageCalls, 2);
   const [draftId] = [...store.drafts.keys()];
   assert.equal(store.assets.has(draftId), true);
 
   // A third run must not pay again now that Voom owns the bytes.
-  await rolling.ensureRollingPlan(ports, { now: NOW, timeZone: TZ, cadence: "weekly", mode: "autopilot", goal: "awareness" });
+  await ensureInstagramPlan(ports, { now: NOW, timeZone: TZ, cadence: "weekly", mode: "autopilot", goal: "awareness" });
   assert.equal(store.providerImageCalls, 2);
 
   // A transient Meta failure is retryable and still publishes exactly once.
@@ -548,7 +552,7 @@ test("stale historical dates can never appear in the plan", async () => {
   // 23:30 Dubai: today's usual evening slot has already passed.
   const lateNight = new Date("2026-09-12T19:30:00.000Z");
   const store = createStore();
-  await rolling.ensureRollingPlan(createPorts(store), {
+  await ensureInstagramPlan(createPorts(store), {
     now: lateNight, timeZone: TZ, cadence: "daily", mode: "autopilot", goal: "awareness",
   });
   const today = tz.localDate(lateNight, TZ);

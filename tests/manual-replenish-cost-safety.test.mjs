@@ -362,7 +362,7 @@ test("2a. Manual + Replenish creates the plan and its drafts — and submits not
   assert.equal(db.rows("mara_drafts").length, 3, "one executable draft per slot");
   assert.deepEqual(
     db.rows("mara_drafts").map((draft) => draft.source_plan_item_key).sort(),
-    run.plan.items.map((item) => item.slot).sort(),
+    run.plan.items.map((item) => item.slotKey).sort(),
   );
   assert.ok(run.plan.items.every((item) => Date.parse(item.publishAt) > NOW.getTime()), "no slot in the past");
   assert.equal(db.rows("marketing_plans")[0].planned_posts.length, 3, "the horizon is mirrored onto the plan");
@@ -453,7 +453,7 @@ test("3a. the Manual+Replenish ports refuse media and auto-approval even when ca
     media_brief: "A premium payments visual.", created_at: NOW.toISOString(),
   });
   const item = {
-    draftId: "draft-forged", slotKey: "2026-09-12", contentType: "post", concept: "Premium Payment Pulse: SynraPay Live Demo",
+    draftId: "draft-forged", slotKey: "2026-09-12", channel: "instagram", format: "post", contentType: "post", concept: "Premium Payment Pulse: SynraPay Live Demo",
     caption: "Caption", publishAt: tz.localToUtcIso("2026-09-12", 18 * 60 + 30, TZ), status: "draft",
   };
 
@@ -480,14 +480,14 @@ test("3b. even a forged 'full' stage cannot make the engine reach media for Manu
     async ensurePlan() { return "plan-1"; },
     async listItems() { return []; },
     async generateContent(slot) { return { concept: `c-${slot.date}`, caption: "cap", cta: "cta", hashtags: [], visualBrief: "vb" }; },
-    async createDraft({ slot, content }) { calls.createDraft += 1; return { draftId: `d-${slot.date}`, slotKey: slot.date, contentType: slot.contentType, concept: content.concept, caption: content.caption, publishAt: slot.publishAt, status: "draft" }; },
+    async createDraft({ slot, content }) { calls.createDraft += 1; return { draftId: `d-${slot.slotKey}`, slotKey: slot.slotKey, channel: slot.channel, format: slot.format, contentType: slot.contentType, concept: content.concept, caption: content.caption, publishAt: slot.publishAt, status: "draft" }; },
     async ensureMedia() { calls.ensureMedia += 1; throw new Error("PAID PATH REACHED"); },
     async requestApproval() { calls.requestApproval += 1; },
     async autoApproveAndSchedule() { calls.autoApprove += 1; return { approved: true }; },
     async savePlanItems() {},
   };
   for (const stage of ["full", "bogus", undefined]) {
-    const run = await rolling.ensureRollingPlan(ports, { now: NOW, timeZone: TZ, cadence: "daily", mode: "manual", goal: "awareness", trigger: "replenish", stage });
+    const run = await rolling.ensureRollingPlan(ports, { now: NOW, timeZone: TZ, cadence: "daily", mode: "manual", goal: "awareness", trigger: "replenish", stage, selectedChannels: ["instagram"] });
     assert.equal(run.mode, "manual");
     assert.equal(run.stage, "planning_only", `stage ${JSON.stringify(stage)} is narrowed to planning_only`);
     assert.equal(run.created, 7);
@@ -535,7 +535,7 @@ function countingPorts() {
     async ensurePlan() { return "plan-1"; },
     async listItems() { return []; },
     async generateContent(slot) { return { concept: `c-${slot.date}`, caption: "A calm look at our work today. Visit us this week.", cta: "Visit", hashtags: [], visualBrief: "vb" }; },
-    async createDraft({ slot, content }) { calls.createDraft += 1; return { draftId: `d-${slot.date}`, slotKey: slot.date, contentType: slot.contentType, concept: content.concept, caption: content.caption, publishAt: slot.publishAt, status: "draft" }; },
+    async createDraft({ slot, content }) { calls.createDraft += 1; return { draftId: `d-${slot.slotKey}`, slotKey: slot.slotKey, channel: slot.channel, format: slot.format, contentType: slot.contentType, concept: content.concept, caption: content.caption, publishAt: slot.publishAt, status: "draft" }; },
     async ensureMedia(item) { calls.ensureMedia += 1; if (item.contentType === "reel") calls.video += 1; else calls.image += 1; return { ok: true }; },
     async requestApproval() { calls.requestApproval += 1; },
     async autoApproveAndSchedule() { calls.autoApprove += 1; return { approved: true }; },
@@ -547,7 +547,7 @@ function countingPorts() {
 test("4a. Assisted: Replenish and scheduled runs plan and draft every slot, and never reach the paid stage (v1)", async () => {
   for (const trigger of ["replenish", "scheduled", undefined]) {
     const { ports, calls } = countingPorts();
-    const run = await rolling.ensureRollingPlan(ports, { now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "awareness", trigger });
+    const run = await rolling.ensureRollingPlan(ports, { now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "awareness", trigger, selectedChannels: ["instagram"] });
     assert.equal(run.mode, "assisted");
     assert.equal(run.stage, "planning_only", `Assisted/${trigger} is planning-only: paid media needs an explicit click`);
     assert.equal(run.created, 7, "Assisted still prepares the whole horizon");
@@ -568,7 +568,7 @@ test("4a. Assisted: Replenish and scheduled runs plan and draft every slot, and 
 test("4b. Autopilot: Replenish and scheduled runs still generate media and auto-approve safe items", async () => {
   for (const trigger of ["replenish", "scheduled", undefined]) {
     const { ports, calls } = countingPorts();
-    const run = await rolling.ensureRollingPlan(ports, { now: NOW, timeZone: TZ, cadence: "daily", mode: "autopilot", goal: "awareness", trigger });
+    const run = await rolling.ensureRollingPlan(ports, { now: NOW, timeZone: TZ, cadence: "daily", mode: "autopilot", goal: "awareness", trigger, selectedChannels: ["instagram"] });
     assert.equal(run.mode, "autopilot");
     assert.equal(run.stage, "full");
     assert.equal(calls.ensureMedia, 7);

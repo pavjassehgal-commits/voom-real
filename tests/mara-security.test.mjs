@@ -176,7 +176,8 @@ test("incomplete content generation is validated against a schema and fails with
   assert.match(service, /jsonSchema: plannedContentJsonSchema/);
   assert.match(service, /parse: \(value\) => plannedContentSchema\.parse\(value\)/);
   assert.match(service, /throw new Error\("content_generation_failed"\)/);
-  assert.match(prompt, /caption: the complete caption in the brand's voice/);
+  assert.match(prompt, /caption: native copy for the assigned platform/);
+  assert.match(prompt, /channel and format were selected by Voom's server and are immutable/);
   assert.match(prompt, /Never invent prices, discounts, offers, opening hours, links, awards, reviews, guarantees or statistics/);
   // A failed slot is reported, never silently dropped or half-saved.
   const rolling = await read("lib/voom/workflow/rolling-plan.ts");

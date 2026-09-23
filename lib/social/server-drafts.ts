@@ -65,7 +65,7 @@ import type { createAdminClient } from "@/utils/supabase/admin";
 export type AdminClient = ReturnType<typeof createAdminClient>;
 
 const DRAFT_COLUMNS =
-  "id,conversation_id,kind,channel,title,content,proposed_publish_at,status,social_channel,social_format,content_meta,provider_ref,created_at,updated_at";
+  "id,conversation_id,kind,channel,title,content,proposed_publish_at,status,social_channel,social_format,content_meta,provider_ref,source_plan_id,source_plan_item_key,created_at,updated_at";
 
 export interface SocialDraftView {
   id: string;
@@ -115,8 +115,14 @@ export interface CreateSocialDraftInput {
   caption?: string;
   description?: string;
   concept?: string;
+  hook?: string;
+  cta?: string;
+  hashtags?: string[];
+  productionGuidance?: string;
   script?: string[];
   scheduledAt?: string | null;
+  /** Stable plan identity for server-generated rolling-plan drafts. */
+  planSource?: { planId: string; slotKey: string };
   /** Explicit YouTube declarations (policy-sensitive; never defaulted here). */
   madeForKids?: boolean | null;
   privacy?: "public" | "private" | "unlisted" | null;
@@ -124,7 +130,7 @@ export interface CreateSocialDraftInput {
   tiktokPrivacy?: string | null;
 }
 
-/** Creates one TikTok/YouTube planning draft. Inserts only. */
+/** Creates one TikTok/YouTube planning draft. Rolling-plan writes are idempotent. */
 export async function createSocialDraft(
   admin: AdminClient,
   ownerId: string,
@@ -136,9 +142,16 @@ export async function createSocialDraft(
   const title = input.title.trim().slice(0, 160);
   if (!title) throw new Error("social_title_required");
   const caption = (input.caption ?? "").trim().slice(0, 4000);
+  const hashtags = Array.isArray(input.hashtags)
+    ? input.hashtags.filter((tag): tag is string => typeof tag === "string").map((tag) => tag.trim().replace(/^#+/, "").slice(0, 80)).filter(Boolean).slice(0, 15)
+    : [];
   const meta: Record<string, unknown> = {
     ...(input.description?.trim() ? { description: input.description.trim().slice(0, 5000) } : {}),
     ...(input.concept?.trim() ? { concept: input.concept.trim().slice(0, 300) } : {}),
+    ...(input.hook?.trim() ? { hook: input.hook.trim().slice(0, 500) } : {}),
+    ...(input.cta?.trim() ? { cta: input.cta.trim().slice(0, 500) } : {}),
+    ...(hashtags.length ? { hashtags } : {}),
+    ...(input.productionGuidance?.trim() ? { productionGuidance: input.productionGuidance.trim().slice(0, 1000) } : {}),
     script: Array.isArray(input.script)
       ? input.script.filter((line): line is string => typeof line === "string").map((line) => line.trim().slice(0, 400)).filter(Boolean).slice(0, 40)
       : [],
@@ -146,7 +159,7 @@ export async function createSocialDraft(
     ...(input.privacy === "public" || input.privacy === "private" || input.privacy === "unlisted" ? { privacy: input.privacy } : {}),
     ...(typeof input.tiktokPrivacy === "string" && isTikTokPrivacy(input.tiktokPrivacy) ? { tiktokPrivacy: input.tiktokPrivacy } : {}),
   };
-  const { data, error } = await admin.from("mara_drafts").insert({
+  const row = {
     conversation_id: conversationId,
     owner_user_id: ownerId,
     kind: input.kind,
@@ -164,9 +177,40 @@ export async function createSocialDraft(
     social_channel: pair.channel,
     social_format: pair.format,
     content_meta: meta,
-  }).select("id").single();
-  if (error || !data?.id) throw new Error("social_draft_create_failed");
-  return String(data.id);
+    ...(input.planSource ? {
+      source_plan_id: input.planSource.planId,
+      source_plan_item_key: input.planSource.slotKey,
+    } : {}),
+  };
+  if (!input.planSource) {
+    const { data, error } = await admin.from("mara_drafts").insert(row).select("id").single();
+    if (error || !data?.id) throw new Error("social_draft_create_failed");
+    return String(data.id);
+  }
+
+  const { data, error } = await admin.from("mara_drafts")
+    .upsert(row, {
+      onConflict: "owner_user_id,source_plan_id,source_plan_item_key",
+      ignoreDuplicates: true,
+    })
+    .select("id,kind,social_channel,social_format")
+    .maybeSingle();
+  if (error && error.code !== "23505") throw new Error("social_draft_create_failed");
+  if (data?.id) return String(data.id);
+
+  const { data: existing, error: existingError } = await admin.from("mara_drafts")
+    .select("id,kind,social_channel,social_format")
+    .eq("owner_user_id", ownerId)
+    .eq("source_plan_id", input.planSource.planId)
+    .eq("source_plan_item_key", input.planSource.slotKey)
+    .maybeSingle();
+  if (existingError || !existing?.id
+    || existing.kind !== input.kind
+    || existing.social_channel !== pair.channel
+    || existing.social_format !== pair.format) {
+    throw new Error("social_plan_slot_conflict");
+  }
+  return String(existing.id);
 }
 
 /** Owner-scoped read of one social draft (queue-driven for YouTube). */
@@ -175,18 +219,20 @@ export async function getSocialDraft(
   ownerId: string,
   draftId: string,
 ): Promise<SocialDraftView | null> {
-  const { data } = await admin.from("mara_drafts").select(DRAFT_COLUMNS)
+  const { data, error } = await admin.from("mara_drafts").select(DRAFT_COLUMNS)
     .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
+  if (error) throw new Error("social_draft_read_failed");
   if (!data) return null;
   const row = data as Record<string, unknown>;
   if (!isSocialVideoDraftKind(row.kind)) return null;
-  const { data: asset } = await admin.from("post_draft_assets")
+  const { data: asset, error: assetError } = await admin.from("post_draft_assets")
     .select("display_name,mime_type").eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
+  if (assetError) throw new Error("social_draft_asset_read_failed");
   const channel = kindPair(row.kind as SocialVideoDraftKind).channel;
   const queue = channel === "youtube"
-    ? await getYouTubeQueueItemForDraft(admin, ownerId, draftId).catch(() => null)
+    ? await getYouTubeQueueItemForDraft(admin, ownerId, draftId)
     : channel === "tiktok"
-      ? await getTikTokQueueItemForDraft(admin, ownerId, draftId).catch(() => null)
+      ? await getTikTokQueueItemForDraft(admin, ownerId, draftId)
       : null;
   return toSocialDraftView(row, (asset as Record<string, unknown> | null) ?? null, queue);
 }
@@ -206,8 +252,8 @@ export async function listSocialDrafts(admin: AdminClient, ownerId: string): Pro
     .filter((row) => kindPair(row.kind as SocialVideoDraftKind).channel === "tiktok")
     .map((row) => String(row.id));
   const [youtubeQueues, tiktokQueues] = await Promise.all([
-    getYouTubeQueueItemsForDrafts(admin, ownerId, youtubeIds).catch(() => new Map<string, YouTubeQueueRow>()),
-    getTikTokQueueItemsForDrafts(admin, ownerId, tiktokIds).catch(() => new Map<string, TikTokQueueRow>()),
+    getYouTubeQueueItemsForDrafts(admin, ownerId, youtubeIds),
+    getTikTokQueueItemsForDrafts(admin, ownerId, tiktokIds),
   ]);
   return Promise.all(rows.map(async (row) => {
     const { data: asset } = await admin.from("post_draft_assets")
@@ -254,7 +300,7 @@ function toSocialDraftView(row: Record<string, unknown>, asset: Record<string, u
     } else {
       publishState = "approved";
       publishStateLabel = scheduledAt
-        ? "Approved — waiting to be queued"
+        ? "Approved — queue sync not confirmed"
         : "Approved — add a schedule to queue publishing";
     }
   } else {
@@ -265,7 +311,7 @@ function toSocialDraftView(row: Record<string, unknown>, asset: Record<string, u
     } else {
       publishState = "approved";
       publishStateLabel = scheduledAt
-        ? "Approved — waiting to be queued"
+        ? "Approved — queue sync not confirmed"
         : "Approved — add a schedule to queue publishing";
     }
   }
@@ -299,7 +345,7 @@ function toSocialDraftView(row: Record<string, unknown>, asset: Record<string, u
 }
 
 /** The truthful, provider-honest label for one TikTok queue state. */
-function tikTokQueueLabel(queueStatus: string): string {
+export function tikTokQueueLabel(queueStatus: string): string {
   switch (queueStatus) {
     case "scheduled": return "Scheduled — publishes through the TikTok queue";
     case "waiting_for_media": return "Waiting for the video file";
@@ -315,7 +361,7 @@ function tikTokQueueLabel(queueStatus: string): string {
 }
 
 /** The truthful, provider-honest label for one YouTube queue state. */
-function youTubeQueueLabel(queueStatus: string, providerPrivacy: string | null): string {
+export function youTubeQueueLabel(queueStatus: string, providerPrivacy: string | null): string {
   switch (queueStatus) {
     case "scheduled": return "Scheduled — publishes through the YouTube queue";
     case "waiting_for_media": return "Waiting for the video file";
@@ -340,8 +386,8 @@ export interface UpdateSocialDraftInput {
   concept?: string;
   script?: string[];
   scheduledAt?: string | null;
-  /** Approval transition: 'approved' or back to 'draft'. */
-  decision?: "approved" | "draft";
+  /** Approval transition or campaign rejection. */
+  decision?: "approved" | "draft" | "rejected";
   /** Explicit YouTube declarations (policy-sensitive; never defaulted here). */
   madeForKids?: boolean | null;
   privacy?: "public" | "private" | "unlisted" | null;
@@ -384,7 +430,9 @@ export async function updateSocialDraft(
     ? input.script.filter((line): line is string => typeof line === "string").map((line) => line.trim().slice(0, 400)).filter(Boolean).slice(0, 40)
     : existing.script;
   const scheduledAt = input.scheduledAt !== undefined ? normalizeSchedule(input.scheduledAt) : existing.scheduledAt;
-  const status = input.decision === "approved" ? "approved" : input.decision === "draft" ? "draft" : existing.status;
+  const status = input.decision === "approved" ? "approved"
+    : input.decision === "draft" ? "draft"
+      : input.decision === "rejected" ? "rejected" : existing.status;
 
   // Explicit declarations win; an explicit null CLEARS the declaration back
   // to undeclared (which parks the queue row visibly — never a silent guess).
@@ -417,7 +465,7 @@ export async function updateSocialDraft(
   const calendarChannel = socialCalendarChannelFor(existing.kind);
   if (calendarChannel) {
     if (status === "approved" && scheduledAt) {
-      await admin.from("content_calendar_items").upsert({
+      const { error: calendarError } = await admin.from("content_calendar_items").upsert({
         owner_user_id: ownerId,
         title,
         channel: calendarChannel,
@@ -429,11 +477,13 @@ export async function updateSocialDraft(
         social_channel: existing.channel,
         social_format: existing.format,
       }, { onConflict: "owner_user_id,source_draft_id" });
+      if (calendarError) throw new Error("social_calendar_sync_failed");
     } else {
-      await admin.from("content_calendar_items")
+      const { error: calendarError } = await admin.from("content_calendar_items")
         .delete()
         .eq("owner_user_id", ownerId)
         .eq("source_draft_id", draftId);
+      if (calendarError) throw new Error("social_calendar_sync_failed");
     }
   }
 
@@ -448,7 +498,7 @@ export async function updateSocialDraft(
       madeForKids,
       privacy,
       format: existing.format === "short" ? "short" : "video",
-    }).catch(() => undefined);
+    });
   }
 
   // TikTok execution mirror: the durable publish queue (migration 0049).
@@ -459,7 +509,7 @@ export async function updateSocialDraft(
       title,
       caption,
       tiktokPrivacy,
-    }).catch(() => undefined);
+    });
   }
 
   return getSocialDraft(admin, ownerId, draftId);
@@ -494,7 +544,7 @@ export async function syncSocialDraftToYouTubeQueue(
   },
 ): Promise<void> {
   if (draft.status !== "approved" || !draft.scheduledAt) {
-    try { await cancelYouTubePublishItem(admin, ownerId, draftId); } catch { /* best effort */ }
+    await cancelYouTubePublishItem(admin, ownerId, draftId);
     return;
   }
 
@@ -516,7 +566,7 @@ export async function syncSocialDraftToYouTubeQueue(
   const { data: calendar } = await admin.from("content_calendar_items")
     .select("id").eq("owner_user_id", ownerId).eq("source_draft_id", draftId).maybeSingle();
 
-  await enqueueYouTubePublishItem(admin, {
+  const queued = await enqueueYouTubePublishItem(admin, {
     ownerId,
     draftId,
     calendarItemId: calendar ? String(calendar.id) : null,
@@ -529,6 +579,9 @@ export async function syncSocialDraftToYouTubeQueue(
     scheduledAt: draft.scheduledAt,
     waitingForMedia,
   });
+  if (!queued || queued.owner_user_id !== ownerId || queued.draft_id !== draftId) {
+    throw new Error("youtube_publish_enqueue_failed");
+  }
 }
 
 /**
@@ -565,7 +618,7 @@ export async function syncSocialDraftToTikTokQueue(
   },
 ): Promise<void> {
   if (draft.status !== "approved" || !draft.scheduledAt) {
-    try { await cancelTikTokPublishItem(admin, ownerId, draftId); } catch { /* best effort */ }
+    await cancelTikTokPublishItem(admin, ownerId, draftId);
     return;
   }
 
@@ -589,7 +642,7 @@ export async function syncSocialDraftToTikTokQueue(
   // The TikTok post title is the caption; TikTok's own limit is 2200 chars.
   const title = draft.caption.trim().slice(0, 2200) || draft.title.trim().slice(0, 2200) || "Untitled";
 
-  await enqueueTikTokPublishItem(admin, {
+  const queued = await enqueueTikTokPublishItem(admin, {
     ownerId,
     draftId,
     calendarItemId: calendar ? String(calendar.id) : null,
@@ -604,6 +657,9 @@ export async function syncSocialDraftToTikTokQueue(
     scheduledAt: draft.scheduledAt,
     waitingForMedia,
   });
+  if (!queued || queued.owner_user_id !== ownerId || queued.draft_id !== draftId) {
+    throw new Error("tiktok_publish_enqueue_failed");
+  }
 }
 
 /**
@@ -619,7 +675,12 @@ export interface SocialCalendarItemView {
   calendarItemId: string | null;
   kind: SocialVideoDraftKind;
   channel: "tiktok" | "youtube";
+  format: "video" | "short";
   contentTypeLabel: string;
+  sourceLabel: "Marketing Plan" | "Studio";
+  media: { displayName: string; mimeType: string } | null;
+  queueStatus: string | null;
+  queueFailureMessage: string | null;
   concept: string;
   caption: string;
   scheduledAt: string;
@@ -632,24 +693,30 @@ export interface SocialCalendarItemView {
 export async function listSocialCalendarItems(
   admin: AdminClient, ownerId: string, now: Date = new Date(),
 ): Promise<SocialCalendarItemView[]> {
-  const { data: business } = await admin.from("businesses")
+  const { data: business, error: businessError } = await admin.from("businesses")
     .select("timezone").eq("owner_user_id", ownerId).maybeSingle();
+  if (businessError) throw new Error("social_calendar_timezone_read_failed");
   const timeZone = accountTimezone((business as { timezone?: string | null } | null)?.timezone);
 
-  const { data: drafts } = await admin.from("mara_drafts").select(DRAFT_COLUMNS)
+  const { data: drafts, error: draftsError } = await admin.from("mara_drafts").select(DRAFT_COLUMNS)
     .eq("owner_user_id", ownerId)
     .in("kind", ["tiktok_video", "youtube_short", "youtube_video"])
     .eq("status", "approved")
     .not("proposed_publish_at", "is", null)
     .order("proposed_publish_at", { ascending: true })
     .limit(100);
+  if (draftsError) throw new Error("social_calendar_drafts_read_failed");
   const rows = (drafts ?? []) as Record<string, unknown>[];
   if (!rows.length) return [];
 
   const ids = rows.map((row) => String(row.id));
-  const { data: calendar } = await admin.from("content_calendar_items")
-    .select("id,source_draft_id").eq("owner_user_id", ownerId).in("source_draft_id", ids);
-  const mirror = new Map((calendar ?? []).map((row) => [String(row.source_draft_id), String(row.id)]));
+  const [calendar, assets] = await Promise.all([
+    admin.from("content_calendar_items").select("id,source_draft_id").eq("owner_user_id", ownerId).in("source_draft_id", ids),
+    admin.from("post_draft_assets").select("draft_id,display_name,mime_type,status").eq("owner_user_id", ownerId).in("draft_id", ids),
+  ]);
+  if (calendar.error || assets.error) throw new Error("social_calendar_metadata_read_failed");
+  const mirror = new Map((calendar.data ?? []).map((row) => [String(row.source_draft_id), String(row.id)]));
+  const assetsByDraft = new Map((assets.data ?? []).map((row) => [String(row.draft_id), row]));
 
   // TikTok and YouTube calendar items are QUEUE-DRIVEN: each durable publish
   // queue is the truth about execution, so the calendar shows scheduled /
@@ -661,8 +728,8 @@ export async function listSocialCalendarItems(
     .filter((row) => kindPair(row.kind as SocialVideoDraftKind).channel === "tiktok")
     .map((row) => String(row.id));
   const [youtubeQueueByDraft, tiktokQueueByDraft] = await Promise.all([
-    getYouTubeQueueItemsForDrafts(admin, ownerId, youtubeIds).catch(() => new Map<string, YouTubeQueueRow>()),
-    getTikTokQueueItemsForDrafts(admin, ownerId, tiktokIds).catch(() => new Map<string, TikTokQueueRow>()),
+    getYouTubeQueueItemsForDrafts(admin, ownerId, youtubeIds),
+    getTikTokQueueItemsForDrafts(admin, ownerId, tiktokIds),
   ]);
 
   return rows.map((row) => {
@@ -678,13 +745,23 @@ export async function listSocialCalendarItems(
       ? pair.channel === "youtube"
         ? youTubeQueueLabel(queue.status, "provider_privacy_status" in queue ? queue.provider_privacy_status : null)
         : tikTokQueueLabel(queue.status)
-      : "Approved — waiting to be queued";
+      : "Approved — queue sync not confirmed";
     return {
       draftId: String(row.id),
       calendarItemId: mirror.get(String(row.id)) ?? null,
       kind,
       channel: pair.channel,
+      format: pair.format,
       contentTypeLabel: SOCIAL_VIDEO_TYPE_LABELS[kind],
+      sourceLabel: row.source_plan_id ? "Marketing Plan" : "Studio",
+      media: (() => {
+        const asset = assetsByDraft.get(String(row.id));
+        return asset && asset.status === "uploaded"
+          ? { displayName: String(asset.display_name ?? "Video file"), mimeType: String(asset.mime_type ?? "application/octet-stream") }
+          : null;
+      })(),
+      queueStatus: queue?.status ?? null,
+      queueFailureMessage: queue?.failure_message ? String(queue.failure_message) : null,
       concept: String(row.title ?? ""),
       caption: String(row.content ?? ""),
       scheduledAt,

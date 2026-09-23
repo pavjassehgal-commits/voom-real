@@ -18,11 +18,10 @@ import type { SocialCalendarItemView } from "@/lib/social/server-drafts";
 /**
  * The Content Calendar is the authoritative visual schedule of the ONE
  * executable content workflow, across every channel. Instagram cells are real
- * workflow items with their real local scheduled time and real status; TikTok
- * and YouTube cells are the approved + scheduled drafts, labelled QUEUE-DRIVEN
- * (each channel's durable publish queue is the execution truth: scheduled /
- * uploading / processing / published — never an optimistic invention).
- * Clicking a cell opens the real draft. There is no sample dataset and no
+ * workflow items with their real local scheduled time and authoritative
+ * status. TikTok and YouTube items use their native channel/format and
+ * durable queue-derived labels; only provider confirmation can say Published.
+ * Clicking a cell opens the real draft. There is no sample dataset or
  * hardcoded month.
  */
 
@@ -30,8 +29,8 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July", 
 const FILTERS = ["All", "Instagram Post", "Reel", "Instagram Story", "TikTok Video", "YouTube Short", "YouTube Video"] as const;
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-/** One calendar cell entry: an executable Instagram workflow item, or a
- * TikTok/YouTube approved planning draft (never executed, always truthful). */
+/** One calendar cell entry: an active Marketing Plan item or a standalone
+ * approved TikTok/YouTube draft. Both surfaces use truthful queue status. */
 type CalendarEvent =
   | { type: "workflow"; item: WorkflowView }
   | { type: "social"; item: SocialCalendarItemView };
@@ -76,13 +75,16 @@ export default function CalendarPage() {
     () => (snapshot?.items ?? []).filter((item) => filter === "All" || item.contentTypeLabel === filter),
     [snapshot, filter],
   );
-  // Multi-Social Core: the ONE calendar merges the executable Instagram
-  // workflow with the approved + scheduled TikTok/YouTube planning drafts,
-  // chronologically by local date/time.
-  const socialCells = useMemo(
-    () => socialItems.filter((item) => filter === "All" || item.contentTypeLabel === filter),
-    [socialItems, filter],
-  );
+  // The shared workflow snapshot includes native channel/format identities for
+  // Marketing Plan items. Keep the extra Studio feed for approved standalone
+  // drafts only, so planned TikTok/YouTube items never render twice.
+  const socialCells = useMemo(() => {
+    const planDraftIds = new Set(snapshot?.planDraftIds ?? []);
+    return socialItems.filter((item) =>
+      !planDraftIds.has(item.draftId)
+        && (filter === "All" || item.contentTypeLabel === filter),
+    );
+  }, [socialItems, snapshot, filter]);
   const byDate = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>();
     for (const item of items) map.set(item.localDate, [...(map.get(item.localDate) ?? []), { type: "workflow", item }]);
@@ -96,6 +98,7 @@ export default function CalendarPage() {
   const view = cursor ?? monthOf(currentScheduleDate());
   const cells = useMemo(() => buildCells(view.year, view.month), [view.year, view.month]);
   const counts = useMemo(() => countByStatus(items), [items]);
+  const nativePlanCount = items.filter((item) => item.channel !== "instagram").length;
   const totalVisible = items.length + socialCells.length;
 
   return <div>
@@ -153,19 +156,22 @@ export default function CalendarPage() {
             key={event.item.draftId}
             className="flex w-full items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-[7px] px-1.5 py-1 text-left text-[9.5px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand sm:px-2 sm:text-[11px]"
             style={{ background: `${colorFor(event.item.status)}1f`, color: colorFor(event.item.status) }}
-            aria-label={`Open ${event.item.concept}`}
-            onClick={() => event.item.calendarItemId
-              ? open(<SavedCalendarDetailModal itemId={event.item.calendarItemId} />)
-              : open(<WorkflowDetail item={event.item} />)}
+            aria-label={`Open ${event.item.concept} (${event.item.contentTypeLabel}, ${event.item.statusLabel})`}
+            title={`${event.item.sourceLabel} · ${event.item.statusLabel}${event.item.mediaDisplayName ? ` · ${event.item.mediaDisplayName}` : ""}${event.item.mediaMimeType ? ` · ${event.item.mediaMimeType}` : ""}`}
+            onClick={() => event.item.channel !== "instagram"
+              ? open(<SocialEditorModal draftId={event.item.draftId} onChanged={() => void load()} />)
+              : event.item.calendarItemId
+                ? open(<SavedCalendarDetailModal itemId={event.item.calendarItemId} />)
+                : open(<WorkflowDetail item={event.item} />)}
           >
             {event.item.localTime} · {event.item.contentTypeLabel} · {event.item.concept}
           </button> : <button
             type="button"
             key={`social-${event.item.draftId}`}
             className="flex w-full items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-[7px] px-1.5 py-1 text-left text-[9.5px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand sm:px-2 sm:text-[11px]"
-            style={{ background: "#7c3aed1f", color: "#7c3aed" }}
-            aria-label={`Open ${event.item.concept} (${event.item.contentTypeLabel}, approved — publishing not connected)`}
-            title={`${event.item.contentTypeLabel} · approved — publishing not connected yet`}
+            style={{ background: `${colorForSocial(event.item.statusLabel)}1f`, color: colorForSocial(event.item.statusLabel) }}
+            aria-label={`Open ${event.item.concept} (${event.item.contentTypeLabel}, ${event.item.statusLabel})`}
+            title={`${event.item.sourceLabel} · ${event.item.statusLabel}${event.item.queueFailureMessage ? ` · ${event.item.queueFailureMessage}` : ""}${event.item.media ? ` · ${event.item.media.displayName} · ${event.item.media.mimeType}` : " · No video file attached"}`}
             onClick={() => open(<SocialEditorModal draftId={event.item.draftId} onChanged={() => void load()} />)}
           >
             {event.item.localTime} · {event.item.contentTypeLabel} · {event.item.concept}
@@ -184,8 +190,8 @@ export default function CalendarPage() {
       </Card>)}
       <Card className="flex items-center justify-between p-4">
         <div>
-          <Tag tone="t-brand">Approved · not connected</Tag>
-          <div className="mt-2 font-display text-2xl">{socialCells.length}</div>
+          <Tag tone="t-brand">TikTok / YouTube</Tag>
+          <div className="mt-2 font-display text-2xl">{nativePlanCount + socialCells.length}</div>
         </div>
       </Card>
     </div>
@@ -262,6 +268,14 @@ function colorFor(status: string) {
   if (status === "needs_approval" || status === "ready_for_review" || status === "waiting_for_media" || status === "media_delayed") return "#f2a516";
   if (status === "generating" || status === "publishing" || status === "scheduled") return "#2f6f9f";
   return "#e8481f";
+}
+function colorForSocial(statusLabel: string) {
+  const label = statusLabel.toLowerCase();
+  if (label.startsWith("published")) return "#1c8a52";
+  if (label.includes("failed") || label.includes("needs attention")) return "#c0392b";
+  if (label.startsWith("scheduled") || label.startsWith("uploading") || label.includes("processing")) return "#2f6f9f";
+  if (label.includes("waiting") || label.includes("needs a privacy") || label.includes("needs audience") || label.includes("sync not confirmed")) return "#f2a516";
+  return "#7c3aed";
 }
 function toneFor(status: string) {
   if (status === "published") return "t-green";

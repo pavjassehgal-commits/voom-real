@@ -51,7 +51,7 @@ test("Today is the operational command centre over the one workflow", async () =
   const [page, data, read_model] = await Promise.all([
     read("app/app/(shell)/today/page.tsx"), read("lib/voom/operating-data.ts"), read("lib/voom/workflow/read.ts"),
   ]);
-  for (const section of ["Publishing today", "Needs your approval", "Being generated", "Needs attention", "What happens next"]) {
+  for (const section of ["Content due today", "Needs your approval", "Being generated", "Needs attention", "What happens next"]) {
     assert.match(page, new RegExp(section));
   }
   assert.match(data, /loadWorkflowSnapshot/);
@@ -303,7 +303,7 @@ test("the rolling plan creates one cadence-driven executable item per slot, neve
 
   const slots = rolling.buildSlots({
     now: new Date("2026-09-12T05:00:00Z"), timeZone: "Asia/Dubai",
-    cadence: "daily", mode: "autopilot", goal: "awareness",
+    cadence: "daily", mode: "autopilot", goal: "awareness", selectedChannels: ["instagram"],
   });
   assert.equal(slots.length, 7);
   assert.equal(slots[0].date, "2026-09-12");
@@ -314,7 +314,7 @@ test("the rolling plan creates one cadence-driven executable item per slot, neve
     read("lib/voom/workflow/service.ts"), read("app/api/plan/route.ts"),
     read("supabase/migrations/0013_weekly_plan_recommendations.sql"), read("components/voom/operating/PlanWorkspace.tsx"),
   ]);
-  assert.match(service, /source_plan_item_key: slot\.date/);
+  assert.match(service, /source_plan_item_key: slot\.slotKey/);
   assert.match(service, /ignoreDuplicates: true/);
   assert.match(route, /runOwnerWorkflow/);
   assert.match(migration, /unique \(owner_user_id, source_plan_id, source_plan_item_key\)/);

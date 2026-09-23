@@ -133,7 +133,7 @@ test("action channels are one compact vocabulary parsed in exactly one place", a
 test("only a provider confirmation while submitting/processing can establish published", async () => {
   const {
     SOCIAL_PUBLISH_STATES, mayEstablishPublished, canTransitionPublishState,
-    publishStateForUnconnectedProvider, publishStateFromDraftStatus,
+    publishStateFromDraftStatus,
   } = await publishStateReady;
 
   assert.ok(SOCIAL_PUBLISH_STATES.length >= 8, "the lifecycle covers planning and execution");
@@ -153,14 +153,11 @@ test("only a provider confirmation while submitting/processing can establish pub
       `${state} → published only from the in-flight states`);
   }
 
-  // An approved item on an unconnected provider is connection_required —
-  // never published, never pretending to be scheduled for execution. A
-  // rejected draft maps to the canonical `blocked` state.
-  assert.equal(publishStateForUnconnectedProvider("approved"), "connection_required");
-  assert.equal(publishStateForUnconnectedProvider("draft"), "draft");
-  assert.equal(publishStateForUnconnectedProvider("rejected"), "blocked");
-  assert.equal(publishStateForUnconnectedProvider(null), "draft");
-  assert.equal(publishStateFromDraftStatus("approved"), "approved", "the bridge keeps the approval semantics");
+  // Approval remains distinct from queue scheduling and provider publication.
+  // Connection readiness is evaluated by the real publisher, not substituted
+  // for the planning or approval state.
+  assert.equal(publishStateFromDraftStatus("approved"), "approved", "approval is not publication");
+  assert.equal(publishStateFromDraftStatus("rejected"), "blocked");
 });
 
 // ─── 3. The publisher boundary is truthful ──────────────────────────────────
@@ -1005,10 +1002,9 @@ test("the social layer invents no provider endpoints, tokens or analytics", asyn
     .replace(/^[ \t]*(\/\/).*$/gm, "");
 
   // The social boundary layer still performs NO network I/O of its own and
-  // names NO provider host: the real YouTube endpoints live exclusively in
-  // lib/youtube/client.ts (built against Google's official documentation),
-  // and the real Instagram endpoints in lib/instagram/client.ts. TikTok has
-  // no integration and nothing invents one here.
+  // names NO provider host: YouTube endpoints live in lib/youtube/client.ts,
+  // TikTok endpoints in lib/tiktok/client.ts, and Instagram in
+  // lib/instagram/client.ts. Provider work remains isolated in those modules.
   for (const [name, source] of [["publisher", publisher], ["connections", connections], ["server-drafts", serverDrafts]]) {
     const code = strip(source);
     assert.doesNotMatch(code, /https?:\/\//, `${name} calls no endpoint at all`);
@@ -1057,17 +1053,19 @@ test("the social drafts layer never executes: TikTok and YouTube only mirror the
   );
 });
 
-test("approving a social campaign action records a decision only — no provider path exists", async () => {
+test("social campaign approval syncs through the durable queue boundary without a provider call", async () => {
   const server = await read("lib/campaign/server.ts");
-  // The social branch of decideCampaignAction never touches the queue.
   const socialBranch = server.slice(
     server.indexOf("if (isSocialVideoChannel(action.channel)) {"),
     server.indexOf("} else if (action.channel === \"email\") {"),
   );
   assert.ok(socialBranch.length > 0, "the social decision branch exists");
-  assert.doesNotMatch(socialBranch, /instagram_publish_queue|enqueue/, "approval never enqueues anything");
-  assert.match(socialBranch, /updateSocialDraft/, "approval goes through the truthful drafts layer");
+  assert.match(socialBranch, /updateSocialDraft/, "approval goes through the shared social-draft queue-sync boundary");
   assert.match(socialBranch, /Attach the video file before approving/, "a social action needs its asset before approval");
+  assert.match(server, /Queue-sync errors throw before this/);
+  assert.match(server, /campaign action is marked approved/,
+    "a queue-sync failure cannot become a successful campaign approval response");
+  assert.doesNotMatch(socialBranch, /publishSocialContent|fetch\(|startYouTubeUpload|startTikTokPost/, "approval never performs the provider call");
 });
 
 test("the coordinator understands every channel and ui_read stays strictly read-only", async () => {
@@ -1099,7 +1097,8 @@ test("the ONE Studio and calendar surfaces present every channel truthfully", as
   assert.match(studio, /SocialEditorModal/, "the Studio opens the social editor for social drafts");
   assert.match(studio, /isSocialVideoDraftKind/, "the Studio routes by kind");
   assert.match(calendar, /YouTube Short|YouTube Video/, "the calendar filters include the social formats");
-  assert.match(calendar, /publishing not connected/i, "social cells say the truth");
+  assert.match(calendar, /statusLabel/, "social cells use the authoritative queue-derived state");
+  assert.match(calendar, /sourceLabel|source: "/, "social cells expose their plan or studio source");
   // The tiles read the REAL connection rows — a connection is claimed only
   // when the provider's row says so, and an unconfigured deployment still
   // says Planning only rather than implying anything.

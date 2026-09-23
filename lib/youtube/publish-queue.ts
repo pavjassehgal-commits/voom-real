@@ -221,15 +221,17 @@ export async function listYouTubePublishQueue(db: SupabaseClient, ownerId: strin
 }
 
 export async function getYouTubeQueueItemForDraft(db: SupabaseClient, ownerId: string, draftId: string): Promise<YouTubeQueueRow | null> {
-  const { data } = await db.from(YOUTUBE_PUBLISH_QUEUE_TABLE).select(YOUTUBE_QUEUE_COLUMNS)
+  const { data, error } = await db.from(YOUTUBE_PUBLISH_QUEUE_TABLE).select(YOUTUBE_QUEUE_COLUMNS)
     .eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
+  if (error) throw new Error("youtube_publish_queue_read_failed");
   return normalizeRow(data);
 }
 
 export async function getYouTubeQueueItemsForDrafts(db: SupabaseClient, ownerId: string, draftIds: string[]): Promise<Map<string, YouTubeQueueRow>> {
   if (!draftIds.length) return new Map();
-  const { data } = await db.from(YOUTUBE_PUBLISH_QUEUE_TABLE).select(YOUTUBE_QUEUE_COLUMNS)
+  const { data, error } = await db.from(YOUTUBE_PUBLISH_QUEUE_TABLE).select(YOUTUBE_QUEUE_COLUMNS)
     .eq("owner_user_id", ownerId).in("draft_id", draftIds);
+  if (error) throw new Error("youtube_publish_queue_read_failed");
   const map = new Map<string, YouTubeQueueRow>();
   for (const row of rowsOf(data)) map.set(row.draft_id, row);
   return map;
