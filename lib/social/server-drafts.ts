@@ -243,6 +243,29 @@ export async function getSocialDraft(
   return toSocialDraftView(row, (asset as Record<string, unknown> | null) ?? null, queue);
 }
 
+/**
+ * Withdraws a TikTok/YouTube draft from its durable provider queue before a
+ * campaign RPC is allowed to rewrite the linked action, draft, Calendar, or
+ * review state. Cancellation is atomic at the queue RPC; a false/ambiguous
+ * result is verified by rereading the row and fails closed.
+ */
+export async function cancelSocialDraftQueueBeforeContentMutation(
+  admin: AdminClient,
+  ownerId: string,
+  draftId: string,
+): Promise<void> {
+  const draft = await getSocialDraft(admin, ownerId, draftId);
+  if (!draft) throw new Error("social_draft_not_found");
+  if (isProviderOwnedSocialQueue(draft.channel, draft.queueStatus)) {
+    throw new Error("social_draft_provider_owned");
+  }
+  if (draft.channel === "youtube") {
+    await cancelAndVerifyYouTubeQueue(admin, ownerId, draftId);
+  } else {
+    await cancelAndVerifyTikTokQueue(admin, ownerId, draftId);
+  }
+}
+
 /** Lists the owner's TikTok/YouTube drafts, newest first. */
 export async function listSocialDrafts(admin: AdminClient, ownerId: string): Promise<SocialDraftView[]> {
   const { data, error } = await admin.from("mara_drafts").select(DRAFT_COLUMNS)
@@ -404,21 +427,31 @@ export interface UpdateSocialDraftInput {
 }
 
 async function cancelAndVerifyYouTubeQueue(admin: AdminClient, ownerId: string, draftId: string): Promise<void> {
+  const before = await getYouTubeQueueItemForDraft(admin, ownerId, draftId);
+  if (before && isProviderOwnedSocialQueue("youtube", before.status)) {
+    throw new Error("social_draft_provider_owned");
+  }
   if (await cancelYouTubePublishItem(admin, ownerId, draftId)) return;
   const remaining = await getYouTubeQueueItemForDraft(admin, ownerId, draftId);
   if (remaining && isProviderOwnedSocialQueue("youtube", remaining.status)) {
     throw new Error("social_draft_provider_owned");
   }
-  if (remaining) throw new Error("social_draft_queue_cancel_not_confirmed");
+  // A false cancellation is safe only when no queue row existed at the start
+  // and none appeared afterward. A vanished previously observed row is ambiguous.
+  if (before || remaining) throw new Error("social_draft_queue_cancel_not_confirmed");
 }
 
 async function cancelAndVerifyTikTokQueue(admin: AdminClient, ownerId: string, draftId: string): Promise<void> {
+  const before = await getTikTokQueueItemForDraft(admin, ownerId, draftId);
+  if (before && isProviderOwnedSocialQueue("tiktok", before.status)) {
+    throw new Error("social_draft_provider_owned");
+  }
   if (await cancelTikTokPublishItem(admin, ownerId, draftId)) return;
   const remaining = await getTikTokQueueItemForDraft(admin, ownerId, draftId);
   if (remaining && isProviderOwnedSocialQueue("tiktok", remaining.status)) {
     throw new Error("social_draft_provider_owned");
   }
-  if (remaining) throw new Error("social_draft_queue_cancel_not_confirmed");
+  if (before || remaining) throw new Error("social_draft_queue_cancel_not_confirmed");
 }
 
 /**
@@ -438,11 +471,17 @@ async function cancelAndVerifyTikTokQueue(admin: AdminClient, ownerId: string, d
  * own confirmation (YouTube 'processed' / TikTok PUBLISH_COMPLETE) ever
  * establishes Published.
  */
+export interface UpdateSocialDraftOptions {
+  /** Trusted server caller already confirmed cancellation before a parent mutation. */
+  queueCancellationConfirmed?: boolean;
+}
+
 export async function updateSocialDraft(
   admin: AdminClient,
   ownerId: string,
   draftId: string,
   input: UpdateSocialDraftInput,
+  options: UpdateSocialDraftOptions = {},
 ): Promise<SocialDraftView | null> {
   const existing = await getSocialDraft(admin, ownerId, draftId);
   if (!existing) return null;
@@ -482,9 +521,11 @@ export async function updateSocialDraft(
   };
 
   const needsQueueCancellation = status !== "approved" || !scheduledAt;
-  if (needsQueueCancellation && existing.channel === "youtube") {
+  const previouslyConfirmedCancellation = options.queueCancellationConfirmed === true
+    && existing.queueStatus === "cancelled";
+  if (needsQueueCancellation && !previouslyConfirmedCancellation && existing.channel === "youtube") {
     await cancelAndVerifyYouTubeQueue(admin, ownerId, draftId);
-  } else if (needsQueueCancellation && existing.channel === "tiktok") {
+  } else if (needsQueueCancellation && !previouslyConfirmedCancellation && existing.channel === "tiktok") {
     await cancelAndVerifyTikTokQueue(admin, ownerId, draftId);
   }
 

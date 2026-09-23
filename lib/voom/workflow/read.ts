@@ -13,8 +13,8 @@ import {
   type SocialMediaChannel,
 } from "@/lib/social/channels";
 import { tikTokQueueLabel } from "@/lib/social/server-drafts";
-import { getTikTokQueueItemsForDrafts, type TikTokQueueRow } from "@/lib/tiktok/publish-queue";
-import { getYouTubeQueueItemsForDrafts, type YouTubeQueueRow } from "@/lib/youtube/publish-queue";
+import { getTikTokQueueItemsForDrafts } from "@/lib/tiktok/publish-queue";
+import { getYouTubeQueueItemsForDrafts } from "@/lib/youtube/publish-queue";
 import { youTubeQueueLabel } from "@/lib/social/server-drafts";
 import { normalizeSelectedSocialChannels, parseWorkflowSlotIdentity, type PlannedContentType } from "./channel-planner";
 import {
@@ -293,7 +293,7 @@ export async function loadWorkflowSnapshot(
   const today = localDate(now, timeZone);
   const cadence = normalizeCadence(business?.content_frequency);
   
-  const planId = normalizePlan((business as any)?.plan);
+  const planId = normalizePlan((business as { plan?: string | null } | null)?.plan);
   let mode = business?.automation_level === "manual" || business?.automation_level === "autopilot"
     ? business.automation_level : "assisted";
   if (!canUseAutomationMode(planId, mode)) {

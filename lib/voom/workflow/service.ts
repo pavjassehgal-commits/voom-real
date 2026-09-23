@@ -35,7 +35,6 @@ import {
   normalizeSelectedSocialChannels,
   parseWorkflowSlotIdentity,
   type ChannelCoverage,
-  type ExistingPlanAssignment,
   type PlannedContentType,
 } from "./channel-planner";
 
@@ -117,7 +116,7 @@ export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInp
   const timeZone = accountTimezone((business as { timezone?: string | null }).timezone);
   const cadence = input.cadence ?? normalizeCadence(business.content_frequency);
   
-  const planId = normalizePlan((business as any).plan);
+  const planId = normalizePlan((business as { plan?: string | null }).plan);
   let mode = normalizeAutomationMode(business.automation_level);
   if (!canUseAutomationMode(planId, mode)) {
     mode = planId === "pro" ? "assisted" : "manual";

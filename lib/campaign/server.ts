@@ -23,7 +23,11 @@ import {
 } from "@/lib/mara/reel-production";
 import { checkScheduleInstant } from "@/lib/voom/schedule-guard";
 import { SOCIAL_PUBLISH_STATE_LABELS, publishStateFromDraftStatus, publishStateFromTikTokQueue, publishStateFromYouTubeQueue } from "@/lib/social/publish-state";
-import { getSocialDraft, updateSocialDraft } from "@/lib/social/server-drafts";
+import {
+  cancelSocialDraftQueueBeforeContentMutation,
+  getSocialDraft,
+  updateSocialDraft,
+} from "@/lib/social/server-drafts";
 import { canUseAutopilot, normalizePlan, type PlanId } from "@/lib/billing/plans";
 import { accountTimezone, daysBetween, isoToLocalDate, localToUtcIso } from "@/lib/voom/timezone";
 import { generateCampaignIntelligence, type CampaignIntelligenceDeps } from "./intelligence";
@@ -1591,7 +1595,7 @@ export async function editCampaignActionContent(
   patch.contentSource = "edited";
   patch.safetyBlockers = evaluateContentSafety(action, patch, scheduledFor ?? action.scheduled_for);
 
-  return writeActionContent(admin, ownerId, action.id, patch, null, false);
+  return writeActionContent(admin, ownerId, action, patch, null, false);
 }
 
 export interface RegenerateCampaignActionInput {
@@ -1766,6 +1770,7 @@ export async function regenerateCampaignAction(
       cta: next.cta ?? null,
       visualDirection: next.visualDirection ?? null,
       script: next.script ?? [],
+      ...(typeof next.description === "string" ? { description: next.description } : {}),
     };
   }
   patch.scheduledFor = next.scheduledFor;
@@ -1774,7 +1779,7 @@ export async function regenerateCampaignAction(
   // Reset review: the content is new, so the previous approval no longer
   // describes it. The RPC handles the email child status and the Instagram
   // mirror/queue withdrawal — published or in-flight items were refused above.
-  return writeActionContent(admin, ownerId, action.id, patch, input.idempotencyKey, true);
+  return writeActionContent(admin, ownerId, action, patch, input.idempotencyKey, true);
 }
 
 async function loadCampaignAction(
@@ -1835,14 +1840,31 @@ async function actionContentLock(admin: Admin, ownerId: string, action: Campaign
 async function writeActionContent(
   admin: Admin,
   ownerId: string,
-  actionId: string,
+  action: CampaignActionRecord,
   patch: Record<string, unknown>,
   idempotencyKey: string | null,
   resetReview: boolean,
 ): Promise<CampaignActionContentResult> {
+  // Campaign RPC updates the action, linked social draft, Calendar mirror and
+  // review state as one database operation. For TikTok/YouTube, first withdraw
+  // the old queue row through the shared social-draft boundary. Its cancellation
+  // RPC atomically wins against a worker claim or returns a verifiable conflict.
+  if (isSocialVideoChannel(action.channel)) {
+    if (!action.draft_id) return { ok: false, blockers: ["That social draft was not found; no campaign changes were made."] };
+    try {
+      await cancelSocialDraftQueueBeforeContentMutation(admin, ownerId, action.draft_id);
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "";
+      const blocker = code === "social_draft_provider_owned"
+        ? "The provider already owns this video, so it cannot be edited or regenerated. No campaign, draft, Calendar or review changes were made."
+        : "Voom couldn't confirm durable queue cancellation. No campaign, draft, Calendar or review changes were made; retry when the queue is available.";
+      return { ok: false, blockers: [blocker] };
+    }
+  }
+
   const { data, error } = await admin.rpc("update_campaign_action_content", {
     p_owner_user_id: ownerId,
-    p_action_id: actionId,
+    p_action_id: action.id,
     p_patch: patch,
     p_idempotency_key: idempotencyKey,
     p_reset_review: resetReview,
@@ -1873,7 +1895,7 @@ async function writeActionContent(
       script: content.script ?? socialDraft.script,
       scheduledAt: updatedAction.scheduled_for ?? socialDraft.scheduledAt,
       ...(resetReview ? { decision: "draft" as const } : {}),
-    });
+    }, { queueCancellationConfirmed: true });
     if (!synced) throw new Error("campaign_social_draft_sync_failed");
   }
   return { ok: true, action: updatedAction };
