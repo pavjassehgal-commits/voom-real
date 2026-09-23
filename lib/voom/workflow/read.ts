@@ -16,7 +16,8 @@ import { tikTokQueueLabel } from "@/lib/social/server-drafts";
 import { getTikTokQueueItemsForDrafts } from "@/lib/tiktok/publish-queue";
 import { getYouTubeQueueItemsForDrafts } from "@/lib/youtube/publish-queue";
 import { youTubeQueueLabel } from "@/lib/social/server-drafts";
-import { normalizeSelectedSocialChannels, parseWorkflowSlotIdentity, type PlannedContentType } from "./channel-planner";
+import { normalizeSelectedSocialChannels, parseWorkflowSlotIdentity, type ExistingPlanAssignment, type PlannedContentType } from "./channel-planner";
+import { evaluatePlanCoverage, type PlanCoverage } from "./rolling-plan";
 import {
   contentTypeLabel,
   deriveWorkflowStatus,
@@ -123,11 +124,17 @@ export interface WorkflowSnapshot {
   /** Every `mara_drafts` id attached to the active plan, including rows the horizon filter hides. */
   planDraftIds: string[];
   items: WorkflowView[];
+  /**
+   * Server-computed coverage of the LIVE rolling horizon, recomputed on every
+   * read: `complete` means a Replenish right now would create nothing.
+   */
+  coverage: PlanCoverage;
 }
 
 export const EMPTY_SNAPSHOT: WorkflowSnapshot = {
   timeZone: "Asia/Dubai", today: "", cadence: "3x_week", cadenceLabel: CADENCE_LABELS["3x_week"],
   mode: "assisted", selectedChannels: [], planId: null, planGoal: null, planValidFrom: null, planValidUntil: null, planDraftIds: [], items: [],
+  coverage: { status: "no_channels", horizonStart: "", horizonEnd: "", horizonDays: DEFAULT_HORIZON_DAYS, slots: 0, uncovered: 0, uncoveredDates: [] },
 };
 
 /** The new slot semantics: `source_plan_item_key` holds a real local date. */
@@ -174,6 +181,32 @@ function pairForDraftRow(row: {
     case "youtube_video": return { channel: "youtube", format: "video" };
     default: return null;
   }
+}
+
+/**
+ * The plan's existing assignments in the engine's own shape: the stable slot
+ * identity, the immutable native pair and the protection facts. Rows without a
+ * readable identity (legacy ordinal keys) never cover a slot, exactly as in
+ * the engine.
+ */
+function planAssignmentsForRows(
+  rows: Record<string, unknown>[],
+  protectedDraftIds: ReadonlySet<string>,
+): ExistingPlanAssignment[] {
+  return rows.flatMap((row) => {
+    const pair = parseWorkflowSlotIdentity(row.source_plan_item_key) ? pairForDraftRow(row) : null;
+    if (!pair) return [];
+    const draftId = String(row.id);
+    const status = String(row.status ?? "draft");
+    return [{
+      draftId,
+      slotKey: String(row.source_plan_item_key),
+      channel: pair.channel,
+      format: pair.format,
+      status,
+      protected: status === "approved" || protectedDraftIds.has(draftId),
+    }];
+  });
 }
 
 function nativeWorkflowStatus(draftStatus: string, queueStatus: string | null): WorkflowStatus {
@@ -305,15 +338,23 @@ export async function loadWorkflowSnapshot(
     .eq("owner_user_id", ownerId).eq("status", "active")
     .order("created_at", { ascending: false }).limit(1).maybeSingle();
 
+  const selectedChannels = normalizeSelectedSocialChannels(business?.preferred_channels);
+  // Coverage of the live horizon runs the engine's own reconciliation and slot
+  // planning over the plan's existing items (see `evaluatePlanCoverage`), so
+  // "up to date" means exactly "a Replenish now would create nothing".
+  const coverageFor = (existing: ExistingPlanAssignment[]) => evaluatePlanCoverage({
+    now, timeZone, cadence, horizonDays: options.horizonDays, selectedChannels, existing,
+  });
   const snapshot: WorkflowSnapshot = {
     timeZone, today, cadence, cadenceLabel: CADENCE_LABELS[cadence], mode,
-    selectedChannels: normalizeSelectedSocialChannels(business?.preferred_channels),
+    selectedChannels,
     planId: plan?.id ? String(plan.id) : null,
     planGoal: plan?.business_goal ? String(plan.business_goal) : null,
     planValidFrom: plan?.valid_from ? String(plan.valid_from) : null,
     planValidUntil: plan?.valid_until ? String(plan.valid_until) : null,
     planDraftIds: [],
     items: [],
+    coverage: coverageFor([]),
   };
   if (!snapshot.planId) return snapshot;
 
@@ -337,6 +378,10 @@ export async function loadWorkflowSnapshot(
       && isValidPublishInstant(row.proposed_publish_at)
       && pairForDraftRow(row) !== null,
   );
+  // Like the engine's own `listItems`, coverage reads every identity-bearing
+  // plan row (visible or not); protection is refined below once the approval
+  // and queue facts are loaded.
+  snapshot.coverage = coverageFor(planAssignmentsForRows(allRows, new Set()));
   if (!rows.length) return snapshot;
 
   const ids = rows.map((row) => String(row.id));
@@ -347,7 +392,7 @@ export async function loadWorkflowSnapshot(
     admin.from("mara_media_generations").select("draft_id,status,media_type,error_code,created_at,updated_at").eq("owner_user_id", ownerId).in("draft_id", ids).order("updated_at", { ascending: true }),
     admin.from("instagram_publish_queue").select("draft_id,status,instagram_media_id,failure_message,scheduled_at").eq("owner_user_id", ownerId).in("draft_id", ids),
     admin.from("content_calendar_items").select("id,source_draft_id").eq("owner_user_id", ownerId).in("source_draft_id", ids),
-    admin.from("mara_pending_actions").select("id,sanitized_arguments,status")
+    admin.from("mara_pending_actions").select("id,sanitized_arguments,new_value,status")
       .eq("owner_user_id", ownerId).eq("tool_name", "propose_calendar_item").in("status", ["pending", "failed"]),
     admin.from("mara_pending_actions").select("id,new_value,sanitized_arguments,status,updated_at")
       .eq("owner_user_id", ownerId).eq("tool_name", "choose_reel_production").in("status", ["pending", "failed"])
@@ -384,6 +429,20 @@ export async function loadWorkflowSnapshot(
     const draftId = (row.sanitized_arguments as { sourceDraftId?: unknown } | null)?.sourceDraftId;
     if (typeof draftId === "string") approvalIds.set(draftId, String(row.id));
   }
+  // The engine's `listItems` protection rule, verbatim: approved, an open
+  // approval card (matched on `new_value ?? sanitized_arguments`), or a live
+  // (non-cancelled) provider queue row. Queue rows exist only for scheduled
+  // drafts, so the identity + publish-time rows queried above include them all.
+  const protectedDraftIds = new Set<string>();
+  for (const row of approvals.data ?? []) {
+    const value = ((row as { new_value?: unknown }).new_value ?? row.sanitized_arguments ?? null) as { sourceDraftId?: unknown } | null;
+    if (typeof value?.sourceDraftId === "string") protectedDraftIds.add(value.sourceDraftId);
+  }
+  for (const queue of [publish, tiktokQueue, youtubeQueue] as Map<string, { status?: unknown }>[]) {
+    for (const [draftId, row] of queue) if (row.status !== "cancelled") protectedDraftIds.add(draftId);
+  }
+  snapshot.coverage = coverageFor(planAssignmentsForRows(allRows, protectedDraftIds));
+
   // The newest open reel-production action per draft carries its live state.
   interface ProductionActionRow { id: string; new_value?: Record<string, unknown> | null; sanitized_arguments?: Record<string, unknown> | null; status: string }
   const productionByDraft = new Map<string, ProductionActionRow>();
@@ -557,6 +616,27 @@ function productionView(
     missingAssetRequest: typeof value?.missingAssetRequest === "string" ? value.missingAssetRequest : capability.missingAssetRequest,
     script: value && typeof value.script === "string" ? value.script : script,
   };
+}
+
+/**
+ * Every draft id attached to the owner's active plan, or null when a read
+ * fails. POST /api/plan reads this before and after a failed Replenish, so
+ * "your existing plan hasn't been changed" is verified — never assumed.
+ */
+export async function loadActivePlanDraftIds(admin: AdminClient, ownerId: string): Promise<string[] | null> {
+  try {
+    const { data: plan, error } = await admin.from("marketing_plans").select("id")
+      .eq("owner_user_id", ownerId).eq("status", "active")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (error) return null;
+    if (!plan?.id) return [];
+    const { data: drafts, error: draftsError } = await admin.from("mara_drafts").select("id")
+      .eq("owner_user_id", ownerId).eq("source_plan_id", String(plan.id));
+    if (draftsError) return null;
+    return (drafts ?? []).map((row) => String(row.id)).sort();
+  } catch {
+    return null;
+  }
 }
 
 /** Items whose local publish date is the real current local date. */

@@ -1,7 +1,9 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { mediaSpendRunNotice } from "@/lib/mara/media-spend";
-import { loadWorkflowSnapshot } from "@/lib/voom/workflow/read";
+import { loadActivePlanDraftIds, loadWorkflowSnapshot } from "@/lib/voom/workflow/read";
 import { runOwnerWorkflow } from "@/lib/voom/workflow/service";
+import { failedPlanRunOutcome, planRunOutcome } from "@/lib/voom/workflow/plan-lifecycle";
+import type { RollingPlanResult } from "@/lib/voom/workflow/rolling-plan";
 import { normalizeCadence, CADENCES } from "@/lib/voom/cadence";
 import { createAdminClient } from "@/utils/supabase/admin";
 
@@ -35,6 +37,15 @@ export async function GET() {
  *               before approval; no automatic paid media.
  *   Autopilot → may generate media within the existing budget/permission
  *               guards, then safety-checks before approval and scheduling.
+ *
+ * Every settled request carries `outcome` (see lib/voom/workflow/plan-lifecycle.ts),
+ * computed from the server's own run so the client never guesses:
+ *   200 "added"        uncovered slots were filled; `added` + native formats
+ *   200 "up_to_date"   zero uncovered slots; nothing generated or duplicated
+ *   200 "no_channels"  no supported social channel selected; no Instagram fallback
+ *   503 "failed"       a slot could not be persisted or the run threw. Never a
+ *                      success; `planUnchanged` is true only when the active
+ *                      plan was re-read and verified identical to before.
  */
 export async function POST(request: Request) {
   const user = await getCurrentUser();
@@ -67,17 +78,35 @@ export async function POST(request: Request) {
     return Response.json({ error: "Voom is already building your content. Give it a few minutes." }, { status: 429 });
   }
 
+  // Read before the run so a failure can be verified against the real plan.
+  const draftIdsBefore = await loadActivePlanDraftIds(admin, user.id);
+  let run: RollingPlanResult | null = null;
   try {
     // An explicit owner request is the "replenish" trigger. The service reads
     // the account's saved mode itself; Manual stays Manual throughout.
-    const run = await runOwnerWorkflow(admin, { ownerId: user.id, cadence, stage, trigger: "replenish" });
-    const snapshot = await loadWorkflowSnapshot(admin, user.id);
-    // AI Media Spend Control: a refused automatic generation is NOT a failed
-    // run — the plan, copy and drafts were created and only the media waits.
-    // The owner is told the truthful reason (disabled / budget reached).
-    const mediaSpendNotice = mediaSpendRunNotice(run.failures);
-    return Response.json({ run, snapshot, mediaSpendNotice });
+    run = await runOwnerWorkflow(admin, { ownerId: user.id, cadence, stage, trigger: "replenish" });
   } catch {
-    return Response.json({ error: "Voom couldn't build your plan right now. Your existing work is safe—please retry." }, { status: 503 });
+    run = null;
   }
+  const outcome = run ? planRunOutcome(run) : null;
+  if (!run || !outcome || outcome.status === "failed") {
+    // Never a success: not every uncovered slot was persisted, or the run
+    // threw. The outcome says what the re-read plan shows actually changed,
+    // and the snapshot (when readable) is the plan exactly as it now stands.
+    const draftIdsAfter = await loadActivePlanDraftIds(admin, user.id);
+    const snapshot = await loadWorkflowSnapshot(admin, user.id).catch(() => null);
+    return Response.json({
+      error: "Voom couldn't build your plan right now. Your existing work is safe—please retry.",
+      outcome: failedPlanRunOutcome({ run, before: draftIdsBefore, after: draftIdsAfter }),
+      snapshot,
+    }, { status: 503 });
+  }
+  // The run itself succeeded. A failed re-read of the view must not turn that
+  // into a reported failure, so the snapshot is null and the client re-reads.
+  const snapshot = await loadWorkflowSnapshot(admin, user.id).catch(() => null);
+  // AI Media Spend Control: a refused automatic generation is NOT a failed
+  // run — the plan, copy and drafts were created and only the media waits.
+  // The owner is told the truthful reason (disabled / budget reached).
+  const mediaSpendNotice = mediaSpendRunNotice(run.failures);
+  return Response.json({ run, snapshot, mediaSpendNotice, outcome });
 }

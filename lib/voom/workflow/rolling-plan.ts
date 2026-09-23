@@ -22,7 +22,7 @@ import {
   type Cadence,
   type ContentType,
 } from "../cadence.ts";
-import { formatLocalTime, isoToLocalDate, localDate, localMinutes, localToUtcIso } from "../timezone.ts";
+import { addDays, formatLocalTime, isoToLocalDate, localDate, localMinutes, localToUtcIso } from "../timezone.ts";
 import type { SocialFormat, SocialMediaChannel } from "@/lib/social/channels";
 import {
   normalizeSelectedSocialChannels,
@@ -181,8 +181,14 @@ export interface RollingPlanResult {
   failures: { slot: string; stage: string; code: string }[];
 }
 
+/** The only inputs slot planning reads; mode, goal, stage and trigger never move a slot. */
+export type SlotPlanningInput = Pick<
+  RollingPlanInput,
+  "now" | "timeZone" | "cadence" | "horizonDays" | "selectedChannels" | "existingAssignments" | "channelCoverage"
+>;
+
 /** Computes canonical slots for the rolling horizon. No connection lookup occurs. */
-export function buildSlots(input: RollingPlanInput): PlanSlot[] {
+export function buildSlots(input: SlotPlanningInput): PlanSlot[] {
   const horizon = input.horizonDays ?? DEFAULT_HORIZON_DAYS;
   const today = localDate(input.now, input.timeZone);
   const nowMinutes = localMinutes(input.now, input.timeZone);
@@ -224,6 +230,57 @@ export function buildSlots(input: RollingPlanInput): PlanSlot[] {
     });
   }
   return slots.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * How completely the plan covers the LIVE rolling horizon right now.
+ *
+ * `complete` means a Replenish at this moment would create nothing: every
+ * cadence slot in [today, today + horizonDays) that still has a valid publish
+ * time already has an eligible plan item. `incomplete` lists the open slots.
+ * `no_channels` means nothing can be planned until a social channel is chosen.
+ */
+export interface PlanCoverage {
+  status: "complete" | "incomplete" | "no_channels";
+  /** First and last local date of the live rolling horizon. */
+  horizonStart: string;
+  horizonEnd: string;
+  horizonDays: number;
+  /** Cadence slots in the horizon that still have a valid publish time. */
+  slots: number;
+  /** Slots with no eligible plan item — exactly what Replenish would create. */
+  uncovered: number;
+  uncoveredDates: string[];
+}
+
+/**
+ * Evaluates coverage with the SAME slot planning `ensureRollingPlan` runs,
+ * without calling any port: `buildSlots` assigns the horizon over the plan's
+ * existing items, and a slot counts as covered only when an existing item
+ * already holds its stable slot identity — exactly the engine's reuse test.
+ * Items the run would detach (unexecuted work on a channel that is no longer
+ * selected, unprotected same-date duplicates) never win a slot in that
+ * assignment, so they never mark a slot covered; protected work always does.
+ * Pure, so it is recomputed on every read and moves with the rolling window.
+ */
+export function evaluatePlanCoverage(input: SlotPlanningInput & { existing: ExistingPlanAssignment[] }): PlanCoverage {
+  const horizonDays = input.horizonDays ?? DEFAULT_HORIZON_DAYS;
+  const today = localDate(input.now, input.timeZone);
+  const window = { horizonStart: today, horizonEnd: addDays(today, horizonDays - 1), horizonDays };
+  const selectedChannels = normalizeInputChannels(input.selectedChannels);
+  if (!selectedChannels.length) {
+    return { status: "no_channels", ...window, slots: 0, uncovered: 0, uncoveredDates: [] };
+  }
+  const slots = buildSlots({ ...input, selectedChannels, existingAssignments: input.existing });
+  const heldKeys = new Set(input.existing.map((item) => item.slotKey));
+  const open = slots.filter((slot) => !heldKeys.has(slot.slotKey));
+  return {
+    status: open.length ? "incomplete" : "complete",
+    ...window,
+    slots: slots.length,
+    uncovered: open.length,
+    uncoveredDates: open.map((slot) => slot.date),
+  };
 }
 
 export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingPlanInput): Promise<RollingPlanResult> {
