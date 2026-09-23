@@ -23,9 +23,10 @@ export const dynamic = "force-dynamic";
  * workflow item from the ONE executable plan — never a disconnected marketing
  * recommendation — and every date is the account's real current local date.
  *
- * Multi-Social Core: Today also lists the approved TikTok/YouTube planning
- * drafts that are dated today, labelled truthfully — they are approved inside
- * Voom, and publishing those channels is not connected yet.
+ * Multi-Social Core: Today also lists the approved TikTok/YouTube drafts that
+ * are dated today, labelled truthfully — approved inside Voom, publishing
+ * through their durable provider queues, and Published only after the
+ * provider itself confirms.
  */
 export default async function TodayPage() {
   const data = await getOperatingData();

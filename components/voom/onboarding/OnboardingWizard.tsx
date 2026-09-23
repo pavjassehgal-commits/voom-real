@@ -1,10 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useVoomActions, useVoomState } from "@/lib/voom/store";
 import { detectIndustry } from "@/lib/voom/demoData";
 import {
-  OB_COLORS,
   OB_STEPS,
   OB_TONE,
   Q_AUTO,
@@ -17,7 +16,7 @@ import {
   Q_PERM,
 } from "@/lib/voom/onboardingData";
 import { Icon } from "../icons";
-import { Btn, Chip, Orb, Textarea } from "../ui/primitives";
+import { Btn, Chip, Orb, Tag, Textarea } from "../ui/primitives";
 import { AnalyzingScreen } from "./AnalyzingScreen";
 import Logo from "@/app/components/Logo";
 
@@ -127,7 +126,7 @@ export function OnboardingWizard() {
           {st === 4 && <StepVoiceChannels />}
           {st === 5 && <StepBudgetPace />}
           {st === 6 && <StepAutomation />}
-          {st === 7 && <StepConnect igConnected={igConnected} onConnect={() => goTo("instagram")} />}
+          {st === 7 && <StepConnect igConnected={igConnected} />}
         </div>
       </div>
 
@@ -264,14 +263,18 @@ function StepBasics() {
         </label>
         <label className="min-w-[200px] flex-1">
           <span className="mb-1.5 block text-[12.5px] font-semibold text-text-2">
-            Website or page <span className="text-text-3">(optional)</span>
+            Website <span className="text-text-3">(optional)</span>
           </span>
           <input
             className="h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px]"
-            placeholder="yourbusiness.ae"
+            placeholder="https://yourbusiness.ae"
+            inputMode="url"
             value={onboard.site}
             onChange={(e) => setOnboardField("site", e.target.value)}
           />
+          <span className="mt-1.5 block text-xs text-text-3">
+            Used in your marketing emails as the website link and default button destination. Change it any time in Settings → Email identity.
+          </span>
         </label>
       </div>
       <QBlock title="1. What kind of business is this?" help="Pick the closest match.">
@@ -317,7 +320,7 @@ function StepAudienceGoal() {
 
 function StepVoiceChannels() {
   const { onboard } = useVoomState();
-  const { toggleOnboardArray, setOnboardField } = useVoomActions();
+  const { toggleOnboardArray } = useVoomActions();
   return (
     <div>
       <h1 className="font-display text-2xl font-bold tracking-tight">How you sound, and where</h1>
@@ -331,24 +334,15 @@ function StepVoiceChannels() {
           ))}
         </div>
       </QBlock>
-      <QBlock title="5. Which marketing channels do you use?" help="Choose all that apply.">
+      <QBlock
+        title="5. Which channels should MARA plan for?"
+        help="Voom publishes to Instagram, TikTok and YouTube through your connected accounts and sends email campaigns and flows. Choose all that apply."
+      >
         <div className="flex flex-wrap gap-2">
           {Q_CHANNELS.map((c) => (
             <Chip key={c} active={onboard.channels.includes(c)} onClick={() => toggleOnboardArray("channels", c)}>
               {c}
             </Chip>
-          ))}
-        </div>
-      </QBlock>
-      <QBlock title="Brand colour" help="Used across your previews.">
-        <div className="flex flex-wrap gap-2.5">
-          {OB_COLORS.map((c) => (
-            <button
-              key={c}
-              onClick={() => setOnboardField("color", c)}
-              className={`h-11 w-11 rounded-xl border-[3px] transition ${onboard.color === c ? "scale-[1.06] border-text" : "border-transparent"}`}
-              style={{ background: c }}
-            />
           ))}
         </div>
       </QBlock>
@@ -444,48 +438,102 @@ function StepAutomation() {
   );
 }
 
-function StepConnect({ igConnected, onConnect }: { igConnected: boolean; onConnect: () => void }) {
-  const { toast } = useVoomActions();
-  const rows: [string, string, string, boolean][] = [
-    ["ig", "Instagram", "Professional account connection", igConnected],
-    ["mail", "Email", "Campaigns, flows & subscriber lists", false],
+/**
+ * The last step tells the truth about where each channel connects. The
+ * workspace only exists once "Finish setup" saves it, and every channel page
+ * lives behind that gate — so no "Connect" button can work from inside the
+ * wizard, and none is offered. Instagram, TikTok and YouTube connect through
+ * their own real authorization flows after setup; email has no account to
+ * connect at all — it is campaigns, automated flows and a sender identity
+ * configured in Settings (the Voom-managed sender address is used until the
+ * business verifies its own domain).
+ */
+type ChannelStatus = { connected: boolean; configured: boolean };
+
+const CHANNEL_STATUS_ENDPOINTS: Record<"instagram" | "tiktok" | "youtube", string> = {
+  instagram: "/api/integrations/instagram/status",
+  tiktok: "/api/integrations/tiktok/status",
+  youtube: "/api/integrations/youtube/status",
+};
+
+function StepConnect({ igConnected }: { igConnected: boolean }) {
+  const [status, setStatus] = useState<Partial<Record<keyof typeof CHANNEL_STATUS_ENDPOINTS, ChannelStatus>>>({});
+
+  useEffect(() => {
+    let active = true;
+    for (const [channel, endpoint] of Object.entries(CHANNEL_STATUS_ENDPOINTS) as [keyof typeof CHANNEL_STATUS_ENDPOINTS, string][]) {
+      void fetch(endpoint, { cache: "no-store" })
+        .then(async (response) => {
+          if (!response.ok) return;
+          const body = (await response.json()) as { connection?: { connected?: boolean; configured?: boolean } };
+          if (!active || !body.connection) return;
+          const next: ChannelStatus = { connected: Boolean(body.connection.connected), configured: Boolean(body.connection.configured) };
+          setStatus((current) => ({ ...current, [channel]: next }));
+        })
+        .catch(() => { /* Unknown status is shown neutrally — never as connected. */ });
+    }
+    return () => { active = false; };
+  }, []);
+
+  const social: { key: keyof typeof CHANNEL_STATUS_ENDPOINTS; icon: string; name: string; desc: string; page: string; background: string }[] = [
+    { key: "instagram", icon: "ig", name: "Instagram", desc: "Professional account · posts, Reels and Stories publish through your connected account.", page: "the Instagram page", background: "linear-gradient(45deg,#f9ce34,#ee2a7b,#6228d7)" },
+    { key: "tiktok", icon: "film", name: "TikTok", desc: "Videos publish through Voom's durable TikTok queue — Published only after TikTok confirms.", page: "the TikTok page", background: "#010101" },
+    { key: "youtube", icon: "play", name: "YouTube", desc: "Shorts and full videos publish through Voom's durable YouTube queue — Published only after YouTube confirms.", page: "the YouTube page", background: "#ff0033" },
   ];
+
   return (
     <div>
-      <h1 className="font-display text-2xl font-bold tracking-tight">Connect your channels</h1>
-      <p className="my-2 text-[15px] text-text-2">Connect a channel when its integration is ready, or finish setup and connect it later.</p>
-      {rows.map(([icon, name, desc, connected]) => (
-        <div key={name} className="mb-2.5 flex items-center justify-between rounded-[var(--r-lg)] border border-line bg-surface p-4">
-          <div className="flex items-center gap-2.5">
-            <div
-              className="grid h-10 w-10 place-items-center rounded-xl text-white"
-              style={{
-                background: icon === "ig" ? "linear-gradient(45deg,#f9ce34,#ee2a7b,#6228d7)" : icon === "mail" ? "var(--grad)" : "var(--amber)",
-              }}
-            >
-              <Icon name={icon} />
+      <h1 className="font-display text-2xl font-bold tracking-tight">Your channels</h1>
+      <p className="my-2 text-[15px] text-text-2">
+        Finish setup to create your workspace, then connect each channel from its own page. Every connection uses the
+        provider&apos;s real authorization flow, and nothing is published anywhere until you approve it.
+      </p>
+      {social.map(({ key, icon, name, desc, page, background }) => {
+        const state = status[key];
+        const connected = key === "instagram" ? igConnected || state?.connected === true : state?.connected === true;
+        return (
+          <div key={name} className="mb-2.5 flex items-center justify-between gap-3 rounded-[var(--r-lg)] border border-line bg-surface p-4">
+            <div className="flex items-center gap-2.5">
+              <div className="grid h-10 w-10 flex-none place-items-center rounded-xl text-white" style={{ background }}>
+                <Icon name={icon} />
+              </div>
+              <div>
+                <b className="text-[14px]">{name}</b>
+                <div className="text-[12.5px] text-text-3">{desc}</div>
+              </div>
             </div>
-            <div>
-              <b className="text-[14px]">{name}</b>
-              <div className="text-[12.5px] text-text-3">{desc}</div>
+            {connected ? (
+              <Tag tone="t-green"><Icon name="check" size={12} /> Connected</Tag>
+            ) : state && !state.configured ? (
+              <Tag tone="t-amber">Not configured on this server yet</Tag>
+            ) : (
+              <span className="flex-none text-right text-[12px] text-text-3">Connect after setup from {page}</span>
+            )}
+          </div>
+        );
+      })}
+      <div className="mb-2.5 flex items-center justify-between gap-3 rounded-[var(--r-lg)] border border-line bg-surface p-4">
+        <div className="flex items-center gap-2.5">
+          <div className="grid h-10 w-10 flex-none place-items-center rounded-xl text-white" style={{ background: "var(--grad)" }}>
+            <Icon name="mail" />
+          </div>
+          <div>
+            <b className="text-[14px]">Email</b>
+            <div className="text-[12.5px] text-text-3">
+              Campaigns and automated flows. There is no account to connect: set your sender name, sending address and domain in
+              Settings → Email identity. Until your domain is verified, emails send from Voom&apos;s managed address with your business
+              name shown.
             </div>
           </div>
-          {connected ? (
-            <span className="inline-flex items-center gap-1 rounded-[7px] bg-green/15 px-2.5 py-[3px] text-[11.5px] font-semibold text-green">
-              <Icon name="check" size={12} /> Connected
-            </span>
-          ) : (
-            <Btn variant="ghost" size="sm" onClick={icon === "ig" ? onConnect : () => toast(`${name} integration is not available yet`, "info")}>
-              Connect
-            </Btn>
-          )}
         </div>
-      ))}
+        <span className="flex-none text-right text-[12px] text-text-3">Set up in Settings</span>
+      </div>
       <div className="mt-2.5 rounded-2xl border border-brand bg-[var(--brand-soft)] p-4">
         <div className="flex items-start gap-2.5">
           <Orb size="sm" className="mt-0.5" />
           <p className="text-[13.5px] leading-[1.6]">
-            Instagram uses a real, secure authorization flow. You can skip it now and connect from the Instagram page after setup.
+            You can plan, draft and approve content for every channel before anything is connected. Approval never publishes on its
+            own — each channel reports Published only after the provider itself confirms.
           </p>
         </div>
       </div>

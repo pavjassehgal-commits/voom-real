@@ -18,9 +18,9 @@ export type PostDraftKind = typeof POST_DRAFT_KIND | typeof REEL_DRAFT_KIND | ty
 
 /**
  * Multi-Social Core: the mara_drafts.kind values the unified Studio writes for
- * TikTok and YouTube. These are PLANNING drafts: they live in Voom, can be
- * approved and scheduled, and truthfully cannot publish until the real
- * provider integrations exist. They never touch the Instagram publish queue.
+ * TikTok and YouTube. They live in Voom, can be approved and scheduled, and
+ * publish through their own durable provider queues (lib/tiktok, lib/youtube)
+ * once the channel is connected. They never touch the Instagram publish queue.
  */
 export const TIKTOK_VIDEO_DRAFT_KIND = "tiktok_video";
 export const YOUTUBE_SHORT_DRAFT_KIND = "youtube_short";

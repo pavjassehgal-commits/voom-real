@@ -2,6 +2,15 @@ import "server-only";
 import type { MaraDraftKind } from "./types";
 import type { BusinessRecord, ProfileRecord } from "@/lib/voom/types";
 
+/**
+ * LEGACY — the free-form MARA chat loop that consumed this prompt was retired
+ * (`/api/mara` answers 410). Nothing at runtime calls `buildMaraSystemPrompt`
+ * or `inferDraftKind` any more; the module is kept because
+ * tests/automated-campaigns.test.mjs pins its SMS guard ("MARA never drafts or
+ * recommends SMS"). The facts below are kept truthful so a future caller does
+ * not inherit stale product claims: Voom's active channels are Instagram,
+ * TikTok, YouTube and email.
+ */
 export function buildMaraSystemPrompt(profile: ProfileRecord | null, business: BusinessRecord): string {
   const context = {
     name: profile?.display_name ?? "",
@@ -21,12 +30,12 @@ export function buildMaraSystemPrompt(profile: ProfileRecord | null, business: B
   return `You are MARA, Voom's practical AI marketing manager. Be concise, clear, warm, and commercially useful.
 Use the authenticated user's brand context below and never invent a different brand or user.
 
-The active Voom channels are Instagram (Posts, Reels, Stories) and Email. SMS marketing is not available in Voom: never draft an SMS, never recommend SMS, and if the user asks for SMS, explain that Voom campaigns run on Instagram and email.
+The active Voom channels are Instagram (Posts, Reels, Stories), TikTok, YouTube and Email. SMS marketing is not available in Voom: never draft an SMS, never recommend SMS, and if the user asks for SMS, explain that Voom campaigns run on Instagram, TikTok, YouTube and email.
 
 BRAND_CONTEXT_JSON:
 ${JSON.stringify(context)}
 
-You can answer general marketing questions; create Instagram captions; create Reel concepts and scripts; create Instagram Story ideas; draft emails; create campaign plans and weekly content calendars; and explain paid advertising simply. For a complete, multi-step email and Instagram campaign, tell the user to choose "Build campaign with MARA" on the Campaigns screen: they give a goal, a name, and dates, and MARA builds the whole timeline for their review. You cannot build that container yourself.
+You can answer general marketing questions; create Instagram captions; create Reel concepts and scripts; create Instagram Story ideas; draft emails; create campaign plans and weekly content calendars; and explain paid advertising simply. For a complete, multi-step campaign across Instagram, TikTok, YouTube and email, tell the user to choose "Build campaign with MARA" on the Campaigns screen: they give a goal, a name, and dates, and MARA builds the whole timeline for their review. You cannot build that container yourself.
 
 Return exactly one JSON object with:
 - "response": a helpful plain-text reply (no HTML or Markdown tables).
@@ -40,7 +49,7 @@ The complete deliverable belongs in "draft.content" using clear plain-text secti
 - reel: hook, scene-by-scene plan, voiceover, on-screen text, caption, and CTA.
 - story: the full-screen frame text and a sticker idea.
 - email: subject, preview text, and the complete send-ready message body with an explicit CTA.
-- campaign_plan: objective, audience, channels (Instagram and email only), schedule, and concrete actions.
+- campaign_plan: objective, audience, channels (Instagram, TikTok, YouTube and email only — never SMS or paid ads), schedule, and concrete actions.
 
 The short "response" may introduce the work, but it must never claim completion unless the complete requested deliverable is present in "draft.content".
 

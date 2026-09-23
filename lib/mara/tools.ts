@@ -7,6 +7,11 @@ import { resolveRelativeDateTime } from "./relative-date";
 import { getResendAvailability } from "@/lib/email/config";
 import { readInstagramConfig } from "@/lib/instagram/config";
 import { getInstagramConnection } from "@/lib/instagram/data";
+import { readTikTokConfig } from "@/lib/tiktok/config";
+import { getTikTokConnection } from "@/lib/tiktok/data";
+import { readYouTubeConfig } from "@/lib/youtube/config";
+import { getYouTubeConnection } from "@/lib/youtube/data";
+import { getPlanConfig, normalizePlan } from "@/lib/billing/plans";
 import { classifyReelProduction } from "@/lib/mara/reel-production";
 import {
   createCalendarItem, createCampaign, deleteCalendarItem, getBrandProfile, getCalendarItem, getCampaign,
@@ -50,15 +55,15 @@ const descriptions: Record<MaraToolName, string> = {
   get_calendar_item: "Read one owned calendar item by ID.",
   list_drafts: "List the user's MARA content drafts.", get_draft: "Read one owned content draft.",
   list_campaigns: "List the user's real email campaign drafts and MARA-built automated campaigns. SMS marketing is no longer available.", get_campaign: "Read one owned campaign draft.",
-  get_connected_channels: "Read saved channel preferences and actual integration availability.",
-  get_instagram_connection_status: "Check whether real Instagram execution is available.",
-  get_subscription_and_feature_limits: "Read the current Voom plan and safe feature limits.",
+  get_connected_channels: "Read saved channel preferences and the real connection state of Instagram, TikTok, YouTube and email. MARA's tools never publish or send.",
+  get_instagram_connection_status: "Read the real Instagram connection state. MARA's tools never publish; approved, scheduled content publishes through Voom's durable queue.",
+  get_subscription_and_feature_limits: "Read the current Voom plan and what MARA's tools may never do (publish, send, spend).",
   create_content_draft: "Create an unscheduled content draft. This never publishes or schedules.",
   update_content_draft: "Update an owned unscheduled content draft.", approve_draft: "Propose approving a draft; requires user confirmation before change.",
   reject_draft: "Reject an owned content draft without publishing.", propose_calendar_item: "Propose a calendar addition; always requires confirmation.",
   update_calendar_item: "Propose changing an owned calendar item; always requires confirmation.",
   delete_calendar_item: "Propose deleting the exact owned calendar items; always requires confirmation.",
-  create_campaign_draft: "Create an email campaign draft only. Never sends it. For a multi-step email and Instagram sequence, direct the user to Build campaign with MARA.", update_campaign_draft: "Update an owned email campaign draft only. Never sends it.",
+  create_campaign_draft: "Create an email campaign draft only. Never sends it. For a coordinated multi-channel campaign (Instagram, TikTok, YouTube, email), direct the user to Build campaign with MARA.", update_campaign_draft: "Update an owned email campaign draft only. Never sends it.",
   choose_reel_production: "Ask the user for a truthful Reel production method when video production is not complete.",
 };
 
@@ -118,33 +123,55 @@ async function runTool(c: ToolContext, name: MaraToolName, a: Record<string, unk
   if (name === "list_campaigns") { const data = await listCampaigns(c.db, c.ownerId, a.kind as string | undefined); return success(data, `Found ${data.length} campaign draft${data.length === 1 ? "" : "s"}.`); }
   if (name === "get_campaign") { const data = await getCampaign(c.db, c.ownerId, a.campaignId as string); return success(data, data ? "Loaded the campaign draft." : "That campaign was not found."); }
   if (name === "get_connected_channels") {
-    const instagram = await getInstagramConnection(c.db, c.ownerId, Boolean(readInstagramConfig()));
+    // The four active channels — Instagram, TikTok, YouTube and email — each
+    // read from their REAL connection state (owner-scoped, sanitized, never a
+    // token). SMS marketing is retired and is not reported.
+    const tikTokConfig = readTikTokConfig();
+    const youTubeConfig = readYouTubeConfig();
+    const [instagram, tiktok, youtube] = await Promise.all([
+      getInstagramConnection(c.db, c.ownerId, Boolean(readInstagramConfig())),
+      getTikTokConnection(c.db, c.ownerId, Boolean(tikTokConfig), tikTokConfig?.appAudited === true).catch(() => null),
+      getYouTubeConnection(c.db, c.ownerId, Boolean(youTubeConfig), youTubeConfig?.projectAudited === true).catch(() => null),
+    ]);
     const email = getResendAvailability();
+    const connected = [instagram.connected && "Instagram", tiktok?.connected && "TikTok", youtube?.connected && "YouTube"].filter(Boolean) as string[];
     return success({
       selectedChannels: c.business.preferred_channels,
-      // SMS marketing is no longer a Voom channel; the active channels are
-      // Instagram and email.
-      integrations: { instagram: instagram.connected, email: false },
+      // Email has no account connection: it is campaigns, flows and a sender
+      // identity on top of the server's provider configuration.
+      integrations: { instagram: instagram.connected, tiktok: tiktok?.connected === true, youtube: youtube?.connected === true },
       providerConfig: {
+        instagram: { configured: instagram.configured },
+        tiktok: { configured: tiktok?.configured === true },
+        youtube: { configured: youtube?.configured === true },
         email: { configured: email.configured, sendConfigured: email.sendConfigured, webhookConfigured: email.webhookConfigured },
       },
-      note: instagram.connected
-        ? "Instagram is connected. Publishing still requires the separate confirmed execution flow. Email provider configuration is reported separately and does not enable sending."
-        : "Instagram is not connected. Email provider configuration is reported separately and does not enable sending.",
+      note: `${connected.length ? `Connected: ${connected.join(", ")}.` : "No social account is connected yet."} MARA's tools never publish: approved, scheduled content publishes through each channel's durable publish queue, and Published appears only after the provider confirms. Email provider configuration is reported separately and does not enable sending — campaign email goes out only on an explicit send.`,
     }, "Checked channel availability.");
   }
   if (name === "get_instagram_connection_status") {
     const instagram = await getInstagramConnection(c.db, c.ownerId, Boolean(readInstagramConfig()));
-    return success({ connected: instagram.connected, configured: instagram.configured, username: instagram.username, accountType: instagram.accountType, publishingAvailable: false, reason: instagram.connected ? "The account is connected, but publishing remains unavailable until the confirmed execution flow is implemented and approved." : "Instagram is not connected." }, instagram.connected ? "Checked the Instagram connection." : "Instagram publishing is unavailable.");
+    // `publishingAvailable` describes THIS tool surface: MARA's tools never
+    // publish. Real Instagram publishing exists — approved, scheduled items
+    // ride the durable Instagram publish queue and report Published only
+    // after Instagram returns a media id.
+    return success({ connected: instagram.connected, configured: instagram.configured, username: instagram.username, accountType: instagram.accountType, publishingAvailable: false, reason: instagram.connected ? "The account is connected. MARA's tools never publish: approved, scheduled Instagram content publishes through Voom's durable publish queue at its scheduled time, and Published appears only after Instagram confirms." : instagram.configured ? "Instagram is not connected. Connect a professional account from the Instagram page." : "Instagram integration is not configured on this server yet." }, instagram.connected ? "Checked the Instagram connection." : "Instagram is not connected.");
   }
-  if (name === "get_subscription_and_feature_limits") return success({ plan: "free", maraMessagesPerMinute: 12, publishingAvailable: false, sendingAvailable: false, adSpendAvailable: false }, "Loaded the current feature limits.");
+  if (name === "get_subscription_and_feature_limits") {
+    // The plan is the business's REAL plan (migration 0035) read through the
+    // one plan authority; the three flags describe MARA's tool surface, which
+    // can never publish, send or spend — those happen only through Voom's
+    // approval flows, durable queues and explicit sends.
+    const plan = getPlanConfig(normalizePlan(c.business.plan));
+    return success({ plan: plan.id, planName: plan.name, monthlyCredits: plan.monthlyCredits, allowedModes: plan.allowedModes, publishingAvailable: false, sendingAvailable: false, adSpendAvailable: false, note: "MARA's tools never publish, send or spend. Publishing happens through Voom's approval flows and durable publish queues, campaign email only on an explicit send, and paid advertising is not connected." }, "Loaded the current plan and tool limits.");
+  }
   if (name === "create_content_draft") {
     const { data, error } = await c.db.from("mara_drafts").insert({ owner_user_id: c.ownerId, conversation_id: c.conversationId, kind: a.kind, channel: a.channel, title: a.title, content: a.content, proposed_publish_at: a.proposedPublishAt ?? null }).select("id,title,status").single();
     if (error) throw new Error("draft_create_failed"); return success(data, `Created unscheduled draft “${data.title}” (${data.id}).`);
   }
   if (name === "update_content_draft") { const draftId = a.draftId as string; const patch = compact({ title: a.title, content: a.content, proposed_publish_at: a.proposedPublishAt }); const { data, error } = await c.db.from("mara_drafts").update(patch).eq("owner_user_id", c.ownerId).eq("id", draftId).select("id,title,status").maybeSingle(); if (error) throw new Error("draft_update_failed"); return success(data, data ? `Updated draft “${data.title}”.` : "That draft was not found."); }
   if (name === "reject_draft") { const { data, error } = await c.db.from("mara_drafts").update({ status: "rejected" }).eq("owner_user_id", c.ownerId).eq("id", a.draftId as string).select("id,title,status").maybeSingle(); if (error) throw new Error("draft_reject_failed"); return success(data, data ? `Rejected draft “${data.title}”. Nothing was published.` : "That draft was not found."); }
-  if (name === "create_campaign_draft") { const data = await createCampaign(c.db, c.ownerId, { ...campaignPatch(a), kind: "email" }); return success(data, `Created email campaign draft “${data.name}” (${data.id}). It was not sent. For a full Instagram + email sequence, use Build campaign with MARA.`); }
+  if (name === "create_campaign_draft") { const data = await createCampaign(c.db, c.ownerId, { ...campaignPatch(a), kind: "email" }); return success(data, `Created email campaign draft “${data.name}” (${data.id}). It was not sent. For a coordinated multi-channel campaign, use Build campaign with MARA.`); }
   if (name === "update_campaign_draft") { const data = await updateCampaign(c.db, c.ownerId, a.campaignId as string, campaignPatch(a)); return success(data, data ? `Updated campaign draft “${data.name}”. It was not sent.` : "That campaign was not found."); }
 
   if (name === "approve_draft") {

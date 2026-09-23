@@ -307,7 +307,7 @@ function TimelineRow({ campaignId, action, timeZone, busy, onDecide, onRegenerat
         {!action.canEditContent && (
           <p className="mt-2 text-[11.5px] text-text-3">
             {isSocial
-              ? `This action is approved inside Voom. ${action.social?.publishStateLabel ?? "Publishing is not connected yet."}`
+              ? `This action is approved inside Voom. ${action.social?.publishStateLabel ?? "Its publishing state could not be loaded."}`
               : `This action has already been ${isEmail ? "sent" : "published or is publishing"}, so its content is locked.`}
           </p>
         )}
