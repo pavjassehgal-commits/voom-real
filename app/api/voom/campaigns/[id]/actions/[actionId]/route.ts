@@ -96,12 +96,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
 
     const automated = await readAutomatedCampaign(db, user.id, id);
+    const action = automated?.actions.find((item) => item.id === actionId);
     const message = parsed.data.action === "approve"
-      ? "Action approved. Email still needs an explicit send; Instagram still needs a visual and schedule."
+      ? action?.social
+        ? `Action approved. Durable queue status: ${action.social.publishStateLabel}. Published appears only after the provider confirms.`
+        : "Action approved. Email still needs an explicit send; Instagram still needs a visual and schedule."
       : "Action rejected. Nothing was sent or published.";
     return Response.json({ message, automated });
-  } catch {
-    return Response.json({ error: "Voom couldn't update that campaign action. Please retry." }, { status: 503 });
+  } catch (reason) {
+    const queueError = campaignQueueSyncFailure(reason);
+    return Response.json({ error: queueError ?? "Voom couldn't update that campaign action. Please retry." }, { status: 503 });
   }
 }
 
@@ -142,7 +146,23 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
     const automated = await readAutomatedCampaign(db, user.id, id);
     return Response.json({ message: "Draft saved. Nothing has been sent or published.", automated });
-  } catch {
-    return Response.json({ error: "Voom couldn't save that draft. Please retry." }, { status: 503 });
+  } catch (reason) {
+    const queueError = campaignQueueSyncFailure(reason);
+    return Response.json({ error: queueError ?? "Voom couldn't save that draft. Please retry." }, { status: 503 });
   }
+}
+
+function campaignQueueSyncFailure(reason: unknown): string | null {
+  const code = reason instanceof Error ? reason.message : "";
+  if (code.includes("publish_enqueue_failed")) {
+    const channel = code.startsWith("youtube_") ? "YouTube" : "TikTok";
+    return `The campaign change was saved, but Voom couldn't confirm the durable ${channel} queue sync. Nothing was published. Retry the approval or save to safely sync it.`;
+  }
+  if (code.includes("publish_cancel_failed")) {
+    return "The campaign change was saved, but Voom couldn't confirm the durable queue cancellation. Nothing was published. Retry to safely sync it.";
+  }
+  if (code === "campaign_queue_state_read_failed" || code === "campaign_content_lock_read_failed" || code.endsWith("publish_queue_read_failed")) {
+    return "Voom couldn't confirm the durable provider queue state. No published status or queued success is being assumed. Refresh and retry.";
+  }
+  return null;
 }

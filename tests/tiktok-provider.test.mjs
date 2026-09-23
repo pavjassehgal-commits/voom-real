@@ -2283,13 +2283,13 @@ test("migration 0049 is additive: it creates only tiktok_* objects and schedules
   assert.doesNotMatch(sql, /pg_cron|cron\.job|pgmq/i, "no cron is configured by the migration itself");
 });
 
-test("the 0049 boundary leaves Instagram/YouTube/email objects byte-identical in this branch", async () => {
+test("rolling-plan channel assignment requires no database migration", async () => {
   const { execSync } = await import("node:child_process");
   const ls = (cmd) => execSync(cmd, { encoding: "utf8" }).trim().split("\n").filter(Boolean).sort();
   const mainFiles = ls("git ls-tree -r --name-only main -- supabase/migrations/");
   const current = ls("git ls-files supabase/migrations/").concat(ls("git ls-files --others --exclude-standard supabase/migrations/")).sort();
   const added = current.filter((file) => !mainFiles.includes(file));
   const removed = mainFiles.filter((file) => !current.includes(file));
-  assert.deepEqual(added, ["supabase/migrations/0049_tiktok_provider.sql"], "exactly one new migration file — 0001..0048 are untouched");
-  assert.deepEqual(removed, [], "no pre-existing migration was deleted");
+  assert.deepEqual(added, [], "no new migration was needed for server-owned slot assignment");
+  assert.deepEqual(removed, [], "all pre-existing migrations remain untouched");
 });

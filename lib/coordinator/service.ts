@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildMarketingState } from "./state";
 import { evaluateMarketingNeeds } from "./engine";
 import { runOwnerWorkflow } from "@/lib/voom/workflow/service";
+import { parseActionChannel } from "@/lib/social/channels";
 import { proposeEmailFlow } from "@/lib/email-flows/create";
 import type { AdminClient } from "@/lib/post/server-data";
 import type { CoordinatorRunResult } from "./types";
@@ -63,32 +64,63 @@ export async function runCoordinatorForOwner(
 
   if (shouldExecuteGapFilling) {
     try {
-      // Calling runOwnerWorkflow with the appropriate trigger and stage.
-      // Notice: In Assisted mode, runOwnerWorkflow will automatically be gated or planning_only
-      // where appropriate, and NEVER calls media generation unless permitted.
-      // In all cases, the coordinator itself spends ZERO media credits.
+      // The coordinator supplies the actual uncovered dates, not just a count.
+      // Existing social commitments participate in channel balance, while
+      // email remains outside the social cadence.
+      const channelCoverage = state.commitments.flatMap((commitment) => {
+        const parsed = parseActionChannel(commitment.channel);
+        return parsed && parsed.channel !== "email"
+          ? [{ date: commitment.localDate, channel: parsed.channel, format: parsed.format }]
+          : [];
+      });
       const workflowResult = await runOwnerWorkflow(admin as AdminClient, {
         ownerId,
         now,
         trigger: trigger === "replenish" ? "replenish" : "scheduled",
+        targetDates: evaluation.gaps.map((gap) => gap.date),
+        channelCoverage,
       });
 
+      const requestedGapDates = evaluation.gaps.map((gap) => gap.date);
+      const requestedGapSet = new Set(requestedGapDates);
+      // A requested slot counts as filled only when the workflow actually
+      // returned a persisted/reused plan item for that local date. `slots` is
+      // an attempted count and `created` omits reused items; neither alone is
+      // an honest completion measure.
+      const filledGapDates = new Set((workflowResult.plan?.items ?? [])
+        .filter((item) => requestedGapSet.has(item.slot))
+        .map((item) => item.slot));
+      const gapsFilled = workflowResult.blockedReason ? 0 : filledGapDates.size;
+      const gapsRemaining = Math.max(0, requestedGapDates.length - gapsFilled);
+      const actionType = workflowResult.blockedReason
+        ? "gap_filling_blocked"
+        : gapsRemaining > 0 ? "gap_filling_partial" : "fill_calendar_gaps";
+
       actionsTaken.push({
-        type: "fill_calendar_gaps",
+        type: actionType,
         details: {
-          gapsFilled: evaluation.gaps.length,
-          slots: workflowResult.slots,
+          gapsRequested: requestedGapDates.length,
+          gapsFilled,
+          gapsRemaining,
+          ...(workflowResult.blockedReason ? { blockedReason: workflowResult.blockedReason } : {}),
+          slotsAttempted: workflowResult.slots,
           created: workflowResult.created,
           reused: workflowResult.reused,
           awaitingApproval: workflowResult.awaitingApproval,
           autoApproved: workflowResult.autoApproved,
+          failures: workflowResult.failures.filter((failure) => requestedGapSet.has(failure.slot)),
         },
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "unknown_error";
       actionsTaken.push({
         type: "gap_filling_failed",
-        details: { error: msg },
+        details: {
+          error: msg,
+          gapsRequested: evaluation.gaps.length,
+          gapsFilled: 0,
+          gapsRemaining: evaluation.gaps.length,
+        },
       });
     }
   }

@@ -8,10 +8,9 @@ import type { Cadence, ContentType } from "@/lib/voom/cadence";
 
 export type CoordinatorNeedType =
   /**
-   * Multi-Social Core: the gap need covers the ONE marketing calendar across
-   * every channel (Instagram, TikTok, YouTube). Gap FILLING still only ever
-   * proposes Instagram drafts — the coordinator never autonomously creates
-   * TikTok/YouTube work.
+   * The gap need covers the ONE marketing calendar across supported social
+   * channels. Gap filling passes actual uncovered dates to the shared planner;
+   * email remains separate from social cadence.
    */
   | "content_calendar_gap"
   | "campaign_needs_attention"

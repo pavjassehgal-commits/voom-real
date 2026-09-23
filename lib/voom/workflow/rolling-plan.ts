@@ -1,24 +1,13 @@
 /**
- * The cadence-aware rolling plan engine.
+ * Deterministic channel-aware rolling social planner.
  *
- * This replaces the legacy "generate exactly 3 Instagram recommendations once
- * per week" rule. It maintains a rolling horizon (7 days by default) of
- * executable content items starting on the account's real current local date,
- * with as many items as the user's selected posting cadence requires.
+ * One cadence slot is one item on one selected channel and one native format.
+ * The server owns that assignment before content generation; Build, Replenish
+ * and scheduled gap filling all use the same planner and stable slot identity.
  *
- * Guarantees:
- *   - one workflow item per (plan, local slot date); an existing item for a
- *     date is always reused, never duplicated, however often the cron runs,
- *   - the horizon is replenished forward only; past dates are never planned,
- *   - Manual creates nothing on a scheduled run; on an explicit Replenish it
- *     plans (drafts + MARA copy) but NEVER generates paid media, approves or
- *     schedules — Manual stays Manual throughout the run. Assisted stops at
- *     Needs approval, Autopilot runs the existing deterministic safety
- *     evaluator and only then auto-approves and schedules,
- *   - every stage failure is recorded on the item instead of aborting the run.
- *
- * It performs no I/O: everything is expressed against injected ports, so the
- * end-to-end acceptance test drives the real logic with mocked providers.
+ * Planning never checks connection state. Connection readiness is an execution
+ * concern, and email remains in Campaigns + Email Automation rather than this
+ * social cadence.
  */
 
 import {
@@ -28,70 +17,93 @@ import {
 } from "../automation.ts";
 import {
   DEFAULT_HORIZON_DAYS,
-  planContentTypes,
   resolveSlotMinutes,
   slotDates,
   type Cadence,
   type ContentType,
 } from "../cadence.ts";
 import { formatLocalTime, isoToLocalDate, localDate, localMinutes, localToUtcIso } from "../timezone.ts";
+import type { SocialFormat, SocialMediaChannel } from "@/lib/social/channels";
+import {
+  normalizeSelectedSocialChannels,
+  parseWorkflowSlotIdentity,
+  planChannelAssignments,
+  type ChannelCoverage,
+  type ExistingPlanAssignment,
+  type PlannedContentType,
+} from "./channel-planner.ts";
 
 /**
- * Execution stages for the rolling workflow.
- *
- *   - "full"          -> plan/reuse slots, MARA copy, paid media generation,
- *                        approval, scheduling and the Instagram queue.
- *   - "planning_only" -> plan/reuse slots + MARA copy only. Stops before the
- *                        existing `ensureMedia` and `autoApproveAndSchedule`
- *                        stages, so it can never spend on media, approve,
- *                        schedule, queue or publish anything.
+ * Execution stages for the existing Instagram workflow.
+ * TikTok/YouTube use social drafts and their own provider queues; they do not
+ * enter Instagram media, approval, or queue actions from this engine.
  */
 export const WORKFLOW_STAGES = ["full", "planning_only"] as const;
 export type WorkflowStage = (typeof WORKFLOW_STAGES)[number];
 
 export interface PlanSlot {
-  /** Local YYYY-MM-DD. Doubles as the durable per-plan slot key. */
+  /** Local YYYY-MM-DD cadence date. */
   date: string;
+  /** Legacy date-only identities remain unchanged; all new slots use date|channel_format. */
+  slotKey: string;
   index: number;
-  contentType: ContentType;
+  channel: SocialMediaChannel;
+  format: SocialFormat;
+  contentType: PlannedContentType;
   /** Absolute UTC instant for the recommended local publish time. */
   publishAt: string;
 }
 
 export interface GeneratedContent {
   concept: string;
+  hook: string;
   caption: string;
   cta: string;
   hashtags: string[];
+  description: string;
+  script: string[];
   visualBrief: string;
 }
 
-export interface WorkflowItem {
+export interface WorkflowItem extends ExistingPlanAssignment {
   draftId: string;
   slotKey: string;
-  contentType: ContentType;
+  channel: SocialMediaChannel;
+  format: SocialFormat;
+  contentType: PlannedContentType;
   concept: string;
   caption: string;
   publishAt: string;
   status: string;
+  protected?: boolean;
 }
 
 export interface RollingPlanPorts {
   /** Active plan id for this owner, creating one if none exists. */
-  ensurePlan(input: { validFrom: string; validUntil: string; cadence: Cadence; goal: string }): Promise<string>;
-  /** Existing workflow items for the plan, keyed by slot date. */
+  ensurePlan(input: {
+    validFrom: string;
+    validUntil: string;
+    cadence: Cadence;
+    goal: string;
+    selectedChannels: SocialMediaChannel[];
+  }): Promise<string>;
+  /** Existing workflow items for the plan, keyed by stable slot identity. */
   listItems(planId: string): Promise<WorkflowItem[]>;
-  /** MARA content generation for one slot. */
+  /** Existing active plan, used to reconcile a saved preference of no channels. */
+  getActivePlan?(): Promise<string | null>;
+  /** Detaches only safe, unexecuted drafts; it never changes or deletes content. */
+  detachDrafts?(planId: string, draftIds: string[]): Promise<void>;
+  /** MARA content generation for one server-assigned slot. */
   generateContent(slot: PlanSlot): Promise<GeneratedContent>;
-  /** Persists a new draft for a slot. Must be idempotent on (plan, slotKey). */
+  /** Persists one new draft for a stable slot identity. */
   createDraft(input: { planId: string; slot: PlanSlot; content: GeneratedContent }): Promise<WorkflowItem>;
-  /** Creates the media-generation job for an item if one is not already live. */
+  /** Existing Instagram media workflow; called for Instagram slots only. */
   ensureMedia(item: WorkflowItem): Promise<{ ok: boolean; code?: string }>;
-  /** Opens (or reuses) the approval action for an item. */
+  /** Opens (or reuses) the existing Instagram approval action. */
   requestApproval(item: WorkflowItem): Promise<void>;
-  /** Deterministic safety evaluation, then approve + schedule. Autopilot only. */
+  /** Existing deterministic Instagram safety evaluation, then approve + schedule. */
   autoApproveAndSchedule(item: WorkflowItem): Promise<{ approved: boolean; reason?: string }>;
-  /** Mirrors the resolved horizon onto the marketing plan row. */
+  /** Mirrors the current horizon onto the marketing plan row. */
   savePlanItems(planId: string, items: WorkflowItem[]): Promise<void>;
 }
 
@@ -102,26 +114,23 @@ export interface RollingPlanInput {
   mode: AutomationModeValue;
   goal: string;
   horizonDays?: number;
+  /** Saved selected social channels. `[]` is an intentional no-selection state. */
+  selectedChannels?: SocialMediaChannel[];
+  /** Existing plan assignments, used to preserve and balance prior work. */
+  existingAssignments?: ExistingPlanAssignment[];
+  /** Other channel commitments in the coordinator's authoritative horizon. */
+  channelCoverage?: ChannelCoverage[];
+  /** When supplied by the coordinator, only these actual gap dates are generated. */
+  targetDates?: string[];
   /** Defaults to "full". Unknown values fall back to "full". */
   stage?: WorkflowStage;
-  /**
-   * What started this run. Defaults to "scheduled" (the cron worker), where a
-   * Manual account creates nothing at all. "replenish" is the owner's explicit
-   * Build/Replenish plan click: Manual then plans, but planning-only.
-   */
+  /** Manual only plans on an explicit owner Replenish, and then planning-only. */
   trigger?: WorkflowTrigger;
 }
 
 /**
- * Resolves the effective stage for one (mode, trigger, requested stage).
- *
- * The requested stage can only ever NARROW a run (an explicit "planning_only"
- * always wins). On top of that, the central paid-media policy decides whether
- * the run may reach `ensureMedia` at all: when `mayAutomaticallyGeneratePaidMedia`
- * says no, the run is forced to "planning_only" regardless of what was asked
- * for. This is the engine-level half of the cost-safety invariant — the
- * service ports hold the other half — so no caller can "opt in" a Manual
- * Replenish to paid media by passing a different stage.
+ * Resolves the effective stage for one (mode, trigger, requested stage). A
+ * caller may narrow a run, never widen the central paid-media policy.
  */
 export function resolveWorkflowStage(input: {
   mode: AutomationModeValue;
@@ -133,28 +142,26 @@ export function resolveWorkflowStage(input: {
   return "full";
 }
 
-/** One resolved horizon slot, for the run summary. */
 export interface PlanSummaryItem {
-  /** Local slot date (YYYY-MM-DD); the durable per-plan slot key. */
+  /** Local date portion of the slot identity; legacy date keys remain readable. */
   slot: string;
-  /** Absolute UTC publish instant for the slot. */
+  slotKey: string;
   publishAt: string;
-  /** Local date/time of `publishAt` in the account timezone. */
   localDate: string;
   localTime: string;
-  contentType: ContentType;
+  channel: SocialMediaChannel;
+  format: SocialFormat;
+  contentType: PlannedContentType;
   draftId: string;
-  /** False when an existing slot item was reused instead of created. */
   created: boolean;
 }
 
 export interface RollingPlanResult {
   planId: string | null;
-  /** The mode the run actually executed under — always the account's own mode. */
   mode: AutomationModeValue;
   trigger: WorkflowTrigger;
   stage: WorkflowStage;
-  /** Resolved horizon summary. Null when nothing was planned (manual/empty). */
+  blockedReason: "no_supported_social_channels_selected" | null;
   plan: {
     cadence: Cadence;
     timeZone: string;
@@ -163,6 +170,7 @@ export interface RollingPlanResult {
     validUntil: string;
     items: PlanSummaryItem[];
   } | null;
+  /** Number of dates this run attempted (all cadence dates for Build/Replenish). */
   slots: number;
   created: number;
   reused: number;
@@ -173,63 +181,162 @@ export interface RollingPlanResult {
   failures: { slot: string; stage: string; code: string }[];
 }
 
-/** Computes the deterministic slots for the horizon, starting today. */
+/** Computes canonical slots for the rolling horizon. No connection lookup occurs. */
 export function buildSlots(input: RollingPlanInput): PlanSlot[] {
   const horizon = input.horizonDays ?? DEFAULT_HORIZON_DAYS;
   const today = localDate(input.now, input.timeZone);
   const nowMinutes = localMinutes(input.now, input.timeZone);
   const dates = slotDates(today, input.cadence, horizon);
-  // Content types are balanced across the WHOLE horizon by cadence + goal
-  // (posts/reels/stories), never by a per-slot modulo that can collapse into
-  // one repeated format. The same horizon always resolves to the same types.
-  const types = planContentTypes({ cadence: input.cadence, count: dates.length, goal: input.goal });
+  const selectedChannels = normalizeInputChannels(input.selectedChannels);
+  if (!selectedChannels.length) return [];
+
+  const assignment = planChannelAssignments({
+    dates,
+    today,
+    selectedChannels,
+    existing: input.existingAssignments,
+    coverage: input.channelCoverage,
+  });
+  const dateIndex = new Map(dates.map((date, index) => [date, index]));
   const slots: PlanSlot[] = [];
-  for (const [index, date] of dates.entries()) {
-    const contentType = types[index] ?? "post";
-    const minutes = resolveSlotMinutes({ contentType, index, isToday: date === today, nowMinutes });
-    // A slot whose local day has no usable time left is skipped rather than
-    // scheduled in the past — stale dates can never enter the workflow.
+  for (const planned of assignment.assignments) {
+    const index = dateIndex.get(planned.date) ?? 0;
+    // Native video formats retain their platform identity. Existing timing
+    // bands are reused only as timing guidance, never as a format conversion.
+    const timingType: ContentType = planned.channel === "instagram"
+      ? planned.contentType as ContentType
+      : planned.channel === "youtube" && planned.format === "video" ? "post" : "reel";
+    const minutes = resolveSlotMinutes({
+      contentType: timingType,
+      index,
+      isToday: planned.date === today,
+      nowMinutes,
+    });
     if (minutes === null) continue;
-    slots.push({ date, index, contentType, publishAt: localToUtcIso(date, minutes, input.timeZone) });
+    slots.push({
+      date: planned.date,
+      slotKey: planned.slotKey,
+      index,
+      channel: planned.channel,
+      format: planned.format,
+      contentType: planned.contentType,
+      publishAt: localToUtcIso(planned.date, minutes, input.timeZone),
+    });
   }
-  return slots;
+  return slots.sort((a, b) => a.date.localeCompare(b.date));
 }
 
 export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingPlanInput): Promise<RollingPlanResult> {
   const trigger: WorkflowTrigger = input.trigger === "replenish" ? "replenish" : "scheduled";
-  // The requested stage can only narrow the run (an explicit "planning_only"
-  // wins; anything else — including an unknown value — asks for "full"). The
-  // central paid-media policy then decides whether "full" is even permitted
-  // for this (mode, trigger): Manual + Replenish is forced to planning-only.
   const stage = resolveWorkflowStage({ mode: input.mode, trigger, stage: input.stage });
   const horizonDays = input.horizonDays ?? DEFAULT_HORIZON_DAYS;
   const result: RollingPlanResult = {
-    planId: null, mode: input.mode, trigger, stage, plan: null, slots: 0, created: 0, reused: 0, mediaQueued: 0,
-    awaitingApproval: 0, autoApproved: 0, heldForReview: 0, failures: [],
+    planId: null,
+    mode: input.mode,
+    trigger,
+    stage,
+    blockedReason: null,
+    plan: null,
+    slots: 0,
+    created: 0,
+    reused: 0,
+    mediaQueued: 0,
+    awaitingApproval: 0,
+    autoApproved: 0,
+    heldForReview: 0,
+    failures: [],
   };
-  // Manual never plans on a scheduled run: nothing runs for it on a timer.
-  // Only the owner's explicit Replenish click plans a Manual account — and
-  // then planning-only (see resolveWorkflowStage), never as Assisted.
   if (input.mode === "manual" && trigger !== "replenish") return result;
 
-  const slots = buildSlots(input);
-  result.slots = slots.length;
-  if (!slots.length) return result;
+  const today = localDate(input.now, input.timeZone);
+  const baseDates = slotDates(today, input.cadence, horizonDays);
+  const validFrom = baseDates[0] ?? today;
+  const validUntil = baseDates.at(-1) ?? today;
+  const selectedChannels = normalizeInputChannels(input.selectedChannels);
 
-  const planId = await ports.ensurePlan({
-    validFrom: slots[0].date,
-    validUntil: slots[slots.length - 1].date,
+  // With no channels, don't invent Instagram work. Existing future unexecuted
+  // drafts are safely detached from an active plan so the read model does not
+  // keep presenting work on a channel the owner no longer selected.
+  let planId: string | null;
+  if (!selectedChannels.length) {
+    planId = await ports.getActivePlan?.() ?? null;
+    result.planId = planId;
+    if (planId) {
+      await ports.ensurePlan({ validFrom, validUntil, cadence: input.cadence, goal: input.goal, selectedChannels: [] });
+      const existing = await ports.listItems(planId);
+      const reconciliation = planChannelAssignments({
+        dates: baseDates,
+        today,
+        selectedChannels,
+        existing,
+        coverage: input.channelCoverage,
+      });
+      let retainedItems = existing;
+      if (reconciliation.detachDraftIds.length) {
+        if (!ports.detachDrafts) throw new Error("plan_reconcile_unavailable");
+        await ports.detachDrafts(planId, reconciliation.detachDraftIds);
+        retainedItems = await ports.listItems(planId);
+      }
+      // Keep the stored read model aligned with the surviving protected work;
+      // an empty selected-channel set must not leave stale plan cards behind.
+      await ports.savePlanItems(planId, retainedItems);
+    }
+    result.blockedReason = "no_supported_social_channels_selected";
+    return result;
+  }
+
+  planId = await ports.ensurePlan({
+    validFrom,
+    validUntil,
     cadence: input.cadence,
     goal: input.goal,
+    selectedChannels,
   });
   result.planId = planId;
 
-  const existing = new Map((await ports.listItems(planId)).map((item) => [item.slotKey, item]));
-  const items: WorkflowItem[] = [];
-  const summary: PlanSummaryItem[] = [];
+  const initialItems = await ports.listItems(planId);
+  const reconciliation = planChannelAssignments({
+    dates: baseDates,
+    today,
+    selectedChannels,
+    existing: initialItems,
+    coverage: input.channelCoverage,
+  });
+  if (reconciliation.detachDraftIds.length) {
+    if (!ports.detachDrafts) throw new Error("plan_reconcile_unavailable");
+    await ports.detachDrafts(planId, reconciliation.detachDraftIds);
+  }
 
+  // Re-read after safe detaches. A retry now sees either the original protected
+  // row or the new assignment, never an old unselected draft reused cross-channel.
+  const existingItems = reconciliation.detachDraftIds.length
+    ? await ports.listItems(planId)
+    : initialItems;
+  const slots = buildSlots({
+    ...input,
+    selectedChannels,
+    existingAssignments: existingItems,
+    channelCoverage: input.channelCoverage,
+  });
+  const workDateSet = input.targetDates === undefined
+    ? new Set(baseDates)
+    : new Set(input.targetDates.filter((date) => baseDates.includes(date)));
+  const workSlots = slots.filter((slot) => workDateSet.has(slot.date));
+  result.slots = workSlots.length;
+
+  const existingByKey = new Map(existingItems.map((item) => [item.slotKey, item]));
+  const itemsForPlan = new Map<string, WorkflowItem>();
+  const summaryByKey = new Map<string, PlanSummaryItem>();
   for (const slot of slots) {
-    let item = existing.get(slot.date) ?? null;
+    const existingItem = existingByKey.get(slot.slotKey);
+    if (existingItem) {
+      itemsForPlan.set(existingItem.slotKey, existingItem);
+      summaryByKey.set(existingItem.slotKey, summaryItem(existingItem, input.timeZone, false));
+    }
+  }
+
+  for (const slot of workSlots) {
+    let item = existingByKey.get(slot.slotKey) ?? null;
     let created = false;
     if (item) {
       result.reused += 1;
@@ -244,29 +351,18 @@ export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingP
         continue;
       }
     }
-    items.push(item);
-    summary.push({
-      slot: slot.date,
-      publishAt: item.publishAt,
-      localDate: isoToLocalDate(item.publishAt, input.timeZone),
-      localTime: formatLocalTime(item.publishAt, input.timeZone),
-      contentType: item.contentType,
-      draftId: item.draftId,
-      created,
-    });
 
-    // Planning-only stops here: before `ensureMedia`, before any approval, and
-    // therefore before any scheduling, calendar mirroring or queueing. The
-    // ports below are never invoked, so no provider, job or publish side
-    // effect is even reachable.
+    itemsForPlan.set(item.slotKey, item);
+    summaryByKey.set(item.slotKey, summaryItem(item, input.timeZone, created));
+
+    // TikTok and YouTube drafts use Social Studio, private video assets and
+    // their own durable provider queues. They never enter Instagram media or
+    // approval actions from this workflow (and no platform is auto-published).
+    if (slot.channel !== "instagram") continue;
+
     if (stage === "planning_only") continue;
-    // Belt and braces: the stage above is derived from this same policy, so
-    // this branch is unreachable for Manual — but the paid path is guarded by
-    // the policy itself, not by trusting the derivation.
     if (!mayAutomaticallyGeneratePaidMedia(input.mode, trigger)) continue;
 
-    // Media. A failure here must not kill the workflow: the item stays visible
-    // with a failed media stage and can be retried without paying twice.
     try {
       const media = await ports.ensureMedia(item);
       if (media.ok) result.mediaQueued += 1;
@@ -282,7 +378,6 @@ export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingP
           result.autoApproved += 1;
           continue;
         }
-        // Risky content is never silently dropped: it stays in Approvals.
         result.heldForReview += 1;
         await ports.requestApproval(item);
         result.awaitingApproval += 1;
@@ -300,16 +395,45 @@ export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingP
     }
   }
 
-  await ports.savePlanItems(planId, items);
+  // Keep non-gap existing items in planned_posts when the coordinator fills a
+  // subset of dates. This prevents a gap-only run from shrinking the plan
+  // header or erasing its current read-model representation.
+  const allItems = [...itemsForPlan.values()].sort((a, b) => a.slotKey.localeCompare(b.slotKey));
+  const summary = [...summaryByKey.values()].sort((a, b) => a.slot.localeCompare(b.slot));
+  await ports.savePlanItems(planId, allItems);
   result.plan = {
     cadence: input.cadence,
     timeZone: input.timeZone,
     horizonDays,
-    validFrom: slots[0].date,
-    validUntil: slots[slots.length - 1].date,
+    validFrom,
+    validUntil,
     items: summary,
   };
   return result;
+}
+
+function normalizeInputChannels(value: SocialMediaChannel[] | undefined): SocialMediaChannel[] {
+  // Production runOwnerWorkflow supplies the saved selection explicitly,
+  // including an empty list. Missing or invalid input is never an Instagram
+  // fallback.
+  return normalizeSelectedSocialChannels(value);
+}
+
+function summaryItem(item: WorkflowItem, timeZone: string, created: boolean): PlanSummaryItem {
+  const identity = parseWorkflowSlotIdentity(item.slotKey);
+  const date = identity?.date ?? item.slotKey;
+  return {
+    slot: date,
+    slotKey: item.slotKey,
+    publishAt: item.publishAt,
+    localDate: isoToLocalDate(item.publishAt, timeZone),
+    localTime: formatLocalTime(item.publishAt, timeZone),
+    channel: item.channel,
+    format: item.format,
+    contentType: item.contentType,
+    draftId: item.draftId,
+    created,
+  };
 }
 
 function codeOf(reason: unknown): string {

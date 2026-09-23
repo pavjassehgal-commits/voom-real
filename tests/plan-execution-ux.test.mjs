@@ -177,12 +177,12 @@ test("5d. formats are interleaved — no back-to-back repetition where the mix a
 });
 
 test("5e. buildSlots carries the balanced types and stays slot-idempotent", () => {
-  const slots = rolling.buildSlots({ now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "Grow awareness" });
+  const slots = rolling.buildSlots({ now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "Grow awareness", selectedChannels: ["instagram"] });
   assert.equal(slots.length, 7);
   const counts = { post: 0, reel: 0, story: 0 };
   for (const slot of slots) counts[slot.contentType] += 1;
   assert.ok(counts.post >= 2 && counts.reel >= 1 && counts.story >= 1, `unbalanced slots: ${JSON.stringify(counts)}`);
-  const again = rolling.buildSlots({ now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "Grow awareness" });
+  const again = rolling.buildSlots({ now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "Grow awareness", selectedChannels: ["instagram"] });
   assert.deepEqual(slots.map((slot) => [slot.date, slot.contentType]), again.map((slot) => [slot.date, slot.contentType]));
   // All times remain in the future (past-time guard preserved).
   for (const slot of slots) assert.ok(Date.parse(slot.publishAt) > NOW.getTime());
@@ -216,10 +216,10 @@ function createPorts(store) {
       return { concept: `${slot.contentType} idea ${slot.index}`, caption: "A calm look at our work today.", cta: "Visit us", hashtags: ["#dubai"], visualBrief: "Clean natural light." };
     },
     async createDraft({ planId, slot, content }) {
-      const key = `${planId}:${slot.date}`;
+      const key = `${planId}:${slot.slotKey}`;
       if (store.bySlot.has(key)) return store.drafts.get(store.bySlot.get(key));
       const draftId = `draft-${++store.seq}`;
-      const item = { draftId, planId, slotKey: slot.date, contentType: slot.contentType, concept: content.concept, caption: content.caption, publishAt: slot.publishAt, status: "draft" };
+      const item = { draftId, planId, slotKey: slot.slotKey, channel: slot.channel, format: slot.format, contentType: slot.contentType, concept: content.concept, caption: content.caption, publishAt: slot.publishAt, status: "draft" };
       store.drafts.set(draftId, item);
       store.bySlot.set(key, draftId);
       return item;
@@ -256,7 +256,7 @@ test("6. generated media advances the SAME workflow item (no duplicate drafts)",
   // Plans + Credits v1: only Autopilot may reach the paid media stage on its
   // own, so the "generated once, never twice" guarantee is proven there.
   const store = createStore();
-  const input = { now: NOW, timeZone: TZ, cadence: "daily", mode: "autopilot", goal: "Grow awareness" };
+  const input = { now: NOW, timeZone: TZ, cadence: "daily", mode: "autopilot", goal: "Grow awareness", selectedChannels: ["instagram"] };
   const first = await rolling.ensureRollingPlan(createPorts(store), input);
   assert.equal(first.created, 7);
   const idsAfterFirst = new Set([...store.drafts.keys()]);
@@ -284,7 +284,7 @@ test("6. generated media advances the SAME workflow item (no duplicate drafts)",
 
 test("6b. Assisted plans the horizon once, generates no media on its own, and a rerun reuses every item (v1)", async () => {
   const store = createStore();
-  const input = { now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "Grow awareness" };
+  const input = { now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "Grow awareness", selectedChannels: ["instagram"] };
   const first = await rolling.ensureRollingPlan(createPorts(store), input);
   assert.equal(first.stage, "planning_only");
   assert.equal(first.created, 7);
@@ -308,7 +308,7 @@ test("6b. Assisted plans the horizon once, generates no media on its own, and a 
 
 test("7. Assisted stops at Planned — nothing is generated, scheduled or queued on its own (v1)", async () => {
   const store = createStore();
-  const run = await rolling.ensureRollingPlan(createPorts(store), { now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "Grow awareness" });
+  const run = await rolling.ensureRollingPlan(createPorts(store), { now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "Grow awareness", selectedChannels: ["instagram"] });
   assert.equal(run.created, 7);
   assert.equal(run.autoApproved, 0);
   assert.equal(run.mediaQueued, 0, "no paid media stage in Assisted");
@@ -322,7 +322,7 @@ test("7. Assisted stops at Planned — nothing is generated, scheduled or queued
 
 test("8. Autopilot safely proceeds for safe content via the existing evaluator", async () => {
   const store = createStore();
-  const run = await rolling.ensureRollingPlan(createPorts(store), { now: NOW, timeZone: TZ, cadence: "daily", mode: "autopilot", goal: "Grow awareness" });
+  const run = await rolling.ensureRollingPlan(createPorts(store), { now: NOW, timeZone: TZ, cadence: "daily", mode: "autopilot", goal: "Grow awareness", selectedChannels: ["instagram"] });
   assert.equal(run.autoApproved + run.heldForReview, 7);
   assert.ok(run.autoApproved >= 1, "safe content advances automatically");
   for (const [draftId, row] of store.queue) {

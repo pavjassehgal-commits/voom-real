@@ -553,9 +553,9 @@ export interface CampaignActionView extends CampaignActionRecord {
    *
    * A YouTube Video is a first-class long-form deliverable (title +
    * description + concept + script/outline + video asset relationship), not a
-   * renamed short. `publishState` is the canonical social lifecycle state,
-   * derived truthfully: while no real TikTok/YouTube provider integration
-   * exists, an approved item reads `connection_required` — never `published`.
+   * renamed short. `publishState` and `queueStatus` are derived from the
+   * channel's durable provider queue. Approval is never publication; only the
+   * provider's own confirmation can establish `published`.
    */
   social?: {
     draftId: string;
@@ -569,6 +569,8 @@ export interface CampaignActionView extends CampaignActionRecord {
     draftStatus: "draft" | "approved" | "rejected";
     /** Canonical lifecycle state from lib/social/publish-state. */
     publishState: string;
+    /** Durable TikTok/YouTube queue status, or null until it is synced. */
+    queueStatus: string | null;
     publishStateLabel: string;
     /** Real provider reference only; null until a provider confirms. */
     providerRef: string | null;

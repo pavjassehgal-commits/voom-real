@@ -33,9 +33,18 @@ const KEY_ASSISTED = "77777777-7777-4777-8777-777777777777";
 const KEY_AUTOPILOT = "88888888-8888-4888-8888-888888888888";
 const KEY_LOCKED = "99999999-9999-4999-8999-999999999999";
 
-const START_UTC = new Date("2026-09-22T00:00+04:00").toISOString();
-const END_UTC = new Date("2026-10-01T23:59+04:00").toISOString();
-const NOW = new Date("2026-09-20T12:00:00.000Z");
+const DAY_MS = 24 * 60 * 60_000;
+const HOUR_MS = 60 * 60_000;
+const NOW = new Date();
+function dubaiDateAfter(days) {
+  return new Date(NOW.getTime() + days * DAY_MS + 4 * HOUR_MS).toISOString().slice(0, 10);
+}
+const START_DATE = dubaiDateAfter(2);
+const END_DATE = dubaiDateAfter(11);
+const START_UTC = new Date(`${START_DATE}T00:00:00+04:00`).toISOString();
+const END_UTC = new Date(`${END_DATE}T23:59:00+04:00`).toISOString();
+const UPDATED_EMAIL_AT = new Date(Date.parse(START_UTC) + 2 * DAY_MS + 7 * HOUR_MS).toISOString();
+const UPDATED_INSTAGRAM_AT = new Date(Date.parse(START_UTC) + 4 * DAY_MS + 15 * HOUR_MS).toISOString();
 
 const BRAND = {
   brandName: "SynraPay",
@@ -48,8 +57,8 @@ const BRAND = {
 const BRIEF = {
   name: "SynraPay website is now LIVE",
   goal: "announce",
-  startAt: "2026-09-22",
-  endAt: "2026-10-01",
+  startAt: START_DATE,
+  endAt: END_DATE,
   offerDetails: "",
   targetAudience: "Existing SynraPay merchants",
   notes: "",
@@ -419,7 +428,7 @@ test("editing one action rewrites only that action's draft", async () => {
     subject: "Edited subject line",
     previewText: "Edited preview",
     body: "Hi,\n\nThis body was edited by the merchant before approval.\n\nCTA: Open the dashboard",
-    scheduledFor: "2026-09-23T07:00:00.000Z",
+    scheduledFor: UPDATED_EMAIL_AT,
     content: { cta: "Open the dashboard", ctaUrl: null, audienceNote: "Existing SynraPay merchants." },
     contentSource: "edited",
   };
@@ -430,7 +439,7 @@ test("editing one action rewrites only that action's draft", async () => {
   assert.equal(updated.id, email.id);
   assert.equal(updated.content_source, "edited");
   assert.equal(updated.mara_content.cta, "Open the dashboard");
-  assert.equal(new Date(updated.scheduled_for).toISOString(), "2026-09-23T07:00:00.000Z");
+  assert.equal(new Date(updated.scheduled_for).toISOString(), UPDATED_EMAIL_AT);
 
   const child = await one("select subject, preview_text, content, proposed_send_at from public.voom_campaigns where id = $1", [email.email_campaign_id]);
   assert.equal(child.subject, "Edited subject line");
@@ -458,7 +467,7 @@ test("editing an Instagram action keeps the caption limits and mirrors the calen
     title: "Edited concept",
     caption: "Edited caption written by the merchant before approval.",
     queueCaption: "Edited caption written by the merchant before approval.",
-    scheduledFor: "2026-09-24T15:00:00.000Z",
+    scheduledFor: UPDATED_INSTAGRAM_AT,
     content: { hook: "Edited hook" },
     contentSource: "edited",
   };
@@ -467,7 +476,7 @@ test("editing an Instagram action keeps the caption limits and mirrors the calen
   const draft = await one("select title, content, proposed_publish_at from public.mara_drafts where id = $1", [action.draft_id]);
   assert.equal(draft.title, "Edited concept");
   assert.match(draft.content, /Edited caption written by the merchant/);
-  assert.equal(new Date(draft.proposed_publish_at).toISOString(), "2026-09-24T15:00:00.000Z");
+  assert.equal(new Date(draft.proposed_publish_at).toISOString(), UPDATED_INSTAGRAM_AT);
 
   const calendar = await one("select title, content from public.content_calendar_items where owner_user_id = $1 and source_draft_id = $2", [OWNER_A, action.draft_id]);
   assert.equal(calendar.title, "Edited concept", "the approved calendar mirror stays truthful");

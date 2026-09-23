@@ -22,8 +22,12 @@ import {
   type ReelProductionMethod,
 } from "@/lib/mara/reel-production";
 import { checkScheduleInstant } from "@/lib/voom/schedule-guard";
-import { SOCIAL_PUBLISH_STATE_LABELS, publishStateForUnconnectedProvider, publishStateFromTikTokQueue, publishStateFromYouTubeQueue } from "@/lib/social/publish-state";
-import { getSocialDraft, updateSocialDraft } from "@/lib/social/server-drafts";
+import { SOCIAL_PUBLISH_STATE_LABELS, publishStateFromDraftStatus, publishStateFromTikTokQueue, publishStateFromYouTubeQueue } from "@/lib/social/publish-state";
+import {
+  cancelSocialDraftQueueBeforeContentMutation,
+  getSocialDraft,
+  updateSocialDraft,
+} from "@/lib/social/server-drafts";
 import { canUseAutopilot, normalizePlan, type PlanId } from "@/lib/billing/plans";
 import { accountTimezone, daysBetween, isoToLocalDate, localToUtcIso } from "@/lib/voom/timezone";
 import { generateCampaignIntelligence, type CampaignIntelligenceDeps } from "./intelligence";
@@ -901,6 +905,9 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
       ? db.from("tiktok_publish_queue").select("draft_id,status,provider_post_id,provider_status").eq("owner_user_id", ownerId).in("draft_id", draftIds)
       : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
   ]);
+  if (queueResult.error || youtubeQueueResult.error || tiktokQueueResult.error) {
+    throw new Error("campaign_queue_state_read_failed");
+  }
 
   const children = new Map<string, Record<string, unknown>>((childrenResult.data ?? []).map((row) => [String(row.id), row]));
   const drafts = new Map<string, Record<string, unknown>>((draftsResult.data ?? []).map((row) => [String(row.id), row]));
@@ -1034,14 +1041,14 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
       const lockedQueueStatus = queue?.status ?? null;
       base.canEditContent = !(lockedQueueStatus && ["uploading", "posting", "provider_processing", "published"].includes(lockedQueueStatus));
       // The canonical publish state: each channel reads its own durable
-      // queue; only an unqueued, unconnected item falls back to the
-      // truthful unconnected-provider derivation.
+      // queue. Without a confirmed queue row, approval remains approval —
+      // never a scheduled or published claim.
       const ytQueueState = youtubeQueue ? publishStateFromYouTubeQueue(youtubeQueue.status) : null;
       const ttQueueState = tiktokQueue ? publishStateFromTikTokQueue(tiktokQueue.status) : null;
       const queueState = ytQueueState ?? ttQueueState;
       const publishState = queueState && queueState !== "draft"
         ? queueState
-        : publishStateForUnconnectedProvider(draft ? draftStatus : null);
+        : publishStateFromDraftStatus(draft ? draftStatus : null);
       const providerRef = typeof draft?.provider_ref === "string" && draft.provider_ref ? draft.provider_ref : null;
       base.social = {
         draftId: action.draft_id,
@@ -1054,7 +1061,12 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
         script: content?.script ?? [],
         draftStatus,
         publishState,
-        publishStateLabel: SOCIAL_PUBLISH_STATE_LABELS[publishState],
+        queueStatus: queue?.status ?? null,
+        publishStateLabel: queueState && queueState !== "draft"
+          ? SOCIAL_PUBLISH_STATE_LABELS[publishState]
+          : draftStatus === "approved" && Boolean(action.scheduled_for)
+            ? "Approved — queue sync not confirmed"
+            : SOCIAL_PUBLISH_STATE_LABELS[publishState],
         // A provider reference only exists when the provider really returned
         // one (YouTube's video id / TikTok's post or publish id).
         providerRef,
@@ -1198,8 +1210,8 @@ function toFacts(view: CampaignActionView): import("./status").ActionFacts {
       scheduledFor: view.scheduled_for,
     };
   }
-  // Multi-Social Core: TikTok/YouTube facts carry no queue — there is no
-  // provider machinery to derive from, so an approved item derives `blocked`.
+  // TikTok/YouTube execution facts carry their own durable provider-queue
+  // state; only the provider-confirmed `published` row derives as executed.
   if (view.social) {
     return {
       kind: "social",
@@ -1207,6 +1219,7 @@ function toFacts(view: CampaignActionView): import("./status").ActionFacts {
       planStatus: view.status,
       draftStatus: view.social.draftStatus,
       hasAsset: !view.social.needsAsset,
+      queueStatus: view.social.queueStatus,
       scheduledFor: view.scheduled_for,
     };
   }
@@ -1346,19 +1359,20 @@ export async function decideCampaignAction(
   if (isSocialVideoChannel(action.channel)) {
     // ── Multi-Social Core: TikTok / YouTube action decisions ──────────────
     //
-    // Approval records the decision INSIDE Voom only. There is no TikTok or
-    // YouTube provider integration, so no queue row is ever created, nothing
-    // is handed to a provider, and the canonical publish state stays
-    // `connection_required` — approval never means publication.
+    // Approval runs through the shared social-draft layer, which mirrors an
+    // approved + scheduled item into its durable TikTok/YouTube provider queue.
+    // It makes no provider call: only the worker executes, and only provider
+    // confirmation establishes Published. Queue-sync errors throw before this
+    // campaign action is marked approved.
     if (!action.draft_id) return { ok: false, blockers: ["That social draft was not found."] };
+    const lock = await actionContentLock(admin, ownerId, action);
+    if (lock) return { ok: false, blockers: [lock] };
     if (decision === "reject") {
-      const { error: rejectError } = await admin.from("mara_drafts").update({ status: "rejected" })
-        .eq("owner_user_id", ownerId).eq("id", action.draft_id);
-      if (rejectError) throw new Error("campaign_action_decision_failed");
-      await admin.from("content_calendar_items").delete()
-        .eq("owner_user_id", ownerId).eq("source_draft_id", action.draft_id);
-      await admin.from("voom_campaign_actions").update({ status: "skipped" })
+      const rejected = await updateSocialDraft(admin, ownerId, action.draft_id, { decision: "rejected" });
+      if (!rejected) return { ok: false, blockers: ["That social draft could not be rejected."] };
+      const { error: actionError } = await admin.from("voom_campaign_actions").update({ status: "skipped" })
         .eq("owner_user_id", ownerId).eq("id", action.id);
+      if (actionError) throw new Error("campaign_action_decision_failed");
     } else {
       const social = await getSocialDraft(admin, ownerId, action.draft_id);
       if (!social) return { ok: false, blockers: ["That social draft was not found."] };
@@ -1367,8 +1381,9 @@ export async function decideCampaignAction(
       }
       const updated = await updateSocialDraft(admin, ownerId, action.draft_id, { decision: "approved" });
       if (!updated) return { ok: false, blockers: ["That social draft could not be approved."] };
-      await admin.from("voom_campaign_actions").update({ status: "approved" })
+      const { error: actionError } = await admin.from("voom_campaign_actions").update({ status: "approved" })
         .eq("owner_user_id", ownerId).eq("id", action.id);
+      if (actionError) throw new Error("campaign_action_decision_failed");
     }
   } else if (action.channel === "email") {
     const { error: rpcError } = await admin.rpc("set_campaign_action_email_approval", {
@@ -1494,8 +1509,9 @@ export async function editCampaignActionContent(
     //
     // The caption is raw platform text (no Instagram CTA/hashtag composition),
     // the description belongs to the YouTube deliverable, and the script is a
-    // beat list / outline. The guarded writer keeps the linked social draft and
-    // its calendar mirror in sync; there is no provider queue to update.
+    // beat list / outline. The guarded writer keeps the linked social draft,
+    // Calendar mirror, and durable provider queue in sync; queue-sync errors
+    // must reach the caller instead of becoming a false saved/queued result.
     if (edit.hook !== undefined || edit.visualDirection !== undefined || edit.format !== undefined || edit.cta !== undefined) {
       return { ok: false, blockers: ["Those fields belong to Instagram actions."] };
     }
@@ -1579,7 +1595,7 @@ export async function editCampaignActionContent(
   patch.contentSource = "edited";
   patch.safetyBlockers = evaluateContentSafety(action, patch, scheduledFor ?? action.scheduled_for);
 
-  return writeActionContent(admin, ownerId, action.id, patch, null, false);
+  return writeActionContent(admin, ownerId, action, patch, null, false);
 }
 
 export interface RegenerateCampaignActionInput {
@@ -1754,6 +1770,7 @@ export async function regenerateCampaignAction(
       cta: next.cta ?? null,
       visualDirection: next.visualDirection ?? null,
       script: next.script ?? [],
+      ...(typeof next.description === "string" ? { description: next.description } : {}),
     };
   }
   patch.scheduledFor = next.scheduledFor;
@@ -1762,7 +1779,7 @@ export async function regenerateCampaignAction(
   // Reset review: the content is new, so the previous approval no longer
   // describes it. The RPC handles the email child status and the Instagram
   // mirror/queue withdrawal — published or in-flight items were refused above.
-  return writeActionContent(admin, ownerId, action.id, patch, input.idempotencyKey, true);
+  return writeActionContent(admin, ownerId, action, patch, input.idempotencyKey, true);
 }
 
 async function loadCampaignAction(
@@ -1779,20 +1796,41 @@ async function loadCampaignAction(
 }
 
 /**
- * The truthful content lock: an email with a real send, or an Instagram item
- * that is publishing or published, can never be rewritten.
+ * The truthful content lock: an email with a real send, an Instagram item
+ * that is publishing or published, or a TikTok/YouTube item owned by its
+ * provider, can never be rewritten.
  */
 async function actionContentLock(admin: Admin, ownerId: string, action: CampaignActionRecord): Promise<string | null> {
   if (action.channel === "email") {
     if (!action.email_campaign_id) return "That campaign action was not found.";
-    const { data } = await admin.from("campaign_sends")
+    const { data, error } = await admin.from("campaign_sends")
       .select("internal_status").eq("owner_user_id", ownerId).eq("campaign_id", action.email_campaign_id).limit(1);
+    if (error) throw new Error("campaign_content_lock_read_failed");
     const sent = (data ?? []).some((row) => String(row.internal_status) !== "skipped");
     return sent ? "This email has already been sent, so its content can no longer be changed." : null;
   }
   if (!action.draft_id) return "That campaign action was not found.";
-  const { data } = await admin.from("instagram_publish_queue")
+  if (action.channel === "tiktok_video") {
+    const { data, error } = await admin.from("tiktok_publish_queue").select("status")
+      .eq("owner_user_id", ownerId).eq("draft_id", action.draft_id).maybeSingle();
+    if (error) throw new Error("campaign_content_lock_read_failed");
+    const status = data ? String(data.status) : null;
+    return status === "posting" || status === "provider_processing" || status === "published"
+      ? "TikTok already owns this post, so its content can no longer be changed."
+      : null;
+  }
+  if (action.channel === "youtube_short" || action.channel === "youtube_video") {
+    const { data, error } = await admin.from("youtube_publish_queue").select("status")
+      .eq("owner_user_id", ownerId).eq("draft_id", action.draft_id).maybeSingle();
+    if (error) throw new Error("campaign_content_lock_read_failed");
+    const status = data ? String(data.status) : null;
+    return status === "uploading" || status === "provider_processing" || status === "published"
+      ? "YouTube already owns this video, so its content can no longer be changed."
+      : null;
+  }
+  const { data, error } = await admin.from("instagram_publish_queue")
     .select("status").eq("owner_user_id", ownerId).eq("draft_id", action.draft_id).maybeSingle();
+  if (error) throw new Error("campaign_content_lock_read_failed");
   const status = data ? String((data as { status: string }).status) : null;
   return status === "published" || status === "publishing"
     ? "This Instagram item is already published or publishing, so its content can no longer be changed."
@@ -1802,14 +1840,31 @@ async function actionContentLock(admin: Admin, ownerId: string, action: Campaign
 async function writeActionContent(
   admin: Admin,
   ownerId: string,
-  actionId: string,
+  action: CampaignActionRecord,
   patch: Record<string, unknown>,
   idempotencyKey: string | null,
   resetReview: boolean,
 ): Promise<CampaignActionContentResult> {
+  // Campaign RPC updates the action, linked social draft, Calendar mirror and
+  // review state as one database operation. For TikTok/YouTube, first withdraw
+  // the old queue row through the shared social-draft boundary. Its cancellation
+  // RPC atomically wins against a worker claim or returns a verifiable conflict.
+  if (isSocialVideoChannel(action.channel)) {
+    if (!action.draft_id) return { ok: false, blockers: ["That social draft was not found; no campaign changes were made."] };
+    try {
+      await cancelSocialDraftQueueBeforeContentMutation(admin, ownerId, action.draft_id);
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "";
+      const blocker = code === "social_draft_provider_owned"
+        ? "The provider already owns this video, so it cannot be edited or regenerated. No campaign, draft, Calendar or review changes were made."
+        : "Voom couldn't confirm durable queue cancellation. No campaign, draft, Calendar or review changes were made; retry when the queue is available.";
+      return { ok: false, blockers: [blocker] };
+    }
+  }
+
   const { data, error } = await admin.rpc("update_campaign_action_content", {
     p_owner_user_id: ownerId,
-    p_action_id: actionId,
+    p_action_id: action.id,
     p_patch: patch,
     p_idempotency_key: idempotencyKey,
     p_reset_review: resetReview,
@@ -1824,7 +1879,26 @@ async function writeActionContent(
     }
     throw new Error("campaign_action_content_update_failed");
   }
-  return { ok: true, action: data as CampaignActionRecord };
+  const updatedAction = data as CampaignActionRecord;
+  if (isSocialVideoChannel(updatedAction.channel) && updatedAction.draft_id) {
+    const socialDraft = await getSocialDraft(admin, ownerId, updatedAction.draft_id);
+    if (!socialDraft) throw new Error("campaign_social_draft_sync_failed");
+    const content = normalizeActionContent(updatedAction.mara_content) ?? {};
+    const synced = await updateSocialDraft(admin, ownerId, updatedAction.draft_id, {
+      // The guarded RPC has already updated the linked draft's canonical text;
+      // this second, idempotent pass syncs its content metadata, Calendar
+      // mirror, and provider queue using the existing social-draft boundary.
+      title: updatedAction.title || socialDraft.title,
+      caption: socialDraft.caption,
+      description: content.description ?? socialDraft.description ?? "",
+      concept: content.concept ?? updatedAction.title ?? socialDraft.concept ?? "",
+      script: content.script ?? socialDraft.script,
+      scheduledAt: updatedAction.scheduled_for ?? socialDraft.scheduledAt,
+      ...(resetReview ? { decision: "draft" as const } : {}),
+    }, { queueCancellationConfirmed: true });
+    if (!synced) throw new Error("campaign_social_draft_sync_failed");
+  }
+  return { ok: true, action: updatedAction };
 }
 
 /** Re-runs the existing Autopilot safety evaluation on edited content. */
@@ -1972,7 +2046,7 @@ function formatForChannel(channel: string): "post" | "reel" | "story" | "video" 
   return "post";
 }
 
-/** True for TikTok/YouTube actions — draft-backed, no provider queue yet. */
+/** True for TikTok/YouTube actions, which use their own draft and provider queue. */
 function isSocialVideoChannel(channel: string): boolean {
   return channel === "tiktok_video" || channel === "youtube_short" || channel === "youtube_video";
 }

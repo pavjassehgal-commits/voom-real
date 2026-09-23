@@ -51,8 +51,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const draft = await getSocialDraft(createAdminClient(), user.id, id);
     if (!draft) return Response.json({ error: "That content was not found." }, { status: 404 });
     return Response.json({ draft }, { headers: { "Cache-Control": "no-store" } });
-  } catch {
-    return Response.json({ error: "Voom couldn't load that content. Please retry." }, { status: 503 });
+  } catch (reason) {
+    const queueReadError = socialQueueReadError(reason);
+    return Response.json({ error: queueReadError ?? "Voom couldn't load that content. Please retry." }, { status: 503 });
   }
 }
 
@@ -75,23 +76,79 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   try {
     const draft = await updateSocialDraft(createAdminClient(), user.id, id, parsed.data);
     if (!draft) return Response.json({ error: "That content was not found." }, { status: 404 });
-    // Truthful approval messaging per channel: approval enqueues durable
-    // execution on the channel's own queue; only the worker — with the
-    // provider's own confirmation — can ever call it Published.
-    const approvalMessage = draft.channel === "youtube"
-      ? draft.scheduledAt
-        ? "Approved. It is on the durable YouTube publish queue and uploads at the scheduled time — Published appears only after YouTube confirms the video is processed."
-        : "Approved inside Voom. Add a schedule to put it on the YouTube publish queue — nothing has been published."
-      : draft.scheduledAt
-        ? "Approved. It is on the durable TikTok publish queue and publishes at the scheduled time — Published appears only after TikTok confirms."
-        : "Approved inside Voom. Add a schedule to put it on the TikTok publish queue — nothing has been published.";
+    // The response is based on the row actually returned by the durable
+    // provider queue. A successful approval write alone is never described as
+    // queued, scheduled, uploading or published.
+    const approvalMessage = socialApprovalMessage(draft);
     return Response.json({
       draft,
       message: parsed.data.decision === "approved"
         ? approvalMessage
         : "Saved inside Voom. Nothing was published.",
     });
-  } catch {
-    return Response.json({ error: "Voom couldn't save that content. Please retry." }, { status: 503 });
+  } catch (reason) {
+    const code = reason instanceof Error ? reason.message : "";
+    if (code.includes("publish_enqueue_failed")) {
+      const channel = code.startsWith("youtube_") ? "YouTube" : "TikTok";
+      return Response.json({
+        error: `Approval was recorded, but Voom couldn't confirm the durable ${channel} queue sync. Nothing was published. Retry saving or scheduling to safely sync it.`,
+      }, { status: 503 });
+    }
+    if (code === "social_draft_provider_owned") {
+      return Response.json({
+        error: "The provider already owns this video, so Voom made no changes. Uploading, processing, and published content cannot be cancelled or rewritten.",
+      }, { status: 409 });
+    }
+    if (code.includes("publish_cancel_failed") || code === "social_draft_queue_cancel_not_confirmed") {
+      return Response.json({
+        error: "Voom couldn't confirm the durable queue cancellation. No draft or calendar changes were saved. Retry when the queue is available.",
+      }, { status: 503 });
+    }
+    if (code === "social_calendar_sync_failed") {
+      return Response.json({
+        error: "The draft was saved, but Voom couldn't sync the calendar mirror. Nothing was published. Retry saving or scheduling.",
+      }, { status: 503 });
+    }
+    const queueReadError = socialQueueReadError(reason);
+    return Response.json({ error: queueReadError ?? "Voom couldn't save that content. Please retry." }, { status: 503 });
+  }
+}
+
+function socialQueueReadError(reason: unknown): string | null {
+  const code = reason instanceof Error ? reason.message : "";
+  if (code.endsWith("publish_queue_read_failed")) {
+    const channel = code.startsWith("youtube_") ? "YouTube" : "TikTok";
+    return `Voom couldn't confirm the durable ${channel} queue state. No queued or published status is being assumed; refresh and retry.`;
+  }
+  return null;
+}
+
+function socialApprovalMessage(draft: NonNullable<Awaited<ReturnType<typeof getSocialDraft>>>) {
+  const channel = draft.channel === "youtube" ? "YouTube" : "TikTok";
+  if (!draft.scheduledAt) {
+    return `Approved inside Voom. Add a schedule to sync this to the durable ${channel} queue — nothing has been published.`;
+  }
+  switch (draft.queueStatus) {
+    case "scheduled":
+      return `Approved and confirmed on the durable ${channel} queue for its scheduled time. Published appears only after ${channel} confirms.`;
+    case "waiting_for_media":
+      return `Approved and on the durable ${channel} queue, but publishing is held until a video file is ready. Nothing has been published.`;
+    case "needs_declaration":
+      return `Approved and on the durable ${channel} queue, but a required audience or privacy declaration is still needed. Nothing has been published.`;
+    case "permission_required":
+      return `Approved and recorded on the durable ${channel} queue, but its provider connection or permission is required before publishing.`;
+    case "uploading":
+    case "posting":
+      return `${channel} is receiving the video. It is not Published until ${channel} confirms.`;
+    case "provider_processing":
+      return `${channel} is processing the video. It is not Published until ${channel} confirms completion.`;
+    case "published":
+      return `${channel} confirmed this video as Published.`;
+    case "failed":
+      return `The durable ${channel} queue records a failed attempt${draft.queueFailureMessage ? `: ${draft.queueFailureMessage}` : ""}. Nothing new was reported as published.`;
+    case "cancelled":
+      return `The ${channel} queue item is cancelled, so this approval is not scheduled for publishing.`;
+    default:
+      return `Approval was recorded, but the durable ${channel} queue sync is not confirmed. Nothing has been published.`;
   }
 }

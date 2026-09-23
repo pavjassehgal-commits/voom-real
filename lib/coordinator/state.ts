@@ -176,10 +176,9 @@ export async function buildMarketingState(
       list.push(a);
       actionsByCampaign.set(campId, list);
 
-      // Add to commitments for any active social channel action. Multi-Social
-      // Core: the coordinator reads the ONE calendar, so TikTok/YouTube
-      // campaign actions count as real commitments too — understanding them
-      // never grants execution (they have no provider path).
+      // Add every active social channel action as a date commitment. The
+      // coordinator only computes coverage; execution remains in each
+      // channel's existing approval and durable provider-queue workflow.
       const ch = String(a.channel);
       const isSocialVideo = ch === "tiktok_video" || ch === "youtube_short" || ch === "youtube_video";
       if ((ch.startsWith("instagram_") || isSocialVideo) && a.status !== "failed" && a.status !== "skipped") {
@@ -200,8 +199,8 @@ export async function buildMarketingState(
           publishAt: sched,
           localDate: localD,
           localTime: sched,
-          // Truthful: an approved social action is never "published" — no
-          // provider exists, so it stays approved.
+          // Coverage needs only the review decision. Provider publication
+          // truth is owned by the separate durable queue and its worker.
           status: isSocialVideo
             ? (a.status === "approved" ? "approved" : "needs_approval")
             : a.status === "executed" ? "published" : a.status === "approved" ? "approved" : "needs_approval",
@@ -277,10 +276,8 @@ export async function buildMarketingState(
     if (alreadyCampaign) continue;
 
     const kind = String(d.kind ?? "instagram_post");
-    // Multi-Social Core: TikTok/YouTube planning drafts carry their real
-    // channel. They have no publish queue, so their state is the honest one:
-    // approved items stay approved — never scheduled-for-execution, never
-    // published.
+    // TikTok/YouTube planning drafts carry their real channel. This state is
+    // used only for date coverage; the provider queue owns execution status.
     const isSocialDraft = kind === "tiktok_video" || kind === "youtube_short" || kind === "youtube_video";
     const format: ContentType | "video" | "short" = kind === "reel" ? "reel"
       : kind === "story" ? "story"
@@ -327,9 +324,9 @@ export async function buildMarketingState(
       continue;
     }
     const channelLabel = String(c.channel ?? "").toLowerCase();
-    // Multi-Social Core: the calendar's channel label decides the commitment's
-    // real channel. TikTok/YouTube mirrors are approved planning items — their
-    // state stays truthful (never scheduled-for-execution, never published).
+    // The calendar's native channel label decides the commitment identity.
+    // This read is for date coverage only; queue state is read by the Calendar
+    // and provider surfaces, not inferred from the mirror.
     const isTikTok = channelLabel === "tiktok";
     const isYouTubeShort = channelLabel === "youtube short";
     const isYouTubeVideo = channelLabel === "youtube video";

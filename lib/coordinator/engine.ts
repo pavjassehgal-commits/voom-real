@@ -97,10 +97,10 @@ export function evaluateMarketingNeeds(state: AuthoritativeMarketingState): Coor
   // Instead of blindly generating N items, see what days in the 7-day horizon
   // are covered by ANY valid marketing commitment on ANY channel (Instagram,
   // TikTok, YouTube campaign actions, approved/scheduled calendar items,
-  // pending approval drafts). Multi-Social Core: a TikTok or YouTube planning
-  // commitment covers its date just like an Instagram one — the coordinator
-  // understands every channel. Gap filling itself still only proposes
-  // Instagram drafts; nothing here creates autonomous TikTok/YouTube work.
+  // pending approval drafts). A TikTok or YouTube planning commitment covers
+  // its date just like an Instagram one. Gap filling passes the exact uncovered
+  // local dates to the shared planner, which assigns one item on a selected
+  // social channel; email never fills a social slot.
   const gaps = identifyCalendarGaps(state);
   if (gaps.length > 0) {
     needs.push({
@@ -254,18 +254,6 @@ export function identifyCalendarGaps(state: AuthoritativeMarketingState): GapIde
     // and does not cover a social slot.
     const isCovered = existingOnDate.some((c) => isSocialCommitmentChannel(c.channel));
     if (isCovered) {
-      continue;
-    }
-
-    // Also check: if the total number of social-channel commitments this week
-    // already equals or exceeds the cadence target count, and they are
-    // reasonably distributed, do not add more!
-    const totalSocialCommitments = commitments.filter(
-      (c) => isSocialCommitmentChannel(c.channel) && c.status !== "failed"
-    ).length;
-
-    if (totalSocialCommitments >= targetDates.length) {
-      // Fleet has enough marketing coverage already
       continue;
     }
 

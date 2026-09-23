@@ -196,7 +196,7 @@ function createCountingPorts() {
     async createDraft({ slot, content }) {
       calls.createDraft += 1;
       const item = {
-        draftId: `draft-${++seq}`, slotKey: slot.date, contentType: slot.contentType,
+        draftId: `draft-${++seq}`, slotKey: slot.slotKey, channel: slot.channel, format: slot.format, contentType: slot.contentType,
         concept: content.concept, caption: content.caption, publishAt: slot.publishAt, status: "draft",
       };
       drafts.set(item.draftId, item);
@@ -214,7 +214,7 @@ function createCountingPorts() {
 async function runMode(mode) {
   const { ports, calls } = createCountingPorts();
   const result = await rolling.ensureRollingPlan(ports, {
-    now: NOW, timeZone: TZ, cadence: "3x_week", mode, goal: "awareness",
+    now: NOW, timeZone: TZ, cadence: "3x_week", mode, goal: "awareness", selectedChannels: ["instagram"],
   });
   return { calls, result };
 }

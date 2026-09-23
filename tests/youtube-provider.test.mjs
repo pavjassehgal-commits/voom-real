@@ -2366,9 +2366,11 @@ test("the social drafts route records declarations without inventing them, and i
   const route = await read("app/api/social-drafts/[id]/route.ts");
   assert.match(route, /madeForKids: z\.boolean\(\)\.nullable\(\)\.optional\(\)/, "the audience declaration is a real boolean or explicitly null");
   assert.match(route, /privacy: z\.enum\(\["public", "private", "unlisted"\]\)\.nullable\(\)\.optional\(\)/, "privacy is one of YouTube's three values or null");
-  assert.match(route, /durable YouTube publish queue|YouTube publish queue/i, "approval messages describe the real queue");
-  assert.match(route, /durable TikTok publish queue/i, "TikTok approval messages describe its real queue");
+  assert.match(route, /youtube_publish_queue/i, "approval sync uses YouTube's durable queue");
+  assert.match(route, /tiktok_publish_queue/i, "TikTok approval sync uses its durable queue");
   assert.match(route, /PUBLISH_COMPLETE/i, "TikTok published requires its own provider evidence");
+  assert.match(route, /couldn't confirm the durable \$\{channel\} queue sync/i, "queue-sync failure is visible and never reported as queued success");
+  assert.match(route, /socialQueueReadError/, "queue-read failure is visible rather than treated as an empty queue");
 });
 
 test("the YouTube hub and editor surfaces tell the provider truth", async () => {

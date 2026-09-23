@@ -35,9 +35,19 @@ const KEY_ASSISTED = "55555555-5555-4555-8555-555555555555";
 const KEY_AUTOPILOT = "66666666-6666-4666-8666-666666666666";
 const KEY_CROSS_OWNER = "77777777-7777-4777-8777-777777777777";
 
-// Exact 2-day announce window in Dubai (UTC+4): 2026-09-22 00:00 → 2026-09-23 23:59.
-const START_UTC = "2026-09-21T20:00:00.000Z";
-const END_UTC = "2026-09-23T19:59:00.000Z";
+// Exact 2-day announce window in Dubai (UTC+4), kept future-relative so the
+// database's real schedule guard remains meaningful as the calendar advances.
+const DAY_MS = 24 * 60 * 60_000;
+function dubaiDateAfter(days) {
+  return new Date(Date.now() + days * DAY_MS + 4 * 60 * 60_000).toISOString().slice(0, 10);
+}
+const START_DATE = dubaiDateAfter(2);
+const END_DATE = dubaiDateAfter(3);
+const START_UTC = new Date(`${START_DATE}T00:00:00+04:00`).toISOString();
+const END_UTC = new Date(`${END_DATE}T23:59:00+04:00`).toISOString();
+const EMAIL_AT = new Date(`${START_DATE}T09:00:00+04:00`).toISOString();
+const STORY_AT = new Date(`${START_DATE}T10:30:00+04:00`).toISOString();
+const POST_AT = new Date(`${START_DATE}T19:00:00+04:00`).toISOString();
 
 const SUMMARY =
   "MARA created a 2-day announcement campaign with 2 Instagram actions (1 Instagram post, 1 Story) and 1 email. " +
@@ -106,7 +116,7 @@ function announcePayload({ key, status, audienceId = null }) {
         stage: "awareness",
         title: "your business: the news you asked for",
         purpose: "Introduces the campaign and earns attention. Email 1 of 1 in the announcement sequence.",
-        scheduledFor: "2026-09-22T05:00:00.000Z",
+        scheduledFor: EMAIL_AT,
         status,
         subject: "your business: the news you asked for",
         previewText: "Here is what is happening.",
@@ -125,7 +135,7 @@ function announcePayload({ key, status, audienceId = null }) {
         stage: "awareness",
         title: "your business Story: campaign moment",
         purpose: "Introduces the campaign and earns attention. Instagram story 1 of 1.",
-        scheduledFor: "2026-09-22T06:30:00.000Z",
+        scheduledFor: STORY_AT,
         status,
         concept: 'Story frame text: "Something new from your business". Keep it full-screen, one line of text.',
         caption: "Something new from your business",
@@ -138,7 +148,7 @@ function announcePayload({ key, status, audienceId = null }) {
         stage: "awareness",
         title: "your business campaign announcement",
         purpose: "Introduces the campaign and earns attention. Instagram post 1 of 1.",
-        scheduledFor: "2026-09-22T15:00:00.000Z",
+        scheduledFor: POST_AT,
         status,
         concept: "your business campaign announcement",
         caption: "Say hello to the latest from your business.\n\nTap through and take a look.\n\n#smallbusiness",
@@ -291,8 +301,8 @@ test("Manual build of the exact 2-day announce campaign succeeds (saved audience
   assert.equal(container.goal, "announce");
   assert.equal(container.parent_campaign_id, null);
   assert.equal(container.status, "draft");
-  assert.equal(container.start_at.toISOString(), START_UTC, "start is 2026-09-22 00:00 Dubai");
-  assert.equal(container.end_at.toISOString(), END_UTC, "end is 2026-09-23 23:59 Dubai");
+  assert.equal(container.start_at.toISOString(), START_UTC, "start is midnight Dubai on the requested future date");
+  assert.equal(container.end_at.toISOString(), END_UTC, "end is 23:59 Dubai on the second campaign date");
   // Optional offer/notes were absent → NULL columns, not empty strings.
   assert.equal(container.offer_details, null, "no offerDetails → NULL");
   assert.equal(container.campaign_notes, null, "no notes → NULL");

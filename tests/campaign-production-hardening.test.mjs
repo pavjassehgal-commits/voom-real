@@ -145,21 +145,33 @@ test("database trigger rejects a past automated action and the guarded writer ke
   const { db } = await createSupabaseLite();
   const owner = "11111111-1111-4111-8111-111111111111";
   await db.exec(`insert into auth.users (id, email) values ('${owner}', 'hardening@example.com');`);
-  const start = "2026-09-22T00:00:00+04:00";
-  const end = "2026-09-22T23:59:00+04:00";
-  const scheduled = "2026-09-22T09:00:00+04:00";
+  const pastStart = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+  const pastEnd = new Date(Date.now() - 12 * 60 * 60_000).toISOString();
+  const pastScheduled = new Date(Date.now() - 60 * 60_000).toISOString();
+  const futureStart = new Date(Date.now() + 2 * 24 * 60 * 60_000).toISOString();
+  const futureEnd = new Date(Date.now() + 3 * 24 * 60 * 60_000).toISOString();
+  const futureScheduled = new Date(Date.now() + 2 * 24 * 60 * 60_000 + 9 * 60 * 60_000).toISOString();
   const payload = {
     campaign: {
       idempotencyKey: "11111111-2222-4333-8444-555555555555", name: "Hardening", goal: "announce",
-      startAt: start, endAt: end, offerDetails: "", audience: "", audienceId: "", notes: "",
+      startAt: futureStart, endAt: futureEnd, offerDetails: "", audience: "", audienceId: "", notes: "",
       summary: "A safe plan", strategy: null, strategySummary: "Plan", generationSource: "deterministic", fallbackSlots: [], performanceUsed: false,
     },
     actions: [{
-      slot: 0, channel: "instagram_post", stage: "awareness", title: "Post", purpose: "Announce", scheduledFor: scheduled,
+      slot: 0, channel: "instagram_post", stage: "awareness", title: "Post", purpose: "Announce", scheduledFor: futureScheduled,
       status: "proposed", concept: "A post", caption: "Caption", hashtags: [], idempotencyKey: "11111111-3333-4333-8444-555555555555",
       contentSource: "deterministic", content: { format: "post" }, safetyBlockers: [],
     }],
   };
+  const pastPayload = {
+    ...payload,
+    campaign: { ...payload.campaign, idempotencyKey: "11111111-4444-4333-8444-555555555555", startAt: pastStart, endAt: pastEnd },
+    actions: [{ ...payload.actions[0], scheduledFor: pastScheduled, idempotencyKey: "11111111-5555-4333-8444-555555555555" }],
+  };
+  await assert.rejects(
+    () => db.query("select id from public.create_automated_campaign($1::uuid, $2::jsonb)", [owner, JSON.stringify(pastPayload)]),
+    /campaign_action_schedule_in_past/,
+  );
   const created = await db.query("select id from public.create_automated_campaign($1::uuid, $2::jsonb)", [owner, JSON.stringify(payload)]);
   const campaignId = created.rows[0].id;
   const action = (await db.query("select id,draft_id from public.voom_campaign_actions where campaign_id = $1", [campaignId])).rows[0];

@@ -30,9 +30,10 @@ import {
   type SocialMediaChannel,
 } from "./channels";
 import {
-  publishStateForUnconnectedProvider,
   publishStateFromDraftStatus,
   publishStateFromInstagramQueue,
+  publishStateFromTikTokQueue,
+  publishStateFromYouTubeQueue,
   type SocialPublishState,
 } from "./publish-state";
 
@@ -146,6 +147,8 @@ export interface SocialContentRecord {
   timeZone: string;
   /** Canonical execution lifecycle state, derived — never faked. */
   publishState: SocialPublishState;
+  /** Durable provider queue status, when one exists for this channel. */
+  queueStatus: string | null;
   /** Real provider publication reference, or null. Never invented. */
   providerRef: string | null;
   asset: { exists: boolean; mimeType: string | null } | null;
@@ -198,16 +201,11 @@ export interface SocialContentMappingInput {
   /** Campaign relationship, when the draft backs a campaign action. */
   campaignId?: string | null;
   source?: SocialContentSource;
-  /** Existing Instagram publish queue status for the draft, if any. */
-  instagramQueueStatus?:
-    | "scheduled"
-    | "waiting_for_media"
-    | "permission_required"
-    | "publishing"
-    | "published"
-    | "failed"
-    | "cancelled"
-    | null;
+  /** Existing per-channel publish queue status for the draft, if any. */
+  instagramQueueStatus?: string | null;
+  tiktokQueueStatus?: string | null;
+  youtubeQueueStatus?: string | null;
+  youtubePrivacyStatus?: string | null;
   /** Whether the draft's private asset bytes are stored. */
   hasAsset?: boolean;
   assetMimeType?: string | null;
@@ -220,9 +218,10 @@ export interface SocialContentMappingInput {
  *   - Instagram: the existing queue state wins when a queue row exists
  *     (published there already means Meta-confirmed); otherwise the draft's
  *     approval state.
- *   - TikTok/YouTube: no provider integration exists, so an approved item is
- *     honestly `connection_required` — never `published`, never a scheduled
- *     state that pretends execution will happen.
+ *   - TikTok/YouTube: their own durable provider queue is authoritative when
+ *     supplied. Approved without a queue remains `approved`, not scheduled or
+ *     published; a missing connection is reported only by the queue's
+ *     `permission_required` state.
  */
 export function socialContentFromDraft(input: SocialContentMappingInput): SocialContentRecord | null {
   const { row } = input;
@@ -230,12 +229,24 @@ export function socialContentFromDraft(input: SocialContentMappingInput): Social
   if (!pair) return null;
 
   const approvalState = row.status === "approved" ? "approved" : row.status === "rejected" ? "rejected" : "draft";
+  const queueStatus = pair.channel === "instagram"
+    ? input.instagramQueueStatus ?? null
+    : pair.channel === "tiktok"
+      ? input.tiktokQueueStatus ?? null
+      : input.youtubeQueueStatus ?? null;
   let publishState: SocialPublishState;
   if (pair.channel === "instagram") {
-    const fromQueue = publishStateFromInstagramQueue(input.instagramQueueStatus ?? null);
+    const instagramStatus = queueStatus === "scheduled" || queueStatus === "waiting_for_media"
+      || queueStatus === "permission_required" || queueStatus === "publishing"
+      || queueStatus === "published" || queueStatus === "failed" || queueStatus === "cancelled"
+      ? queueStatus
+      : null;
+    const fromQueue = publishStateFromInstagramQueue(instagramStatus);
     publishState = fromQueue ?? (approvalState === "approved" && row.proposed_publish_at ? "scheduled" : publishStateFromDraftStatus(approvalState));
+  } else if (pair.channel === "tiktok") {
+    publishState = publishStateFromTikTokQueue(queueStatus) ?? publishStateFromDraftStatus(approvalState);
   } else {
-    publishState = publishStateForUnconnectedProvider(approvalState);
+    publishState = publishStateFromYouTubeQueue(queueStatus) ?? publishStateFromDraftStatus(approvalState);
   }
 
   return {
@@ -252,6 +263,7 @@ export function socialContentFromDraft(input: SocialContentMappingInput): Social
     scheduledAt: row.proposed_publish_at ?? null,
     timeZone: input.timeZone ?? "UTC",
     publishState,
+    queueStatus,
     // A provider reference only exists when a provider really returned one.
     providerRef: typeof row.provider_ref === "string" && row.provider_ref.trim() ? row.provider_ref : null,
     asset: { exists: Boolean(input.hasAsset), mimeType: input.assetMimeType ?? null },

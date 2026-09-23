@@ -171,8 +171,8 @@ function createPorts(store) {
       store.plans.set(id, { id, validFrom, validUntil });
       return id;
     },
-    async listItems() {
-      return [...store.drafts.values()];
+    async listItems(planId) {
+      return [...store.drafts.values()].filter((item) => item.planId === planId);
     },
     async generateContent(slot) {
       store.copy += 1;
@@ -184,12 +184,16 @@ function createPorts(store) {
         visualBrief: "Warm natural light, clean composition, no text.",
       };
     },
-    async createDraft({ slot, content }) {
-      if (store.bySlot.has(slot.date)) return store.drafts.get(store.bySlot.get(slot.date));
+    async createDraft({ planId, slot, content }) {
+      const key = `${planId}:${slot.slotKey}`;
+      if (store.bySlot.has(key)) return store.drafts.get(store.bySlot.get(key));
       const draftId = `draft-${++store.seq}`;
       const item = {
         draftId,
-        slotKey: slot.date,
+        planId,
+        slotKey: slot.slotKey,
+        channel: slot.channel,
+        format: slot.format,
         contentType: slot.contentType,
         concept: content.concept,
         caption: content.caption,
@@ -197,7 +201,7 @@ function createPorts(store) {
         status: "draft",
       };
       store.drafts.set(draftId, item);
-      store.bySlot.set(slot.date, draftId);
+      store.bySlot.set(key, draftId);
       return item;
     },
     async ensureMedia() {
@@ -231,15 +235,15 @@ test("the panel can display a real planning-only run: counts, cadence, timezone 
 
   // One slot already exists, so the run reuses it and creates the other six.
   const seeded = {
-    draftId: "draft-seeded", slotKey: "2026-09-12", contentType: "post",
+    draftId: "draft-seeded", planId: "plan-1", slotKey: "2026-09-12", channel: "instagram", format: "post", contentType: "post",
     concept: "Seeded post", caption: "An existing caption. Visit us this week.",
     publishAt: tz.localToUtcIso("2026-09-12", 18 * 60 + 30, TZ), status: "draft",
   };
   store.drafts.set(seeded.draftId, seeded);
-  store.bySlot.set(seeded.slotKey, seeded.draftId);
+  store.bySlot.set(`plan-1:${seeded.slotKey}`, seeded.draftId);
 
   const run = await rolling.ensureRollingPlan(createPorts(store), {
-    now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "awareness", stage: "planning_only",
+    now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "awareness", stage: "planning_only", selectedChannels: ["instagram"],
   });
   assert.equal(run.stage, "planning_only");
 
@@ -437,7 +441,7 @@ test("backend planning-only idempotency is unchanged: a second run reuses every 
   // before media, approval, calendar, queue and publishing.
   const store = createStore();
   const first = await rolling.ensureRollingPlan(createPorts(store), {
-    now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "g", stage: "planning_only",
+    now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "g", stage: "planning_only", selectedChannels: ["instagram"],
   });
   assert.equal(first.stage, "planning_only");
   assert.equal(first.created, 7);
@@ -445,7 +449,7 @@ test("backend planning-only idempotency is unchanged: a second run reuses every 
   assert.equal(store.drafts.size, 7);
 
   const second = await rolling.ensureRollingPlan(createPorts(store), {
-    now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "g", stage: "planning_only",
+    now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "g", stage: "planning_only", selectedChannels: ["instagram"],
   });
   assert.equal(second.stage, "planning_only");
   assert.equal(second.created, 0);

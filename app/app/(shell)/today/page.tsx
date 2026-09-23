@@ -19,14 +19,11 @@ import { formatLocalDate } from "@/lib/voom/timezone";
 export const dynamic = "force-dynamic";
 
 /**
- * Today is the operational command centre. Every row on this page is a real
- * workflow item from the ONE executable plan — never a disconnected marketing
- * recommendation — and every date is the account's real current local date.
- *
- * Multi-Social Core: Today also lists the approved TikTok/YouTube drafts that
- * are dated today, labelled truthfully — approved inside Voom, publishing
- * through their durable provider queues, and Published only after the
- * provider itself confirms.
+ * Today is the operational command centre. Marketing Plan rows come from the
+ * shared workflow snapshot; standalone approved TikTok/YouTube drafts are shown
+ * once through their durable queue-derived Calendar feed. Every date is the
+ * account's real current local date, and missing queue state is never reported
+ * as a successful schedule or publication.
  */
 export default async function TodayPage() {
   const data = await getOperatingData();
@@ -43,13 +40,20 @@ export default async function TodayPage() {
   // Real lifecycle state for the card below. `available` is false when the
   // 0040 migration is not applied, and then nothing is rendered at all.
   const lifecycle = await readEmailFlowSummary(sessionDb, data.user.id);
-  // Multi-Social Core: approved + scheduled TikTok/YouTube drafts dated today.
-  // A failure here must never blank the page — the Instagram workflow is the
-  // critical path, so the social section degrades to empty.
+  // Native-channel Marketing Plan items already live in the shared snapshot.
+  // The additional social feed contributes standalone Studio drafts only, so
+  // one plan item never appears twice on Today.
+  const planDraftIds = new Set(snapshot.planDraftIds);
   const admin = createAdminClient();
-  const socialToday = await listSocialCalendarItems(admin, data.user.id)
-    .then((items) => items.filter((item) => item.localDate === snapshot.today))
-    .catch(() => []);
+  let socialToday: Awaited<ReturnType<typeof listSocialCalendarItems>> = [];
+  let socialQueueReadFailed = false;
+  try {
+    socialToday = (await listSocialCalendarItems(admin, data.user.id))
+      .filter((item) => item.localDate === snapshot.today && !planDraftIds.has(item.draftId));
+  } catch {
+    // The page remains usable, but it must not imply the missing queue is empty.
+    socialQueueReadFailed = true;
+  }
 
   return <div>
     <PageHead
@@ -57,6 +61,9 @@ export default async function TodayPage() {
       description={`${snapshot.cadenceLabel} plan · ${snapshot.timeZone.replace("_", " ")} · ${formatLocalDate(snapshot.today)}`}
       actions={<AutomationMode compact initial={normalizeAutomationMode(data.business.automation_level)} />}
     />
+    {socialQueueReadFailed && <p role="alert" className="mb-4 rounded-xl border border-amber/35 bg-amber/10 px-4 py-3 text-sm text-amber">
+      Voom couldn&apos;t load TikTok/YouTube queue status. Those items are not being assumed scheduled or published; refresh to retry.
+    </p>}
 
     <Card className="mb-4 p-5 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -91,8 +98,8 @@ export default async function TodayPage() {
       timeZone={snapshot.timeZone}
     />
 
-    <Section title="Publishing today" icon="clock" href="/app/calendar" action="Open Content Calendar" items={summary.publishingToday}
-      empty="Nothing is due to publish today." />
+    <Section title="Content due today" icon="clock" href="/app/calendar" action="Open Content Calendar" items={summary.publishingToday}
+      empty="Nothing is due today." />
     {socialToday.length > 0 && (
       <Card className="mb-4 p-5 sm:p-6">
         <div className="mb-4 flex items-center gap-2">
@@ -106,7 +113,8 @@ export default async function TodayPage() {
               <span className="min-w-[110px] text-xs font-semibold text-text-2">{item.dayLabel} · {item.localTime}</span>
               <Tag tone="t-blue">{item.contentTypeLabel}</Tag>
               <b className="min-w-0 flex-1 truncate text-sm">{item.concept}</b>
-              <Tag tone="t-blue">{item.statusLabel}</Tag>
+              <Tag tone={socialStatusTone(item.statusLabel)}>{item.statusLabel}</Tag>
+              {item.queueFailureMessage && <p role="alert" className="w-full text-xs text-red">{item.queueFailureMessage}</p>}
             </div>
           ))}
         </div>
@@ -243,6 +251,15 @@ export function WorkflowRow({ item }: { item: WorkflowView }) {
     <b className="min-w-0 flex-1 truncate text-sm">{item.concept}</b>
     <Tag tone={statusTone(item.status)}>{item.statusLabel}</Tag>
   </div>;
+}
+
+function socialStatusTone(label: string) {
+  const status = label.toLowerCase();
+  if (status.includes("published")) return "t-green";
+  if (status.includes("failed") || status.includes("needs attention")) return "t-red";
+  if (status.includes("scheduled") || status.includes("uploading") || status.includes("processing")) return "t-blue";
+  if (status.includes("waiting") || status.includes("declaration") || status.includes("sync not confirmed") || status.includes("permission")) return "t-amber";
+  return "t-grey";
 }
 
 export function statusTone(status: string) {
