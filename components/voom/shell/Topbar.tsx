@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useVoomActions, useVoomState, getInitials } from "@/lib/voom/store";
 import { getPlanConfig } from "@/lib/billing/plans";
 import { Icon } from "../icons";
-import { IconBtn } from "../ui/primitives";
+import { IconBtn, VoomMark } from "../ui/primitives";
 import { useModal } from "@/lib/voom/modal";
 import { NotificationsModal } from "../modals/NotificationsModal";
 import { CreateContentModal } from "../modals/CreateContentModal";
@@ -89,7 +89,7 @@ function AppSearch() {
         onFocus={() => setOpen(true)}
         placeholder="Search content, campaigns, contacts…"
         aria-label="Search your workspace"
-        className="h-[40px] w-full rounded-[12px] border border-line bg-surface-2 pl-[40px] pr-3.5 text-[13.5px] outline-none placeholder:text-text-3 transition focus:border-text focus:bg-surface focus:shadow-[0_0_0_4px_var(--brand-soft)]"
+        className="h-[40px] w-full rounded-[12px] border border-line bg-surface-2 pl-[40px] pr-3.5 text-[13.5px] outline-none backdrop-blur-xl placeholder:text-text-3 transition focus:border-brand/60 focus:bg-surface focus:shadow-[0_0_0_4px_var(--brand-soft)]"
       />
       {open && searchActive && (
         <div className="absolute left-0 right-0 top-[48px] z-[70] max-h-[440px] overflow-y-auto rounded-[14px] border border-line bg-surface p-1.5 shadow-[var(--shadow-lg)]">
@@ -179,7 +179,7 @@ export function Topbar() {
   }
 
   return (
-    <header className="sticky top-0 z-30 flex h-[64px] items-center gap-3 border-b border-[var(--topbar-line)] bg-[var(--topbar-bg)] px-4 backdrop-blur-[16px] supports-[backdrop-filter]:bg-[var(--topbar-bg)] sm:px-6">
+    <header className="sticky top-0 z-30 flex h-[64px] items-center gap-3 border-b border-[var(--topbar-line)] bg-[var(--topbar-bg)] px-4 shadow-[0_10px_30px_-28px_rgba(72,83,180,.7)] backdrop-blur-[20px] backdrop-saturate-[1.2] supports-[backdrop-filter]:bg-[var(--topbar-bg)] sm:px-6">
       {/* Mobile: menu + wordmark */}
       <IconBtn
         className="md:hidden !h-9 !w-9 rounded-[10px] border border-line bg-surface-2"
@@ -189,9 +189,7 @@ export function Topbar() {
         <Icon name="menu" size={18} />
       </IconBtn>
       <div className="flex items-center gap-2 text-[16px] font-bold md:hidden">
-        <span className="grid h-[28px] w-[28px] place-items-center rounded-[9px] bg-text text-surface">
-          <Icon name="bolt" size={14} className="text-surface" />
-        </span>
+        <VoomMark size={27} />
         <span className="font-display tracking-tight">Voom</span>
       </div>
 
@@ -228,7 +226,7 @@ export function Topbar() {
         <Icon name="bell" size={18} />
         {attention > 0 && (
           <span
-            className="absolute -right-0.5 -top-0.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-text px-1 text-[10px] font-bold text-surface ring-2 ring-[var(--topbar-bg)]"
+            className="voom-grad absolute -right-0.5 -top-0.5 grid h-[18px] min-w-[18px] place-items-center rounded-full px-1 text-[10px] font-bold text-white ring-2 ring-[var(--topbar-bg)]"
             aria-label={`${attention} item${attention === 1 ? "" : "s"} need your attention`}
           >
             {attention > 9 ? "9+" : attention}

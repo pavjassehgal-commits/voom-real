@@ -7,6 +7,26 @@ export function cx(...parts: (string | false | null | undefined)[]) {
   return parts.filter(Boolean).join(" ");
 }
 
+/** Compact code-native Voom mark: one continuous refracted spectrum. */
+export function VoomMark({ size = 30, className }: { size?: number; className?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cx("relative inline-block shrink-0 drop-shadow-[0_5px_12px_rgba(92,72,255,.28)]", className)}
+      style={{ width: size, height: size }}
+    >
+      <span
+        className="absolute left-[18%] top-[13%] h-[68%] w-[29%] -rotate-[27deg] rounded-full"
+        style={{ background: "linear-gradient(180deg,#39dded 0%,#3878ff 54%,#7348ff 100%)" }}
+      />
+      <span
+        className="absolute right-[17%] top-[9%] h-[76%] w-[31%] rotate-[28deg] rounded-full"
+        style={{ background: "linear-gradient(180deg,#d83fe8 0%,#8d47ff 47%,#ff755f 100%)" }}
+      />
+    </span>
+  );
+}
+
 /* ──────────────────────────────────────────────────────────────
    Voom 2.0 — Surfaces
    Soft neutral surfaces, subtle border, restrained shadow,
@@ -17,8 +37,8 @@ export function Card({ className, children, style }: { className?: string; child
   return (
     <div
       className={cx(
-        "rounded-[var(--r-lg)] border border-line bg-surface shadow-[var(--shadow)]",
-        "transition-shadow duration-200",
+        "rounded-[var(--r-lg)] border border-line bg-surface shadow-[var(--shadow)] backdrop-blur-[18px] backdrop-saturate-[1.18]",
+        "transition-[border-color,box-shadow,transform] duration-200 hover:border-line-2",
         className,
       )}
       style={style}
@@ -29,7 +49,7 @@ export function Card({ className, children, style }: { className?: string; child
 }
 
 export function Surface({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={cx("rounded-[var(--r)] border border-line bg-surface-2", className)}>{children}</div>;
+  return <div className={cx("rounded-[var(--r)] border border-line bg-surface-2 backdrop-blur-[14px]", className)}>{children}</div>;
 }
 
 type BtnVariant = "primary" | "dark" | "ghost" | "outline" | "danger" | "plain" | "brand";
@@ -37,8 +57,8 @@ type BtnSize = "sm" | "md" | "lg";
 
 /**
  * Voom 2.0 Buttons — restrained, premium
- * primary = dark graphite (operational, not AI gradient)
- * brand = orange gradient for special CTAs (use sparingly)
+ * primary = graphite (operational)
+ * brand = the unified Voom iridescent spectrum for rare key CTAs
  * ghost/outline = neutral secondary
  */
 const VARIANT_CLASSES: Record<BtnVariant, string> = {
@@ -46,7 +66,7 @@ const VARIANT_CLASSES: Record<BtnVariant, string> = {
   primary: "bg-text text-surface shadow-[var(--shadow-sm)] hover:brightness-[1.08] active:brightness-[0.96]",
   dark: "bg-text text-surface shadow-[var(--shadow-sm)] hover:brightness-[1.08]",
   // Brand — use sparingly for key actions (Create, etc)
-  brand: "voom-grad text-white shadow-[0_6px_18px_-8px_var(--brand)] hover:brightness-110",
+  brand: "voom-grad text-white shadow-[0_8px_24px_-10px_rgba(105,75,255,.72)] hover:brightness-110",
   ghost: "bg-surface-2 text-text border border-line hover:bg-surface-3 hover:border-line-2",
   outline: "border border-line-2 bg-surface text-text hover:bg-surface-2",
   danger: "bg-[var(--red-soft)] text-red hover:bg-red/15 border border-transparent",
@@ -76,7 +96,7 @@ export function Btn({
       className={cx(
         "inline-flex items-center justify-center font-[600] tracking-[-0.01em] whitespace-nowrap transition-all duration-150",
         "active:scale-[0.98] disabled:opacity-45 disabled:pointer-events-none",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
         VARIANT_CLASSES[variant],
         SIZE_CLASSES[size],
         block && "w-full",
@@ -121,7 +141,7 @@ export function Chip({
       className={cx(
         "inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[13px] font-medium tracking-[-0.01em] transition",
         active
-          ? "border-text bg-text font-semibold text-surface shadow-[var(--shadow-sm)]"
+          ? "border-transparent voom-grad font-semibold text-white shadow-[0_8px_22px_-12px_rgba(104,79,255,.7)]"
           : "border-line bg-surface-2 text-text-2 hover:border-line-2 hover:text-text hover:bg-surface-3",
         "disabled:pointer-events-none disabled:opacity-40",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text focus-visible:ring-offset-1",
@@ -260,8 +280,8 @@ export function Orb({ size = "md", className }: { size?: "sm" | "md" | "lg"; cla
       style={{
         width: dims,
         height: dims,
-        background: "conic-gradient(from 200deg,#e8481f,#f2a516,#0f6f68,#e8481f)",
-        boxShadow: "0 0 0 3px var(--surface), 0 6px 18px -6px rgba(232,72,31,.5)",
+        background: "conic-gradient(from 205deg,#2dd7ee,#3578ff,#7447ff,#db3ee5,#ff5d86,#ff9b4a,#2dd7ee)",
+        boxShadow: "0 0 0 3px var(--surface), 0 8px 24px -7px rgba(101,72,255,.62)",
       }}
     >
       <span className="absolute rounded-full bg-surface" style={{ inset: inset1, opacity: 0.92 }} />

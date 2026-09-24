@@ -222,13 +222,14 @@ test("MARA visual language is calm and operational, not chatbot", async () => {
 test("Voom 2.0 design system tokens are established", async () => {
   const css = await read("app/globals.css");
 
-  // Warm off-white / light neutral workspace
-  assert.match(css, /--bg:\s*#f6f5ef|#f7f5ef|#f8f6f0|#faf8f4/, "Must have warm off-white bg");
+  // Neutral near-white workspace — the rejected cream/beige direction must not return.
+  assert.match(css, /--bg:\s*#f7f8fb/, "Must have a clean neutral near-white bg");
+  assert.doesNotMatch(css, /--bg:\s*#f6f5ef|#f7f5ef|#f8f6f0|#faf8f4/, "Workspace must not use the rejected cream palette");
   // Near-black / graphite navigation shell
-  assert.match(css, /--sidebar-bg:\s*#111412|#121412|#111614|#0f1110/, "Must have graphite sidebar bg");
+  assert.match(css, /--sidebar-bg:\s*#080a12/, "Must have navy-graphite sidebar bg");
 
   // Crisp dark typography
-  assert.match(css, /--text:\s*#121412|#111614|#161616/, "Must have crisp dark text");
+  assert.match(css, /--text:\s*#111522/, "Must have crisp neutral dark text");
 
   // Restrained borders
   assert.match(css, /--line:/, "Must have line tokens");
@@ -252,16 +253,31 @@ test("Voom 2.0 design system tokens are established", async () => {
   assert.match(css, /--sidebar-bg-active/, "Must have sidebar active token");
   assert.match(css, /--sidebar-text/, "Must have sidebar text tokens");
 
-  // Atmospheric accent — subtle, no photos
+  // Atmospheric iridescence — subtle, code-native and never photography.
   assert.match(css, /--atmosphere|atmospheric/, "Must have atmospheric accent");
+  assert.match(css, /--iridescent:/, "Must establish iridescence as the primary visual identity");
+  for (const stop of ["#2dd7ee", "#3578ff", "#7447ff", "#db3ee5", "#ff5d86", "#ff9b4a"]) {
+    assert.match(css, new RegExp(stop, "i"), `Iridescent spectrum must include ${stop}`);
+  }
   assert.doesNotMatch(css, /url\(.*dubai|url\(.*skyline|photo/i);
 
-  // No pure sterile white everywhere
-  // bg should not be #ffffff, should be warm off-white
+  // Near-white may be clean and neutral, but the workspace is not raw #fff.
   const bgMatch = css.match(/:root\s*{[^}]*--bg:\s*([^;]+);/s);
   if (bgMatch) {
-    assert.doesNotMatch(bgMatch[1], /#ffffff|#fff\b/, "Workspace bg must not be pure white");
+    assert.doesNotMatch(bgMatch[1], /#ffffff|#fff\b/, "Workspace bg must remain a dimensional near-white");
   }
+});
+
+test("iridescent identity remains decorative, restrained and motion-safe", async () => {
+  const css = await read("app/globals.css");
+  const appShell = await read("components/voom/shell/AppShell.tsx");
+  const primitives = await read("components/voom/ui/primitives.tsx");
+
+  assert.match(appShell, /aria-hidden="true"/, "decorative light volumes must be hidden from assistive technology");
+  assert.match(appShell, /pointer-events-none/, "decorative light volumes must never obstruct controls");
+  assert.match(css, /prefers-reduced-motion:\s*reduce/, "atmospheric motion must respect reduced motion");
+  assert.doesNotMatch(css + appShell, /three|webgl|canvas/i, "the shell must not add a heavy 3D runtime");
+  assert.match(primitives, /VoomMark/, "the shell must expose the Voom iridescent brand mark");
 });
 
 test("surfaces use soft neutral, subtle border, restrained shadow", async () => {

@@ -8,32 +8,29 @@ import { BottomBar } from "./BottomBar";
 /**
  * Voom 2.0 Application Shell
  *
- * - Graphite sidebar (near-black) + warm off-white workspace
- * - Restrained topbar, contextual
+ * - Graphite glass sidebar + neutral refracted-light workspace
+ * - Restrained translucent topbar, contextual
  * - Generous but efficient whitespace, premium rounded surfaces
  * - Responsive: sidebar collapses to overlay on mobile, bottom bar for primary nav
  * - Atmospheric accent: extremely subtle glow via CSS (globals.css body::before)
  */
 export function AppShell({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-dvh bg-bg text-text antialiased">
+    <div className="relative isolate flex min-h-dvh bg-bg text-text antialiased">
       <Sidebar />
-      <div className="flex min-w-0 flex-1 flex-col bg-bg">
+      <div className="relative flex min-w-0 flex-1 flex-col bg-transparent">
         <Topbar />
         <main
           className="mx-auto flex w-full max-w-[1280px] flex-1 flex-col px-4 pb-[88px] pt-6 sm:px-6 sm:pb-10 sm:pt-8 lg:px-8"
           style={{ animation: "voom-fade-in 0.32s ease" }}
         >
-          {/* Subtle atmospheric header glow — restrained */}
+          {/* Decorative light volumes are inert, slow and remain behind content. */}
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 top-0 h-[280px] opacity-[0.5]"
-            style={{
-              background:
-                "radial-gradient(900px 220px at 20% 0%, rgba(232,72,31,0.06), transparent 60%), radial-gradient(700px 200px at 80% 0%, rgba(15,111,104,0.04), transparent 60%)",
-            }}
+            className="voom-atmospheric-orbit pointer-events-none absolute right-[3%] top-[-92px] -z-10"
           />
-          <div className="relative w-full flex-1">{children}</div>
+          <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 -z-20 h-[320px] bg-[var(--atmosphere)] opacity-80" />
+          <div className="relative z-0 w-full flex-1">{children}</div>
         </main>
       </div>
       <BottomBar />

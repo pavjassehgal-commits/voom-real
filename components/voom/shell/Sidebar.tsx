@@ -3,14 +3,14 @@
 import { usePathname } from "next/navigation";
 import { useVoomActions, useVoomState } from "@/lib/voom/store";
 import { Icon } from "../icons";
-import { Btn, IconBtn, cx } from "../ui/primitives";
+import { Btn, IconBtn, VoomMark, cx } from "../ui/primitives";
 import { automationModeStatusLine } from "@/lib/voom/automation";
 import { NAV, pageIdFromPath } from "./nav";
 
 /**
- * Voom 2.0 Sidebar — near-black / graphite navigation shell
+ * Voom 2.0 Sidebar — near-black refracted-glass navigation shell
  *
- * - Warm off-white workspace is handled by AppShell/main
+ * - Neutral light / refracted dark workspace is handled by AppShell/main
  * - Sidebar is always graphite, independent of theme
  * - Compact icon + label, clear selected state, subtle section separation
  * - Settings toward bottom, business context preserved
@@ -50,11 +50,7 @@ export function Sidebar() {
         {/* Brand — Voom at top, compact */}
         <div className="flex h-[64px] shrink-0 items-center justify-between gap-2 border-b border-[var(--sidebar-line)] px-[18px]">
           <div className="flex items-center gap-2.5">
-            <span className="grid h-8 w-8 place-items-center rounded-[10px] bg-[var(--brand)] text-white shadow-[0_4px_12px_-4px_var(--brand)]">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
-                <path d="M13 2L3 14h8l-1 8 10-12h-8z" />
-              </svg>
-            </span>
+            <VoomMark size={31} />
             <span className="font-display text-[18px] font-bold tracking-tight text-white">Voom</span>
           </div>
           <IconBtn
@@ -86,14 +82,14 @@ export function Sidebar() {
                           "group flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-[9px] text-left text-[13.5px] font-[500] leading-none transition-all duration-150",
                           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 focus-visible:ring-offset-0",
                           isActive
-                            ? "bg-[var(--sidebar-bg-active)] text-[var(--sidebar-text-active)] font-[600] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]"
+                            ? "voom-iridescent-border bg-[linear-gradient(100deg,var(--sidebar-bg-active),var(--sidebar-bg-active-2))] text-[var(--sidebar-text-active)] font-[600] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08),0_9px_24px_-16px_rgba(91,79,255,.8)]"
                             : "text-[var(--sidebar-text-2)] hover:bg-[var(--sidebar-bg-hover)] hover:text-[var(--sidebar-text)]",
                         )}
                       >
                         <span
                           className={cx(
                             "grid h-[22px] w-[22px] place-items-center rounded-[7px] transition-colors",
-                            isActive ? "bg-white/[0.08] text-white" : "text-[var(--sidebar-text-3)] group-hover:text-[var(--sidebar-text-2)]",
+                            isActive ? "bg-white/[0.10] text-white shadow-[inset_0_0_12px_rgba(101,104,255,.14)]" : "text-[var(--sidebar-text-3)] group-hover:text-[var(--sidebar-text-2)]",
                           )}
                         >
                           <Icon name={item.i} size={16} />
@@ -103,7 +99,7 @@ export function Sidebar() {
                           <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[var(--sidebar-green-dot)] shadow-[0_0_0_3px_rgba(34,201,106,0.18)]" aria-hidden="true" />
                         )}
                         {item.badge && !isActive && (
-                          <span className="ml-auto rounded-full bg-[var(--brand)] px-1.5 py-0.5 text-[10px] font-bold text-white">
+                          <span className="voom-grad ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-bold text-white">
                             {item.badge}
                           </span>
                         )}
@@ -138,7 +134,7 @@ export function Sidebar() {
                             "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-[9px] text-left text-[13.5px] font-[500] transition",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20",
                             isActive
-                              ? "bg-[var(--sidebar-bg-active)] text-white font-semibold"
+                              ? "voom-iridescent-border bg-[linear-gradient(100deg,var(--sidebar-bg-active),var(--sidebar-bg-active-2))] text-white font-semibold"
                               : "text-[var(--sidebar-text-2)] hover:bg-[var(--sidebar-bg-hover)] hover:text-white",
                           )}
                         >
@@ -158,7 +154,7 @@ export function Sidebar() {
 
         {/* Business / Account context — preserved near bottom, compact */}
         <div className="shrink-0 border-t border-[var(--sidebar-line)] p-3">
-          <div className="rounded-[12px] bg-[var(--sidebar-bg-2)] p-3 ring-1 ring-white/[0.04]">
+          <div className="rounded-[14px] bg-[var(--sidebar-bg-2)] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,.05),0_16px_34px_-25px_rgba(72,104,255,.75)] ring-1 ring-white/[0.07] backdrop-blur-xl">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">

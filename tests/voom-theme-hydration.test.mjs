@@ -190,10 +190,10 @@ test("a returning dark-theme user paints dark before any client JavaScript runs"
   assert.equal(result.evaluate.theme, "dark", "the pre-paint script applies the persisted theme");
   assert.deepEqual(paintedThemes(result.evaluate.history), ["dark"], "dark is the only theme ever painted for this user (no light flash)");
   assert.equal(result.evaluate.hydrated, false, "no client bundle is loaded in this scenario");
-  assert.equal(result.evaluate.background, "rgb(10, 14, 13)", "the dark workspace token is painted");
+  assert.equal(result.evaluate.background, "rgb(7, 9, 18)", "the navy-black dark workspace token is painted");
   // The markup on the wire still renders the light default (server and first
   // client render agree); only the attribute decides the paint.
-  assert.match(result.evaluate.background, /rgb\(10, 14, 13\)/);
+  assert.match(result.evaluate.background, /rgb\(7, 9, 18\)/);
 });
 
 test("hydration with a persisted dark theme reports no mismatch and keeps the toggle truthful", async (t) => {
@@ -247,7 +247,7 @@ test("a fresh user (nothing persisted) hydrates light and stays light", async (t
   assert.equal(result.evaluate.stored, null, "no preference is written back for a fresh user");
   assert.equal(result.evaluate.label, "Switch to dark mode");
   assert.equal(result.evaluate.hasSunGlyph, false, "the moon icon shows in light mode");
-  assert.equal(result.evaluate.background, "rgb(246, 245, 239)", "the warm light workspace is painted");
+  assert.equal(result.evaluate.background, "rgb(247, 248, 251)", "the neutral frosted light workspace is painted");
 });
 
 test("the theme toggle still persists and flips in both directions", async (t) => {
@@ -369,11 +369,11 @@ function themeTokens(css, selector) {
   return tokens;
 }
 
-test("muted text stays readable in dark mode (and the light workspace is untouched)", async () => {
+test("muted text stays readable across the refracted light and dark themes", async () => {
   const css = await readRepoFile("app/globals.css");
   const light = themeTokens(css, ":root {");
   const dark = themeTokens(css, ':root[data-theme="dark"] {');
-  assert.equal(light["text-3"], "#9a9996", "the approved light muted token is unchanged");
+  assert.equal(light["text-3"], "#7d879a", "the approved neutral light muted token is present");
 
   for (const surface of ["bg", "surface", "surface-2", "surface-3"]) {
     const ratio = contrast(dark["text-3"], dark[surface]);
