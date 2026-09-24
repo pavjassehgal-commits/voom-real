@@ -16,6 +16,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
@@ -29,12 +30,18 @@ import type {
 import { saveOnboarding as saveOnboardingAction, saveBrandSettings as saveBrandSettingsAction, saveMediaSpendSettings as saveMediaSpendAction, restartOnboarding as restartOnboardingAction } from "./mutations";
 import { normalizeMediaSpendSettings, type MediaSpendSettings } from "@/lib/mara/media-spend";
 import { brandFromBusiness, deriveHandle, type Brand } from "./brand-state";
+import { AUTOMATION_MODE_EVENT, storedAutomationMode, type AutomationModeValue } from "./automation";
+import { applyThemeToDocument, initialTheme, persistTheme, readStoredTheme, subscribeToTheme, themeSnapshot, type ThemeValue } from "./theme";
 
 const NAV_PATHS: Record<string, string> = {
   dash: "/app/today",
   today: "/app/today",
   approvals: "/app/approvals",
   plan: "/app/plan",
+  // Voom 2.0 primary aliases
+  "marketing-plan": "/app/plan",
+  marketing_plan: "/app/plan",
+  create: "/app/studio",
   studio: "/app/studio",
   calendar: "/app/calendar",
   campaigns: "/app/campaigns",
@@ -44,7 +51,10 @@ const NAV_PATHS: Record<string, string> = {
   connections: "/app/connections",
   contacts: "/app/contacts",
   instagram: "/app/instagram",
+  tiktok: "/app/tiktok",
   youtube: "/app/youtube",
+  reels: "/app/studio",
+  mara: "/app/mara",
   pricing: "/app/pricing",
   settings: "/app/settings",
 };
@@ -76,11 +86,16 @@ export function getInitials(name: string, email: string | null | undefined): str
 interface VoomState {
   displayName: string;
   email: string;
-  theme: "light" | "dark";
   sideOpen: boolean;
   menuOpen: boolean;
   igConnected: boolean;
   plan: "free" | "pro" | "max";
+  /**
+   * The account's SAVED automation mode (`businesses.automation_level`), or
+   * null when nothing is stored. Deliberately not derived from `plan`: billing
+   * tier and automation state are two different facts.
+   */
+  automationMode: AutomationModeValue | null;
   brand: Brand;
   /** AI Media Spending settings — the live value the settings screen edits. */
   mediaSpend: MediaSpendSettings;
@@ -93,20 +108,32 @@ interface VoomState {
   toasts: Toast[];
 }
 
+/**
+ * What consumers see. `theme` is layered on top of the server-derived state
+ * because it is a browser-owned fact: React uses the shared default while
+ * hydrating and the persisted value afterwards (see lib/voom/theme.ts).
+ */
+export type VoomStateValue = VoomState & { theme: ThemeValue };
+
 function normalizePlan(value: string | null | undefined): "free" | "pro" | "max" {
   if (value === "pro" || value === "max") return value;
   return "free";
 }
 
 function initialState(init: { displayName: string | null; email: string | null; business: BusinessRecord | null }): VoomState {
+  // The theme is deliberately absent here: it is a browser-owned value read
+  // through `useSyncExternalStore` in the provider, so the server render and
+  // the first client render cannot disagree (Voom 2.0 defaults to light; dark
+  // is remembered in localStorage and applied by the pre-paint script in
+  // app/layout.tsx). Billing-plan display stays separate from automation state.
   return {
     displayName: init.displayName?.trim() ?? "",
     email: init.email ?? "",
-    theme: "dark",
     sideOpen: false,
     menuOpen: false,
     igConnected: false,
     plan: normalizePlan(init.business?.plan),
+    automationMode: storedAutomationMode(init.business?.automation_level),
     brand: brandFromBusiness(init.business),
     mediaSpend: normalizeMediaSpendSettings(init.business),
     onboard: { ...emptyOnboard(), displayName: init.displayName?.trim() ?? "" },
@@ -143,7 +170,7 @@ interface VoomActions {
   restartOnboarding: () => Promise<void>;
 }
 
-const StateCtx = createContext<VoomState | null>(null);
+const StateCtx = createContext<VoomStateValue | null>(null);
 const ActionsCtx = createContext<VoomActions | null>(null);
 
 export function VoomProvider({
@@ -160,8 +187,32 @@ export function VoomProvider({
   const [state, setState] = useState<VoomState>(() =>
     initialState({ displayName: initialDisplayName, email: initialEmail, business: initialBusiness }),
   );
+  // `getServerSnapshot` (the shared default) is what React uses for the server
+  // render AND while hydrating, so the first client render matches the HTML;
+  // the persisted value takes over immediately after hydration.
+  const theme = useSyncExternalStore(subscribeToTheme, themeSnapshot, initialTheme);
   const router = useRouter();
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  // Keep <html data-theme> in step with the AUTHORITATIVE stored theme. The
+  // pre-paint script already painted it, so this is a no-op on hydration and
+  // only does work when the value really changes (toggle, another tab).
+  useEffect(() => {
+    applyThemeToDocument(readStoredTheme(window.localStorage));
+  }, [theme]);
+
+  // A saved automation mode is authoritative for the whole shell: the mode
+  // control broadcasts what the server confirmed so the sidebar can never
+  // describe a mode the account is not actually running.
+  useEffect(() => {
+    function onAutomationChanged(event: Event) {
+      const saved = storedAutomationMode((event as CustomEvent<{ mode?: string | null }>).detail?.mode);
+      if (!saved) return;
+      setState((current) => (current.automationMode === saved ? current : { ...current, automationMode: saved }));
+    }
+    window.addEventListener(AUTOMATION_MODE_EVENT, onAutomationChanged);
+    return () => window.removeEventListener(AUTOMATION_MODE_EVENT, onAutomationChanged);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -215,11 +266,10 @@ export function VoomProvider({
   }, []);
 
   const setTheme = useCallback<VoomActions["setTheme"]>((t) => {
-    setState((s) => ({ ...s, theme: t }));
-    if (typeof document !== "undefined") {
-      document.documentElement.dataset.theme = t;
-      window.localStorage.setItem("voom-theme", t);
-    }
+    // Persisting first makes the new value authoritative for every reader; the
+    // document attribute is written here as well so the paint never waits.
+    persistTheme(t);
+    applyThemeToDocument(t);
   }, []);
 
   const igDisconnect = useCallback<VoomActions["igDisconnect"]>(() => {
@@ -420,14 +470,16 @@ export function VoomProvider({
     ],
   );
 
+  const value = useMemo<VoomStateValue>(() => ({ ...state, theme }), [state, theme]);
+
   return (
-    <StateCtx.Provider value={state}>
+    <StateCtx.Provider value={value}>
       <ActionsCtx.Provider value={actions}>{children}</ActionsCtx.Provider>
     </StateCtx.Provider>
   );
 }
 
-export function useVoomState(): VoomState {
+export function useVoomState(): VoomStateValue {
   const ctx = useContext(StateCtx);
   if (!ctx) throw new Error("useVoomState must be used inside VoomProvider");
   return ctx;

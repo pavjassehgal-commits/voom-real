@@ -599,8 +599,9 @@ test("the existing Reel workflow and other flows are left intact", async () => {
 
 test("the Create content entry point is reachable from navigation and the calendar", async () => {
   const nav = await read("components/voom/shell/nav.ts");
-  assert.match(nav, /id: "studio", n: "Create Content"/);
-  assert.match(nav, /studio: "Create Content"/);
+  // Voom 2.0: primary label is "Create" (was "Create Content") — both acceptable during transition
+  assert.match(nav, /id: "studio", n: "Create/);
+  assert.match(nav, /studio: "Create/);
   const store = await read("lib/voom/store.tsx");
   assert.match(store, /studio: "\/app\/studio"/);
   const page = await read("app/app/(shell)/studio/page.tsx");

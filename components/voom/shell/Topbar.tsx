@@ -5,10 +5,11 @@ import { useRouter } from "next/navigation";
 import { useVoomActions, useVoomState, getInitials } from "@/lib/voom/store";
 import { getPlanConfig } from "@/lib/billing/plans";
 import { Icon } from "../icons";
-import { IconBtn } from "../ui/primitives";
+import { IconBtn, VoomMark } from "../ui/primitives";
 import { useModal } from "@/lib/voom/modal";
 import { NotificationsModal } from "../modals/NotificationsModal";
 import { CreateContentModal } from "../modals/CreateContentModal";
+import { themeToggleIcon, themeToggleLabel } from "@/lib/voom/theme";
 import { logout as logoutAction } from "@/app/app/actions";
 
 interface SearchGroup {
@@ -39,7 +40,7 @@ function AppSearch() {
       setState("loading");
       try {
         const response = await fetch(`/api/search?q=${encodeURIComponent(trimmed)}`, { cache: "no-store" });
-        const body = await response.json() as { groups?: SearchGroup[]; error?: string };
+        const body = (await response.json()) as { groups?: SearchGroup[]; error?: string };
         if (request !== seq.current) return;
         if (!response.ok) throw new Error(body.error ?? "Search couldn't load right now.");
         setGroups(body.groups ?? []);
@@ -77,38 +78,41 @@ function AppSearch() {
   }
 
   return (
-    <div className="relative hidden max-w-[380px] flex-1 md:block" ref={wrapRef}>
-      <Icon name="search" size={16} className="absolute left-3 top-[11px] text-text-3" />
+    <div className="relative hidden max-w-[400px] flex-1 md:block" ref={wrapRef}>
+      <Icon name="search" size={16} className="pointer-events-none absolute left-3.5 top-[11px] text-text-3" />
       <input
         value={query}
-        onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          setOpen(true);
+        }}
         onFocus={() => setOpen(true)}
         placeholder="Search content, campaigns, contacts…"
         aria-label="Search your workspace"
-        className="h-[38px] w-full rounded-[11px] border border-line bg-surface-2 pl-[38px] pr-3 text-sm outline-none placeholder:text-text-3 focus:border-brand"
+        className="h-[40px] w-full rounded-[12px] border border-line bg-surface-2 pl-[40px] pr-3.5 text-[13.5px] outline-none backdrop-blur-xl placeholder:text-text-3 transition focus:border-brand/60 focus:bg-surface focus:shadow-[0_0_0_4px_var(--brand-soft)]"
       />
       {open && searchActive && (
-        <div className="absolute left-0 right-0 top-[44px] z-[70] max-h-[420px] overflow-y-auto rounded-[14px] border border-line bg-surface p-1.5 shadow-[var(--shadow-lg)]">
+        <div className="absolute left-0 right-0 top-[48px] z-[70] max-h-[440px] overflow-y-auto rounded-[14px] border border-line bg-surface p-1.5 shadow-[var(--shadow-lg)]">
           {state === "error" && (
-            <p role="alert" className="px-2.5 py-3 text-[13px] text-red">Search couldn’t load right now. Please try again.</p>
+            <p role="alert" className="px-3 py-3 text-[13px] text-red">
+              Search couldn’t load right now. Please try again.
+            </p>
           )}
-          {state === "loading" && (
-            <p className="px-2.5 py-3 text-[13px] text-text-3">Searching…</p>
-          )}
+          {state === "loading" && <p className="px-3 py-3 text-[13px] text-text-3">Searching…</p>}
           {state === "idle" && total === 0 && (
-            <p className="px-2.5 py-3 text-[13px] text-text-3">No matches for “{query.trim()}”.</p>
+            <p className="px-3 py-3 text-[13px] text-text-3">No matches for “{query.trim()}”.</p>
           )}
           {visibleGroups.map((group) => (
             <div key={group.label} className="mb-1 last:mb-0">
-              <div className="px-2.5 pb-1 pt-2 font-mono text-[10px] font-bold uppercase tracking-[.09em] text-text-3">{group.label}</div>
+              <div className="px-3 pb-1 pt-2 font-mono text-[10px] font-bold uppercase tracking-[0.09em] text-text-3">{group.label}</div>
               {group.items.map((item) => (
                 <button
                   key={`${group.label}-${item.id}`}
                   type="button"
                   onClick={() => go(item.href)}
-                  className="flex w-full flex-col rounded-[9px] px-2.5 py-2 text-left transition hover:bg-surface-2"
+                  className="flex w-full flex-col rounded-[10px] px-3 py-2.5 text-left transition hover:bg-surface-2 focus-visible:outline-none focus-visible:bg-surface-2"
                 >
-                  <span className="truncate text-[13.5px] font-semibold">{item.title}</span>
+                  <span className="truncate text-[13.5px] font-semibold tracking-tight">{item.title}</span>
                   {item.subtitle && <span className="truncate text-[11.5px] text-text-3">{item.subtitle}</span>}
                 </button>
               ))}
@@ -142,13 +146,22 @@ export function Topbar() {
   const syncAttention = useCallback(async () => {
     try {
       const response = await fetch("/api/voom/workflow", { cache: "no-store" });
-      const body = await response.json() as { snapshot?: { items?: { status: string }[] } };
+      const body = (await response.json()) as { snapshot?: { items?: { status: string }[] } };
       if (response.ok && body.snapshot) {
         const items = body.snapshot.items ?? [];
-        setAttention(items.filter((item) => item.status === "needs_approval" || item.status === "failed"
-          || item.status === "media_delayed" || item.status === "media_timed_out").length);
+        setAttention(
+          items.filter(
+            (item) =>
+              item.status === "needs_approval" ||
+              item.status === "failed" ||
+              item.status === "media_delayed" ||
+              item.status === "media_timed_out",
+          ).length,
+        );
       }
-    } catch { /* badge stays at its last known value */ }
+    } catch {
+      /* badge stays at its last known value */
+    }
   }, []);
   useEffect(() => {
     const timer = window.setTimeout(() => void syncAttention(), 0);
@@ -166,65 +179,111 @@ export function Topbar() {
   }
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-3.5 border-b border-line bg-[color-mix(in_srgb,var(--surface)_82%,transparent)] px-4 backdrop-blur-[14px] sm:px-[22px]">
-      <IconBtn className="md:hidden" onClick={() => toggleSidebar(true)}>
-        <Icon name="menu" />
+    <header className="sticky top-0 z-30 flex h-[64px] items-center gap-3 border-b border-[var(--topbar-line)] bg-[var(--topbar-bg)] px-4 shadow-[0_10px_30px_-28px_rgba(72,83,180,.7)] backdrop-blur-[20px] backdrop-saturate-[1.2] supports-[backdrop-filter]:bg-[var(--topbar-bg)] sm:px-6">
+      {/* Mobile: menu + wordmark */}
+      <IconBtn
+        className="md:hidden !h-9 !w-9 rounded-[10px] border border-line bg-surface-2"
+        onClick={() => toggleSidebar(true)}
+        aria-label="Open navigation"
+      >
+        <Icon name="menu" size={18} />
       </IconBtn>
-      <div className="flex items-center gap-2 text-[17px] font-bold md:hidden">
-        <span className="voom-grad grid h-[27px] w-[27px] place-items-center rounded-[9px]">
-          <Icon name="bolt" size={15} className="text-white" />
-        </span>
+      <div className="flex items-center gap-2 text-[16px] font-bold md:hidden">
+        <VoomMark size={27} />
+        <span className="font-display tracking-tight">Voom</span>
       </div>
+
       <AppSearch />
+
       <div className="flex-1" />
+
+      {/* Create — restrained, not giant gradient. Dark graphite primary. */}
       <button
         onClick={() => open(<CreateContentModal />)}
-        className="voom-grad hidden h-[34px] items-center gap-1.5 rounded-[9px] px-3.5 text-[13px] font-semibold text-white shadow-[0_6px_18px_-8px_var(--brand)] hover:brightness-110 md:inline-flex"
+        className="hidden h-[36px] items-center gap-1.5 rounded-[11px] bg-text px-3.5 text-[13px] font-semibold tracking-[-0.01em] text-surface shadow-[0_1px_2px_rgba(0,0,0,0.06),0_4px_12px_-4px_rgba(0,0,0,0.12)] transition hover:translate-y-[-1px] hover:shadow-[0_4px_16px_-6px_rgba(0,0,0,0.18)] active:translate-y-0 active:scale-[0.98] md:inline-flex"
       >
-        <Icon name="plus" size={14} /> Create
+        <Icon name="plus" size={14} />
+        Create
       </button>
-      <IconBtn onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title="Theme">
-        <Icon name={theme === "dark" ? "sun" : "moon"} />
+
+      <div className="hidden h-5 w-px bg-line md:block" aria-hidden="true" />
+
+      <IconBtn
+        onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+        title={themeToggleLabel(theme)}
+        aria-label={themeToggleLabel(theme)}
+        className="rounded-[10px] border border-transparent hover:border-line hover:bg-surface-2"
+      >
+        <Icon name={themeToggleIcon(theme)} size={18} />
       </IconBtn>
-      <IconBtn className="relative" onClick={handleNotifOpen} title="Notifications">
-        <Icon name="bell" />
+
+      <IconBtn
+        className="relative rounded-[10px] border border-transparent hover:border-line hover:bg-surface-2"
+        onClick={handleNotifOpen}
+        title="Notifications"
+        aria-label={attention > 0 ? `Notifications, ${attention} need attention` : "Notifications"}
+      >
+        <Icon name="bell" size={18} />
         {attention > 0 && (
           <span
-            className="absolute -right-0.5 -top-0.5 grid h-[17px] min-w-[17px] place-items-center rounded-full bg-brand px-1 text-[10px] font-bold text-white"
+            className="voom-grad absolute -right-0.5 -top-0.5 grid h-[18px] min-w-[18px] place-items-center rounded-full px-1 text-[10px] font-bold text-white ring-2 ring-[var(--topbar-bg)]"
             aria-label={`${attention} item${attention === 1 ? "" : "s"} need your attention`}
           >
             {attention > 9 ? "9+" : attention}
           </span>
         )}
       </IconBtn>
+
       <div className="relative" ref={menuRef}>
         <button
           onClick={toggleMenu}
-          className="voom-grad grid h-[34px] w-[34px] flex-none place-items-center rounded-full text-[13px] font-bold text-white"
+          className="grid h-[36px] w-[36px] flex-none place-items-center rounded-full bg-text text-[12.5px] font-bold text-surface ring-1 ring-line transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--topbar-bg)]"
+          aria-label="Account menu"
+          aria-expanded={menuOpen}
+          aria-haspopup="menu"
         >
           {getInitials(displayName, email)}
         </button>
         {menuOpen && (
-          <div className="absolute right-0 top-[46px] z-[60] w-[216px] rounded-[14px] border border-line bg-surface p-1.5 shadow-[var(--shadow-lg)]">
-            <div className="px-2.5 pb-2.5 pt-2">
-              <b className="block text-[13.5px]">{displayName || "Your account"}</b>
-              <span className="text-xs text-text-3">{email}</span>
-              <div className="mt-1.5">
-                <span className="inline-flex items-center rounded-[7px] bg-[var(--brand-soft)] px-2.5 py-[3px] text-[11.5px] font-semibold text-brand">
+          <div
+            className="absolute right-0 top-[48px] z-[60] w-[240px] rounded-[14px] border border-line bg-surface p-1.5 shadow-[var(--shadow-lg)]"
+            role="menu"
+          >
+            <div className="px-3 pb-3 pt-2.5">
+              <div className="flex items-center gap-2.5">
+                <div className="grid h-8 w-8 place-items-center rounded-full bg-text text-[12px] font-bold text-surface">
+                  {getInitials(displayName, email)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <b className="block truncate text-[13.5px] font-semibold tracking-tight">{displayName || "Your account"}</b>
+                  <span className="block truncate text-[11.5px] text-text-3">{email}</span>
+                </div>
+              </div>
+              <div className="mt-2.5">
+                <span className="inline-flex items-center gap-1.5 rounded-[8px] bg-surface-2 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-text-2 ring-1 ring-line">
+                  <span className="h-1.5 w-1.5 rounded-full bg-green" aria-hidden="true" />
                   {planName} plan
                 </span>
               </div>
             </div>
             <div className="my-1 h-px bg-line" />
-            <MenuBtn onClick={() => { closeMenu(); open(<NotificationsModal />); }} icon="bell" label="Notifications" />
+            <MenuBtn
+              onClick={() => {
+                closeMenu();
+                open(<NotificationsModal />);
+              }}
+              icon="bell"
+              label="Notifications"
+            />
             <MenuBtn onClick={() => goTo("/app/settings", router, closeMenu)} icon="cog" label="Brand settings" />
             <MenuBtn onClick={() => goTo("/app/pricing", router, closeMenu)} icon="card" label="Plans & billing" />
-            <MenuBtn onClick={() => goTo("/app/instagram", router, closeMenu)} icon="ig" label="Connections" />
+            <MenuBtn onClick={() => goTo("/app/connections", router, closeMenu)} icon="globe" label="Connections" />
             <div className="my-1 h-px bg-line" />
             <form action={logoutAction}>
               <button
                 type="submit"
-                className="flex w-full items-center gap-2.5 rounded-[9px] px-2.5 py-2.5 text-left text-[13.5px] font-medium text-red transition hover:bg-surface-2"
+                role="menuitem"
+                className="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-left text-[13px] font-medium text-red transition hover:bg-red-soft focus-visible:outline-none focus-visible:bg-red-soft"
               >
                 <Icon name="logout" size={16} />
                 Sign out
@@ -246,7 +305,8 @@ function MenuBtn({ onClick, icon, label }: { onClick: () => void; icon: string; 
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center gap-2.5 rounded-[9px] px-2.5 py-2.5 text-left text-[13.5px] font-medium transition hover:bg-surface-2"
+      role="menuitem"
+      className="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-left text-[13px] font-medium transition hover:bg-surface-2 focus-visible:outline-none focus-visible:bg-surface-2"
     >
       <Icon name={icon} size={16} className="text-text-3" />
       {label}

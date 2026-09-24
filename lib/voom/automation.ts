@@ -41,6 +41,47 @@ export function normalizeAutomationMode(value: string | null | undefined): Autom
   return value === "manual" || value === "autopilot" ? value : "assisted";
 }
 
+/**
+ * The SAVED mode exactly as it is stored, or `null` when the account has no
+ * stored value (the `businesses.automation_level` column is nullable).
+ *
+ * This exists so a surface can report the account's real automation state
+ * without inferring it: `normalizeAutomationMode` answers "which mode does the
+ * product run as", while this answers "what is actually saved right now".
+ * Billing tier is never a stand-in for either — a Max customer may be running
+ * Manual, and a Free customer's stored value is still their stored value.
+ */
+export function storedAutomationMode(value: string | null | undefined): AutomationModeValue | null {
+  return value === "manual" || value === "assisted" || value === "autopilot" ? value : null;
+}
+
+/**
+ * Compact operational line for shell surfaces (the sidebar). Describes the
+ * SAVED mode only; each line is the short form of the matching
+ * `AUTOMATION_MODE_DESCRIPTIONS` entry, so the shell and the Automations screen
+ * can never describe the same mode differently.
+ */
+export const AUTOMATION_MODE_STATUS_LINES: Record<AutomationModeValue, string> = {
+  manual: "Manual — MARA acts only when you ask.",
+  assisted: "Assisted — MARA drafts, you approve.",
+  autopilot: "Autopilot — MARA runs within your limits.",
+};
+
+/**
+ * Shown when no mode is stored yet. Truthful and neutral: it says what is
+ * known (nothing saved) instead of guessing from the account's billing tier.
+ */
+export const AUTOMATION_MODE_UNKNOWN_STATUS = "Automation mode not set.";
+
+/** The sidebar status line for a stored value. Never plan-derived. */
+export function automationModeStatusLine(value: string | null | undefined): string {
+  const mode = storedAutomationMode(value);
+  return mode ? AUTOMATION_MODE_STATUS_LINES[mode] : AUTOMATION_MODE_UNKNOWN_STATUS;
+}
+
+/** The event a successful save broadcasts so shell surfaces stay truthful. */
+export const AUTOMATION_MODE_EVENT = "voom:automation-changed";
+
 /** The one display order, shared by the segmented control and the cards. */
 export const AUTOMATION_MODES: readonly AutomationModeValue[] = ["manual", "assisted", "autopilot"];
 

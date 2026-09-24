@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Bricolage_Grotesque, Public_Sans, IBM_Plex_Mono } from "next/font/google";
+import { THEME_INIT_SCRIPT } from "@/lib/voom/theme";
 import "./globals.css";
 
 const bricolage = Bricolage_Grotesque({
@@ -30,6 +31,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${bricolage.variable} ${publicSans.variable} ${plexMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-bg text-text font-sans">
+        {/*
+          Applies the persisted theme before the first paint. It only sets
+          `data-theme` on <html>: the React markup is identical on the server and
+          on the first client render (see lib/voom/theme.ts), so this can never
+          cause a hydration mismatch — it just stops a returning dark-theme user
+          from seeing a light flash.
+        */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         {children}
       </body>
     </html>
