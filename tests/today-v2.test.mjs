@@ -110,6 +110,23 @@ test("Today V2 uses real performance state and removes the operational counter g
   assert.doesNotMatch(page + dashboard, /Ask MARA|input.*MARA/i);
 });
 
+test("Today server rendering never calls a helper across a client-module boundary", async () => {
+  const [dashboard, primitives, serverSafeCx] = await Promise.all([
+    readFile(new URL("../components/voom/today/TodayDashboard.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/voom/ui/primitives.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/voom/cx.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(primitives, /^"use client";/, "shared UI primitives remain a client module");
+  assert.doesNotMatch(
+    dashboard,
+    /import\s*\{[^}]*\bcx\b[^}]*\}\s*from\s*["']@\/components\/voom\/ui\/primitives["']/s,
+    "a server-rendered Today component must not invoke cx through Next's client proxy",
+  );
+  assert.match(dashboard, /import\s*\{\s*cx\s*\}\s*from\s*["']@\/lib\/voom\/cx["']/);
+  assert.doesNotMatch(serverSafeCx, /["']use client["']/);
+});
+
 test("mobile priority is coverage, Needs You, Next Up, week, performance, then MARA", async () => {
   const dashboard = await readFile(new URL("../components/voom/today/TodayDashboard.tsx", import.meta.url), "utf8");
   const order = ["view.coverage.title", "<AttentionCard", "<NextUpCard", "<CoverageCard", "<PerformanceCard", "<MaraInsightCard"];

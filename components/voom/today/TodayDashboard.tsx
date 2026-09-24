@@ -2,9 +2,10 @@ import Link from "next/link";
 import Image from "next/image";
 import { AutomationMode } from "@/components/voom/operating/AutomationMode";
 import { Icon } from "@/components/voom/icons";
-import { Card, Tag, VoomMark, cx } from "@/components/voom/ui/primitives";
+import { Card, Tag, VoomMark } from "@/components/voom/ui/primitives";
 import type { PerformanceReport } from "@/lib/performance/insights";
 import type { AutomationModeValue } from "@/lib/voom/automation";
+import { cx } from "@/lib/voom/cx";
 import type { TodayCoverageDay, TodayItem } from "@/lib/voom/today-view";
 
 type View = {
