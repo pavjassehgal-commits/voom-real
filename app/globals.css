@@ -120,7 +120,8 @@
 
   --text: #eef2ee;
   --text-2: #a3ada5;
-  --text-3: #6f7a72;
+  /* Muted text raised for AA contrast on dark surfaces (was #6f7a72: 3.6:1 on --surface-2). */
+  --text-3: #8a948c;
 
   --brand: #ff6a3d;
   --brand-2: #3fb3a6;
@@ -167,7 +168,7 @@
     --line-strong: #3d4a46;
     --text: #eef2ee;
     --text-2: #a3ada5;
-    --text-3: #6f7a72;
+    --text-3: #8a948c;
     --brand: #ff6a3d;
     --brand-2: #3fb3a6;
     --brand-soft: rgba(255, 106, 61, 0.14);

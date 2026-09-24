@@ -5,12 +5,24 @@ import { Icon } from "@/components/voom/icons";
 import { Btn, cx } from "@/components/voom/ui/primitives";
 import {
   AUTOMATION_MODES,
+  AUTOMATION_MODE_EVENT,
   AUTOMATION_MODE_LABELS,
   automationModeCards,
+  storedAutomationMode,
   type AutomationModeCard,
   type AutomationModeValue,
 } from "@/lib/voom/automation";
 import { getPlanConfig, type PlanId } from "@/lib/billing/plans";
+
+/**
+ * The mode the SERVER confirmed is the authoritative one. Broadcasting it lets
+ * every shell surface that describes automation state (the sidebar) follow the
+ * same saved value instead of deriving its own.
+ */
+function announceSavedMode(mode: AutomationModeValue) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(AUTOMATION_MODE_EVENT, { detail: { mode } }));
+}
 
 export function AutomationMode({
   initial,
@@ -50,16 +62,22 @@ export function AutomationMode({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: next }),
     });
-    const body = (await response.json()) as { error?: string };
+    const body = (await response.json()) as { error?: string; mode?: string };
     if (response.ok) setMode(next);
     else setError(body.error ?? "Voom couldn't save that mode.");
+    // The server echoes the saved mode; fall back to the mode we asked for.
+    if (response.ok) announceSavedMode(storedAutomationMode(body.mode) ?? next);
     setBusy(false);
   }
 
   const cards = automationModeCards(mode);
+  // Width discipline: the control is placed in page headers, so every level is
+  // shrinkable and capped at its container (`min-w-0`/`max-w-full`) and the
+  // explanation below wraps instead of forcing a single-line max-content width
+  // that would push the whole page wider than the viewport.
   return (
-    <div>
-      <div role="group" className={cx("flex flex-wrap gap-1 rounded-xl border border-line bg-surface-2 p-1", !compact && "max-w-md")} aria-label="Automation mode">
+    <div className="min-w-0 max-w-full">
+      <div role="group" className={cx("flex max-w-full min-w-0 flex-wrap gap-1 rounded-xl border border-line bg-surface-2 p-1", !compact && "max-w-md")} aria-label="Automation mode">
         {AUTOMATION_MODES.map((value) => {
           const allowed = isModeAllowed(value);
           return (
@@ -79,9 +97,10 @@ export function AutomationMode({
           );
         })}
       </div>
-      {error && <p role="alert" className="mt-1.5 text-xs text-red">{error}</p>}
-      <p className="mt-2 text-[11px] text-text-3">
-        Current plan: {planConfig.name} · Allowed modes: {planConfig.allowedModes.join(", ")} · {planConfig.blurb}
+      {error && <p role="alert" className="mt-1.5 min-w-0 max-w-full break-words text-xs text-red">{error}</p>}
+      {/* One text node: the server and the client must render identical text. */}
+      <p className="mt-2 min-w-0 max-w-full break-words text-[11px] leading-relaxed text-text-3">
+        {`Current plan: ${planConfig.name} · Allowed modes: ${planConfig.allowedModes.join(", ")} · ${planConfig.blurb}`}
       </p>
       {describe && (
         <div className="mt-6 grid gap-3 md:grid-cols-3">
@@ -115,11 +134,16 @@ function ModeCard({ card, allowed, plan }: { card: AutomationModeCard; allowed: 
             Recommended
           </span>
         )}
-        {!allowed && <span className="inline-flex items-center rounded-[7px] border border-amber/40 bg-amber/10 px-2.5 py-[3px] text-[11.5px] font-medium text-amber">Requires {card.value === "autopilot" ? "Max" : "Pro"}</span>}
+        {!allowed && (
+          <span className="inline-flex items-center rounded-[7px] border border-amber/40 bg-amber/10 px-2.5 py-[3px] text-[11.5px] font-medium text-amber">
+            {`Requires ${card.value === "autopilot" ? "Max" : "Pro"}`}
+          </span>
+        )}
       </div>
       <p className="mt-1 text-xs leading-relaxed text-text-3">{card.summary}</p>
       <p className="mt-2 text-xs leading-relaxed text-text-2">
-        <b className="font-semibold">Paid media:</b> {card.media}
+        <b className="font-semibold">Paid media:</b>
+        {` ${card.media}`}
       </p>
       {card.warning && (
         <p className={cx("mt-2.5 flex items-start gap-1.5 rounded-lg border border-amber/35 px-2.5 py-2 text-xs leading-relaxed text-amber", card.active ? "bg-amber/15" : "bg-amber/10")}>
@@ -129,7 +153,7 @@ function ModeCard({ card, allowed, plan }: { card: AutomationModeCard; allowed: 
       )}
       {!allowed && (
         <p className="mt-2 text-[11px] text-text-3">
-          Your {plan} plan does not support {card.label} mode.
+          {`Your ${plan} plan does not support ${card.label} mode.`}
         </p>
       )}
     </div>

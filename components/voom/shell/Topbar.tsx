@@ -9,6 +9,7 @@ import { IconBtn } from "../ui/primitives";
 import { useModal } from "@/lib/voom/modal";
 import { NotificationsModal } from "../modals/NotificationsModal";
 import { CreateContentModal } from "../modals/CreateContentModal";
+import { themeToggleIcon, themeToggleLabel } from "@/lib/voom/theme";
 import { logout as logoutAction } from "@/app/app/actions";
 
 interface SearchGroup {
@@ -211,11 +212,11 @@ export function Topbar() {
 
       <IconBtn
         onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-        title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-        aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+        title={themeToggleLabel(theme)}
+        aria-label={themeToggleLabel(theme)}
         className="rounded-[10px] border border-transparent hover:border-line hover:bg-surface-2"
       >
-        <Icon name={theme === "dark" ? "sun" : "moon"} size={18} />
+        <Icon name={themeToggleIcon(theme)} size={18} />
       </IconBtn>
 
       <IconBtn

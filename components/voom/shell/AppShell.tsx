@@ -41,6 +41,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * Page header — responsive by construction.
+ *
+ * The header used to hand its actions a `shrink-0` box, so a control whose
+ * content has a wide intrinsic width (the automation segmented control's
+ * "Current plan: …" line) stretched the page past the viewport. The actions
+ * container now takes its own full-width row on small screens (where it may
+ * wrap inside the viewport), and is only auto-sized and non-shrinking from
+ * `sm` upwards — the desktop layout is unchanged.
+ */
 export function PageHead({
   title,
   description,
@@ -59,7 +69,11 @@ export function PageHead({
         {description && <p className="mt-1.5 max-w-2xl text-[14px] leading-relaxed text-text-2">{description}</p>}
         {tags && <div className="mt-3 flex flex-wrap items-center gap-1.5">{tags}</div>}
       </div>
-      {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+      {actions && (
+        <div className="flex w-full min-w-0 max-w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0">
+          {actions}
+        </div>
+      )}
     </div>
   );
 }

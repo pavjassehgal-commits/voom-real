@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { useVoomActions, useVoomState } from "@/lib/voom/store";
 import { Icon } from "../icons";
 import { Btn, IconBtn, cx } from "../ui/primitives";
+import { automationModeStatusLine } from "@/lib/voom/automation";
 import { NAV, pageIdFromPath } from "./nav";
 
 /**
@@ -17,7 +18,7 @@ import { NAV, pageIdFromPath } from "./nav";
  * - Accessible: semantic nav, keyboard focus, aria-current
  */
 export function Sidebar() {
-  const { sideOpen, plan, displayName, email } = useVoomState();
+  const { sideOpen, plan, automationMode, displayName, email } = useVoomState();
   const { goTo, toggleSidebar } = useVoomActions();
   const pathname = usePathname();
   const active = pageIdFromPath(pathname);
@@ -162,16 +163,24 @@ export function Sidebar() {
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="h-1.5 w-1.5 rounded-full bg-[var(--sidebar-green-dot)]" aria-hidden="true" />
+                  {/*
+                    Billing plan display — deliberately separate from the
+                    automation state below, and built as ONE string so the
+                    server and the client render identical text nodes.
+                  */}
                   <span className="font-display text-[13px] font-semibold text-white tracking-tight">
-                    {plan === "max" ? "Max" : plan === "pro" ? "Pro" : "Free"} workspace
+                    {`${plan === "max" ? "Max" : plan === "pro" ? "Pro" : "Free"} workspace`}
                   </span>
                 </div>
+                {/*
+                  Operational copy comes from the account's SAVED automation
+                  mode (the same authoritative value the mode control saves and
+                  the plan engine enforces) — never from the billing tier. A Max
+                  account running Manual must read Manual here, and an account
+                  with nothing stored yet is told exactly that.
+                */}
                 <p className="mt-1 line-clamp-2 text-[11.5px] leading-[1.4] text-[var(--sidebar-text-2)]">
-                  {plan === "max"
-                    ? "Automated — MARA is running."
-                    : plan === "pro"
-                      ? "Assisted — MARA drafts for review."
-                      : "Manual — you publish."}
+                  {automationModeStatusLine(automationMode)}
                 </p>
               </div>
             </div>
