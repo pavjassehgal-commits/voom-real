@@ -29,11 +29,13 @@ export function AutomationMode({
   plan = "free",
   compact = false,
   describe = false,
+  showPlanSummary = true,
 }: {
   initial: AutomationModeValue;
   plan?: PlanId;
   compact?: boolean;
   describe?: boolean;
+  showPlanSummary?: boolean;
 }) {
   const [mode, setMode] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -99,9 +101,9 @@ export function AutomationMode({
       </div>
       {error && <p role="alert" className="mt-1.5 min-w-0 max-w-full break-words text-xs text-red">{error}</p>}
       {/* One text node: the server and the client must render identical text. */}
-      <p className="mt-2 min-w-0 max-w-full break-words text-[11px] leading-relaxed text-text-3">
+      {showPlanSummary && <p className="mt-2 min-w-0 max-w-full break-words text-[11px] leading-relaxed text-text-3">
         {`Current plan: ${planConfig.name} · Allowed modes: ${planConfig.allowedModes.join(", ")} · ${planConfig.blurb}`}
-      </p>
+      </p>}
       {describe && (
         <div className="mt-6 grid gap-3 md:grid-cols-3">
           {cards.map((card) => (

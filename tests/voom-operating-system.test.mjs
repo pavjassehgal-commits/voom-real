@@ -48,12 +48,18 @@ test("automation modes preserve confirmation safety", async () => {
 });
 
 test("Today is the operational command centre over the one workflow", async () => {
-  const [page, data, read_model] = await Promise.all([
-    read("app/app/(shell)/today/page.tsx"), read("lib/voom/operating-data.ts"), read("lib/voom/workflow/read.ts"),
+  const [page, dashboard, projection, data, read_model] = await Promise.all([
+    read("app/app/(shell)/today/page.tsx"), read("components/voom/today/TodayDashboard.tsx"),
+    read("lib/voom/today-view.ts"), read("lib/voom/operating-data.ts"), read("lib/voom/workflow/read.ts"),
   ]);
-  for (const section of ["Content due today", "Needs your approval", "Being generated", "Needs attention", "What happens next"]) {
-    assert.match(page, new RegExp(section));
+  for (const section of ["Next up", "Needs you", "This week", "Performance", "MARA insight"]) {
+    assert.match(dashboard, new RegExp(section));
   }
+  assert.match(page, /buildTodayView\(data\.snapshot, data\.summary, data\.coordinator\)/);
+  assert.match(projection, /summary\.needsApproval/);
+  assert.match(projection, /summary\.waitingForMedia/);
+  assert.match(projection, /summary\.failed/);
+  assert.match(projection, /summary\.missed/);
   assert.match(data, /loadWorkflowSnapshot/);
   assert.match(data, /todaySummary/);
   assert.match(read_model, /mara_drafts/);
@@ -61,7 +67,7 @@ test("Today is the operational command centre over the one workflow", async () =
   assert.match(read_model, /instagram_publish_queue/);
   assert.match(read_model, /eq\("owner_user_id", ownerId\)/);
   // Today never mutates and never hardcodes a date.
-  assert.doesNotMatch(page + data, /insert\(|upsert\(|\b20\d\d-\d\d-\d\d\b/);
+  assert.doesNotMatch(page + dashboard + projection + data, /insert\(|upsert\(|\b20\d\d-\d\d-\d\d\b/);
 });
 
 test("rolling plan automation is server-scheduled, cadence-aware, mode-aware, and idempotent", async () => {

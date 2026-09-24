@@ -768,6 +768,11 @@ test("6. Replenish copy is truthful per mode and the Manual card never implies f
   const workspace = await read("components/voom/operating/PlanWorkspace.tsx");
   assert.match(workspace, /replenishPlanDescription\(snapshot\.mode\)/, "the Marketing Plan renders the per-mode sentence");
   assert.match(workspace, /Replenish plan/);
-  const today = await read("app/app/(shell)/today/page.tsx");
-  assert.match(today, /Manual mode: MARA generates a visual only when you choose Create with MARA/);
+  const [today, dashboard] = await Promise.all([
+    read("app/app/(shell)/today/page.tsx"),
+    read("components/voom/today/TodayDashboard.tsx"),
+  ]);
+  assert.match(today, /normalizeAutomationMode\(data\.business\.automation_level\)/, "Today passes the authoritative saved mode");
+  assert.match(dashboard, /<AutomationMode compact showPlanSummary=\{false\} initial=\{automationMode\}/, "Today keeps mode changing compact");
+  assert.doesNotMatch(today + dashboard, /finished media|media automatically/i, "Today never implies a plan already produced media");
 });
