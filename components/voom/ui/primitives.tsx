@@ -7,10 +7,20 @@ export function cx(...parts: (string | false | null | undefined)[]) {
   return parts.filter(Boolean).join(" ");
 }
 
+/* ──────────────────────────────────────────────────────────────
+   Voom 2.0 — Surfaces
+   Soft neutral surfaces, subtle border, restrained shadow,
+   consistent radius, clear spacing hierarchy.
+   Avoid excessive nested cards.
+   ────────────────────────────────────────────────────────────── */
 export function Card({ className, children, style }: { className?: string; children: ReactNode; style?: React.CSSProperties }) {
   return (
     <div
-      className={cx("rounded-[var(--r-lg)] border border-line bg-surface shadow-[var(--shadow)]", className)}
+      className={cx(
+        "rounded-[var(--r-lg)] border border-line bg-surface shadow-[var(--shadow)]",
+        "transition-shadow duration-200",
+        className,
+      )}
       style={style}
     >
       {children}
@@ -18,22 +28,35 @@ export function Card({ className, children, style }: { className?: string; child
   );
 }
 
-type BtnVariant = "primary" | "dark" | "ghost" | "outline" | "danger" | "plain";
+export function Surface({ className, children }: { className?: string; children: ReactNode }) {
+  return <div className={cx("rounded-[var(--r)] border border-line bg-surface-2", className)}>{children}</div>;
+}
+
+type BtnVariant = "primary" | "dark" | "ghost" | "outline" | "danger" | "plain" | "brand";
 type BtnSize = "sm" | "md" | "lg";
 
+/**
+ * Voom 2.0 Buttons — restrained, premium
+ * primary = dark graphite (operational, not AI gradient)
+ * brand = orange gradient for special CTAs (use sparingly)
+ * ghost/outline = neutral secondary
+ */
 const VARIANT_CLASSES: Record<BtnVariant, string> = {
-  primary: "voom-grad text-white shadow-[0_6px_18px_-8px_var(--brand)] hover:brightness-110",
-  dark: "bg-text text-surface",
-  ghost: "bg-surface-2 text-text border border-line hover:bg-surface-3",
-  outline: "border border-line-2 text-text hover:bg-surface-2",
-  danger: "bg-red/10 text-red hover:bg-red/15",
-  plain: "text-text-2 hover:text-text",
+  // Primary — graphite, restrained, premium
+  primary: "bg-text text-surface shadow-[var(--shadow-sm)] hover:brightness-[1.08] active:brightness-[0.96]",
+  dark: "bg-text text-surface shadow-[var(--shadow-sm)] hover:brightness-[1.08]",
+  // Brand — use sparingly for key actions (Create, etc)
+  brand: "voom-grad text-white shadow-[0_6px_18px_-8px_var(--brand)] hover:brightness-110",
+  ghost: "bg-surface-2 text-text border border-line hover:bg-surface-3 hover:border-line-2",
+  outline: "border border-line-2 bg-surface text-text hover:bg-surface-2",
+  danger: "bg-[var(--red-soft)] text-red hover:bg-red/15 border border-transparent",
+  plain: "text-text-2 hover:text-text hover:bg-surface-2",
 };
 
 const SIZE_CLASSES: Record<BtnSize, string> = {
-  sm: "h-[34px] px-3.5 text-[13px] rounded-[9px] gap-1.5",
-  md: "h-[42px] px-[18px] text-sm rounded-[11px] gap-2",
-  lg: "h-[50px] px-[26px] text-[15px] rounded-[13px] gap-2",
+  sm: "h-[34px] px-3.5 text-[13px] rounded-[10px] gap-1.5",
+  md: "h-[40px] px-4 text-[13.5px] rounded-[11px] gap-2",
+  lg: "h-[46px] px-6 text-[14.5px] rounded-[12px] gap-2",
 };
 
 export function Btn({
@@ -51,7 +74,9 @@ export function Btn({
   return (
     <button
       className={cx(
-        "inline-flex items-center justify-center font-semibold whitespace-nowrap transition active:scale-[.975] disabled:opacity-45 disabled:pointer-events-none",
+        "inline-flex items-center justify-center font-[600] tracking-[-0.01em] whitespace-nowrap transition-all duration-150",
+        "active:scale-[0.98] disabled:opacity-45 disabled:pointer-events-none",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
         VARIANT_CLASSES[variant],
         SIZE_CLASSES[size],
         block && "w-full",
@@ -72,7 +97,10 @@ export function IconBtn({
   return (
     <button
       className={cx(
-        "grid h-[38px] w-[38px] place-items-center rounded-[11px] text-text-2 transition hover:bg-surface-2 hover:text-text",
+        "grid h-[38px] w-[38px] place-items-center rounded-[11px] text-text-2 transition",
+        "hover:bg-surface-2 hover:text-text",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text focus-visible:ring-offset-1",
+        "active:scale-[0.96]",
         className,
       )}
       {...props}
@@ -91,11 +119,12 @@ export function Chip({
   return (
     <button
       className={cx(
-        "inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[13px] font-medium transition",
+        "inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[13px] font-medium tracking-[-0.01em] transition",
         active
-          ? "border-brand bg-[var(--brand-soft)] font-semibold text-brand"
-          : "border-line bg-surface-2 text-text-2 hover:border-brand hover:text-text",
+          ? "border-text bg-text font-semibold text-surface shadow-[var(--shadow-sm)]"
+          : "border-line bg-surface-2 text-text-2 hover:border-line-2 hover:text-text hover:bg-surface-3",
         "disabled:pointer-events-none disabled:opacity-40",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text focus-visible:ring-offset-1",
         className,
       )}
       {...props}
@@ -106,22 +135,21 @@ export function Chip({
 }
 
 const TAG_CLASSES: Record<string, string> = {
-  "t-green": "bg-green/15 text-green",
-  "t-amber": "bg-amber/15 text-amber",
-  "t-red": "bg-red/15 text-red",
-  "t-blue": "bg-blue/15 text-blue",
-  "t-pink": "bg-pink/15 text-pink",
-  "t-brand": "bg-[var(--brand-soft)] text-brand",
-  // The Story badge: deep-teal support colour from the Voom identity.
-  "t-story": "bg-[var(--brand-2)]/15 text-[var(--brand-2)]",
-  "t-grey": "bg-surface-2 text-text-3",
+  "t-green": "bg-[var(--green-soft)] text-[var(--green)] ring-1 ring-[var(--green)]/10",
+  "t-amber": "bg-[var(--amber-soft)] text-[var(--amber)] ring-1 ring-[var(--amber)]/10",
+  "t-red": "bg-[var(--red-soft)] text-[var(--red)] ring-1 ring-[var(--red)]/10",
+  "t-blue": "bg-[var(--blue-soft)] text-[var(--blue)] ring-1 ring-[var(--blue)]/10",
+  "t-pink": "bg-pink/10 text-pink ring-1 ring-pink/10",
+  "t-brand": "bg-[var(--brand-soft)] text-brand ring-1 ring-brand/10",
+  "t-story": "bg-[var(--brand-2)]/10 text-[var(--brand-2)] ring-1 ring-[var(--brand-2)]/10",
+  "t-grey": "bg-surface-2 text-text-3 ring-1 ring-line",
 };
 
 export function Tag({ tone = "t-grey", className, children }: { tone?: string; className?: string; children: ReactNode }) {
   return (
     <span
       className={cx(
-        "inline-flex items-center gap-1 rounded-[7px] px-2.5 py-[3px] text-[11.5px] font-semibold tracking-[.01em]",
+        "inline-flex items-center gap-1 rounded-[8px] px-2.5 py-[3px] text-[11px] font-semibold tracking-[0.02em]",
         TAG_CLASSES[tone] ?? TAG_CLASSES["t-grey"],
         className,
       )}
@@ -131,12 +159,54 @@ export function Tag({ tone = "t-grey", className, children }: { tone?: string; c
   );
 }
 
+/* ──────────────────────────────────────────────────────────────
+   MARA Visual Language — calm, operational, ambient automation
+   Not a chatbot. Green = active/healthy/connected/scheduled/complete
+   ────────────────────────────────────────────────────────────── */
+export function MaraDot({ active = true, className }: { active?: boolean; className?: string }) {
+  return (
+    <span
+      className={cx(
+        "inline-block h-2 w-2 rounded-full bg-[var(--green-dot)] shadow-[0_0_0_3px_var(--green-soft)]",
+        active && "animate-[voom-mara-pulse_2.4s_ease-in-out_infinite]",
+        className,
+      )}
+      aria-hidden="true"
+    />
+  );
+}
+
+export function MaraStatus({
+  label = "MARA active",
+  activity,
+  className,
+}: {
+  label?: string;
+  activity?: string;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cx(
+        "inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1.5 shadow-[var(--shadow-sm)]",
+        className,
+      )}
+    >
+      <MaraDot active />
+      <span className="text-[12px] font-medium tracking-[-0.01em] text-text-2">
+        <span className="font-semibold text-text">{label}</span>
+        {activity && <span className="ml-1.5 text-text-3">· {activity}</span>}
+      </span>
+    </span>
+  );
+}
+
 export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
-    <label className="mb-3.5 block">
-      <span className="mb-1.5 block text-[12.5px] font-semibold tracking-[.01em] text-text-2">{label}</span>
+    <label className="mb-4 block">
+      <span className="mb-1.5 block text-[12.5px] font-semibold tracking-[0.01em] text-text-2">{label}</span>
       {children}
-      {hint && <span className="mt-1.5 block text-xs text-text-3">{hint}</span>}
+      {hint && <span className="mt-1.5 block text-xs leading-relaxed text-text-3">{hint}</span>}
     </label>
   );
 }
@@ -145,8 +215,8 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
   return (
     <input
       className={cx(
-        "h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px] text-text outline-none placeholder:text-text-3",
-        "focus:border-brand focus:bg-surface focus:ring-4 focus:ring-[var(--brand-soft)]",
+        "h-[44px] w-full rounded-[12px] border border-line bg-surface-2 px-3.5 text-[14px] text-text outline-none placeholder:text-text-3",
+        "transition focus:border-text focus:bg-surface focus:shadow-[0_0_0_4px_var(--brand-soft)]",
         className,
       )}
       {...props}
@@ -158,8 +228,8 @@ export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTex
   return (
     <textarea
       className={cx(
-        "w-full rounded-xl border border-line bg-surface-2 px-3.5 py-3 text-[14.5px] leading-[1.55] text-text outline-none placeholder:text-text-3",
-        "focus:border-brand focus:bg-surface focus:ring-4 focus:ring-[var(--brand-soft)]",
+        "w-full rounded-[12px] border border-line bg-surface-2 px-3.5 py-3 text-[14px] leading-[1.6] text-text outline-none placeholder:text-text-3",
+        "transition focus:border-text focus:bg-surface focus:shadow-[0_0_0_4px_var(--brand-soft)]",
         className,
       )}
       {...props}
@@ -168,22 +238,22 @@ export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTex
 }
 
 export function Sep({ className }: { className?: string }) {
-  return <div className={cx("my-3.5 h-px bg-line", className)} />;
+  return <div className={cx("my-4 h-px bg-line", className)} />;
 }
 
 export function StatMini({ value, label }: { value: string; label: string }) {
   return (
-    <div className="rounded-xl bg-surface-2 p-2.5 text-center">
-      <b className="block font-display text-[19px]">{value}</b>
-      <span className="text-[11px] text-text-3">{label}</span>
+    <div className="rounded-[12px] bg-surface-2 p-3 text-center ring-1 ring-line">
+      <b className="block font-display text-[18px] font-semibold tracking-tight">{value}</b>
+      <span className="mt-0.5 block text-[11px] font-medium text-text-3">{label}</span>
     </div>
   );
 }
 
 export function Orb({ size = "md", className }: { size?: "sm" | "md" | "lg"; className?: string }) {
-  const dims = { sm: 26, md: 34, lg: 64 }[size];
-  const inset1 = { sm: 4, md: 6, lg: 11 }[size];
-  const inset2 = { sm: 7, md: 10, lg: 18 }[size];
+  const dims = { sm: 24, md: 32, lg: 56 }[size];
+  const inset1 = { sm: 4, md: 5, lg: 10 }[size];
+  const inset2 = { sm: 6, md: 8, lg: 16 }[size];
   return (
     <span
       className={cx("relative flex-none rounded-full", className)}
@@ -191,7 +261,7 @@ export function Orb({ size = "md", className }: { size?: "sm" | "md" | "lg"; cla
         width: dims,
         height: dims,
         background: "conic-gradient(from 200deg,#e8481f,#f2a516,#0f6f68,#e8481f)",
-        boxShadow: "0 0 0 3px var(--surface), 0 6px 18px -6px rgba(232,72,31,.6)",
+        boxShadow: "0 0 0 3px var(--surface), 0 6px 18px -6px rgba(232,72,31,.5)",
       }}
     >
       <span className="absolute rounded-full bg-surface" style={{ inset: inset1, opacity: 0.92 }} />
@@ -209,9 +279,7 @@ export function Row({ className, children }: { className?: string; children: Rea
 }
 
 /**
- * The one empty-state presentation: consistent icon, hierarchy and spacing so
- * an intentionally empty screen never reads as broken. Every state it renders
- * is truthful: what the screen is for, why it is empty, what to do next.
+ * Empty state — truthful, consistent hierarchy
  */
 export function EmptyState({
   icon = "spark",
@@ -226,12 +294,14 @@ export function EmptyState({
   action?: ReactNode;
   className?: string;
 }) {
-  return <div className={cx("flex flex-col items-center px-5 py-10 text-center sm:py-12", className)}>
-    <span className="grid h-14 w-14 place-items-center rounded-2xl bg-[var(--brand-soft)] text-brand">
-      <Icon name={icon} size={24} />
-    </span>
-    <h2 className="mt-4 font-display text-lg font-semibold sm:text-xl">{title}</h2>
-    <p className="mx-auto mt-2 max-w-xl text-sm leading-relaxed text-text-2">{reason}</p>
-    {action && <div className="mt-5 flex flex-wrap justify-center gap-2">{action}</div>}
-  </div>;
+  return (
+    <div className={cx("flex flex-col items-center px-6 py-12 text-center sm:py-16", className)}>
+      <span className="grid h-14 w-14 place-items-center rounded-[16px] bg-surface-2 text-text-2 ring-1 ring-line">
+        <Icon name={icon} size={24} />
+      </span>
+      <h2 className="mt-5 font-display text-[18px] font-semibold tracking-tight sm:text-[20px]">{title}</h2>
+      <p className="mx-auto mt-2.5 max-w-xl text-[13.5px] leading-relaxed text-text-2">{reason}</p>
+      {action && <div className="mt-6 flex flex-wrap justify-center gap-2.5">{action}</div>}
+    </div>
+  );
 }

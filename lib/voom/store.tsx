@@ -35,6 +35,10 @@ const NAV_PATHS: Record<string, string> = {
   today: "/app/today",
   approvals: "/app/approvals",
   plan: "/app/plan",
+  // Voom 2.0 primary aliases
+  "marketing-plan": "/app/plan",
+  marketing_plan: "/app/plan",
+  create: "/app/studio",
   studio: "/app/studio",
   calendar: "/app/calendar",
   campaigns: "/app/campaigns",
@@ -44,7 +48,10 @@ const NAV_PATHS: Record<string, string> = {
   connections: "/app/connections",
   contacts: "/app/contacts",
   instagram: "/app/instagram",
+  tiktok: "/app/tiktok",
   youtube: "/app/youtube",
+  reels: "/app/studio",
+  mara: "/app/mara",
   pricing: "/app/pricing",
   settings: "/app/settings",
 };
@@ -99,10 +106,13 @@ function normalizePlan(value: string | null | undefined): "free" | "pro" | "max"
 }
 
 function initialState(init: { displayName: string | null; email: string | null; business: BusinessRecord | null }): VoomState {
+  // Voom 2.0 defaults to light (warm off-white workspace) — dark remains available via toggle
+  const saved = typeof window !== "undefined" ? window.localStorage.getItem("voom-theme") : null;
+  const initialTheme = saved === "dark" || saved === "light" ? (saved as "light" | "dark") : "light";
   return {
     displayName: init.displayName?.trim() ?? "",
     email: init.email ?? "",
-    theme: "dark",
+    theme: initialTheme,
     sideOpen: false,
     menuOpen: false,
     igConnected: false,
@@ -162,6 +172,13 @@ export function VoomProvider({
   );
   const router = useRouter();
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  // Voom 2.0: ensure theme dataset is synced on mount and on theme change
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.dataset.theme = state.theme;
+    }
+  }, [state.theme]);
 
   useEffect(() => {
     let active = true;

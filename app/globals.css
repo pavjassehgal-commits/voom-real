@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* ──────────────────────────────────────────────────────────────
+   Voom 2.0 — Design System Foundation
+   Principles: warm off-white workspace, graphite navigation shell,
+   crisp dark typography, restrained borders, subtle shadows,
+   premium rounded surfaces, generous but efficient whitespace.
+   ────────────────────────────────────────────────────────────── */
+
 @keyframes voom-reel-scene { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes voom-reel-text-rise { from { opacity: 0; transform: translateY(18px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes voom-reel-text-pop { from { opacity: 0; transform: scale(.88); } to { opacity: 1; transform: scale(1); } }
@@ -7,14 +14,110 @@
 @keyframes voom-reel-kenburns-b { from { transform: scale(1.24) translate(2%, -2%); } to { transform: scale(1.06); } }
 @keyframes voom-reel-kenburns-c { from { transform: scale(1.05) translate(-3%, 1%); } to { transform: scale(1.22) translate(3%, -2%); } }
 @keyframes voom-reel-kenburns-d { from { transform: scale(1.2) translate(0, 2%); } to { transform: scale(1.04) translate(2%, -1%); } }
+@keyframes voom-mara-pulse { 0%,100% { transform: scale(1); opacity: .9 } 50% { transform: scale(1.08); opacity: 1 } }
+@keyframes voom-fade-in { from { opacity: 0; transform: translateY(4px) } to { opacity: 1; transform: translateY(0) } }
 
+/* ──────────────────────────────────────────────────────────────
+   Voom 2.0 Light — Primary workspace (warm off-white)
+   ────────────────────────────────────────────────────────────── */
 :root {
+  /* Workspace — warm off-white / light neutral */
+  --bg: #f6f5ef;
+  --bg-soft: #f1efe8;
+  --surface: #ffffff;
+  --surface-2: #f1efe8;
+  --surface-3: #e9e4d6;
+  --surface-hover: #ece8de;
+
+  /* Borders — restrained */
+  --line: #e9e4d6;
+  --line-2: #d8d2c2;
+  --line-strong: #c9c3b3;
+
+  /* Typography — crisp dark */
+  --text: #121412;
+  --text-2: #5e5d5a;
+  --text-3: #9a9996;
+
+  /* Brand — restrained, not flood */
+  --brand: #e8481f;
+  --brand-2: #0f6f68;
+  --brand-soft: rgba(232, 72, 31, 0.08);
+  --brand-soft-2: rgba(232, 72, 31, 0.12);
+  --ember: #f2a516;
+  --rose: #c9306b;
+
+  /* Operational state — green is active/healthy/connected */
+  --green: #1a8a4f;
+  --green-soft: rgba(26, 138, 79, 0.10);
+  --green-strong: #167a45;
+  --green-dot: #22a85e;
+
+  --amber: #b8770a;
+  --amber-soft: rgba(184, 119, 10, 0.10);
+  --red: #c02d28;
+  --red-soft: rgba(192, 45, 40, 0.10);
+  --blue: #2f6f9f;
+  --blue-soft: rgba(47, 111, 159, 0.10);
+  --pink: #c9306b;
+
+  /* Shadows — subtle, restrained */
+  --shadow-sm: 0 1px 2px rgba(18, 20, 18, 0.04);
+  --shadow: 0 1px 2px rgba(18, 20, 18, 0.04), 0 4px 16px -6px rgba(18, 20, 18, 0.06);
+  --shadow-md: 0 4px 16px -8px rgba(18, 20, 18, 0.08), 0 2px 8px -2px rgba(18, 20, 18, 0.05);
+  --shadow-lg: 0 16px 40px -16px rgba(18, 20, 18, 0.12), 0 4px 16px -4px rgba(18, 20, 18, 0.06);
+  --shadow-focus: 0 0 0 4px var(--brand-soft);
+
+  /* Radius — premium rounded surfaces */
+  --r-xs: 8px;
+  --r-sm: 10px;
+  --r: 14px;
+  --r-md: 16px;
+  --r-lg: 20px;
+  --r-xl: 24px;
+  --r-full: 9999px;
+
+  /* Gradients — restrained, atmospheric only */
+  --grad: linear-gradient(112deg, #c9380f 0%, #e8481f 55%, #e8681c 100%);
+  --grad-deep: linear-gradient(140deg, #8f2506 0%, #c9380f 45%, #e05a15 100%);
+  --atmosphere: radial-gradient(1200px 420px at 18% -8%, rgba(232, 72, 31, 0.05), transparent 60%),
+                radial-gradient(900px 360px at 84% 0%, rgba(15, 111, 104, 0.04), transparent 58%);
+
+  /* ── Navigation shell — near-black / graphite (always dark) ── */
+  --sidebar-bg: #111412;
+  --sidebar-bg-2: #191e1c;
+  --sidebar-bg-3: #222825;
+  --sidebar-bg-hover: rgba(255, 255, 255, 0.06);
+  --sidebar-bg-active: #1e2623;
+  --sidebar-bg-active-2: #232c29;
+  --sidebar-line: #1d2522;
+  --sidebar-line-2: #2a3330;
+  --sidebar-text: #eef2ee;
+  --sidebar-text-2: #9aa5a0;
+  --sidebar-text-3: #6f7a72;
+  --sidebar-text-active: #ffffff;
+  --sidebar-green-dot: #22c96a;
+
+  /* Topbar — restrained, contextual */
+  --topbar-bg: rgba(246, 245, 239, 0.84);
+  --topbar-line: var(--line);
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Voom 2.0 Dark — preserves accessibility, same sidebar
+   ────────────────────────────────────────────────────────────── */
+:root[data-theme="dark"] {
   --bg: #0a0e0d;
+  --bg-soft: #0f1211;
   --surface: #131817;
   --surface-2: #1b2220;
   --surface-3: #252d2a;
+  --surface-hover: #252d2a;
+
   --line: #242c29;
   --line-2: #374039;
+  --line-strong: #3d4a46;
+
   --text: #eef2ee;
   --text-2: #a3ada5;
   --text-3: #6f7a72;
@@ -22,55 +125,78 @@
   --brand: #ff6a3d;
   --brand-2: #3fb3a6;
   --brand-soft: rgba(255, 106, 61, 0.14);
-  --ember: #f2a516;
-  --rose: #c9306b;
+  --brand-soft-2: rgba(255, 106, 61, 0.20);
 
   --green: #3ec27c;
+  --green-soft: rgba(62, 194, 124, 0.14);
+  --green-strong: #2fb06c;
+  --green-dot: #3ec27c;
+
   --amber: #e0a53a;
+  --amber-soft: rgba(224, 165, 58, 0.14);
   --red: #f0645c;
+  --red-soft: rgba(240, 100, 92, 0.14);
   --blue: #6aa8d8;
-  --pink: #c9306b;
+  --blue-soft: rgba(106, 168, 216, 0.14);
 
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px -16px rgba(0, 0, 0, 0.8);
-  --shadow-lg: 0 30px 70px -20px rgba(0, 0, 0, 0.85);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px -16px rgba(0, 0, 0, 0.6);
+  --shadow-md: 0 4px 20px -8px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 30px 70px -20px rgba(0, 0, 0, 0.75);
+  --shadow-focus: 0 0 0 4px rgba(255, 106, 61, 0.18);
 
-  --r: 14px;
-  --r-lg: 20px;
-  --r-sm: 10px;
+  --topbar-bg: rgba(19, 24, 23, 0.86);
+  --topbar-line: var(--line);
 
-  --grad: linear-gradient(112deg, #c9380f 0%, #e8481f 55%, #e8681c 100%);
-  --grad-deep: linear-gradient(140deg, #8f2506 0%, #c9380f 45%, #e05a15 100%);
+  /* Sidebar stays same — already dark */
+  --atmosphere: radial-gradient(1200px 420px at 18% -8%, rgba(255, 106, 61, 0.08), transparent 60%),
+                radial-gradient(900px 360px at 84% 0%, rgba(63, 179, 166, 0.06), transparent 58%);
 }
 
-:root[data-theme="light"] {
-  --bg: #f1f3ef;
-  --surface: #ffffff;
-  --surface-2: #eaece6;
-  --surface-3: #dee1d9;
-  --line: #dee1d8;
-  --line-2: #c9cec3;
-  --text: #111614;
-  --text-2: #4d574f;
-  --text-3: #818c83;
-
-  --brand: #e8481f;
-  --brand-2: #0f6f68;
-  --brand-soft: rgba(232, 72, 31, 0.1);
-  --ember: #f2a516;
-  --rose: #c9306b;
-
-  --green: #1c8a52;
-  --amber: #b8770a;
-  --red: #c02d28;
-  --blue: #2f6f9f;
-  --pink: #c9306b;
-
-  --shadow: 0 1px 2px rgba(17, 22, 20, 0.05), 0 8px 24px -14px rgba(17, 22, 20, 0.22);
-  --shadow-lg: 0 26px 60px -22px rgba(17, 22, 20, 0.4);
+/* Support system preference for users who haven't chosen */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a0e0d;
+    --bg-soft: #0f1211;
+    --surface: #131817;
+    --surface-2: #1b2220;
+    --surface-3: #252d2a;
+    --surface-hover: #252d2a;
+    --line: #242c29;
+    --line-2: #374039;
+    --line-strong: #3d4a46;
+    --text: #eef2ee;
+    --text-2: #a3ada5;
+    --text-3: #6f7a72;
+    --brand: #ff6a3d;
+    --brand-2: #3fb3a6;
+    --brand-soft: rgba(255, 106, 61, 0.14);
+    --brand-soft-2: rgba(255, 106, 61, 0.20);
+    --green: #3ec27c;
+    --green-soft: rgba(62, 194, 124, 0.14);
+    --green-strong: #2fb06c;
+    --green-dot: #3ec27c;
+    --amber: #e0a53a;
+    --amber-soft: rgba(224, 165, 58, 0.14);
+    --red: #f0645c;
+    --red-soft: rgba(240, 100, 92, 0.14);
+    --blue: #6aa8d8;
+    --blue-soft: rgba(106, 168, 216, 0.14);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px -16px rgba(0, 0, 0, 0.6);
+    --shadow-md: 0 4px 20px -8px rgba(0, 0, 0, 0.6);
+    --shadow-lg: 0 30px 70px -20px rgba(0, 0, 0, 0.75);
+    --shadow-focus: 0 0 0 4px rgba(255, 106, 61, 0.18);
+    --topbar-bg: rgba(19, 24, 23, 0.86);
+    --topbar-line: var(--line);
+    --atmosphere: radial-gradient(1200px 420px at 18% -8%, rgba(255, 106, 61, 0.08), transparent 60%),
+                  radial-gradient(900px 360px at 84% 0%, rgba(63, 179, 166, 0.06), transparent 58%);
+  }
 }
 
 @theme inline {
   --color-bg: var(--bg);
+  --color-bg-soft: var(--bg-soft);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
@@ -93,6 +219,9 @@
   --font-mono: var(--font-plex-mono);
 }
 
+/* ──────────────────────────────────────────────────────────────
+   Base resets & accessibility
+   ────────────────────────────────────────────────────────────── */
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -107,9 +236,27 @@
   background: transparent;
 }
 
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background: var(--atmosphere);
+  opacity: 1;
 }
 
 ::selection {
@@ -117,9 +264,78 @@ body {
   color: #fff;
 }
 
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Voom 2.0 — Reusable utilities
+   ────────────────────────────────────────────────────────────── */
 .voom-grad {
   background: var(--grad);
 }
 .voom-grad-deep {
   background: var(--grad-deep);
+}
+
+/* Operational green dot — MARA active, healthy, connected */
+.voom-dot-green {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green-dot);
+  box-shadow: 0 0 0 3px var(--green-soft);
+  display: inline-block;
+  flex: none;
+}
+
+.voom-dot-green.pulse {
+  animation: voom-mara-pulse 2.4s ease-in-out infinite;
+}
+
+/* Atmospheric surface — extremely subtle glow for headers */
+.voom-atmospheric {
+  position: relative;
+  overflow: hidden;
+}
+
+.voom-atmospheric::before {
+  content: "";
+  position: absolute;
+  inset: -40% -20% auto -20%;
+  height: 70%;
+  background: radial-gradient(600px 200px at 20% 0%, rgba(232, 72, 31, 0.06), transparent 60%),
+              radial-gradient(500px 180px at 80% 0%, rgba(15, 111, 104, 0.04), transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+:root[data-theme="dark"] .voom-atmospheric::before {
+  background: radial-gradient(600px 200px at 20% 0%, rgba(255, 106, 61, 0.08), transparent 60%),
+              radial-gradient(500px 180px at 80% 0%, rgba(63, 179, 166, 0.06), transparent 60%);
+}
+
+/* Card — soft neutral, subtle border, restrained shadow */
+.voom-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+}
+
+/* Focus ring utility */
+.voom-focus-ring:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-color: var(--brand);
 }

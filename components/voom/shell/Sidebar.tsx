@@ -4,76 +4,198 @@ import { usePathname } from "next/navigation";
 import { useVoomActions, useVoomState } from "@/lib/voom/store";
 import { Icon } from "../icons";
 import { Btn, IconBtn, cx } from "../ui/primitives";
-import Logo from "@/app/components/Logo";
 import { NAV, pageIdFromPath } from "./nav";
 
+/**
+ * Voom 2.0 Sidebar — near-black / graphite navigation shell
+ *
+ * - Warm off-white workspace is handled by AppShell/main
+ * - Sidebar is always graphite, independent of theme
+ * - Compact icon + label, clear selected state, subtle section separation
+ * - Settings toward bottom, business context preserved
+ * - No mock data, no decorative imagery
+ * - Accessible: semantic nav, keyboard focus, aria-current
+ */
 export function Sidebar() {
-  const { sideOpen, plan } = useVoomState();
+  const { sideOpen, plan, displayName, email } = useVoomState();
   const { goTo, toggleSidebar } = useVoomActions();
   const pathname = usePathname();
   const active = pageIdFromPath(pathname);
 
+  // Split groups for layout: primary/secondary/system in scrollable area,
+  // utility (Settings) pinned at bottom
+  const mainGroups = NAV.filter((g) => g.g !== "Utility");
+  const utilityGroups = NAV.filter((g) => g.g === "Utility");
+
   return (
     <>
       {sideOpen && (
-        <div className="fixed inset-0 z-[85] bg-black/45 md:hidden" onClick={() => toggleSidebar(false)} />
+        <div
+          className="fixed inset-0 z-[85] bg-black/50 backdrop-blur-[2px] md:hidden"
+          onClick={() => toggleSidebar(false)}
+          aria-hidden="true"
+        />
       )}
       <aside
         className={cx(
-          "flex w-[262px] flex-none flex-col border-r border-line bg-surface px-3 py-4.5",
-          "fixed left-0 top-0 z-[90] h-dvh -translate-x-[105%] shadow-[var(--shadow-lg)] transition-transform duration-300 md:sticky md:top-0 md:h-dvh md:translate-x-0 md:shadow-none",
+          "flex w-[268px] flex-none flex-col border-r bg-[var(--sidebar-bg)] text-[var(--sidebar-text)]",
+          "border-[var(--sidebar-line)]",
+          "fixed left-0 top-0 z-[90] h-dvh -translate-x-[105%] shadow-[var(--shadow-lg)] transition-transform duration-300 ease-[cubic-bezier(.32,.72,0,1)]",
+          "md:sticky md:top-0 md:h-dvh md:translate-x-0 md:shadow-none",
           sideOpen && "translate-x-0",
         )}
+        aria-label="Primary navigation"
       >
-        <div className="flex items-center justify-between px-2 pb-4.5 pt-1">
-          <Logo />
-          <IconBtn className="md:hidden" onClick={() => toggleSidebar(false)}>
-            <Icon name="x" />
+        {/* Brand — Voom at top, compact */}
+        <div className="flex h-[64px] shrink-0 items-center justify-between gap-2 border-b border-[var(--sidebar-line)] px-[18px]">
+          <div className="flex items-center gap-2.5">
+            <span className="grid h-8 w-8 place-items-center rounded-[10px] bg-[var(--brand)] text-white shadow-[0_4px_12px_-4px_var(--brand)]">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+                <path d="M13 2L3 14h8l-1 8 10-12h-8z" />
+              </svg>
+            </span>
+            <span className="font-display text-[18px] font-bold tracking-tight text-white">Voom</span>
+          </div>
+          <IconBtn
+            className="md:hidden !h-8 !w-8 !text-[var(--sidebar-text-2)] hover:!bg-[var(--sidebar-bg-2)] hover:!text-white"
+            onClick={() => toggleSidebar(false)}
+            aria-label="Close navigation"
+          >
+            <Icon name="x" size={16} />
           </IconBtn>
         </div>
-        <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto">
-          {NAV.map((group) => (
-            <div key={group.g}>
-              <div className="px-2.5 pb-1.5 pt-4 font-mono text-[10px] font-bold uppercase tracking-[.09em] text-text-3">
-                {group.g}
+
+        {/* Navigation — scrollable */}
+        <div className="flex flex-1 flex-col overflow-y-auto px-3 py-4">
+          <nav className="flex flex-col gap-6" aria-label="Main">
+            {mainGroups.map((group) => (
+              <div key={group.g}>
+                <div className="mb-2 px-2.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--sidebar-text-3)]">
+                  {group.g}
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  {group.items.map((item) => {
+                    const isActive = active === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => goTo(item.id)}
+                        aria-current={isActive ? "page" : undefined}
+                        className={cx(
+                          "group flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-[9px] text-left text-[13.5px] font-[500] leading-none transition-all duration-150",
+                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 focus-visible:ring-offset-0",
+                          isActive
+                            ? "bg-[var(--sidebar-bg-active)] text-[var(--sidebar-text-active)] font-[600] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]"
+                            : "text-[var(--sidebar-text-2)] hover:bg-[var(--sidebar-bg-hover)] hover:text-[var(--sidebar-text)]",
+                        )}
+                      >
+                        <span
+                          className={cx(
+                            "grid h-[22px] w-[22px] place-items-center rounded-[7px] transition-colors",
+                            isActive ? "bg-white/[0.08] text-white" : "text-[var(--sidebar-text-3)] group-hover:text-[var(--sidebar-text-2)]",
+                          )}
+                        >
+                          <Icon name={item.i} size={16} />
+                        </span>
+                        <span className="min-w-0 flex-1 truncate tracking-[-0.01em]">{item.n}</span>
+                        {isActive && (
+                          <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[var(--sidebar-green-dot)] shadow-[0_0_0_3px_rgba(34,201,106,0.18)]" aria-hidden="true" />
+                        )}
+                        {item.badge && !isActive && (
+                          <span className="ml-auto rounded-full bg-[var(--brand)] px-1.5 py-0.5 text-[10px] font-bold text-white">
+                            {item.badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-              {group.items.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => goTo(item.id)}
-                  className={cx(
-                    "flex w-full items-center gap-2.5 rounded-[11px] px-2.5 py-2.5 text-left text-sm font-medium transition",
-                    active === item.id
-                      ? "bg-[var(--brand-soft)] font-semibold text-brand"
-                      : "text-text-2 hover:bg-surface-2 hover:text-text",
-                  )}
-                >
-                  <Icon name={item.i} size={18} />
-                  <span className="min-w-0 flex-1 truncate">{item.n}</span>
-                  {item.badge && (
-                    <span className="ml-auto rounded-full bg-brand px-1.5 py-0.5 text-[10.5px] font-bold text-white">
-                      {item.badge}
-                    </span>
-                  )}
-                </button>
+            ))}
+          </nav>
+
+          {/* Spacer pushes utility to bottom on large screens, but keeps scroll natural */}
+          <div className="flex-1" />
+
+          {/* Utility — Settings toward bottom, subtle separation */}
+          {utilityGroups.length > 0 && (
+            <div className="mt-6 border-t border-[var(--sidebar-line)] pt-4">
+              {utilityGroups.map((group) => (
+                <div key={group.g}>
+                  <div className="mb-2 px-2.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--sidebar-text-3)]">
+                    {group.g}
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    {group.items.map((item) => {
+                      const isActive = active === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          onClick={() => goTo(item.id)}
+                          aria-current={isActive ? "page" : undefined}
+                          className={cx(
+                            "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-[9px] text-left text-[13.5px] font-[500] transition",
+                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20",
+                            isActive
+                              ? "bg-[var(--sidebar-bg-active)] text-white font-semibold"
+                              : "text-[var(--sidebar-text-2)] hover:bg-[var(--sidebar-bg-hover)] hover:text-white",
+                          )}
+                        >
+                          <span className="grid h-[22px] w-[22px] place-items-center rounded-[7px] text-[var(--sidebar-text-3)]">
+                            <Icon name={item.i} size={16} />
+                          </span>
+                          <span className="truncate">{item.n}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               ))}
             </div>
-          ))}
-        </nav>
-        <div className="voom-grad-deep relative mx-1.5 mt-3 overflow-hidden rounded-[15px] p-3.5 text-white">
-          <b className="font-display text-[15px]">You’re on {plan === "max" ? "Max" : plan === "pro" ? "Pro" : "Free"}</b>
-          <p className="my-0.5 mb-2.5 text-xs opacity-85">
-            {plan === "max" ? "Your automated marketing workspace is active." : plan === "pro" ? "Your assisted marketing workspace is active." : "Your manual marketing workspace is active."}
-          </p>
-          <Btn
-            variant="plain"
-            size="sm"
-            block
-            className="h-[34px] bg-white/96 text-[13px] text-[#a82c08] hover:bg-white"
-            onClick={() => goTo("pricing")}
-          >
-            <Icon name="card" size={14} /> See plans
-          </Btn>
+          )}
+        </div>
+
+        {/* Business / Account context — preserved near bottom, compact */}
+        <div className="shrink-0 border-t border-[var(--sidebar-line)] p-3">
+          <div className="rounded-[12px] bg-[var(--sidebar-bg-2)] p-3 ring-1 ring-white/[0.04]">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--sidebar-green-dot)]" aria-hidden="true" />
+                  <span className="font-display text-[13px] font-semibold text-white tracking-tight">
+                    {plan === "max" ? "Max" : plan === "pro" ? "Pro" : "Free"} workspace
+                  </span>
+                </div>
+                <p className="mt-1 line-clamp-2 text-[11.5px] leading-[1.4] text-[var(--sidebar-text-2)]">
+                  {plan === "max"
+                    ? "Automated — MARA is running."
+                    : plan === "pro"
+                      ? "Assisted — MARA drafts for review."
+                      : "Manual — you publish."}
+                </p>
+              </div>
+            </div>
+            {displayName || email ? (
+              <div className="mt-2.5 flex items-center gap-2 rounded-[9px] bg-[var(--sidebar-bg-3)] px-2.5 py-2 ring-1 ring-white/[0.03]">
+                <div className="grid h-7 w-7 place-items-center rounded-full bg-white/[0.08] text-[11px] font-bold text-white">
+                  {(displayName?.[0] || email?.[0] || "V").toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[12px] font-medium text-white">{displayName || "Your account"}</div>
+                  <div className="truncate text-[10.5px] text-[var(--sidebar-text-3)]">{email}</div>
+                </div>
+              </div>
+            ) : null}
+            <Btn
+              variant="plain"
+              size="sm"
+              block
+              className="mt-2.5 h-[32px] !bg-white/[0.08] !text-[12.5px] !font-medium !text-white hover:!bg-white/[0.12] focus-visible:!ring-white/20"
+              onClick={() => goTo("pricing")}
+            >
+              <Icon name="card" size={13} /> Plans & billing
+            </Btn>
+          </div>
         </div>
       </aside>
     </>

@@ -325,10 +325,21 @@ test("duplicate submits are guarded on the remaining mutation surfaces", async (
 
 test("navigation contains only implemented features", async () => {
   const nav = await read("components/voom/shell/nav.ts");
-  assert.doesNotMatch(nav, /"reels"|"ads"/);
+  // Voom 2.0: primary nav must not include unimplemented surfaces as NAV items
+  // (ads/reels routes still resolve but are not primary navigation)
+  assert.doesNotMatch(nav, /id:\s*"reels"/);
+  assert.doesNotMatch(nav, /id:\s*"ads"/);
   for (const kept of ["today", "approvals", "plan", "studio", "calendar", "campaigns", "automations", "performance", "connections", "contacts", "settings"]) {
     assert.match(nav, new RegExp(`id: "${kept}"`));
   }
+  // Voom 2.0 primary hierarchy must be present
+  for (const primary of ["today", "plan", "studio", "calendar", "performance"]) {
+    assert.match(nav, new RegExp(`id: "${primary}"`), `Primary nav must include ${primary}`);
+  }
+  for (const secondary of ["campaigns", "contacts", "connections"]) {
+    assert.match(nav, new RegExp(`id: "${secondary}"`), `Secondary nav must include ${secondary}`);
+  }
+  assert.match(nav, /id: "settings"/, "Utility nav must include settings");
   const bottom = await read("components/voom/shell/BottomBar.tsx");
   assert.doesNotMatch(bottom, /"reels"/);
   // The removed routes still resolve: no dead links.
