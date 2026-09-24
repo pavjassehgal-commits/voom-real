@@ -96,7 +96,7 @@ export function Sidebar() {
                         </span>
                         <span className="min-w-0 flex-1 truncate tracking-[-0.01em]">{item.n}</span>
                         {isActive && (
-                          <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[var(--sidebar-green-dot)] shadow-[0_0_0_3px_rgba(34,201,106,0.18)]" aria-hidden="true" />
+                          <span className="voom-grad ml-auto h-1.5 w-1.5 rounded-full shadow-[0_0_0_3px_rgba(111,78,255,0.18)]" aria-hidden="true" />
                         )}
                         {item.badge && !isActive && (
                           <span className="voom-grad ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-bold text-white">

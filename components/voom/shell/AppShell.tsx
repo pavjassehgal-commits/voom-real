@@ -27,10 +27,10 @@ export function AppShell({ children }: { children: ReactNode }) {
           {/* Decorative light volumes are inert, slow and remain behind content. */}
           <div
             aria-hidden="true"
-            className="voom-atmospheric-orbit pointer-events-none absolute right-[3%] top-[-92px] -z-10"
+            className="voom-atmospheric-orbit pointer-events-none absolute right-[3%] top-[-92px] z-0"
           />
-          <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 -z-20 h-[320px] bg-[var(--atmosphere)] opacity-80" />
-          <div className="relative z-0 w-full flex-1">{children}</div>
+          <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 z-0 h-[320px] bg-[var(--atmosphere)] opacity-90" />
+          <div className="relative z-10 w-full flex-1">{children}</div>
         </main>
       </div>
       <BottomBar />
