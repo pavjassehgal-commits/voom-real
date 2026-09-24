@@ -64,12 +64,8 @@ const MODULE_DOUBLES = {
     export async function headers() { return new Headers(); }
     export async function draftMode() { return { isEnabled: false, enable() {}, disable() {} }; }
   `)}`,
-  "next/link": `data:text/javascript,${encodeURIComponent(`
-    import { createElement } from "react";
-    export default function Link({ href, children, prefetch, replace, scroll, shallow, locale, legacyBehavior, passHref, ...rest }) {
-      return createElement("a", { href, ...rest }, children);
-    }
-  `)}`,
+  "next/link": pathToFileURL(path.join(ROOT, "tests/helpers/next-link.tsx")).href,
+  "next/image": "data:text/javascript,export default function Image(){return null}",
   "next/font/google": `data:text/javascript,${encodeURIComponent(`
     const font = (options) => ({ variable: options?.variable ?? "--font-stub", className: options?.variable ?? "font-stub", style: { fontFamily: "system-ui" } });
     export const Bricolage_Grotesque = font;

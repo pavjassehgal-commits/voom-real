@@ -333,7 +333,11 @@ test("4b. the Automations page passes the saved mode and the saved plan, and kee
 });
 
 test("4c. Today keeps the compact control without the descriptive cards", async () => {
-  const today = await read("app/app/(shell)/today/page.tsx");
-  assert.match(today, /<AutomationMode compact initial=\{normalizeAutomationMode\(data\.business\.automation_level\)\} \/>/);
-  assert.doesNotMatch(today, /describe/, "the header control stays compact");
+  const [today, dashboard] = await Promise.all([
+    read("app/app/(shell)/today/page.tsx"),
+    read("components/voom/today/TodayDashboard.tsx"),
+  ]);
+  assert.match(today, /automationMode=\{normalizeAutomationMode\(data\.business\.automation_level\)\}/);
+  assert.match(dashboard, /<AutomationMode compact showPlanSummary=\{false\} initial=\{automationMode\} \/>/);
+  assert.doesNotMatch(today + dashboard, /describe/, "the Today control stays compact");
 });

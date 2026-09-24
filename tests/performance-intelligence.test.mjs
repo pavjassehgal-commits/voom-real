@@ -891,8 +891,11 @@ test("the Today insight exists only when there is enough measured data", async (
   assert.doesNotMatch(card, /collecting data|learning\.\.\.|placeholder/i);
 
   const today = await readFile(new URL("../app/app/(shell)/today/page.tsx", import.meta.url), "utf8");
+  const dashboard = await readFile(new URL("../components/voom/today/TodayDashboard.tsx", import.meta.url), "utf8");
   assert.match(today, /loadPerformanceReport/);
-  assert.match(today, /PerformanceIntelligenceCard report=\{performance\} source="today"/);
+  assert.match(today, /performance=\{performance\}/);
+  assert.match(dashboard, /report\.headline/, "Today V2 only presents a performance claim backed by the real report");
+  assert.doesNotMatch(dashboard, /fake|sample chart|12\.4K/i);
 
   const page = await readFile(new URL("../app/app/(shell)/performance/page.tsx", import.meta.url), "utf8");
   assert.match(page, /loadPerformanceReport/);

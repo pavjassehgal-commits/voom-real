@@ -107,6 +107,83 @@
   --topbar-line: var(--line);
 }
 
+/* Today V2 — a denser, more luminous expression of the shared Voom system. */
+.today-v2 { container-type: inline-size; }
+
+.today-spectrum {
+  background:
+    radial-gradient(circle at 22% 44%, rgba(45, 215, 238, .42), transparent 28%),
+    radial-gradient(circle at 43% 24%, rgba(53, 120, 255, .48), transparent 30%),
+    radial-gradient(circle at 67% 35%, rgba(219, 62, 229, .44), transparent 34%),
+    radial-gradient(circle at 84% 54%, rgba(255, 93, 134, .36), transparent 28%),
+    radial-gradient(circle at 72% 76%, rgba(255, 155, 74, .30), transparent 29%);
+  border-radius: 46% 54% 60% 40% / 42% 40% 60% 58%;
+  transform: rotate(-8deg);
+  animation: voom-atmosphere-drift 26s ease-in-out infinite alternate;
+}
+
+.today-aurora {
+  background: conic-gradient(from 210deg, rgba(45,215,238,.22), rgba(53,120,255,.26), rgba(116,71,255,.26), rgba(219,62,229,.24), rgba(255,93,134,.18), rgba(255,155,74,.18), rgba(45,215,238,.22));
+  border-radius: 50%;
+  animation: voom-atmosphere-drift 34s ease-in-out infinite alternate-reverse;
+}
+
+.today-orbit {
+  border: 1px solid rgba(255,255,255,.35);
+  background: conic-gradient(from 150deg, rgba(45,215,238,.25), rgba(53,120,255,.8), rgba(219,62,229,.72), rgba(255,93,134,.6), rgba(255,155,74,.55), rgba(45,215,238,.25));
+  box-shadow: inset 10px -12px 26px rgba(4,8,22,.35), 0 24px 70px rgba(89,79,255,.32);
+  filter: saturate(1.2);
+  animation: voom-orbit-drift 30s ease-in-out infinite;
+}
+
+.today-media-orb {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: conic-gradient(from 165deg, #2dd7ee, #3578ff, #7447ff, #db3ee5, #ff5d86, #ff9b4a, #2dd7ee);
+  box-shadow: inset 7px -9px 16px rgba(7,9,18,.28), 0 14px 34px rgba(105,75,255,.25);
+}
+
+.today-day-covered {
+  background: linear-gradient(135deg, #3578ff 0%, #7447ff 43%, #db3ee5 72%, #ff755f 100%);
+  box-shadow: 0 10px 24px -14px rgba(105,75,255,.9);
+}
+
+.today-clear-card {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--surface) 92%, transparent), color-mix(in srgb, var(--green-soft) 55%, var(--surface)));
+}
+
+.today-attention-card {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--surface) 92%, transparent), color-mix(in srgb, var(--amber-soft) 62%, var(--surface)));
+}
+
+.today-insight-glow {
+  background: conic-gradient(from 180deg, rgba(45,215,238,.55), rgba(53,120,255,.75), rgba(219,62,229,.65), rgba(255,155,74,.5), rgba(45,215,238,.55));
+  filter: blur(24px);
+  opacity: .42;
+}
+
+:root:not(.dark) .today-v2::before {
+  content: "";
+  position: absolute;
+  inset: 4% 0 auto 7%;
+  height: 52%;
+  pointer-events: none;
+  background: linear-gradient(112deg, rgba(255,255,255,.45), rgba(219,62,229,.06), rgba(45,215,238,.09), rgba(255,155,74,.08));
+  filter: blur(18px);
+  border-radius: 42% 58% 46% 54%;
+}
+
+@media (max-width: 1023px) {
+  .today-spectrum { opacity: .48; transform: scale(.78) rotate(-8deg); transform-origin: top right; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .today-spectrum,
+  .today-aurora,
+  .today-orbit { animation: none !important; }
+}
+
 /* ──────────────────────────────────────────────────────────────
    Voom 2.0 Dark — preserves accessibility, same sidebar
    ────────────────────────────────────────────────────────────── */
