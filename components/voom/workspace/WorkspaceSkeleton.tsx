@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { cx } from "../ui/primitives";
+import { cx } from "@/lib/voom/cx";
 
 /**
  * Voom 2.0 workspace loading skeleton — the route-level `loading.tsx` face.
