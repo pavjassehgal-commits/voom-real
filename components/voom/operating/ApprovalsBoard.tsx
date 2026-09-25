@@ -4,7 +4,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/voom/icons";
-import { Btn, Card, Input, Tag, Textarea } from "@/components/voom/ui/primitives";
+import { Btn, Input, Tag, Textarea } from "@/components/voom/ui/primitives";
+import { Panel, SectionLabel } from "@/components/voom/workspace/ui";
 import { REEL_ASSET_ACCEPT, REEL_ASSET_MAX_BYTES, REEL_ASSET_PACK_LIMIT } from "@/lib/media/reel-asset";
 import { formatIngestionClientError } from "@/lib/media/ingestion-error";
 import { ReelCompositionPlayer } from "@/components/voom/operating/ReelCompositionPlayer";
@@ -55,8 +56,13 @@ export function ApprovalsBoard({ initial }: { initial: ApprovalItem[] }) {
   const completed = items.filter((item) => item.status !== "pending" && item.status !== "failed");
   return <div>
     {error && <div role="alert" className="mb-4 rounded-xl border border-red/35 bg-red/10 px-4 py-3 text-sm text-red">{error}</div>}
-    {open.length ? <div className="space-y-4">{open.map((item) => item.tool_name === "choose_reel_production" ? <ReelProductionCard key={item.id} item={item} busy={busy === item.id} onDecision={decide} onProduce={produce} onProduceVideo={produceVideo} onRefresh={refreshItem} /> : <ApprovalCard key={item.id} item={item} busy={busy === item.id} onDecision={decide} />)}</div> : <Card className="p-8 text-center"><span className="mx-auto grid h-12 w-12 place-items-center rounded-full border border-line text-green"><Icon name="check" size={22} /></span><h2 className="mt-3 font-display text-lg font-semibold">Nothing needs your approval</h2><p className="mx-auto mt-1 max-w-md text-sm text-text-3">When Voom recommends a calendar change, approval, deletion, or another protected action, it will appear here first.</p><p className="mx-auto mt-2 max-w-lg text-[12.5px] leading-relaxed text-text-3"><b className="text-text-2">Reel production choices live here too.</b> Generate or refresh your Marketing Plan; if MARA recommends a Reel, a “Reel production choice” card appears on this screen with <b className="text-text-2">Create with MARA</b>, film-it-yourself, and asset-upload options.</p></Card>}
-    {completed.length > 0 && <section className="mt-7"><h2 className="mb-3 font-display text-base font-semibold">Recent decisions</h2><Card className="overflow-hidden">{completed.slice(0, 12).map((item) => <div key={item.id} className="flex items-start justify-between gap-4 border-t border-line px-4 py-3 first:border-0"><div><b className="text-sm">{item.summary}</b><p className="mt-1 text-xs text-text-3">{item.result_summary ?? item.error_summary ?? "No database change was made."}</p></div><Tag tone={item.status === "confirmed" ? "t-green" : "t-grey"}>{item.status === "confirmed" && item.result_summary?.startsWith("Auto-approved by Autopilot") ? "Autopilot approved" : item.status}</Tag></div>)}</Card></section>}
+    {open.length ? <div className="space-y-3.5">{open.map((item) => item.tool_name === "choose_reel_production" ? <ReelProductionCard key={item.id} item={item} busy={busy === item.id} onDecision={decide} onProduce={produce} onProduceVideo={produceVideo} onRefresh={refreshItem} /> : <ApprovalCard key={item.id} item={item} busy={busy === item.id} onDecision={decide} />)}</div> : <Panel className="py-10 text-center">
+      <span className="mx-auto grid h-12 w-12 place-items-center rounded-full border border-line text-green"><Icon name="check" size={22} /></span>
+      <h2 className="mt-3 font-display text-xl font-semibold tracking-[-0.02em]">You’re all caught up.</h2>
+      <p className="mx-auto mt-1.5 max-w-md text-sm text-text-3">Nothing needs your approval. When Voom recommends a calendar change, approval, deletion, or another protected action, it will appear here first — and only then.</p>
+      <p className="mx-auto mt-2 max-w-lg text-[12.5px] leading-relaxed text-text-3"><b className="text-text-2">Reel production choices live here too.</b> Generate or refresh your Marketing Plan; if MARA recommends a Reel, a “Reel production choice” card appears on this screen with <b className="text-text-2">Create with MARA</b>, film-it-yourself, and asset-upload options.</p>
+    </Panel>}
+    {completed.length > 0 && <section className="mt-7"><SectionLabel className="mb-3">Recent decisions</SectionLabel><Panel padded={false} className="overflow-hidden">{completed.slice(0, 12).map((item) => <div key={item.id} className="flex items-start justify-between gap-4 border-t border-line px-4 py-3 first:border-0"><div><b className="text-sm">{item.summary}</b><p className="mt-1 text-xs text-text-3">{item.result_summary ?? item.error_summary ?? "No database change was made."}</p></div><Tag tone={item.status === "confirmed" ? "t-green" : "t-grey"}>{item.status === "confirmed" && item.result_summary?.startsWith("Auto-approved by Autopilot") ? "Autopilot approved" : item.status}</Tag></div>)}</Panel></section>}
   </div>;
 }
 
@@ -93,7 +99,7 @@ function ReelProductionCard({ item, busy, onDecision, onProduce, onProduceVideo,
     const timer = window.setInterval(() => void tick(), 8000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [videoActive, videoProduced, item.id, onRefresh]);
-  return <Card className="overflow-hidden border-brand/30"><div className="border-l-[3px] border-brand p-4 sm:p-5">
+  return <Panel padded={false} className="overflow-hidden border-brand/30"><div className="border-l-[3px] border-brand p-4 sm:p-5">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><span className="text-[10px] font-bold uppercase tracking-[.09em] text-brand">Reel production choice</span><h2 className="mt-1 font-display text-lg font-semibold">{String(value.concept ?? "Reel concept")}</h2></div><Tag tone={produced ? "t-green" : videoFailed ? "t-red" : videoActive ? "t-blue" : selected ? "t-blue" : "t-amber"}>{busy ? "Producing…" : selected ? statusLabel(String(value.productionStatus ?? "")) : "Voom needs your choice"}</Tag></div>
     <div className="mt-4 grid gap-4 sm:grid-cols-2"><section><h3 className="text-xs font-semibold uppercase tracking-wide text-text-3">Short script</h3><p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-text-2">{String(value.script ?? "")}</p></section><section><h3 className="text-xs font-semibold uppercase tracking-wide text-text-3">What Voom needs</h3><p className="mt-1.5 text-sm leading-relaxed text-text-2">{typeof value.missingAssetRequest === "string" ? value.missingAssetRequest : "No authentic real-world footage is required for this concept."}</p></section></div>
     {shots.length > 0 && <section className="mt-4 rounded-xl border border-line bg-surface-2 p-3.5"><h3 className="text-xs font-semibold uppercase tracking-wide text-text-3">Simple shot instructions</h3><ul className="mt-2 space-y-1 text-sm text-text-2">{shots.map((shot) => <li key={shot}>• {shot}</li>)}</ul></section>}
@@ -116,7 +122,7 @@ function ReelProductionCard({ item, busy, onDecision, onProduce, onProduceVideo,
     {(selected === "upload_asset" || selected === "film_yourself") && <ReelAssetUpload actionId={item.id} received={assetReady} onReceived={() => setAssetReady(true)} allowedKinds={Array.isArray(value.allowedAssetKinds) ? value.allowedAssetKinds.filter((kind): kind is string => typeof kind === "string") : ["image", "video"]} />}
     {produced && !videoProduced && <ReelCompositionPlayer actionId={item.id} value={value} />}
     <p className="mt-2 text-[11px] text-text-3">Nothing has been published externally.</p>
-  </div></Card>;
+  </div></Panel>;
 }
 
 interface ReelAssetView { id: string; name: string; mimeType: string; byteSize: number; status: string; updatedAt: string; previewUrl: string | null; }
@@ -220,15 +226,36 @@ function ApprovalCard({ item, busy, onDecision }: { item: ApprovalItem; busy: bo
     const key = editableKey(item.new_value); if (!key || !text.trim()) return;
     if (await onDecision(item.id, "edit", { [key]: text.trim() })) setEditing(false);
   }
-  return <Card className="overflow-hidden border-brand/30"><div className="border-l-[3px] border-brand p-4 sm:p-5">
+  return <Panel padded={false} className="overflow-hidden border-brand/30"><div className="border-l-[3px] border-brand p-4 sm:p-5">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><span className="text-[10px] font-bold uppercase tracking-[.09em] text-brand">Approval required</span><h2 className="mt-1 font-display text-lg font-semibold">{item.summary}</h2></div><Tag tone={failed ? "t-red" : "t-amber"}>{failed ? "Retry needed" : "Waiting for you"}</Tag></div>
-    <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2"><Info label="Why Voom recommends it" value={detail.why} /><Info label="Channel" value={detail.channel} /></dl>
+    <dl className="mt-4 grid min-w-0 gap-3 text-sm sm:grid-cols-3">
+      <Info label="Why Voom recommends it" value={detail.why} />
+      <Info label="Channel" value={detail.channel} />
+      <Info label="Scheduled for" value={scheduledFact(item)} />
+    </dl>
+    {contentApproval && !editing && <div className="mt-4 min-w-0 rounded-2xl border border-line bg-[var(--surface)]/70 p-3.5">
+      <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">Content preview</span>
+      <p className="mt-1.5 max-h-[220px] overflow-hidden whitespace-pre-wrap text-[13px] leading-relaxed text-text-2">{String(item.new_value?.content ?? "").slice(0, 1500)}</p>
+      {typeof item.new_value?.topic === "string" && item.new_value.topic ? <p className="mt-2 text-[11.5px] text-text-3">Topic: {String(item.new_value.topic)}</p> : null}
+    </div>}
     {item.old_value && <Values title="Current" value={item.old_value} />}
     {editing ? <div className="mt-4 space-y-3"><label className="block"><span className="mb-1.5 block text-xs font-semibold text-text-2">{contentApproval ? "Instagram caption" : `Edit proposed ${editableKey(item.new_value)?.replaceAll("_", " ") ?? "content"}`}</span><Textarea rows={7} value={text} maxLength={12000} onChange={(event) => setText(event.target.value)} /></label>{contentApproval && <label className="block"><span className="mb-1.5 block text-xs font-semibold text-text-2">Scheduled date and time</span><Input type="datetime-local" value={publishAt} onInput={(event) => setPublishAt(event.currentTarget.value)} /></label>}{validation && <p role="alert" className="text-sm text-red">{validation}</p>}</div> : item.new_value && <Values title="Exact proposed change" value={item.new_value} />}
     {failed && <p className="mt-3 text-sm text-red">{item.error_summary ?? "The previous attempt failed safely. Nothing was changed."}</p>}
     <div className="mt-4 flex flex-wrap gap-2">{editing ? <><Btn size="sm" variant="primary" disabled={busy || !text.trim() || (contentApproval && !publishAt)} onClick={() => void save()}>Save edit</Btn><Btn size="sm" variant="ghost" onClick={() => { setEditing(false); setValidation(""); setText(editableText(item.new_value)); setPublishAt(toDubaiLocal(item.new_value?.publishAt)); }}>Cancel edit</Btn></> : <><Btn size="sm" variant="primary" disabled={busy} onClick={() => void onDecision(item.id, "confirm")}>{failed ? "Retry" : "Confirm"}</Btn><Btn size="sm" variant="outline" disabled={busy || !editableKey(item.new_value)} onClick={() => setEditing(true)}>Edit</Btn>{!failed && <Btn size="sm" variant="danger" disabled={busy} onClick={() => void onDecision(item.id, "cancel")}>Cancel</Btn>}<Link href={detail.href} className="inline-flex h-[34px] items-center rounded-[9px] border border-line px-3.5 text-[13px] font-semibold hover:border-brand">{detail.link} →</Link></> }</div>
-    <p className="mt-3 text-[11px] text-text-3">Confirm changes Voom data only. It never publishes, sends, deletes externally, or spends money without separate permission.</p>
-  </div></Card>;
+    <p className="mt-3 text-[11px] leading-relaxed text-text-3">Confirm changes Voom data only. It never publishes, sends, deletes externally, or spends money without separate permission.</p>
+  </div></Panel>;
+}
+const MONTH_ABBREVIATIONS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** The action's own proposed publish instant, in the business timezone. */
+function scheduledFact(item: ApprovalItem) {
+  const local = toDubaiLocal(item.new_value?.publishAt);
+  if (!local) return "Not scheduled yet";
+  const [date, time] = local.split("T");
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const suffix = hour >= 12 ? "PM" : "AM";
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${MONTH_ABBREVIATIONS[month - 1] ?? ""} ${day}, ${year} · ${hour12}:${String(minute).padStart(2, "0")} ${suffix}`;
 }
 function Info({ label, value }: { label: string; value: string }) { return <div><dt className="text-xs font-semibold text-text-3">{label}</dt><dd className="mt-1 leading-relaxed text-text-2">{value}</dd></div>; }
 function Values({ title, value }: { title: string; value: Record<string, unknown> }) { const rows = Object.entries(value).filter(([key, entry]) => !key.toLowerCase().includes("id") && (typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean")).slice(0, 12); if (!rows.length) return null; return <div className="mt-4 rounded-xl border border-line bg-surface-2 p-3.5"><b className="text-xs uppercase tracking-wide text-text-3">{title}</b><dl className="mt-2 grid gap-2">{rows.map(([key, entry]) => <div key={key} className="grid gap-1 text-sm sm:grid-cols-[150px_1fr]"><dt className="capitalize text-text-3">{key.replaceAll("_", " ").replaceAll(/([A-Z])/g, " $1")}</dt><dd className="whitespace-pre-wrap break-words">{formatValue(key, entry)}</dd></div>)}</dl></div>; }

@@ -25,10 +25,19 @@ type Kind = "instagram_post" | "reel" | "story" | "tiktok_video" | "youtube_shor
  * appears only after the provider's own confirmation — the flow says so
  * plainly and never claims a publication.
  */
-export function CreateContentModal({ onChanged }: { onChanged?: () => void }) {
+export function CreateContentModal({ onChanged, startWith }: {
+  onChanged?: () => void;
+  /**
+   * Optional entry point: when the caller already knows the platform (for
+   * example a Studio tile named "TikTok Video"), the modal opens on that
+   * platform's format step instead of asking for the platform again. Absent,
+   * the flow is unchanged and starts on the platform step.
+   */
+  startWith?: Platform;
+}) {
   const { open, close } = useModal();
-  const [platform, setPlatform] = useState<Platform>("instagram");
-  const [step, setStep] = useState<Step>("platform");
+  const [platform, setPlatform] = useState<Platform>(startWith ?? "instagram");
+  const [step, setStep] = useState<Step>(startWith ? "choose" : "platform");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 

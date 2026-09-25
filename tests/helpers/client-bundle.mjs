@@ -43,6 +43,12 @@ const STUBS = {
       return createElement("a", { href, ...rest }, children);
     }
   `,
+  // Next's real image component drags the ESM-only `@swc/helpers/esm/*` tree into
+  // the browser graph; a client bundle under test only needs it to not explode.
+  "next/image": `
+    import { createElement } from "react";
+    export default function Image({ src, alt, ...rest }) { return createElement("img", { src, alt, ...rest }); }
+  `,
 };
 
 const SUFFIXES = ["", ".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".json", "/index.tsx", "/index.ts", "/index.js"];
@@ -62,7 +68,8 @@ function resolveFile(base) {
 function transpile(file) {
   const source = readFileSync(file, "utf8");
   if (/\.json$/.test(file)) return `module.exports = ${source};`;
-  if (file.startsWith(path.join(ROOT, "node_modules"))) return source; // already CommonJS
+  // package code is normally CommonJS, but a few Next helpers ship ESM only.
+  if (file.startsWith(path.join(ROOT, "node_modules")) && !/^\s*(import|export)[\s{*]/m.test(source)) return source;
   const { outputText } = ts.transpileModule(source, {
     fileName: file,
     compilerOptions: {
@@ -100,7 +107,32 @@ export function buildClientBundle(entrySource) {
     return record;
   }
 
+  /**
+   * A `"use server"` module never runs in the browser: Next replaces it with an
+   * RPC proxy, so its `node:` imports (crypto, fs, …) are not part of the
+   * client graph either. The harness mirrors that by substituting a proxy that
+   * exports the module's action names and refuses to run them client-side.
+   */
+  function serverActionProxy(file) {
+    const source = readFileSync(file, "utf8");
+    if (!/^\s*["']use server["']/.test(source)) return null;
+    const names = new Set();
+    for (const match of source.matchAll(/export\s+(?:async\s+)?function\s+([A-Za-z0-9_$]+)/g)) names.add(match[1]);
+    for (const match of source.matchAll(/export\s+const\s+([A-Za-z0-9_$]+)/g)) names.add(match[1]);
+    const body = [...names]
+      .map((name) => `export async function ${name}() { throw new Error(${JSON.stringify(`${name} is a server action and cannot run in the browser`)}); }`)
+      .join("\n");
+    return `const error = () => { throw new Error("a server action cannot run in the browser"); };\n${body}`;
+  }
+
   function resolveModule(specifier, importerDirectory) {
+    // Node built-ins can never be part of a browser graph; the only client-side
+    // reference to them would come through a server action, which is stubbed.
+    if (specifier.startsWith("node:")) {
+      const id = `stub:${specifier}`;
+      if (!modules.has(id)) modules.set(id, { id, source: "module.exports = {};", dependencies: new Map(), directory: importerDirectory, stub: true });
+      return modules.get(id);
+    }
     const stub = STUBS[specifier];
     if (stub) {
       const id = `stub:${specifier}`;
@@ -135,6 +167,22 @@ export function buildClientBundle(entrySource) {
       if (!file && specifier.startsWith("next/")) file = null;
     }
     if (!file) return null;
+    const proxy = serverActionProxy(file);
+    if (proxy) {
+      const id = `action:${file}`;
+      if (!modules.has(id)) {
+        const transpiled = ts.transpileModule(proxy, {
+          compilerOptions: { jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
+        }).outputText;
+        const record = { id, source: transpiled, dependencies: new Map(), directory: path.dirname(file), stub: true };
+        modules.set(id, record);
+        for (const match of transpiled.matchAll(REQUIRE_PATTERN)) {
+          const nested = resolveModule(match[2], record.directory);
+          if (nested) record.dependencies.set(match[2], nested.id);
+        }
+      }
+      return modules.get(id);
+    }
     const record = add(file, file, path.dirname(file));
     return record;
   }
