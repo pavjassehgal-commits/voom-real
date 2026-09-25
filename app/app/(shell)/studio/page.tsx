@@ -171,7 +171,9 @@ export default function StudioPage() {
           title="How close is it to ready"
           hint="These are Voom's internal stages. Provider confirmation is a separate, later step — the Studio never marks anything published."
         />
-        <ol className="mt-4 grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Two stages per row on a phone: the four readiness stages stay
+            scannable instead of costing a full screen each. */}
+        <ol className="mt-4 grid min-w-0 grid-cols-2 gap-2 lg:grid-cols-4">
           {STATE_ORDER.map((state, index) => (
             <li key={state} className="min-w-0 rounded-2xl border border-line bg-[var(--surface)]/70 p-3.5">
               <div className="flex items-center justify-between gap-2">
