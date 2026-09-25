@@ -342,6 +342,9 @@ function createPgliteAdmin(db) {
           async createSignedUrl(path, ttl) {
             return { data: { signedUrl: `https://signed.test/${bucket}/${path}?ttl=${ttl}` }, error: null };
           },
+          async createSignedUrls(paths, ttl) {
+            return { data: paths.map((path) => ({ signedUrl: `https://signed.test/${bucket}/${path}?ttl=${ttl}`, path })), error: null };
+          },
         };
       },
     },

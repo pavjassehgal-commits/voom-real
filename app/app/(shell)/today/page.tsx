@@ -1,9 +1,7 @@
 import { TodayDashboard } from "@/components/voom/today/TodayDashboard";
 import { normalizeAutomationMode } from "@/lib/voom/automation";
-import { loadPerformanceReport } from "@/lib/performance/data";
 import { getOperatingData } from "@/lib/voom/operating-data";
 import { buildTodayView } from "@/lib/voom/today-view";
-import { createClient } from "@/utils/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -17,8 +15,10 @@ export default async function TodayPage() {
   const data = await getOperatingData();
   if (!data) return null;
 
-  const sessionDb = await createClient();
-  const performance = await loadPerformanceReport(sessionDb, data.user.id);
+  // The performance report was read once by the shared operating-data read and
+  // is shared with the coordinator; awaiting it here fails exactly as this
+  // page's own load did if the read is unavailable.
+  const performance = await data.performance;
   const view = buildTodayView(data.snapshot, data.summary, data.coordinator);
   const displayName = readDisplayName(data.user.email);
 

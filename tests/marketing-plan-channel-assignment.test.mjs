@@ -236,7 +236,10 @@ function createMemoryAdmin(seed = {}) {
     writes,
     from: (table) => new Query(table),
     async rpc() { return { data: null, error: { message: "RPC not configured in this test" } }; },
-    storage: { from: () => ({ createSignedUrl: async () => ({ data: null, error: null }) }) },
+    storage: { from: () => ({
+      createSignedUrl: async () => ({ data: null, error: null }),
+      createSignedUrls: async (paths) => ({ data: paths.map((path) => ({ signedUrl: null, path })) }),
+    }) },
   };
 }
 

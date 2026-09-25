@@ -284,11 +284,37 @@ export function filterApprovalActionsForCurrentWorkflow<
  * reach the current views.
  */
 export async function loadWorkflowSnapshot(
-  admin: AdminClient, ownerId: string, options: { now?: Date; horizonDays?: number } = {},
+  admin: AdminClient, ownerId: string, options: {
+    now?: Date;
+    horizonDays?: number;
+    /**
+     * Optional already-read `businesses` row (owner-scoped). Callers that hold
+     * the owner's business record pass it in so one navigation request reads it
+     * once; values and behaviour are otherwise identical.
+     */
+    business?: {
+      content_frequency?: unknown;
+      automation_level?: unknown;
+      timezone?: unknown;
+      plan?: unknown;
+      preferred_channels?: unknown;
+    } | null;
+  } = {},
 ): Promise<WorkflowSnapshot> {
   const now = options.now ?? new Date();
-  const { data: business } = await admin.from("businesses")
-    .select("content_frequency,automation_level,timezone,plan,preferred_channels").eq("owner_user_id", ownerId).maybeSingle();
+  // The business row and the active plan row are independent reads — they run
+  // concurrently instead of one-after-the-other.
+  const [businessRead, planRead] = await Promise.all([
+    options.business !== undefined
+      ? Promise.resolve({ data: options.business })
+      : admin.from("businesses")
+          .select("content_frequency,automation_level,timezone,plan,preferred_channels").eq("owner_user_id", ownerId).maybeSingle(),
+    admin.from("marketing_plans")
+      .select("id,business_goal,valid_from,valid_until")
+      .eq("owner_user_id", ownerId).eq("status", "active")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  const business = businessRead.data;
   const timeZone = accountTimezone((business as { timezone?: string | null } | null)?.timezone);
   const today = localDate(now, timeZone);
   const cadence = normalizeCadence(business?.content_frequency);
@@ -300,10 +326,7 @@ export async function loadWorkflowSnapshot(
     mode = planId === "pro" ? "assisted" : "manual";
   }
 
-  const { data: plan } = await admin.from("marketing_plans")
-    .select("id,business_goal,valid_from,valid_until")
-    .eq("owner_user_id", ownerId).eq("status", "active")
-    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  const { data: plan } = planRead;
 
   const snapshot: WorkflowSnapshot = {
     timeZone, today, cadence, cadenceLabel: CADENCE_LABELS[cadence], mode,
@@ -394,6 +417,11 @@ export async function loadWorkflowSnapshot(
   }
 
   snapshot.items = [];
+  // Media preview URLs are signed in ONE batched storage round trip after the
+  // loop — the previous per-item `createSignedUrl` awaited inside the loop and
+  // turned every Instagram visual into its own sequential network call.
+  const signIndexes: number[] = [];
+  const signPaths: string[] = [];
   for (const row of rows) {
     const draftId = String(row.id);
     const identity = parseWorkflowSlotIdentity(row.source_plan_item_key)!;
@@ -436,15 +464,13 @@ export async function loadWorkflowSnapshot(
       ? deriveWorkflowStatus(facts)
       : nativeWorkflowStatus(draftStatus, socialQueue?.status ?? null);
 
-    let mediaPreviewUrl: string | null = null;
     // Only Instagram's media workflow uses the mara-media bucket. TikTok and
     // YouTube assets remain private in post_draft_assets and are represented by
     // safe metadata below; the provider queues receive them through their own
     // existing publisher path.
     if (isInstagram && hasMedia) {
-      const { data: signed } = await admin.storage.from("mara-media")
-        .createSignedUrl(String(asset!.storage_path), 600).catch(() => ({ data: null }) as { data: unknown });
-      mediaPreviewUrl = (signed as { signedUrl?: string } | null)?.signedUrl ?? null;
+      signIndexes.push(snapshot.items.length);
+      signPaths.push(String(asset!.storage_path));
     }
 
     const productionRow = productionByDraft.get(draftId) ?? null;
@@ -494,13 +520,25 @@ export async function loadWorkflowSnapshot(
       hasMedia,
       instagramMediaId: isInstagram ? instagramRow?.instagram_media_id ?? null : null,
       mediaStatus: isInstagram ? media?.status ?? null : null,
-      mediaPreviewUrl,
+      mediaPreviewUrl: null,
       mediaMimeType: hasMedia && typeof asset?.mime_type === "string" ? asset.mime_type : null,
       mediaDisplayName: hasMedia && typeof asset?.display_name === "string" ? asset.display_name : null,
       mediaFromMara: asset?.origin === "mara",
       queueStatus,
       production,
     });
+  }
+  if (signPaths.length) {
+    // One batched round trip for every stored visual; each path resolves to its
+    // own signed preview URL (null on failure — never an invented URL), with
+    // the same 600s lifetime the per-item calls used.
+    const { data: signed } = await admin.storage.from("mara-media")
+      .createSignedUrls(signPaths, 600).catch(() => ({ data: null }) as { data: unknown });
+    const signedRows = Array.isArray(signed) ? signed as Array<{ signedUrl?: string | null } | null> : [];
+    for (const i of signPaths.keys()) {
+      const entry = signedRows[i] ?? null;
+      snapshot.items[signIndexes[i]].mediaPreviewUrl = entry?.signedUrl ?? null;
+    }
   }
   // The horizon rule (see `isCurrentWorkflowItem`): the ACTIVE rolling horizon
   // in the account's business timezone, plus work that has already progressed

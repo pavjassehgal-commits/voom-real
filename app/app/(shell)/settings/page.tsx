@@ -15,7 +15,7 @@ import { EmailIdentityCard } from "@/components/voom/modals/EmailIdentityCard";
 
 export default function SettingsPage() {
   const { brand, mediaSpend, theme, displayName, email, settingsSaving, settingsError, plan } = useVoomState();
-  const { toggleTone, setTheme, toast, restartOnboarding, saveBrandSettings, saveMediaSpend } = useVoomActions();
+  const { toggleTone, setTheme, toast, restartOnboarding, saveBrandSettings, saveMediaSpend, goTo } = useVoomActions();
 
   const [nameInput, setNameInput] = useState(displayName);
   const [brandNameInput, setBrandNameInput] = useState(brand.name);
@@ -148,7 +148,7 @@ export default function SettingsPage() {
           Credits are used only when Voom generates AI images or videos. An image costs 5 credits, a short video costs 40 credits. Polling, planning, copy and scheduling use zero credits. No provider call happens when you are blocked for insufficient credits.
         </p>
         <div className="mt-3">
-          <Btn variant="outline" size="sm" onClick={() => window.location.assign("/app/pricing")}>View plans</Btn>
+          <Btn variant="outline" size="sm" onClick={() => goTo("pricing")}>View plans</Btn>
         </div>
       </Card>
 

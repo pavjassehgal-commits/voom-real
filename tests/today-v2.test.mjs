@@ -99,11 +99,15 @@ test("MARA insight is real coordinator output or a neutral empty state", () => {
 });
 
 test("Today V2 uses real performance state and removes the operational counter graveyard", async () => {
-  const [page, dashboard] = await Promise.all([
+  const [page, dashboard, operatingData] = await Promise.all([
     readFile(new URL("../app/app/(shell)/today/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/voom/today/TodayDashboard.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/voom/operating-data.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(page, /loadPerformanceReport/);
+  // The real performance read model backs Today: loaded once per request by
+  // the shared operating read and awaited by the page.
+  assert.match(operatingData, /loadPerformanceReport/);
+  assert.match(page, /await data\.performance/);
   assert.match(page, /buildTodayView\(data\.snapshot, data\.summary, data\.coordinator\)/);
   assert.match(dashboard, /Performance is learning/);
   assert.doesNotMatch(page + dashboard, /0 generating|0 waiting for media|0 missed|Stat label=/i);

@@ -140,6 +140,7 @@ function createFakeAdmin(tables) {
     storage: {
       from: () => ({
         createSignedUrl: async (path) => ({ data: { signedUrl: `https://signed.invalid/${path}` } }),
+        createSignedUrls: async (paths) => ({ data: paths.map((path) => ({ signedUrl: `https://signed.invalid/${path}`, path })) }),
       }),
     },
   };

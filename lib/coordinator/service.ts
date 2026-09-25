@@ -8,12 +8,20 @@ import { runOwnerWorkflow } from "@/lib/voom/workflow/service";
 import { parseActionChannel } from "@/lib/social/channels";
 import { proposeEmailFlow } from "@/lib/email-flows/create";
 import type { AdminClient } from "@/lib/post/server-data";
+import type { PerformanceReport } from "@/lib/performance/insights";
 import type { CoordinatorRunResult } from "./types";
 
 export interface CoordinatorRunOptions {
   now?: Date;
   trigger?: "scheduled" | "replenish" | "manual" | "ui_read";
   forceReplenish?: boolean;
+  /**
+   * Optional already-loaded performance report for this owner (or its
+   * in-flight promise). When present the coordinator's marketing state derives
+   * from it instead of reading the owner's performance data again — identical
+   * derived state, one read per request. Omitted, it is read exactly as before.
+   */
+  performanceReport?: PerformanceReport | Promise<PerformanceReport>;
 }
 
 /**
@@ -39,7 +47,9 @@ export async function runCoordinatorForOwner(
   const trigger = options.trigger ?? "scheduled";
 
   // Build the Authoritative Marketing State
-  const state = await buildMarketingState(admin, ownerId, businessId, now);
+  const state = await buildMarketingState(admin, ownerId, businessId, now, {
+    performanceReport: options.performanceReport,
+  });
 
   // Evaluate Needs
   const evaluation = evaluateMarketingNeeds(state);
