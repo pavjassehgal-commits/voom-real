@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useVoomActions } from "@/lib/voom/store";
+import { navPath } from "@/lib/voom/store";
 import { Icon } from "../icons";
 import { cx } from "../ui/primitives";
 import { pageIdFromPath } from "./nav";
@@ -20,7 +21,6 @@ const ITEMS: [string, string, string][] = [
 ];
 
 export function BottomBar() {
-  const { goTo } = useVoomActions();
   const pathname = usePathname();
   const active = pageIdFromPath(pathname);
 
@@ -33,9 +33,10 @@ export function BottomBar() {
       {ITEMS.map(([id, label, icon]) => {
         const isActive = active === id;
         return (
-          <button
+          <Link
             key={id}
-            onClick={() => goTo(id)}
+            href={navPath(id)}
+            prefetch
             aria-current={isActive ? "page" : undefined}
             className={cx(
               "relative flex flex-1 flex-col items-center justify-center gap-1 rounded-[12px] px-1 py-1 text-[10px] font-medium tracking-wide transition",
@@ -51,7 +52,7 @@ export function BottomBar() {
               <Icon name={icon} size={20} />
             </span>
             <span className={cx("leading-none", isActive && "font-semibold")}>{label}</span>
-          </button>
+          </Link>
         );
       })}
     </nav>

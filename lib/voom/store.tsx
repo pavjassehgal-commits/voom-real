@@ -59,6 +59,11 @@ const NAV_PATHS: Record<string, string> = {
   settings: "/app/settings",
 };
 
+/** Canonical route for a navigation id (nav entries, aliases and account menu). */
+export function navPath(id: string): string {
+  return NAV_PATHS[id] ?? "/app";
+}
+
 function emptyOnboard(): OnboardingAnswers {
   return {
     displayName: "",

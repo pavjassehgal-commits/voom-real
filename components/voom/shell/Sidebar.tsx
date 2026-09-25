@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useVoomActions, useVoomState } from "@/lib/voom/store";
+import { useVoomActions, useVoomState, navPath } from "@/lib/voom/store";
 import { Icon } from "../icons";
 import { Btn, IconBtn, VoomMark, cx } from "../ui/primitives";
 import { automationModeStatusLine } from "@/lib/voom/automation";
@@ -74,9 +75,10 @@ export function Sidebar() {
                   {group.items.map((item) => {
                     const isActive = active === item.id;
                     return (
-                      <button
+                      <Link
                         key={item.id}
-                        onClick={() => goTo(item.id)}
+                        href={navPath(item.id)}
+                        prefetch
                         aria-current={isActive ? "page" : undefined}
                         className={cx(
                           "group flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-[9px] text-left text-[13.5px] font-[500] leading-none transition-all duration-150",
@@ -103,7 +105,7 @@ export function Sidebar() {
                             {item.badge}
                           </span>
                         )}
-                      </button>
+                      </Link>
                     );
                   })}
                 </div>
@@ -126,9 +128,10 @@ export function Sidebar() {
                     {group.items.map((item) => {
                       const isActive = active === item.id;
                       return (
-                        <button
+                        <Link
                           key={item.id}
-                          onClick={() => goTo(item.id)}
+                          href={navPath(item.id)}
+                          prefetch
                           aria-current={isActive ? "page" : undefined}
                           className={cx(
                             "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-[9px] text-left text-[13.5px] font-[500] transition",
@@ -142,7 +145,7 @@ export function Sidebar() {
                             <Icon name={item.i} size={16} />
                           </span>
                           <span className="truncate">{item.n}</span>
-                        </button>
+                        </Link>
                       );
                     })}
                   </div>

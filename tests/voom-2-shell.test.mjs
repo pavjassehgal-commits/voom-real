@@ -301,9 +301,12 @@ test("accessibility is preserved", async () => {
   // Semantic navigation
   assert.match(sidebar, /aria-label.*navigation|role="navigation"|nav/, "Sidebar must have semantic nav");
 
-  // Button distinction
-  assert.match(sidebar, /<button/, "Sidebar must use buttons");
-  assert.match(topbar, /<button/, "Topbar must use buttons");
+  // Navigation is real links (fast client-side App Router navigation with
+  // prefetch — never hard page loads); actions stay real buttons.
+  assert.match(sidebar, /from "next\/link"|from 'next\/link'/, "Sidebar must navigate with Next links");
+  assert.match(sidebar, /<Link/, "Sidebar nav destinations must be links");
+  assert.match(sidebar, /IconBtn|<button/, "Sidebar actions must use buttons");
+  assert.match(topbar, /<button|IconBtn|MenuBtn/, "Topbar must use buttons");
 
   // Reduced motion
   const css = await read("app/globals.css");

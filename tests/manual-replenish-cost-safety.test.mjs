@@ -257,6 +257,7 @@ function createFakeAdmin(tables) {
         upload: async () => ({ data: null, error: null }),
         remove: async () => ({ data: null, error: null }),
         createSignedUrl: async (path) => ({ data: { signedUrl: `https://signed.invalid/${path}` } }),
+        createSignedUrls: async (paths) => ({ data: paths.map((path) => ({ signedUrl: `https://signed.invalid/${path}`, path })) }),
         download: async () => ({ data: null, error: { message: "not found" } }),
       }),
     },

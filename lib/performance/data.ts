@@ -80,12 +80,25 @@ export async function loadPerformanceModel(
   const windowDays = options.windowDays ?? PERFORMANCE_WINDOW_DAYS;
   const cutoff = new Date(now.getTime() - windowDays * 86_400_000).toISOString();
 
-  const { data: snapshotRows } = await db.from(PERFORMANCE_SNAPSHOT_TABLE)
-    .select("instagram_media_id,draft_id,content_type,published_at,collected_at,metrics,metric_sources")
-    .eq("owner_user_id", ownerId)
-    .gte("published_at", cutoff)
-    .order("collected_at", { ascending: false })
-    .limit(SNAPSHOT_LIMIT);
+  // Snapshot rows and published-without-snapshot rows are independent reads.
+  const [snapshotsRead, publishedRead] = await Promise.all([
+    db.from(PERFORMANCE_SNAPSHOT_TABLE)
+      .select("instagram_media_id,draft_id,content_type,published_at,collected_at,metrics,metric_sources")
+      .eq("owner_user_id", ownerId)
+      .gte("published_at", cutoff)
+      .order("collected_at", { ascending: false })
+      .limit(SNAPSHOT_LIMIT),
+    db.from("instagram_publish_queue")
+      .select("draft_id,media_kind,instagram_media_id,published_at")
+      .eq("owner_user_id", ownerId)
+      .eq("status", "published")
+      .not("instagram_media_id", "is", null)
+      .gte("published_at", cutoff)
+      .order("published_at", { ascending: false })
+      .limit(PUBLISHED_LIMIT),
+  ]);
+  const { data: snapshotRows } = snapshotsRead;
+  const { data: publishedRows } = publishedRead;
 
   // One measurement per media id: the newest collection window wins.
   const latest = new Map<string, PerformanceMeasurement>();
@@ -109,15 +122,6 @@ export async function loadPerformanceModel(
     });
   }
 
-  const { data: publishedRows } = await db.from("instagram_publish_queue")
-    .select("draft_id,media_kind,instagram_media_id,published_at")
-    .eq("owner_user_id", ownerId)
-    .eq("status", "published")
-    .not("instagram_media_id", "is", null)
-    .gte("published_at", cutoff)
-    .order("published_at", { ascending: false })
-    .limit(PUBLISHED_LIMIT);
-
   let publishedWithoutMetrics = 0;
   for (const row of publishedRows ?? []) {
     const mediaId = row.instagram_media_id ? String(row.instagram_media_id) : null;
@@ -128,12 +132,16 @@ export async function loadPerformanceModel(
 
   // Titles/captions come from the SAME drafts Voom planned and published, so
   // topic and purpose are derived from the words the business actually used.
+  // Chunk reads are independent of each other and run concurrently.
   const draftIds = [...new Set([...latest.values()].map((item) => item.draftId).filter((id): id is string => Boolean(id)))];
   const drafts = new Map<string, { title: string; content: string }>();
+  const chunkReads = [];
   for (let index = 0; index < draftIds.length; index += DRAFT_CHUNK) {
     const chunk = draftIds.slice(index, index + DRAFT_CHUNK);
-    const { data } = await db.from("mara_drafts").select("id,title,content").eq("owner_user_id", ownerId).in("id", chunk);
-    for (const row of data ?? []) drafts.set(String(row.id), { title: String(row.title ?? ""), content: String(row.content ?? "") });
+    chunkReads.push(db.from("mara_drafts").select("id,title,content").eq("owner_user_id", ownerId).in("id", chunk));
+  }
+  for (const result of await Promise.all(chunkReads)) {
+    for (const row of result.data ?? []) drafts.set(String(row.id), { title: String(row.title ?? ""), content: String(row.content ?? "") });
   }
 
   const measurements = [...latest.values()]
