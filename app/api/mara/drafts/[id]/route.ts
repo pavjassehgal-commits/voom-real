@@ -1,6 +1,7 @@
 import { getBusinessRecord, getCurrentUser, getProfileRecord } from "@/lib/voom/server-data";
 import { executeMaraTool } from "@/lib/mara/tools";
 import { createClient } from "@/utils/supabase/server";
+import { createAdminClient } from "@/utils/supabase/admin";
 
 /**
  * LEGACY — retained deliberately, not dead.
@@ -33,15 +34,18 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
 
   const supabase = await createClient();
+  // Writes go through the owner-filtered service-role client: authenticated
+  // users have no direct write access to drafts or approvals (migration 0050).
+  const admin = createAdminClient();
   if (body.action === "approve") {
     const [{ data: draft }, business, profile] = await Promise.all([
       supabase.from("mara_drafts").select("conversation_id,message_id").eq("id", id).eq("owner_user_id", user.id).maybeSingle(),
       getBusinessRecord(), getProfileRecord(),
     ]);
     if (!draft || !business) return Response.json({ error: "Draft not found." }, { status: 404 });
-    const result = await executeMaraTool({ db: supabase, ownerId: user.id, conversationId: draft.conversation_id, business, profile }, "approve_draft", JSON.stringify({ draftId: id }));
+    const result = await executeMaraTool({ db: admin, ownerId: user.id, conversationId: draft.conversation_id, business, profile }, "approve_draft", JSON.stringify({ draftId: id }));
     if (!result.ok || !result.pendingActionId) return Response.json({ error: result.summary }, { status: 503 });
-    if (draft.message_id) await supabase.from("mara_pending_actions").update({ message_id: draft.message_id }).eq("id", result.pendingActionId).eq("owner_user_id", user.id);
+    if (draft.message_id) await admin.from("mara_pending_actions").update({ message_id: draft.message_id }).eq("id", result.pendingActionId).eq("owner_user_id", user.id);
     const { data: pendingAction } = await supabase.from("mara_pending_actions").select("id,conversation_id,message_id,tool_name,summary,old_value,new_value,status,result_summary,error_summary,created_at,updated_at,executed_at").eq("id", result.pendingActionId).eq("owner_user_id", user.id).single();
     return Response.json({ pendingAction, message: "Review and confirm the approval. Nothing has changed yet." });
   }
@@ -59,7 +63,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
   } else return Response.json({ error: "Unknown draft action." }, { status: 400 });
 
-  const { data, error } = await supabase
+  const { data, error } = await admin
     .from("mara_drafts")
     .update(update)
     .eq("id", id)

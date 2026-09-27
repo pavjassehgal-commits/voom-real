@@ -5,6 +5,7 @@ import { readAutomatedCampaign } from "@/lib/campaign/server";
 import type { AutomatedCampaignView, CampaignContainerRecord } from "@/lib/campaign/types";
 import type { CampaignRecord } from "@/lib/voom/types";
 import { createClient } from "@/utils/supabase/server";
+import { createAdminClient } from "@/utils/supabase/admin";
 import { accountTimezone } from "@/lib/voom/timezone";
 import { z } from "zod";
 
@@ -114,7 +115,9 @@ export async function POST(request: Request) {
       audienceId = audience.id;
     }
 
-    const campaign = await createCampaign(db, user.id, {
+    // Owner-filtered service-role write: authenticated users have no direct
+    // write access to campaigns (migration 0050).
+    const campaign = await createCampaign(createAdminClient(), user.id, {
       kind: "email",
       name: parsed.data.name,
       objective: parsed.data.objective,

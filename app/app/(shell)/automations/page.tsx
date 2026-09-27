@@ -24,7 +24,7 @@ export const dynamic = "force-dynamic";
 export default async function AutomationsPage() {
   const data = await getOperatingData();
   if (!data) return null;
-  const planId = normalizePlan((data.business as any).plan);
+  const planId = normalizePlan((data.business as { plan?: string | null }).plan);
   const timeZone = accountTimezone((data.business as { timezone?: string | null }).timezone);
   const lifecycle = data.coordinator?.state.emailState;
 

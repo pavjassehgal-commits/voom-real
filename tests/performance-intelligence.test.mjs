@@ -622,8 +622,15 @@ test("no publish or media-generation path is reachable from the performance sync
   assert.match(route, /runInstagramPerformanceSync/);
   assert.deepEqual(
     [...route.matchAll(/from\s+"([^"]+)"/g)].map((match) => match[1]).sort(),
-    ["@/lib/performance/sync"],
-    "the worker may only reach the read-only performance sync",
+    ["@/lib/performance/sync", "@/utils/bearer-auth"],
+    "the worker may only reach the read-only performance sync (plus the shared cron auth helper)",
+  );
+  // The shared auth helper is itself inert: it only reaches node:crypto.
+  const bearer = await readFile(new URL("../utils/bearer-auth.ts", import.meta.url), "utf8");
+  assert.deepEqual(
+    [...bearer.matchAll(/from\s+"([^"]+)"/g)].map((match) => match[1]).sort(),
+    ["node:crypto"],
+    "the cron auth helper reaches nothing but node:crypto",
   );
   const routeCode = route.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
   assert.doesNotMatch(routeCode, /InstagramClient|createAiProvider|publish|generat/i, "no publishing or generation call may exist in the worker");

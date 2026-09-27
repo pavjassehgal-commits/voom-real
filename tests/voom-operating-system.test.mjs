@@ -104,7 +104,10 @@ test("rolling plan automation is server-scheduled, cadence-aware, mode-aware, an
   assert.match(migration, /^commit;/m);
   assert.match(migration, /add column if not exists timezone/);
   assert.doesNotMatch(migration, /drop table|delete from|truncate/i);
-  assert.match(cron, /Bearer \$\{secret\}/);
+  assert.match(cron, /bearerMatches\(request, secret\)/);
+  const bearer = await read("utils/bearer-auth.ts");
+  assert.match(bearer, /Bearer \$\{secret\}/, "the shared helper compares the full Bearer header");
+  assert.match(bearer, /timingSafeEqual/, "the shared helper compares in constant time");
   assert.match(cron, /runRollingPlanAutomation/);
   assert.match(vercel, /0 3 \* \* \*/);
   assert.match(planRoute, /export async function POST/);

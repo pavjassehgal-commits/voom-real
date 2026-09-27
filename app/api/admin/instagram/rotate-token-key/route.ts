@@ -1,6 +1,7 @@
 import { instagramKeyRing, readInstagramConfig } from "@/lib/instagram/config";
 import { createRotationStore, publicRotationResult, rotateInstagramTokens } from "@/lib/instagram/key-rotation";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { bearerMatches } from "@/utils/bearer-auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -23,7 +24,7 @@ export async function POST(request: Request) {
       { status: 503, headers: NO_STORE },
     );
   }
-  if (request.headers.get("authorization") !== `Bearer ${secret}`) {
+  if (!bearerMatches(request, secret)) {
     return Response.json({ error: "Unauthorized." }, { status: 401, headers: NO_STORE });
   }
 

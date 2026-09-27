@@ -59,7 +59,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    const item = await createCalendarItem(await createClient(), user.id, {
+    // Owner-filtered service-role write (migration 0050).
+    const item = await createCalendarItem(createAdminClient(), user.id, {
       title: parsed.data.title,
       channel: parsed.data.channel,
       content: parsed.data.content,

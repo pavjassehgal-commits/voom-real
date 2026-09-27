@@ -31,6 +31,7 @@
  * Missing any condition = do not call provider. Planning must continue even when media is blocked.
  */
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getPlanConfig, type PlanId, canUseAutomationMode, canGenerateExplicitMedia, canGenerateAutomaticMedia } from "./plans";
 import { creditCostForMedia, type CreditMediaType } from "./credits";
 import { reserveCredits, refundCredits, settleCredits, getCreditSummary } from "./ledger";
@@ -69,7 +70,7 @@ export type GuardResult =
  * If reservation succeeds, caller may submit provider job, then settle. On failure before paid job, refund.
  */
 export async function guardAndReserveMedia(
-  admin: any,
+  admin: SupabaseClient,
   input: GuardContext & { generationId: string },
 ): Promise<GuardResult> {
   const now = input.now ?? new Date();
@@ -195,11 +196,11 @@ export async function guardAndReserveMedia(
   };
 }
 
-export async function releaseReservationOnFailure(admin: any, ownerId: string, generationId: string) {
+export async function releaseReservationOnFailure(admin: SupabaseClient, ownerId: string, generationId: string) {
   return refundCredits(admin, ownerId, generationId);
 }
 
-export async function confirmReservation(admin: any, ownerId: string, generationId: string) {
+export async function confirmReservation(admin: SupabaseClient, ownerId: string, generationId: string) {
   return settleCredits(admin, ownerId, generationId);
 }
 

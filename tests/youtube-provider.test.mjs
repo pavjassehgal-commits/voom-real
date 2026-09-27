@@ -1448,11 +1448,12 @@ async function saveConnection(ownerId, overrides = {}) {
   });
 }
 
-test("migrations 0047-0049 apply cleanly and 0049 is the checked-in head", async () => {
+test("migrations 0047-0051 apply cleanly and 0051 is the checked-in head", async () => {
   const { applied } = await liteDb();
   assert.ok(applied.includes("0047_youtube_provider.sql"), "0047 applied through PGlite");
   assert.ok(applied.includes("0049_tiktok_provider.sql"), "0049 (TikTok) applied through PGlite");
-  assert.equal(applied[applied.length - 1], "0049_tiktok_provider.sql");
+  assert.ok(applied.includes("0050_approval_state_write_lockdown.sql"), "0050 (write lockdown) applied through PGlite");
+  assert.equal(applied[applied.length - 1], "0051_ai_request_rate_limits.sql");
   const tables = await all(
     "select table_name from information_schema.tables where table_schema = 'public' and table_name like 'youtube_%' order by table_name",
   );
@@ -2358,8 +2359,11 @@ test("the three cron workers are secret-protected, bounded to 300s, and call the
     assert.match(source, /export const dynamic = "force-dynamic"/, `${file} is never statically cached`);
     assert.match(source, new RegExp(runner), `${file} calls ${runner}`);
     assert.match(source, /export async function GET/, `${file} supports the cron GET`);
-    assert.match(source, /timingSafeEqual|Bearer \$\{secret\}/, `${file} checks the bearer secret`);
+    assert.match(source, /bearerMatches\(request, secret\)/, `${file} checks the bearer secret`);
   }
+  const bearer = await read("utils/bearer-auth.ts");
+  assert.match(bearer, /Bearer \$\{secret\}/, "the shared helper compares the full Bearer header");
+  assert.match(bearer, /timingSafeEqual/, "the shared helper compares in constant time");
   // The worker budget constant matches the route ceiling.
   assert.equal(pub.YOUTUBE_WORKER_MAX_DURATION_MS, 300_000);
   assert.ok(pub.YOUTUBE_UPLOAD_BUDGET_MS < pub.YOUTUBE_WORKER_MAX_DURATION_MS, "uploads stop before the platform kills them");

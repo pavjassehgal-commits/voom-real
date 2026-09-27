@@ -12,8 +12,11 @@ import { flowTypePolicy } from "@/lib/email-flows/policy";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
+import { consumeAiRateLimit, rateLimitedResponse } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
+// AI calls / sequential provider sends can exceed the platform default timeout.
+export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -57,6 +60,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
+  if (!(await consumeAiRateLimit(user.id, "email_flow_create"))) return rateLimitedResponse();
 
   let body: unknown;
   try { body = await request.json(); } catch { return Response.json({ error: "That flow is not valid." }, { status: 400 }); }

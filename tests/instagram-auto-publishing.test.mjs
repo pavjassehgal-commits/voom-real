@@ -258,7 +258,10 @@ test("0022 leaves the media bucket private", async () => {
 test("the cron route is secret-protected and server-only; Supabase Cron schedules it (no Vercel cron entry)", async () => {
   const route = await read("app/api/cron/instagram-publish/route.ts");
   assert.match(route, /process\.env\.CRON_SECRET/);
-  assert.match(route, /Bearer \$\{secret\}/);
+  assert.match(route, /bearerMatches\(request, secret\)/);
+  const bearer = await read("utils/bearer-auth.ts");
+  assert.match(bearer, /Bearer \$\{secret\}/, "the shared helper compares the full Bearer header");
+  assert.match(bearer, /timingSafeEqual/, "the shared helper compares in constant time");
   assert.match(route, /status: 401/);
   assert.match(route, /runtime = "nodejs"/);
   // Vercel runs on the Hobby plan, which does not support cron schedules:

@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
 import { readAutomatedCampaign, regenerateCampaignAction } from "@/lib/campaign/server";
+import { consumeAiRateLimit, rateLimitedResponse } from "@/lib/rate-limit";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -22,10 +23,13 @@ const regenerateSchema = z.object({
 }).strict();
 
 export const runtime = "nodejs";
+// AI calls / sequential provider sends can exceed the platform default timeout.
+export const maxDuration = 120;
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string; actionId: string }> }) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
+  if (!(await consumeAiRateLimit(user.id, "campaign_regenerate"))) return rateLimitedResponse();
   const { id, actionId } = await params;
   if (!UUID_RE.test(id) || !UUID_RE.test(actionId)) {
     return Response.json({ error: "That campaign action was not found." }, { status: 404 });

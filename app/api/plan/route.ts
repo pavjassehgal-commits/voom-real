@@ -9,6 +9,7 @@ import {
 import { runOwnerWorkflow } from "@/lib/voom/workflow/service";
 import { normalizeCadence, CADENCES } from "@/lib/voom/cadence";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { consumeAiRateLimit, rateLimitedResponse } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -44,6 +45,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
+  if (!(await consumeAiRateLimit(user.id, "plan_run"))) return rateLimitedResponse();
   const admin = createAdminClient();
 
   let cadence: ReturnType<typeof normalizeCadence> | undefined;

@@ -252,8 +252,9 @@ async function stopTimedOutGeneration(
 async function loadBusinessBilling(admin: AdminClient, ownerId: string): Promise<{ planId: PlanId; allowAutomatic: boolean }> {
   try {
     const { data } = await admin.from("businesses").select("plan,allow_automatic_paid_media").eq("owner_user_id", ownerId).maybeSingle();
-    const planId = normalizePlan((data as any)?.plan);
-    const allowAutomatic = normalizeAllowAutomaticPaidMedia((data as any)?.allow_automatic_paid_media);
+    const business = data as { plan?: string | null; allow_automatic_paid_media?: unknown } | null;
+    const planId = normalizePlan(business?.plan);
+    const allowAutomatic = normalizeAllowAutomaticPaidMedia(business?.allow_automatic_paid_media);
     return { planId, allowAutomatic };
   } catch {
     return { planId: "free", allowAutomatic: false };
@@ -327,7 +328,7 @@ export async function produceWorkflowMedia(
     allowAutomaticPaidMedia: billing.allowAutomatic,
     mediaType,
     durationSeconds: mediaType === "video" ? 8 : null,
-    source: effectiveSource as any,
+    source: effectiveSource,
     generationId: generationIdForLedger,
     now,
   });

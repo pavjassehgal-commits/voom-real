@@ -1,4 +1,5 @@
 import { runInstagramPublishing } from "@/lib/instagram/publish-worker";
+import { bearerMatches } from "@/utils/bearer-auth";
 
 export const runtime = "nodejs";
 /**
@@ -30,7 +31,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret) return Response.json({ error: "Instagram publishing is not configured." }, { status: 503 });
-  if (request.headers.get("authorization") !== `Bearer ${secret}`) {
+  if (!bearerMatches(request, secret)) {
     return Response.json({ error: "Unauthorized." }, { status: 401 });
   }
   try {

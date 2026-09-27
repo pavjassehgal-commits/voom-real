@@ -22,8 +22,11 @@ import {
 } from "@/lib/campaign/types";
 import { campaignDate, campaignSpanDays } from "@/lib/campaign/planner";
 import { accountTimezone } from "@/lib/voom/timezone";
+import { consumeAiRateLimit, rateLimitedResponse } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
+// AI calls / sequential provider sends can exceed the platform default timeout.
+export const maxDuration = 120;
 
 const UUID_VALUE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -107,6 +110,7 @@ const SELF_ACTION_MESSAGES: Record<string, string> = {
 export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
+  if (!(await consumeAiRateLimit(user.id, "campaign_build"))) return rateLimitedResponse();
 
   let body: unknown;
   try { body = await request.json(); } catch {

@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { MONTHLY_CREDIT_ALLOWANCES, type PlanId, getPlanConfig, normalizePlan } from "./plans";
 import { creditCostForMedia, type CreditMediaType } from "./credits";
 
@@ -44,6 +45,25 @@ export type ReserveResult =
   | { ok: true; already?: boolean; remaining: number; allowance: number; used: number; reservationId?: string }
   | { ok: false; reason: "insufficient_credits" | "plan_not_allowed" | "invalid"; remaining: number; allowance: number; used: number; message: string };
 
+interface LedgerSummaryRow {
+  credits: number | string | null;
+  source: string | null;
+  status: string | null;
+  created_at: string;
+}
+
+type ReserveCreditsRpcResult =
+  | { ok: true; already?: boolean; remaining: number; allowance: number; used: number }
+  | { ok: false; reason?: string; remaining?: number | null; allowance?: number | null; used?: number | null };
+
+interface RefundCreditsRpcResult {
+  refunded?: unknown;
+}
+
+interface SettleCreditsRpcResult {
+  settled?: unknown;
+}
+
 function monthStartUtc(now: Date): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 }
@@ -53,7 +73,7 @@ function nextMonthStartUtc(now: Date): Date {
 }
 
 export async function getCreditSummary(
-  admin: any,
+  admin: SupabaseClient,
   ownerId: string,
   planId: PlanId,
   now: Date = new Date(),
@@ -72,7 +92,7 @@ export async function getCreditSummary(
       .gte("created_at", periodStart.toISOString());
 
     if (!error && data) {
-      for (const row of data as any[]) {
+      for (const row of data as LedgerSummaryRow[]) {
         if (row.status === "refunded") continue;
         if (row.source === "grant" || row.source === "purchase") {
           if (row.status === "granted") additional += Number(row.credits ?? 0);
@@ -99,7 +119,7 @@ export async function getCreditSummary(
   };
 }
 
-export async function reserveCredits(admin: any, input: ReserveInput): Promise<ReserveResult> {
+export async function reserveCredits(admin: SupabaseClient, input: ReserveInput): Promise<ReserveResult> {
   const now = input.now ?? new Date();
   const planId = input.planId ?? "free";
   const config = getPlanConfig(planId);
@@ -122,7 +142,7 @@ export async function reserveCredits(admin: any, input: ReserveInput): Promise<R
     });
     if (error) throw error;
     if (data) {
-      const result = data as any;
+      const result = data as ReserveCreditsRpcResult;
       if (result.ok) {
         if (result.already) {
           const summary = await getCreditSummary(admin, input.ownerId, planId, now);
@@ -157,11 +177,11 @@ export async function reserveCredits(admin: any, input: ReserveInput): Promise<R
   return { ok: false, reason: "invalid", remaining: summary.remaining, allowance: summary.allowance, used: summary.used, message: `Unknown credit error.` };
 }
 
-export async function refundCredits(admin: any, ownerId: string, generationId: string): Promise<{ ok: boolean; refunded: boolean }> {
+export async function refundCredits(admin: SupabaseClient, ownerId: string, generationId: string): Promise<{ ok: boolean; refunded: boolean }> {
   try {
     const { data, error } = await admin.rpc("refund_media_credits", { p_owner_user_id: ownerId, p_generation_id: generationId });
     if (!error && data) {
-      return { ok: true, refunded: Boolean((data as any).refunded) };
+      return { ok: true, refunded: Boolean((data as RefundCreditsRpcResult).refunded) };
     }
   } catch {
     // Return false on failure
@@ -169,11 +189,11 @@ export async function refundCredits(admin: any, ownerId: string, generationId: s
   return { ok: false, refunded: false };
 }
 
-export async function settleCredits(admin: any, ownerId: string, generationId: string): Promise<{ ok: boolean; settled: boolean }> {
+export async function settleCredits(admin: SupabaseClient, ownerId: string, generationId: string): Promise<{ ok: boolean; settled: boolean }> {
   try {
     const { data, error } = await admin.rpc("settle_media_credits", { p_owner_user_id: ownerId, p_generation_id: generationId });
     if (!error && data) {
-      return { ok: true, settled: Boolean((data as any).settled) };
+      return { ok: true, settled: Boolean((data as SettleCreditsRpcResult).settled) };
     }
   } catch {
     // Return false on failure

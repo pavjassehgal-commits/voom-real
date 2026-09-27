@@ -82,7 +82,9 @@ test("content creation goes through the real persisted workflow, not a demo comp
     read("app/app/(shell)/calendar/page.tsx"),
   ]);
   assert.match(route, /export async function POST/);
-  assert.match(route, /createCalendarItem\(await createClient\(\), user\.id/);
+  // Writes to content_calendar_items run on the service-role client (0050
+  // revoked browser writes); ownership is still pinned to the signed-in user.
+  assert.match(route, /createCalendarItem\(createAdminClient\(\), user\.id/);
   assert.match(create, /fetch\("\/api\/posts"/);
   assert.match(create, /method: "POST"/);
   // Multi-Social Core: the modal now names every platform, so the truth line

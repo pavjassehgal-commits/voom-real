@@ -2213,7 +2213,7 @@ test("the cron routes require CRON_SECRET, declare the 300s ceiling, and the wor
     const route = await read(`app/api/cron/${name}/route.ts`);
     assert.match(route, /maxDuration = 300/, "the declared ceiling matches the worker's budget math");
     assert.match(route, /CRON_SECRET/, "Bearer-secret protected like the other workers");
-    assert.match(route, /Bearer \$\{secret\}/, "the header must equal Bearer + secret");
+    assert.match(route, /bearerMatches\(request, secret\)/, "the header must equal Bearer + secret (constant-time check)");
     assert.match(route, /runTikTokPublishing|runTikTokReconciliation/, "the route runs exactly the worker and nothing else");
   }
 });
@@ -2286,11 +2286,18 @@ test("migration 0049 is additive: it creates only tiktok_* objects and schedules
   assert.doesNotMatch(sql, /pg_cron|cron\.job|pgmq/i, "no cron is configured by the migration itself");
 });
 
-test("rolling-plan channel assignment requires no database migration", async () => {
+test("rolling-plan channel assignment requires no database migration", async (t) => {
   const { execSync } = await import("node:child_process");
-  const ls = (cmd) => execSync(cmd, { encoding: "utf8" }).trim().split("\n").filter(Boolean).sort();
-  const mainFiles = ls("git ls-tree -r --name-only main -- supabase/migrations/");
-  const current = ls("git ls-files supabase/migrations/").concat(ls("git ls-files --others --exclude-standard supabase/migrations/")).sort();
+  const ls = (cmd) => execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim().split("\n").filter(Boolean).sort();
+  let mainFiles;
+  let current;
+  try {
+    mainFiles = ls("git ls-tree -r --name-only main -- supabase/migrations/");
+    current = ls("git ls-files supabase/migrations/").concat(ls("git ls-files --others --exclude-standard supabase/migrations/")).sort();
+  } catch {
+    t.skip("git history with a `main` branch is unavailable in this checkout");
+    return;
+  }
   const added = current.filter((file) => !mainFiles.includes(file));
   const removed = mainFiles.filter((file) => !current.includes(file));
   assert.deepEqual(added, [], "no new migration was needed for server-owned slot assignment");

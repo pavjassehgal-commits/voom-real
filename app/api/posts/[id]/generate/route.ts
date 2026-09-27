@@ -9,10 +9,13 @@ import { startPostStudioVideo } from "@/lib/mara/video-service";
 import { estimateMediaCostUsd, normalizeAllowAutomaticPaidMedia } from "@/lib/mara/media-spend";
 import { aspectMatches, inspectImageBytes } from "@/lib/media/media-inspect";
 import { applyPostOverlay } from "@/lib/media/image-overlay";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { normalizePlan, canUseAutomationMode } from "@/lib/billing/plans";
 import { creditCostForMedia } from "@/lib/billing/credits";
 import { guardAndReserveMedia, releaseReservationOnFailure, confirmReservation } from "@/lib/billing/entitlement-guard";
+import { consumeAiRateLimit, rateLimitedResponse } from "@/lib/rate-limit";
+import { normalizeAutomationMode } from "@/lib/voom/automation";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -31,13 +34,16 @@ const GENERATED_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
  * If provider fails before real paid job, refund reservation.
  */
 
-async function loadBillingContext(admin: any, ownerId: string) {
+type BusinessBillingRow = { plan?: string | null; allow_automatic_paid_media?: unknown; automation_level?: string | null } | null;
+
+async function loadBillingContext(admin: SupabaseClient, ownerId: string) {
   try {
     const { data } = await admin.from("businesses").select("plan,allow_automatic_paid_media,automation_level").eq("owner_user_id", ownerId).maybeSingle();
 
-    const plan = normalizePlan((data as any)?.plan);
-    const allowAutomatic = normalizeAllowAutomaticPaidMedia((data as any)?.allow_automatic_paid_media);
-    let mode = (data as any)?.automation_level === "manual" || (data as any)?.automation_level === "autopilot" ? (data as any).automation_level : "assisted";
+    const business = data as BusinessBillingRow;
+    const plan = normalizePlan(business?.plan);
+    const allowAutomatic = normalizeAllowAutomaticPaidMedia(business?.allow_automatic_paid_media);
+    let mode = normalizeAutomationMode(business?.automation_level);
     if (!canUseAutomationMode(plan, mode)) {
       mode = plan === "pro" ? "assisted" : "manual";
     }
@@ -50,6 +56,7 @@ async function loadBillingContext(admin: any, ownerId: string) {
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
+  if (!(await consumeAiRateLimit(user.id, "post_generate"))) return rateLimitedResponse();
   const { id } = await params;
   if (!UUID_RE.test(id)) return Response.json({ error: "That post was not found." }, { status: 404 });
 

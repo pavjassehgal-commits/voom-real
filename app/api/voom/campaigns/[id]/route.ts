@@ -87,7 +87,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       proposedSendAt = guard.publishAt;
     }
 
-    const campaign = await updateCampaign(db, user.id, id, {
+    // Owner-filtered service-role write (migration 0050).
+    const campaign = await updateCampaign(createAdminClient(), user.id, id, {
       name: parsed.data.name,
       objective: parsed.data.objective,
       audience: parsed.data.audience,
@@ -136,8 +137,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
 
     const campaign = parsed.data.action === "approve"
-      ? await approveCampaign(db, user.id, id)
-      : await rejectCampaign(db, user.id, id);
+      ? await approveCampaign(createAdminClient(), user.id, id)
+      : await rejectCampaign(createAdminClient(), user.id, id);
     if (!campaign) return Response.json({ error: "That campaign was not found." }, { status: 404 });
     const message = parsed.data.action === "approve"
       ? "Campaign approved. It is ready for an explicit send. Nothing has been sent."

@@ -814,13 +814,14 @@ test("7. migrations 0040–0044 remain additive and owner-scoped", async () => {
 
   // Email Automation shipped in 0040–0044 and is frozen. The migrations after
   // it are Campaigns v3 (0045), the Multi-Social Core (0046), the YouTube
-  // provider (0047), its OAuth ACL fix (0048) and the TikTok provider (0049);
-  // all must leave every email flow table, function and cron path exactly as
-  // 0040–0044 shipped them.
+  // provider (0047), its OAuth ACL fix (0048), the TikTok provider (0049),
+  // the approval-state write lockdown (0050) and AI request rate limits
+  // (0051); all must leave every email flow table, function and cron path
+  // exactly as 0040–0044 shipped them.
   assert.ok(files.includes("0044_email_flow_durable_claims.sql"), "0044 is still applied");
   const afterEmailAutomation = files.filter((name) => name > "0044_email_flow_durable_claims.sql");
-  assert.deepEqual(afterEmailAutomation, ["0045_campaigns_v3_unified_channels.sql", "0046_multi_social_core.sql", "0047_youtube_provider.sql", "0048_youtube_oauth_state_acl.sql", "0049_tiktok_provider.sql"],
-    "0045 Campaigns v3, 0046 Multi-Social Core, 0047 YouTube provider, 0048 OAuth ACL fix and 0049 TikTok provider are the only migrations after the Email Automation freeze");
+  assert.deepEqual(afterEmailAutomation, ["0045_campaigns_v3_unified_channels.sql", "0046_multi_social_core.sql", "0047_youtube_provider.sql", "0048_youtube_oauth_state_acl.sql", "0049_tiktok_provider.sql", "0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql"],
+    "0045 Campaigns v3, 0046 Multi-Social Core, 0047 YouTube provider, 0048 OAuth ACL fix, 0049 TikTok provider, 0050 write lockdown and 0051 rate limits are the only migrations after the Email Automation freeze");
   // Executed statements only: 0047 documents its rollback plan in comments
   // (`-- drop table ...`), which must not be confused with destruction.
   const stripSql = (name) => fs.readFileSync(path.join(dir, name), "utf8")
@@ -845,6 +846,14 @@ test("7. migrations 0040–0044 remain additive and owner-scoped", async () => {
   assert.doesNotMatch(youTubeProvider, /pg_cron|cron\.schedule/, "0047 schedules no cron");
   assert.doesNotMatch(youTubeProvider, /drop table|drop column|truncate/, "0047 destroys nothing");
   assert.doesNotMatch(youTubeProvider, /instagram_publish_queue|instagram_connections/, "0047 never touches the Instagram integration");
+  for (const name of ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql"]) {
+    const hardening = stripSql(name);
+    assert.doesNotMatch(hardening, /voom_email_flow/, `${name} never touches an email flow table`);
+    assert.doesNotMatch(hardening, /voom_email_identity|voom_email_brand|voom_email_asset|voom_email_suppression|voom_email_unsubscribe/,
+      `${name} never touches the Branded Email Engine tables`);
+    assert.doesNotMatch(hardening, /pg_cron|cron\.schedule/, `${name} schedules no cron`);
+    assert.doesNotMatch(hardening, /drop table|drop column|truncate/, `${name} destroys nothing`);
+  }
   assert.ok(files.includes("0043_plans_credits_safety.sql"));
   assert.ok(files.includes("0042_branded_email_url_regex_fix.sql"));
   assert.ok(files.includes("0041_branded_email_engine.sql"));

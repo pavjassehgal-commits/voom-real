@@ -4,8 +4,11 @@ import { postAssetKindForMime } from "@/lib/post/core";
 import { buildExistingContentPayload, EXISTING_CONTENT_DISCLOSURE, POST_SUGGESTION_SYSTEM_PROMPT, postSuggestionJsonSchema, postSuggestionSchema } from "@/lib/post/prompt";
 import { getPostDraft, loadPostBrandContext, loadPostPlanContext } from "@/lib/post/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { consumeAiRateLimit, rateLimitedResponse } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
+// AI calls / sequential provider sends can exceed the platform default timeout.
+export const maxDuration = 60;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
@@ -18,6 +21,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
+  if (!(await consumeAiRateLimit(user.id, "post_suggest"))) return rateLimitedResponse();
   const { id } = await params;
   if (!UUID_RE.test(id)) return Response.json({ error: "That post was not found." }, { status: 404 });
 

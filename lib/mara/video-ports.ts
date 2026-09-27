@@ -48,13 +48,16 @@ export interface VideoPortDependencies {
   plan: { businessGoal: string; weeklyStrategy: string; topics: string[] } | null;
 }
 
+type BusinessBillingRow = { plan?: string | null; allow_automatic_paid_media?: unknown; automation_level?: string | null } | null;
+
 async function loadBillingForVideo(admin: SupabaseClient, ownerId: string) {
   try {
     const { data } = await admin.from("businesses").select("plan,allow_automatic_paid_media,automation_level").eq("owner_user_id", ownerId).maybeSingle();
+    const business = data as BusinessBillingRow;
     return {
-      planId: normalizePlan((data as any)?.plan),
-      allowAutomatic: normalizeAllowAutomaticPaidMedia((data as any)?.allow_automatic_paid_media),
-      mode: normalizeAutomationMode((data as any)?.automation_level),
+      planId: normalizePlan(business?.plan),
+      allowAutomatic: normalizeAllowAutomaticPaidMedia(business?.allow_automatic_paid_media),
+      mode: normalizeAutomationMode(business?.automation_level),
     };
   } catch {
     return { planId: "free" as const, allowAutomatic: false, mode: "assisted" as const };

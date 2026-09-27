@@ -562,18 +562,21 @@ test("migration 0045 stores the channels, refuses invalid combinations and is ad
   assert.doesNotMatch(sql, /5\s*(credits|voom credits)|40\s*(credits|voom credits)/i, "media costs are untouched");
 });
 
-test("migrations 0001–0045 are untouched and 0046–0049 are the only new ones", async () => {
+test("migrations 0001–0045 are untouched and 0046–0051 are the only new ones", async () => {
   const { readdir } = await import("node:fs/promises");
   const files = (await readdir(new URL("supabase/migrations/", root))).filter((name) => name.endsWith(".sql")).sort();
 
   // Multi-Social Core (0046), YouTube provider (0047), its focused OAuth
-  // ACL fix (0048) and the TikTok provider (0049) are the only migrations
-  // after Campaigns v3.
-  assert.equal(files[files.length - 1], "0049_tiktok_provider.sql", "0049 (TikTok provider) is the newest migration");
-  assert.equal(files[files.length - 2], "0048_youtube_oauth_state_acl.sql", "0048 (YouTube OAuth ACL fix) precedes it");
-  assert.equal(files[files.length - 3], "0047_youtube_provider.sql", "0047 (YouTube provider) precedes 0048");
-  assert.equal(files[files.length - 4], "0046_multi_social_core.sql", "0046 (Multi-Social Core) precedes 0047");
-  assert.equal(files[files.length - 5], "0045_campaigns_v3_unified_channels.sql", "0045 remains intact");
+  // ACL fix (0048), the TikTok provider (0049), the approval-state write
+  // lockdown (0050) and AI request rate limits (0051) are the only
+  // migrations after Campaigns v3.
+  assert.equal(files[files.length - 1], "0051_ai_request_rate_limits.sql", "0051 (AI request rate limits) is the newest migration");
+  assert.equal(files[files.length - 2], "0050_approval_state_write_lockdown.sql", "0050 (approval-state write lockdown) precedes it");
+  assert.equal(files[files.length - 3], "0049_tiktok_provider.sql", "0049 (TikTok provider) precedes 0050");
+  assert.equal(files[files.length - 4], "0048_youtube_oauth_state_acl.sql", "0048 (YouTube OAuth ACL fix) precedes 0049");
+  assert.equal(files[files.length - 5], "0047_youtube_provider.sql", "0047 (YouTube provider) precedes 0048");
+  assert.equal(files[files.length - 6], "0046_multi_social_core.sql", "0046 (Multi-Social Core) precedes 0047");
+  assert.equal(files[files.length - 7], "0045_campaigns_v3_unified_channels.sql", "0045 remains intact");
   for (const expected of [
     "0033_automated_campaigns.sql",
     "0034_automated_campaign_shape_check_fix.sql",

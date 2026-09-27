@@ -275,7 +275,10 @@ test("0021 is marked already-applied; 0018-0020 are untouched and 0022-0028 stay
   // 0048 (YouTube OAuth ACL) and 0049 (TikTok provider) are checked in but
   // deliberately NOT applied to production yet. Anything newer is a migration
   // this suite has not been told about — it must be added deliberately.
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 49), "no migration beyond 0049 (the TikTok provider) may exist");
+  // 0050 (approval-state write lockdown) and 0051 (AI request rate limits)
+  // are the production-hardening release and are the only migrations after 0049.
+  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql"], "only the 0050/0051 hardening migrations follow 0049");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 51), "no migration beyond 0051 (AI request rate limits) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],

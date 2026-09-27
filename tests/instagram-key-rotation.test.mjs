@@ -424,7 +424,10 @@ test("NEXT is optional, server-only and distinct from LEGACY", async () => {
 test("the protected endpoint rejects missing NEXT before creating a store", async () => {
   const route = await read("app/api/admin/instagram/rotate-token-key/route.ts");
   assert.match(route, /INSTAGRAM_KEY_ROTATION_SECRET/);
-  assert.match(route, /Bearer \$\{secret\}/);
+  assert.match(route, /bearerMatches\(request, secret\)/);
+  const bearer = await read("utils/bearer-auth.ts");
+  assert.match(bearer, /Bearer \$\{secret\}/, "the shared helper compares the full Bearer header");
+  assert.match(bearer, /timingSafeEqual/, "the shared helper compares in constant time");
   assert.match(route, /!config\.nextEncryptionKey \|\| config\.nextEncryptionKey === config\.encryptionKey/);
   assert.ok(
     route.indexOf("if (!config.nextEncryptionKey") < route.indexOf("createRotationStore(createAdminClient())"),

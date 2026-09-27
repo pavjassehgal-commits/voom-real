@@ -11,7 +11,7 @@ export async function GET() {
   const admin = createAdminClient();
   try {
     const { data } = await admin.from("businesses").select("plan").eq("owner_user_id", user.id).maybeSingle();
-    const planId = normalizePlan((data as any)?.plan);
+    const planId = normalizePlan((data as { plan?: string | null } | null)?.plan);
     const summary = await getCreditSummary(admin, user.id, planId);
     return Response.json({ summary }, { headers: { "Cache-Control": "no-store" } });
   } catch {

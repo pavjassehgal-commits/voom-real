@@ -6,8 +6,8 @@ import { classifyReelProduction } from "@/lib/mara/reel-production";
 import { assetKindForMime, assignReelVisuals } from "@/lib/mara/reel-visuals";
 import { startPostStudioVideo, advanceVideoJob, buildVideoService, enforceVideoJobHardTimeout, latestVideoGeneration } from "@/lib/mara/video-service";
 import { VIDEO_JOB_TIMEOUT_ERROR_CODE, videoJobSafeError } from "@/lib/mara/video-job";
-import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { consumeAiRateLimit, rateLimitedResponse } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -44,6 +44,7 @@ Rules:
 export async function POST(request: Request, { params }: { params: Promise<{ actionId: string }> }) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
+  if (!(await consumeAiRateLimit(user.id, "reel_produce"))) return rateLimitedResponse();
   const { actionId } = await params;
   if (!UUID_RE.test(actionId)) return Response.json({ error: "That Reel request is not valid." }, { status: 400 });
   let idempotencyToken: string | null = null;
@@ -51,7 +52,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ act
     const body = await request.json() as { idempotencyKey?: unknown };
     if (typeof body.idempotencyKey === "string" && body.idempotencyKey.trim()) idempotencyToken = body.idempotencyKey.trim();
   } catch { /* no body on the first production click */ }
-  const db = await createClient();
+  // Every query below is owner-filtered. The service-role client is used
+  // because authenticated users have no direct write access to approval
+  // state (migration 0050).
+  const db = createAdminClient();
   const { data: action } = await db.from("mara_pending_actions").select(ACTION_COLUMNS).eq("id", actionId).eq("owner_user_id", user.id).eq("tool_name", "choose_reel_production").eq("status", "pending").maybeSingle();
   if (!action || !action.new_value || typeof action.new_value.draftId !== "string") return Response.json({ error: "That Reel request was not found." }, { status: 404 });
   if (action.new_value.productionStatus === "video_generating" || action.new_value.productionStatus === "video_processing") {
@@ -175,7 +179,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ act
   if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
   const { actionId } = await params;
   if (!UUID_RE.test(actionId)) return Response.json({ error: "That Reel request is not valid." }, { status: 400 });
-  const db = await createClient();
+  // Every query below is owner-filtered. The service-role client is used
+  // because authenticated users have no direct write access to approval
+  // state (migration 0050).
+  const db = createAdminClient();
   const { data: action } = await db.from("mara_pending_actions").select(ACTION_COLUMNS).eq("id", actionId).eq("owner_user_id", user.id).eq("tool_name", "choose_reel_production").eq("status", "pending").maybeSingle();
   if (!action || !action.new_value || typeof action.new_value.draftId !== "string") return Response.json({ error: "That Reel request was not found." }, { status: 404 });
   const value = action.new_value as Record<string, unknown>;
@@ -245,7 +252,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ act
   return Response.json({ action }, { headers: { "Cache-Control": "no-store" } });
 }
 
-async function fail(db: Awaited<ReturnType<typeof createClient>>, ownerId: string, actionId: string, value: Record<string, unknown>, message: string) {
+async function fail(db: ReturnType<typeof createAdminClient>, ownerId: string, actionId: string, value: Record<string, unknown>, message: string) {
   await db.from("mara_pending_actions").update({ new_value: { ...value, productionStatus: "production_failed" }, error_summary: message, result_summary: "Reel production stopped safely. Nothing was published." }).eq("id", actionId).eq("owner_user_id", ownerId).eq("status", "pending");
   return Response.json({ error: message }, { status: 503 });
 }

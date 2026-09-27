@@ -161,9 +161,9 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
     if (!reserve.ok) {
       const reason = reserve.reason ?? "spend_limit";
       if (reason === "insufficient_credits" || reason === "plan_not_allowed") {
-        return { ok: false, status: 402, code: reason as any, errorCode: reason, message: reserve.message ?? "Not enough credits or plan does not allow generation." };
+        return { ok: false, status: 402, code: reason, errorCode: reason, message: reserve.message ?? "Not enough credits or plan does not allow generation." };
       }
-      return { ok: false, status: 503, code: "automatic_media_disabled" as any, errorCode: reason, message: reserve.message ?? "Automatic media generation disabled." };
+      return { ok: false, status: 503, code: "automatic_media_disabled", errorCode: reason, message: reserve.message ?? "Automatic media generation disabled." };
     }
   }
 

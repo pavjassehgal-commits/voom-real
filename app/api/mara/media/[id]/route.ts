@@ -63,18 +63,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   return runGeneration(admin, row, owned.userId);
 }
 
+type BusinessBillingRow = { plan?: string | null; allow_automatic_paid_media?: unknown; automation_level?: string | null } | null;
+
 async function loadBilling(admin: ReturnType<typeof createAdminClient>, ownerId: string) {
   try {
     const { data } = await admin.from("businesses").select("plan,allow_automatic_paid_media,automation_level").eq("owner_user_id", ownerId).maybeSingle();
 
-    const planId = normalizePlan((data as any)?.plan);
-    let mode = normalizeAutomationMode((data as any)?.automation_level);
+    const business = data as BusinessBillingRow;
+    const planId = normalizePlan(business?.plan);
+    let mode = normalizeAutomationMode(business?.automation_level);
     if (!canUseAutomationMode(planId, mode)) {
       mode = planId === "pro" ? "assisted" : "manual";
     }
     return {
       planId,
-      allowAutomatic: normalizeAllowAutomaticPaidMedia((data as any)?.allow_automatic_paid_media),
+      allowAutomatic: normalizeAllowAutomaticPaidMedia(business?.allow_automatic_paid_media),
       mode,
     };
   } catch {

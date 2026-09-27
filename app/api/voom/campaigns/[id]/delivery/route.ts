@@ -33,6 +33,8 @@ const audienceSendPayload = z.object({
 const deliveryPayload = z.union([singleRecipientPayload, audienceSendPayload]);
 
 export const runtime = "nodejs";
+// AI calls / sequential provider sends can exceed the platform default timeout.
+export const maxDuration = 300;
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
