@@ -2298,7 +2298,9 @@ test("rolling-plan channel assignment requires no database migration", async (t)
     t.skip("git history with a `main` branch is unavailable in this checkout");
     return;
   }
-  const added = current.filter((file) => !mainFiles.includes(file));
+  // Trend Intelligence ships its own reviewed migrations; slot assignment added none.
+  const TREND_MIGRATIONS = ["supabase/migrations/0055_trend_intelligence.sql", "supabase/migrations/0056_trend_mara_workflow_context.sql", "supabase/migrations/0057_wikidata_event_source.sql"];
+  const added = current.filter((file) => !mainFiles.includes(file) && !TREND_MIGRATIONS.includes(file));
   const removed = mainFiles.filter((file) => !current.includes(file));
   assert.deepEqual(added, [], "no new migration was needed for server-owned slot assignment");
   assert.deepEqual(removed, [], "all pre-existing migrations remain untouched");

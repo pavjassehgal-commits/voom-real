@@ -18,6 +18,7 @@ const socialDrafts = await import("../lib/social/server-drafts.ts");
 const workflowRead = await import("../lib/voom/workflow/read.ts");
 const coordinator = await import("../lib/coordinator/service.ts");
 const timezone = await import("../lib/voom/timezone.ts");
+const discovery = await import("../lib/trends/discovery.ts");
 
 const OWNER = "owner-channel-plan";
 const BUSINESS = "business-channel-plan";
@@ -898,4 +899,197 @@ test("MARA receives the immutable channel/format assignment and cannot return a 
     }),
     /content_generation_failed/,
   );
+});
+
+const VERIFIED_TREND_CONTEXT = {
+  topic: "Dubai Fitness Challenge",
+  market: { country: "AE", language: "en" },
+  eventWindow: { start: "2026-11-01", end: "2026-11-30" },
+  facts: [{
+    statement: "Dubai Fitness Challenge runs during November 2026.",
+    sources: ["Dubai Fitness Challenge official website"],
+  }],
+  observedAt: "2026-09-10T00:00:00.000Z",
+  confidence: "low",
+  caveats: ["Do not imply an official partnership."],
+};
+
+test("real runOwnerWorkflow entry carries verified trend evidence into grounded MARA drafts", async () => {
+  const previous = process.env.VOOM_TREND_CONTEXT_ENABLED;
+  process.env.VOOM_TREND_CONTEXT_ENABLED = "true";
+  try {
+    const captured = [];
+    let trendReads = 0;
+    const provider = {
+      async structured(request) {
+        const payload = JSON.parse(request.messages[1].content);
+        captured.push(payload);
+        return request.parse({
+          concept: `Dubai Fitness Challenge ${payload.assignedSocialSlot.label}`,
+          hook: "Make the Dubai Fitness Challenge fit your daily routine.",
+          caption: "Palm Fuel can support your routine during Dubai Fitness Challenge with its existing smoothie menu.",
+          cta: "Build your Dubai Fitness Challenge routine.",
+          hashtags: ["DubaiFitnessChallenge"],
+          description: payload.assignedSocialSlot.channel === "youtube"
+            ? "A practical Dubai Fitness Challenge routine using Palm Fuel's existing menu."
+            : "",
+          script: payload.assignedSocialSlot.channel === "instagram" && payload.assignedSocialSlot.format === "post"
+            ? []
+            : ["Name Dubai Fitness Challenge", "Show the existing menu", "Connect it to a daily routine", "Close without unsupported claims"],
+          visualBrief: "Show an active Dubai routine and Palm Fuel's existing smoothies without event logos or partnership claims.",
+        });
+      },
+    };
+    const admin = createMemoryAdmin(adminSeed({
+      preferredChannels: ["Instagram"],
+      businessOverrides: {
+        brand_name: "Palm Fuel Smoothie Bar",
+        brand_description: "Smoothies for active routines in Dubai.",
+        industry: "Food and beverage",
+      },
+    }));
+    const result = await service.runOwnerWorkflow(admin, {
+      ownerId: OWNER,
+      now: NOW,
+      trigger: "replenish",
+      stage: "planning_only",
+      planningDeps: {
+        provider,
+        performanceContext: async () => null,
+        trendContext: async () => { trendReads += 1; return VERIFIED_TREND_CONTEXT; },
+      },
+    });
+    assert.equal(result.created, 7);
+    assert.equal(trendReads, 1, "verified context is loaded at most once per workflow run");
+    assert.equal(captured.length, 7);
+    assert.ok(captured.every((payload) => payload.trendOpportunity?.topic === "Dubai Fitness Challenge"));
+    assert.ok(admin.tables.get("mara_drafts").every((draft) => /Dubai Fitness Challenge/i.test(`${draft.title} ${draft.content}`)));
+  } finally {
+    if (previous === undefined) delete process.env.VOOM_TREND_CONTEXT_ENABLED;
+    else process.env.VOOM_TREND_CONTEXT_ENABLED = previous;
+  }
+});
+
+test("automatic event discovery can feed a reviewed context through Replenish into grounded Reel/video ideas", async () => {
+  const previous = process.env.VOOM_TREND_CONTEXT_ENABLED;
+  process.env.VOOM_TREND_CONTEXT_ENABLED = "true";
+  try {
+    const sourcePayload = { results: { bindings: [{
+      event: { value: "https://www.wikidata.org/entity/Q999999" },
+      label: { value: "Dubai Fitness Challenge" },
+      starts: { value: "2026-11-01T00:00:00Z|11" },
+      ends: { value: "2026-11-30T00:00:00Z|11" },
+      website: { value: "https://www.dubaifitnesschallenge.com/" },
+    }] } };
+    const collected = await discovery.runWikidataEventDiscovery({
+      now: NOW,
+      fetch: async () => ({ ok: true, async json() { return sourcePayload; } }),
+      client: { async rpc() { return { data: {
+        status: "stored", observation_id: "22222222-2222-4222-8222-222222222222", revision: 1,
+        item_key: null, topic_key: "topic|web|AE|en|topic|dubai fitness challenge",
+        trend_key: "topic|web|AE|en|topic|dubai fitness challenge",
+        expires_at: "2026-09-26T05:00:00Z", delete_after: "2026-10-12T05:00:00Z",
+      }, error: null }; } },
+    });
+    assert.equal(collected.status, "completed");
+    assert.equal(collected.storage.counts.stored, 1);
+    const candidate = collected.reviewCandidates[0];
+    const reviewedContext = {
+      topic: candidate.observation.subject.text,
+      market: candidate.observation.market,
+      eventWindow: candidate.eventWindow,
+      facts: candidate.facts.map((fact) => ({ statement: fact.statement, sources: ["Wikidata (CC0)"] })),
+      observedAt: candidate.observation.retrievedAt,
+      confidence: "low",
+      caveats: ["Community-maintained event record; verify details before publishing.", "Do not imply an official partnership."],
+    };
+    const captured = [];
+    const admin = createMemoryAdmin(adminSeed({
+      preferredChannels: ["Instagram", "TikTok", "YouTube"],
+      businessOverrides: { brand_name: "Palm Fuel Smoothie Bar", brand_description: "Smoothies for active routines in Dubai.", industry: "Food and beverage" },
+    }));
+    const result = await service.runOwnerWorkflow(admin, {
+      ownerId: OWNER, now: NOW, trigger: "replenish", stage: "planning_only",
+      planningDeps: {
+        performanceContext: async () => null,
+        trendContext: async () => reviewedContext,
+        provider: { async structured(request) {
+          const payload = JSON.parse(request.messages[1].content);
+          captured.push(payload);
+          const video = payload.assignedSocialSlot.format !== "post";
+          return request.parse({
+            concept: `Dubai Fitness Challenge ${video ? "vertical video" : "post"}`,
+            hook: "Build a Dubai Fitness Challenge routine that feels achievable.",
+            caption: "Use Palm Fuel's existing smoothie menu as part of your Dubai Fitness Challenge routine.",
+            cta: "Plan your Dubai Fitness Challenge routine.", hashtags: ["DubaiFitnessChallenge"],
+            description: payload.assignedSocialSlot.channel === "youtube" ? "A practical Dubai Fitness Challenge routine with Palm Fuel's existing menu." : "",
+            script: video ? ["Name Dubai Fitness Challenge", "Show the existing menu", "Offer a practical routine", "Avoid partnership claims"] : [],
+            visualBrief: "Vertical active-routine visuals with Palm Fuel products; no event logos or partnership claims.",
+          });
+        } },
+      },
+    });
+    assert.equal(result.created, 7);
+    const videos = captured.filter((payload) => payload.assignedSocialSlot.format !== "post");
+    assert.ok(videos.length > 0, "the real planner requested Reel/video ideas");
+    assert.ok(videos.every((payload) => payload.trendOpportunity.topic === "Dubai Fitness Challenge"));
+    assert.ok(admin.tables.get("mara_drafts").every((draft) => /Dubai Fitness Challenge/i.test(`${draft.title} ${draft.content}`)));
+  } finally {
+    if (previous === undefined) delete process.env.VOOM_TREND_CONTEXT_ENABLED;
+    else process.env.VOOM_TREND_CONTEXT_ENABLED = previous;
+  }
+});
+
+test("trend-aware generation rejects generic output and unsupported claims", async () => {
+  const input = {
+    business: {
+      brand_name: "Palm Fuel Smoothie Bar",
+      brand_description: "Smoothies for active routines in Dubai.",
+      industry: "Food and beverage",
+      target_customer: ["Active Dubai residents"],
+    },
+    goal: "Grow awareness",
+    cadence: "daily",
+    timeZone: TZ,
+    slot: { date: DATE, slotKey: `${DATE}|instagram_post`, index: 0, channel: "instagram", format: "post", contentType: "post", publishAt: timezone.localToUtcIso(DATE, 18 * 60 + 30, TZ) },
+    plannedConcepts: [],
+    performance: null,
+    trendOpportunity: VERIFIED_TREND_CONTEXT,
+  };
+  const result = (caption) => ({
+    concept: "Active routine", hook: "", caption, cta: "Visit Palm Fuel.", hashtags: [],
+    description: "", script: [], visualBrief: "Show an existing smoothie beside running shoes.",
+  });
+  await assert.rejects(
+    () => service.generateWorkflowPlannedContent({ ...input, provider: { async structured(request) { return request.parse(result("Fuel your active routine with Palm Fuel.")); } } }),
+    /content_generation_failed/,
+  );
+  await assert.rejects(
+    () => service.generateWorkflowPlannedContent({ ...input, provider: { async structured(request) { return request.parse(result("Dubai Fitness Challenge participants get 20% off.")); } } }),
+    /content_generation_failed/,
+  );
+});
+
+test("feature flag off leaves the existing workflow payload and loader behavior unchanged", async () => {
+  const previous = process.env.VOOM_TREND_CONTEXT_ENABLED;
+  delete process.env.VOOM_TREND_CONTEXT_ENABLED;
+  try {
+    const captured = [];
+    const admin = createMemoryAdmin(adminSeed({ preferredChannels: ["Instagram"] }));
+    const result = await service.runOwnerWorkflow(admin, {
+      ownerId: OWNER,
+      now: NOW,
+      trigger: "replenish",
+      stage: "planning_only",
+      planningDeps: {
+        provider: structuredProvider(captured),
+        performanceContext: async () => null,
+        trendContext: async () => { throw new Error("flag-off loader must not run"); },
+      },
+    });
+    assert.equal(result.created, 7);
+    assert.ok(captured.every((payload) => !("trendOpportunity" in payload)));
+  } finally {
+    if (previous !== undefined) process.env.VOOM_TREND_CONTEXT_ENABLED = previous;
+  }
 });

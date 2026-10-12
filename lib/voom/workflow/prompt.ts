@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { actionChannelLabel, actionChannelFor, type SocialFormat, type SocialMediaChannel } from "@/lib/social/channels";
 import { PERFORMANCE_ADVISORY_RULES, compactPlanContext, type PerformancePlanContext } from "@/lib/performance/plan-context";
+import type { TrendPromptContext } from "@/lib/trends/opportunity";
 
 /**
  * MARA's strict text-only output for one server-assigned social plan slot.
@@ -76,6 +77,27 @@ ${PERFORMANCE_ADVISORY_RULES.map((rule) => `- ${rule}`).join("\n")}
 - Performance evidence is advisory and must never override assignedSocialSlot.
 - When recentPerformance is null, plan from the supplied brand context, goal and already-planned concepts only.`;
 
+/**
+ * Rules added to the system prompt ONLY when verified trend evidence is
+ * supplied (feature flag VOOM_TREND_CONTEXT_ENABLED; off by default). With no
+ * trend evidence the prompt is exactly PLANNED_CONTENT_SYSTEM_PROMPT.
+ */
+export const TREND_EVIDENCE_RULES = [
+  "The payload may carry trendOpportunity: a timely topic Voom verified from dated public sources for this business's market, with its facts and their sources.",
+  "Voom has already determined that trendOpportunity is relevant to this business and slot. Meaningfully use it and explicitly name trendOpportunity.topic in the deliverable; generic copy that merely hints at the topic is invalid.",
+  "Use only the facts listed in trendOpportunity.facts. Never add dates, numbers, prizes, prices, partnerships or claims that are not listed there.",
+  "Never imply the business is an official partner, sponsor or participant of the topic unless the business context says so.",
+  "trendOpportunity is advisory and must never override assignedSocialSlot, the business context or the rules above.",
+] as const;
+
+export function plannedContentSystemPrompt(options: { trendEvidence: boolean }): string {
+  if (!options.trendEvidence) return PLANNED_CONTENT_SYSTEM_PROMPT;
+  return `${PLANNED_CONTENT_SYSTEM_PROMPT}
+
+TREND EVIDENCE
+${TREND_EVIDENCE_RULES.map((rule) => `- ${rule}`).join("\n")}`;
+}
+
 /** Text-only payload for one planned, server-assigned social slot. */
 export function buildPlannedContentPayload(input: {
   business: Record<string, unknown>;
@@ -88,9 +110,11 @@ export function buildPlannedContentPayload(input: {
   timezone: string;
   recentConcepts: string[];
   performance?: PerformancePlanContext | null;
+  /** Verified trend evidence; present only when the trend feature flag is on. */
+  trendOpportunity?: TrendPromptContext | null;
 }) {
   const actionChannel = actionChannelFor(input.channel, input.format);
-  return {
+  const payload = {
     business: input.business,
     marketingGoal: input.goal.slice(0, 300),
     postingCadence: input.cadenceLabel,
@@ -107,4 +131,6 @@ export function buildPlannedContentPayload(input: {
       ? compactPlanContext(input.performance)
       : null,
   };
+  // The key is added only when evidence exists, so the flag-off payload is unchanged.
+  return input.trendOpportunity ? { ...payload, trendOpportunity: input.trendOpportunity } : payload;
 }

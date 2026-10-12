@@ -1,0 +1,67 @@
+{
+  "label": "MANUALLY SUPPLIED EVIDENCE — recorded by a reviewer from two public news reports. No metrics, no search volumes, no statistics.",
+  "provenance": {
+    "recordedBy": "reviewer:claude-trend-demo",
+    "recordedAt": "2026-10-11T17:02:42Z",
+    "method": "Both pages were fetched on 2026-10-11 and read; every fact below appears in both reports unless marked with one source."
+  },
+  "observation": {
+    "id": "mr-2026-10-11-dubai-fitness-challenge",
+    "sourceId": "manual_research",
+    "platform": "web",
+    "market": { "country": "AE", "language": "en" },
+    "subject": { "kind": "topic", "text": "Dubai Fitness Challenge 2026" },
+    "window": { "start": "2026-10-01T17:00:00Z", "end": "2026-10-01T17:55:00Z" },
+    "retrievedAt": "2026-10-11T17:02:42Z",
+    "evidence": [
+      {
+        "sourceId": "manual_research",
+        "url": "https://www.khaleejtimes.com/uae/dubai-fitness-challenge-2026-registration-opens",
+        "attribution": "Khaleej Times — \"Dubai Fitness Challenge opens registration for 2026 edition\" (Bahni Bandyopadhyay, 1 Oct 2026)",
+        "retrievedAt": "2026-10-11T17:02:42Z"
+      },
+      {
+        "sourceId": "manual_research",
+        "url": "https://gulfnews.com/uae/health/dubai-fitness-challenge-2026-registrations-open-for-30-day-fitness-drive-1.500695407",
+        "attribution": "Gulf News — \"Dubai Fitness Challenge 2026: Registrations open for 30-day fitness drive\" (Balaram Menon, 1 Oct 2026)",
+        "retrievedAt": "2026-10-11T17:02:42Z"
+      }
+    ]
+  },
+  "note": {
+    "facts": [
+      {
+        "statement": "Registration for the 2026 Dubai Fitness Challenge opened on 1 October 2026.",
+        "evidenceUrls": [
+          "https://www.khaleejtimes.com/uae/dubai-fitness-challenge-2026-registration-opens",
+          "https://gulfnews.com/uae/health/dubai-fitness-challenge-2026-registrations-open-for-30-day-fitness-drive-1.500695407"
+        ]
+      },
+      {
+        "statement": "It runs from 31 October to 29 November 2026 under the theme \"What's Your 30x30?\" — 30 minutes of activity a day for 30 days.",
+        "evidenceUrls": [
+          "https://www.khaleejtimes.com/uae/dubai-fitness-challenge-2026-registration-opens",
+          "https://gulfnews.com/uae/health/dubai-fitness-challenge-2026-registrations-open-for-30-day-fitness-drive-1.500695407"
+        ]
+      },
+      {
+        "statement": "Flagship community events: Dubai Ride on 1 November, Dubai Run on 22 November and Dubai Yoga on 29 November 2026.",
+        "evidenceUrls": [
+          "https://www.khaleejtimes.com/uae/dubai-fitness-challenge-2026-registration-opens",
+          "https://gulfnews.com/uae/health/dubai-fitness-challenge-2026-registrations-open-for-30-day-fitness-drive-1.500695407"
+        ]
+      },
+      {
+        "statement": "Registration is free on the official Dubai Fitness Challenge website.",
+        "evidenceUrls": [
+          "https://gulfnews.com/uae/health/dubai-fitness-challenge-2026-registrations-open-for-30-day-fitness-drive-1.500695407"
+        ]
+      }
+    ],
+    "eventWindow": { "start": "2026-10-31", "end": "2026-11-29" },
+    "relevantIndustries": ["fitness", "gym", "sportswear", "sports", "healthy food", "healthy cafe", "juice", "smoothie", "nutrition", "wellness", "physiotherapy", "yoga"],
+    "relevanceRationale": "A city-wide, month-long public activity drive in Dubai; relevant to businesses whose customers exercise or eat around exercise.",
+    "reviewer": "reviewer:claude-trend-demo",
+    "reviewedAt": "2026-10-11T17:02:42Z"
+  }
+}
