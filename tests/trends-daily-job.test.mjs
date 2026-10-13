@@ -91,7 +91,10 @@ test("the cron route is disabled by default, requires CRON_SECRET, and fails clo
   }
 });
 
-test("the route is not scheduled anywhere", () => {
-  assert.doesNotMatch(read("../vercel.json"), /trend/i);
-  assert.doesNotMatch(read("../supabase/ops/schedule-workers.sql"), /trend/i);
+test("the route is scheduled exactly once a day by Vercel Cron, with room for its worst case, and nowhere else", () => {
+  const vercel = JSON.parse(read("../vercel.json"));
+  assert.deepEqual(vercel.crons.filter((c) => /trend/i.test(c.path)), [{ path: "/api/cron/trend-collection", schedule: "0 4 * * *" }]);
+  assert.ok(vercel.crons.some((c) => c.path === "/api/cron/weekly-plans" && c.schedule === "0 3 * * *"), "weekly-plans schedule preserved");
+  assert.doesNotMatch(read("../supabase/ops/schedule-workers.sql"), /trend/i, "no second (pg_cron) trigger");
+  assert.match(read("../app/api/cron/trend-collection/route.ts"), /export const maxDuration = 300;/);
 });

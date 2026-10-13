@@ -3,17 +3,19 @@ import { createTrendAdminRpcClient } from "@/lib/trends/supabase-rpc";
 import { bearerMatches } from "@/utils/bearer-auth";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 /**
- * Daily Trend Intelligence job: bounded purge, at most one Wikidata
- * collection per 20 hours through the governed store RPC, retention health.
+ * Daily Trend Intelligence job: bounded purge, then governed collection
+ * (Wikidata, public holidays per approved country, Wikipedia attention), each
+ * at most once per 20 hours through the store RPC, then retention health.
  *
- * OFF unless TREND_COLLECTION_ENABLED is exactly "true", and authenticated
- * with CRON_SECRET. NOT scheduled: this route is intentionally absent from
- * vercel.json until a production schedule is approved. Responds with counts
- * and safe codes only.
+ * Scheduled once a day by vercel.json (04:00 UTC) but OFF unless
+ * TREND_COLLECTION_ENABLED is exactly "true", and authenticated with
+ * CRON_SECRET (Vercel Cron sends it as a bearer token). 300 s covers the
+ * worst case where every bounded request times out. Responds with counts and
+ * safe codes only.
  */
 export async function GET(request: Request) {
   if (process.env.TREND_COLLECTION_ENABLED !== "true") {
