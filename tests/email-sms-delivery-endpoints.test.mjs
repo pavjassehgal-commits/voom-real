@@ -28,15 +28,17 @@ test("manual send route is approval-gated, provider-backed, and double-send safe
 });
 
 test("Resend webhook route verifies signatures before delivery updates and no unverified SMS webhook exists", async () => {
-  const [helper, resend] = await Promise.all([
+  const [helper, resend, adapter] = await Promise.all([
     read("lib/voom/campaign-delivery.ts"),
     read("app/api/webhooks/resend/route.ts"),
+    read("lib/email/providers/resend.ts"),
   ]);
 
-  assert.match(helper, /new Webhook\(secret\)\.verify/);
+  assert.match(adapter, /new Webhook\(secret\)\.verify/);
   assert.match(helper, /rpc\("record_campaign_delivery_event"/);
-  assert.match(resend, /svix-id/);
+  assert.match(adapter, /svix-id/);
   assert.match(resend, /verifyResendWebhook/);
+  assert.match(resend, /normalizeResendWebhook/);
   assert.match(resend, /recordDeliveryFromWebhook/);
 
   // The Twilio webhook route was removed with the ClickSend provider swap, and

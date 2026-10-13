@@ -1,7 +1,6 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { Webhook } from "standardwebhooks";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getResendAvailability } from "@/lib/email/config";
 import { dispatchBrandedEmail, prepareBrandedSend } from "@/lib/email/branded/dispatch";
@@ -278,14 +277,6 @@ export async function sendEmailCampaign(campaign: CampaignRecord, recipient: Cam
 
   const response = await dispatchBrandedEmail(payload, {});
   return { ...response, terminal: false };
-}
-
-export function verifyResendWebhook(payload: string, headers: Headers, secret: string) {
-  return new Webhook(secret).verify(payload, {
-    "webhook-id": headers.get("svix-id") ?? "",
-    "webhook-timestamp": headers.get("svix-timestamp") ?? "",
-    "webhook-signature": headers.get("svix-signature") ?? "",
-  }) as Record<string, unknown>;
 }
 
 export async function recordDeliveryFromWebhook(db: SupabaseClient, input: { provider: "resend" | "twilio"; providerMessageId: string | null; eventId: string; eventType: string; receivedAt: string; providerStatus: string | null }) {
