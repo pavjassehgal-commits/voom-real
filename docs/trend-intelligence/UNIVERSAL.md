@@ -6,8 +6,8 @@ Goal: Marketing Plan → Replenish gives every business ideas that are tailored,
 | Source | What it gives | Rights and limits | Market |
 |---|---|---|---|
 | `wikidata_events` (live since 0057) | Upcoming events recorded in Wikidata | CC0 structured data; no popularity claim | AE (as configured) |
-| `public_holidays_nager` (proposed 0058) | Nationwide public holidays within the next 45 days | Nager.Date, MIT open source; calendar facts only. No data for some countries (e.g. AE, IN). | Per country, ISO code |
-| `wikimedia_pageviews` (proposed 0058) | Business-relevant articles from the daily most-viewed English Wikipedia list, with their measured views | Wikimedia Analytics API; pageview data is CC0; a descriptive User-Agent is required. This is reader attention, not searches, sales or social popularity. | `ZZ` (worldwide; it's a language-edition signal, not a country signal) |
+| `public_holidays_nager` (0058) | Nationwide public holidays within the next 45 days | Nager.Date, MIT open source; calendar facts only. No data for some countries (e.g. AE, IN). | Per country, ISO code |
+| `wikimedia_pageviews` (0058) | Business-relevant articles from the daily most-viewed English Wikipedia list, with their measured views | Wikimedia Analytics API; pageview data is CC0; a descriptive User-Agent is required. This is reader attention, not searches, sales or social popularity. | `ZZ` (worldwide; it's a language-edition signal, not a country signal) |
 
 Not used, deliberately: Google Trends website scraping (no public API), YouTube charts (terms restrict derived metrics), and any social-network scraping.
 
@@ -40,7 +40,7 @@ Not used, deliberately: Google Trends website scraping (no public API), YouTube 
 - **Everything is auditable.** Each draft carries its basis, and each observation keeps its evidence URL and attribution.
 
 ## Activation (each step needs separate approval)
-1. Number and apply `supabase/proposed/0058_universal_trend_sources.sql` in production; Admin Panel migrations would then start at 0059.
+1. Apply `supabase/migrations/0058_universal_trend_sources.sql` in production (rollback: `supabase/proposed/0058_universal_trend_sources.rollback.sql`), then record `0058` in the ledger. Admin Panel migrations start at 0059.
 2. Record governance approvals for `public_holidays_nager` and `wikimedia_pageviews`, then verify coverage:
    - `web`/`ZZ` for pageviews;
    - `web`/each country for holidays: US, GB, CA, AU, IE, NZ, DE, FR, ES, IT, NL, ZA.

@@ -853,7 +853,7 @@ test("migration 0046 backfills Instagram rows and keeps every channel on one cal
   );
 
   const applied = await applyPending();
-  assert.equal(applied[applied.length - 1], "0057_wikidata_event_source.sql", "0057 (Trend Intelligence: Wikidata event source) is the final checked-in migration");
+  assert.equal(applied[applied.length - 1], "0058_universal_trend_sources.sql", "0058 (Trend Intelligence: universal trend sources) is the final checked-in migration");
 
   const legacy = await one(
     "select social_channel, social_format from public.mara_drafts where title = 'Legacy Reel'",

@@ -820,8 +820,8 @@ test("7. migrations 0040–0044 remain additive and owner-scoped", async () => {
   // exactly as 0040–0044 shipped them.
   assert.ok(files.includes("0044_email_flow_durable_claims.sql"), "0044 is still applied");
   const afterEmailAutomation = files.filter((name) => name > "0044_email_flow_durable_claims.sql");
-  assert.deepEqual(afterEmailAutomation, ["0045_campaigns_v3_unified_channels.sql", "0046_multi_social_core.sql", "0047_youtube_provider.sql", "0048_youtube_oauth_state_acl.sql", "0049_tiktok_provider.sql", "0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql"],
-    "0045 Campaigns v3, 0046 Multi-Social Core, 0047 YouTube provider, 0048 OAuth ACL fix, 0049 TikTok provider, 0050 write lockdown, 0051 rate limits and 0055-0057 Trend Intelligence are the only migrations after the Email Automation freeze");
+  assert.deepEqual(afterEmailAutomation, ["0045_campaigns_v3_unified_channels.sql", "0046_multi_social_core.sql", "0047_youtube_provider.sql", "0048_youtube_oauth_state_acl.sql", "0049_tiktok_provider.sql", "0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql"],
+    "0045 Campaigns v3, 0046 Multi-Social Core, 0047 YouTube provider, 0048 OAuth ACL fix, 0049 TikTok provider, 0050 write lockdown, 0051 rate limits and 0055-0058 Trend Intelligence are the only migrations after the Email Automation freeze");
   // Executed statements only: 0047 documents its rollback plan in comments
   // (`-- drop table ...`), which must not be confused with destruction.
   const stripSql = (name) => fs.readFileSync(path.join(dir, name), "utf8")
@@ -846,7 +846,7 @@ test("7. migrations 0040–0044 remain additive and owner-scoped", async () => {
   assert.doesNotMatch(youTubeProvider, /pg_cron|cron\.schedule/, "0047 schedules no cron");
   assert.doesNotMatch(youTubeProvider, /drop table|drop column|truncate/, "0047 destroys nothing");
   assert.doesNotMatch(youTubeProvider, /instagram_publish_queue|instagram_connections/, "0047 never touches the Instagram integration");
-  for (const name of ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql"]) {
+  for (const name of ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql"]) {
     const hardening = stripSql(name);
     assert.doesNotMatch(hardening, /voom_email_flow/, `${name} never touches an email flow table`);
     assert.doesNotMatch(hardening, /voom_email_identity|voom_email_brand|voom_email_asset|voom_email_suppression|voom_email_unsubscribe/,

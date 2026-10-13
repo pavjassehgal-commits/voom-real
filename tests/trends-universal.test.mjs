@@ -1,7 +1,6 @@
 /**
  * Universal Trend Intelligence: multi-industry sources, governed collection
- * and business-specific relevance. Local PGlite (0051 base + 0055–0057 +
- * proposed 0058) with deterministic source fixtures; no network.
+ * and business-specific relevance. Local PGlite (0051 base + 0055–0058) with deterministic source fixtures; no network.
  */
 import "./helpers/server-only-shim.mjs";
 
@@ -13,7 +12,7 @@ import { createTrendDb, MARA_CONTEXT_SQL, rpcClient } from "./helpers/trend-db.m
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const WIKIDATA_SQL = read("../supabase/migrations/0057_wikidata_event_source.sql");
-const UNIVERSAL_SQL = read("../supabase/proposed/0058_universal_trend_sources.sql");
+const UNIVERSAL_SQL = read("../supabase/migrations/0058_universal_trend_sources.sql");
 const UNIVERSAL_ROLLBACK_SQL = read("../supabase/proposed/0058_universal_trend_sources.rollback.sql");
 
 const { discoverPublicHolidays } = await import("../lib/trends/connectors/public-holidays.ts");
