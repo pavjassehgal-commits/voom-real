@@ -55,6 +55,9 @@ const queueMod = await import("../lib/tiktok/publish-queue.ts");
 const dataMod = await import("../lib/tiktok/data.ts");
 const workerMod = await import("../lib/tiktok/publish-worker.ts");
 const reconcileMod = await import("../lib/tiktok/reconcile.ts");
+const consentMod = await import("../lib/tiktok/post-consent.ts");
+const settingsMod = await import("../lib/tiktok/post-settings.ts");
+const socialDrafts = await import("../lib/social/server-drafts.ts");
 
 const OWNER_A = "11111111-1111-4111-8111-111111111111";
 const OWNER_B = "99999999-9999-4999-8999-999999999999";
@@ -420,6 +423,31 @@ async function makeAsset(ownerId, draftId, { mime = "video/mp4", byteSize = 1024
   );
 }
 
+/**
+ * Records the owner's "Post to TikTok" confirmation exactly as the consent
+ * route does, bound to the queued title/privacy, the connected account and
+ * the stored video. Interaction/disclosure fields mirror enqueueInput (null).
+ */
+async function confirmPost(ownerId, draftId, { title = "Launch teaser", privacy = "SELF_ONLY", byteSize = 1024 } = {}) {
+  const { db } = await liteDb();
+  const openId = `73645806670${ownerId.slice(0, 5)}`;
+  const tiktokPost = {
+    version: 1,
+    settings: { privacy, allowComment: false, allowDuet: false, allowStitch: false, commercial: false, yourBrand: false, brandedContent: false, aiGenerated: false },
+    creatorOpenId: openId,
+    creatorNickname: "Voom Studio",
+    declaration: "music",
+    consentedAt: nowIso(),
+    fingerprint: consentMod.tiktokConsentFingerprint({
+      draftId, creatorOpenId: openId, title, privacyLevel: privacy,
+      disableComment: null, disableDuet: null, disableStitch: null,
+      brandContentToggle: null, brandOrganicToggle: null, isAigc: null,
+      assetStoragePath: `tiktok/${ownerId}/${draftId}-video.mp4`, assetByteSize: byteSize,
+    }),
+  };
+  await db.query("update public.mara_drafts set content_meta = jsonb_build_object('tiktokPost', $2::jsonb) where id = $1", [draftId, JSON.stringify(tiktokPost)]);
+}
+
 async function saveConnection(ownerId, overrides = {}) {
   const { admin } = await liteDb();
   await dataMod.saveTikTokConnection(admin, {
@@ -744,7 +772,10 @@ test("Direct Post post_info sends only documented fields and only explicitly dec
 
 test("the provider failure taxonomy keeps rate, auth, media, unaudited, cap and ambiguity apart", () => {
   const failures = pub.TIKTOK_PUBLISH_FAILURES;
-  assert.equal(Object.keys(failures).length, 22, "every documented outcome class has its own key");
+  assert.equal(Object.keys(failures).length, 23, "every documented outcome class has its own key");
+  // Missing or stale per-post consent waits for the owner; it is never retried on its own.
+  assert.equal(failures.consent_required.status, "needs_declaration");
+  assert.equal(failures.consent_required.retryable, false);
   // Rate limit: retryable, parks, and is NOT an auth failure.
   assert.equal(failures.rate_limited.retryable, true);
   assert.equal(failures.rate_limited.status, "scheduled");
@@ -1122,6 +1153,7 @@ function fakePorts(overrides = {}) {
       calls.push(["loadAsset"]);
       return "asset" in overrides ? overrides.asset : { status: "uploaded", mimeType: "video/mp4", byteSize: 1024, storagePath: "tiktok/a/video.mp4" };
     },
+    async verifyPostConsent() { calls.push(["verifyPostConsent"]); return overrides.consent ?? "valid"; },
     async openMediaRange(storagePath, start, end) { calls.push(["openMediaRange", { start, end }]); return new Uint8Array(end - start + 1); },
     async queryCreatorInfo() { calls.push(["queryCreatorInfo"]); if (overrides.creatorInfoError) throw overrides.creatorInfoError; return "creatorInfo" in overrides ? overrides.creatorInfo : fakeCreatorInfo(); },
     async initDirectPost(accessToken, metadata, sourceInfo) { calls.push(["initDirectPost", { metadata, sourceInfo }]); if (overrides.initError) throw overrides.initError; return { publishId: "7364580667079849990", uploadUrl: "https://upload.tiktok.test/task" }; },
@@ -1164,7 +1196,7 @@ test("the flow follows the documented order: approval re-check, connection+scope
   const names = callNames(ports);
   const order = [
     "loadDraft", "loadConnection", "loadCredentials", "loadAsset",
-    "queryCreatorInfo", "initDirectPost", "persistPublish",
+    "verifyPostConsent", "queryCreatorInfo", "initDirectPost", "persistPublish",
     "openMediaRange", "putChunk", "persistProgress",
     "enterProviderProcessing",
     "loadCredentials", "fetchPostStatus", "recordProviderStatus",
@@ -1992,6 +2024,7 @@ test("the publish worker drives a due, approved, declared item to 'published' â€
   await saveConnection(OWNER_A);
   const draftId = await makeDraft(OWNER_A);
   await makeAsset(OWNER_A, draftId, { byteSize: 1024 });
+  await confirmPost(OWNER_A, draftId);
   const publishId = newPublishId();
   await queueMod.enqueueTikTokPublishItem(admin, enqueueInput(draftId));
 
@@ -2029,6 +2062,7 @@ test("an interrupted upload parks at the cron boundary with the id persisted; th
   await saveConnection(OWNER_A);
   const draftId = await makeDraft(OWNER_A);
   await makeAsset(OWNER_A, draftId, { byteSize: 1024 });
+  await confirmPost(OWNER_A, draftId);
   await queueMod.enqueueTikTokPublishItem(admin, enqueueInput(draftId));
 
   // Run 1: the upload dies mid-transfer (network).
@@ -2055,6 +2089,112 @@ test("an interrupted upload parks at the cron boundary with the id persisted; th
   const row = await one("select status, tiktok_publish_id from public.tiktok_publish_queue where draft_id = $1", [draftId]);
   assert.equal(row.status, "published");
   assert.equal(row.tiktok_publish_id, parked.tiktok_publish_id, "the SAME post was completed");
+});
+
+test("without the owner's per-post confirmation the worker sends NOTHING to TikTok, and a changed post needs confirming again", async () => {
+  const { admin } = await liteDb();
+  await clearAllQueueRows();
+  await saveConnection(OWNER_A);
+
+  // Approved and queued (as Autopilot or a campaign would), but never confirmed.
+  const unconfirmed = await makeDraft(OWNER_A);
+  await makeAsset(OWNER_A, unconfirmed, { byteSize: 1024 });
+  await queueMod.enqueueTikTokPublishItem(admin, enqueueInput(unconfirmed));
+  // Confirmed, then the caption changed on the queue: the consent no longer covers it.
+  const changed = await makeDraft(OWNER_A);
+  await makeAsset(OWNER_A, changed, { byteSize: 1024 });
+  await confirmPost(OWNER_A, changed);
+  await queueMod.enqueueTikTokPublishItem(admin, enqueueInput(changed, { title: "A different caption" }));
+  // Confirmed for a different video file size: also not covered.
+  const otherVideo = await makeDraft(OWNER_A);
+  await makeAsset(OWNER_A, otherVideo, { byteSize: 1024 });
+  await confirmPost(OWNER_A, otherVideo, { byteSize: 2048 });
+  await queueMod.enqueueTikTokPublishItem(admin, enqueueInput(otherVideo));
+
+  const tiktok = fakeTikTok();
+  const result = await workerMod.runTikTokPublishing({ db: admin, config: fakeConfig(), clientFor: () => tiktok, sleep: noopSleep });
+  assert.equal(result.claimed, 3);
+  assert.equal(result.published, 0);
+  assert.deepEqual(tiktok.calls.filter(([kind]) => kind === "creatorInfo" || kind === "init" || kind === "chunk"), [], "no TikTok posting call of any kind");
+  for (const draftId of [unconfirmed, changed, otherVideo]) {
+    const row = await one("select status, failure_code, tiktok_publish_id from public.tiktok_publish_queue where draft_id = $1", [draftId]);
+    assert.equal(row.status, "needs_declaration", "the item waits for the owner");
+    assert.equal(row.failure_code, "tiktok_post_confirmation_required");
+    assert.equal(row.tiktok_publish_id, null, "no post was started");
+  }
+});
+
+test("approval alone (Autopilot, campaigns, an old privacy choice or owner default) never queues a TikTok post; the owner's confirmation does, and editing withdraws it", async () => {
+  const { admin, db } = await liteDb();
+  await clearAllQueueRows();
+  await saveConnection(OWNER_A);
+  // An owner-level default and a stored per-item privacy from before this change.
+  await admin.rpc("set_tiktok_publish_defaults", { p_owner_user_id: OWNER_A, p_default_privacy: "SELF_ONLY" });
+  const draftId = await makeDraft(OWNER_A, { status: "draft" });
+  await db.query("update public.mara_drafts set content_meta = '{\"tiktokPrivacy\":\"SELF_ONLY\"}'::jsonb where id = $1", [draftId]);
+  await makeAsset(OWNER_A, draftId, { byteSize: 1024 });
+  const scheduledAt = nowIso(-60_000);
+
+  // 1. A plain approval with a schedule, as Autopilot or a campaign approval does.
+  await socialDrafts.updateSocialDraft(admin, OWNER_A, draftId, { decision: "approved", scheduledAt });
+  let row = await one("select status, privacy_level, disable_comment from public.tiktok_publish_queue where draft_id = $1", [draftId]);
+  assert.equal(row.status, "needs_declaration", "approval is not consent: the item waits for the owner");
+  assert.equal(row.privacy_level, null, "no default or stored value stands in for the owner's per-post choice");
+
+  // 2. The owner confirms in the post sheet (the consent route's own computation).
+  const settings = { ...settingsMod.EMPTY_TIKTOK_POST_SETTINGS, privacy: "SELF_ONLY", allowComment: true, commercial: true, yourBrand: true };
+  const fields = settingsMod.tiktokPostFields(settings);
+  const caption = "Our new menu, made fresh every morning.";
+  const openId = `73645806670${OWNER_A.slice(0, 5)}`;
+  const consent = {
+    version: consentMod.TIKTOK_POST_CONSENT_VERSION,
+    settings,
+    creatorOpenId: openId,
+    creatorNickname: "Voom Studio",
+    declaration: settingsMod.tiktokDeclaration(settings).kind,
+    consentedAt: nowIso(),
+    fingerprint: consentMod.tiktokConsentFingerprint({
+      draftId, creatorOpenId: openId, title: socialDrafts.tiktokQueueTitle(caption, "Launch teaser"), ...fields,
+      assetStoragePath: `tiktok/${OWNER_A}/${draftId}-video.mp4`, assetByteSize: 1024,
+    }),
+  };
+  const confirmed = await socialDrafts.updateSocialDraft(admin, OWNER_A, draftId, { caption, scheduledAt, decision: "approved", tiktokPostConsent: consent });
+  assert.equal(confirmed.tiktokPost.settings.privacy, "SELF_ONLY");
+  assert.equal(confirmed.tiktokPost.creatorNickname, "Voom Studio");
+  assert.equal("fingerprint" in confirmed.tiktokPost || "creatorOpenId" in confirmed.tiktokPost, false, "the browser view stays sanitized");
+  row = await one("select * from public.tiktok_publish_queue where draft_id = $1", [draftId]);
+  assert.equal(row.status, "scheduled");
+  assert.equal(row.privacy_level, "SELF_ONLY");
+  assert.deepEqual(
+    [row.disable_comment, row.disable_duet, row.disable_stitch, row.brand_organic_toggle, row.brand_content_toggle, row.is_aigc],
+    [false, true, true, true, false, false],
+    "unchecked interactions are disabled; the disclosure is exactly what the owner chose",
+  );
+
+  // 3. The worker accepts exactly that confirmation and posts with those settings.
+  const tiktok = fakeTikTok();
+  const result = await workerMod.runTikTokPublishing({ db: admin, config: fakeConfig(), clientFor: () => tiktok, sleep: noopSleep });
+  assert.equal(result.published, 1);
+  const init = tiktok.calls.find(([kind]) => kind === "init");
+  assert.deepEqual(init[1].metadata.post_info, {
+    title: caption, privacy_level: "SELF_ONLY", disable_comment: false, disable_duet: true, disable_stitch: true,
+    brand_content_toggle: false, brand_organic_toggle: true, is_aigc: false,
+  });
+
+  // 4. On another draft, editing the caption after confirming withdraws the confirmation.
+  const second = await makeDraft(OWNER_A, { status: "draft" });
+  await makeAsset(OWNER_A, second, { byteSize: 1024 });
+  const secondConsent = { ...consent, fingerprint: consentMod.tiktokConsentFingerprint({
+    draftId: second, creatorOpenId: openId, title: caption, ...fields,
+    assetStoragePath: `tiktok/${OWNER_A}/${second}-video.mp4`, assetByteSize: 1024,
+  }) };
+  await socialDrafts.updateSocialDraft(admin, OWNER_A, second, { caption, scheduledAt, decision: "approved", tiktokPostConsent: secondConsent });
+  // (scheduledAt is passed because PGlite returns timestamps as Date objects, unlike Supabase's ISO strings.)
+  const edited = await socialDrafts.updateSocialDraft(admin, OWNER_A, second, { caption: "A different caption", scheduledAt });
+  assert.equal(edited.tiktokPost, null, "the confirmation no longer covers the edited caption");
+  row = await one("select status, privacy_level from public.tiktok_publish_queue where draft_id = $1", [second]);
+  assert.equal(row.status, "needs_declaration");
+  assert.equal(row.privacy_level, null);
 });
 
 test("reconciliation: PUBLISH_COMPLETE publishes, a fail-closed row is recovered read-only, and a provider-attested 'does not exist' re-arms guarded", async () => {
@@ -2222,7 +2362,8 @@ test("the TikTok hub page tells the provider truth: identity, scopes, unaudited 
   const page = await read("app/app/(shell)/tiktok/page.tsx");
   assert.match(page, /integrations\/tiktok\/status/, "the hub reads the real status endpoint");
   assert.match(page, /integrations\/tiktok\/queue/, "the hub reads the real queue endpoint");
-  assert.match(page, /integrations\/tiktok\/settings/, "the privacy default is a real, persisted owner choice");
+  assert.doesNotMatch(page, /integrations\/tiktok\/settings|Default privacy/, "TikTok requires a manual privacy choice per post: no default is offered");
+  assert.match(page, /Needs your confirmation/, "the hub explains that unconfirmed items wait for the owner");
   assert.match(page, /TikTokConnectModal/, "connect is a real flow");
   assert.match(page, /DisconnectTikTokModal/, "disconnect is a real flow");
   assert.match(page, /unaudited/i, "the unaudited restriction is disclosed");

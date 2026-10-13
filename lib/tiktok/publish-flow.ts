@@ -8,7 +8,9 @@
  *   1. re-verify the draft is still approved
  *   2. verify the connection is live and grants video.publish
  *   3. require an explicit privacy declaration (never guess)
- *   4. verify the media exists, is a publishable codec, and fits the limits
+ *   4. verify the media exists, is a publishable codec, and fits the limits,
+ *      and that the owner expressly consented to THIS post (account, caption,
+ *      settings, disclosures and video exactly as queued)
  *   5. query the CREATOR INFO required before every post and verify the
  *      user's privacy choice against the options TikTok returned live
  *   6. init Direct Post and PERSIST the publish id before any byte is sent
@@ -112,6 +114,11 @@ export interface TikTokFlowPorts {
   loadConnection(ownerId: string): Promise<{ status: string; scopes: string[] } | null>;
   loadCredentials(ownerId: string): Promise<{ openId: string; accessToken: string }>;
   loadAsset(ownerId: string, draftId: string): Promise<LoadedAsset | null>;
+  /**
+   * The owner's per-post consent, checked against exactly what is queued
+   * (lib/tiktok/post-consent.ts). Only "valid" lets a fresh post start.
+   */
+  verifyPostConsent(item: TikTokFlowItem, subject: { openId: string; storagePath: string; byteSize: number }): Promise<"valid" | "missing" | "stale">;
   openMediaRange(storagePath: string, start: number, end: number): Promise<ReadableStream<Uint8Array> | Uint8Array | null>;
   queryCreatorInfo(accessToken: string): Promise<TikTokCreatorInfo>;
   initDirectPost(
@@ -270,6 +277,21 @@ export async function runTikTokPublishFlow(
     plan = tiktokChunkPlan(asset.byteSize);
     if (!plan) return fail("media_too_large", "The video is larger than TikTok allows (4 GB)");
   } else {
+    // Express consent for THIS upload (TikTok Content Sharing Guidelines).
+    // Without it — Autopilot, a campaign approval, or an edit after the
+    // owner confirmed — nothing is sent and the item waits for the owner.
+    let consent: "valid" | "missing" | "stale";
+    try {
+      consent = await ports.verifyPostConsent(item, { openId: credentials.openId, storagePath: asset.storagePath, byteSize: asset.byteSize });
+    } catch {
+      consent = "missing";
+    }
+    if (consent !== "valid") {
+      return fail("consent_required", consent === "stale"
+        ? "This video changed after you confirmed it, so Voom needs your confirmation again before sending it to TikTok"
+        : "This video needs your confirmation before Voom sends it to TikTok");
+    }
+
     // 3. TikTok requires an explicit privacy choice — Voom never guesses one.
     if (!isTikTokPrivacy(item.privacyLevel)) {
       return fail("needs_declaration", `Choose how the post is shared — TikTok has no default privacy level`);
@@ -298,12 +320,13 @@ export async function runTikTokPublishFlow(
     // 6. Init Direct Post. The publish id is PERSISTED before any byte goes
     //    over the wire, so an ambiguous outcome can always be recovered
     //    read-only through the post-status endpoint.
+    // An interaction the creator has since turned off in TikTok stays off.
     const metadata = tiktokDirectPostMetadata({
       title: item.title,
       privacy: item.privacyLevel as (typeof TIKTOK_PRIVACY_VALUES)[number],
-      disableComment: item.disableComment,
-      disableDuet: item.disableDuet,
-      disableStitch: item.disableStitch,
+      disableComment: creator.commentDisabled === true ? true : item.disableComment,
+      disableDuet: creator.duetDisabled === true ? true : item.disableDuet,
+      disableStitch: creator.stitchDisabled === true ? true : item.disableStitch,
       brandContentToggle: item.brandContentToggle,
       brandOrganicToggle: item.brandOrganicToggle,
       isAigc: item.isAigc,

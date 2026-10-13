@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { TikTokClient } from "./client.ts";
 import { readTikTokConfig, tikTokKeyRing, type TikTokConfig } from "./config.ts";
 import { getTikTokServerCredentials } from "./data.ts";
+import { evaluateTikTokPostConsent } from "./post-consent.ts";
 import { runTikTokPublishFlow, type TikTokFlowItem, type TikTokFlowPorts } from "./publish-flow.ts";
 import {
   claimDueTikTokPosts,
@@ -195,6 +196,26 @@ export function buildTikTokFlowPorts(
         status: String(data.status ?? ""),
         byteSize: Number.isFinite(byteSize) ? byteSize : null,
       };
+    },
+    async verifyPostConsent(item, subject) {
+      const { data, error } = await db.from("mara_drafts").select("content_meta")
+        .eq("owner_user_id", item.ownerUserId).eq("id", item.draftId).maybeSingle();
+      if (error || !data) return "missing";
+      const meta = data.content_meta && typeof data.content_meta === "object" ? data.content_meta as Record<string, unknown> : {};
+      return evaluateTikTokPostConsent(meta.tiktokPost, {
+        draftId: item.draftId,
+        creatorOpenId: subject.openId,
+        title: item.title,
+        privacyLevel: item.privacyLevel,
+        disableComment: item.disableComment,
+        disableDuet: item.disableDuet,
+        disableStitch: item.disableStitch,
+        brandContentToggle: item.brandContentToggle,
+        brandOrganicToggle: item.brandOrganicToggle,
+        isAigc: item.isAigc,
+        assetStoragePath: subject.storagePath,
+        assetByteSize: subject.byteSize,
+      });
     },
     async openMediaRange(storagePath, start, end) {
       // HTTP Range read of the PRIVATE object through a short-lived signed
