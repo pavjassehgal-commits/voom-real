@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useModal } from "@/lib/voom/modal";
 import type { AudienceEligibilityPreview, AudienceRecord } from "@/lib/contacts/types";
 import type { AudienceSendResults, CampaignDeliveryState, CampaignDeliveryView, CampaignRecord, CampaignStatus } from "@/lib/voom/types";
+import { EmailResultsPanel } from "@/components/voom/campaigns/EmailResultsPanel";
 import { Icon } from "../icons";
 import { ModalBody, ModalFoot, ModalHead, ModalShell } from "../ui/Modal";
 import { Btn, Card, Field, Input, Tag, Textarea } from "../ui/primitives";
@@ -497,6 +498,10 @@ export function CampaignEditorModal({ campaign }: { campaign?: CampaignRecord | 
             )}
           </Card>
         )}
+
+        {id && (campaign?.kind ?? "email") === "email" && delivery && delivery.sendsSummary.total > 0 ? (
+          <EmailResultsPanel campaignId={id} refreshKey={delivery} />
+        ) : null}
 
         <Card className="border-amber bg-amber/[.08] p-3.5">
           <div className="flex items-start gap-2.5">
