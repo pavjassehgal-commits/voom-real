@@ -208,7 +208,9 @@ test("the migration is idempotent, and the rollback removes everything and re-ap
 
 test("the base storage migration mirrors the sources that existed before connector migrations", async () => {
   const sources = await all("select * from public.trend_sources order by source_id");
-  const baseSources = Object.values(TREND_SOURCES).filter((source) => source.id !== "wikidata_events");
+  // Sources added by later connector migrations (0057, 0058) are checked by their own tests.
+  const connectorSources = new Set(["wikidata_events", "public_holidays_nager", "wikimedia_pageviews"]);
+  const baseSources = Object.values(TREND_SOURCES).filter((source) => !connectorSources.has(source.id));
   assert.deepEqual(sources.map((s) => s.source_id), baseSources.map((source) => source.id).sort());
   for (const row of sources) {
     const source = TREND_SOURCES[row.source_id];

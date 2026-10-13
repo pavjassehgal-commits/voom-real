@@ -2299,7 +2299,7 @@ test("rolling-plan channel assignment requires no database migration", async (t)
     return;
   }
   // Trend Intelligence ships its own reviewed migrations; slot assignment added none.
-  const TREND_MIGRATIONS = ["supabase/migrations/0055_trend_intelligence.sql", "supabase/migrations/0056_trend_mara_workflow_context.sql", "supabase/migrations/0057_wikidata_event_source.sql"];
+  const TREND_MIGRATIONS = ["supabase/migrations/0055_trend_intelligence.sql", "supabase/migrations/0056_trend_mara_workflow_context.sql", "supabase/migrations/0057_wikidata_event_source.sql", "supabase/migrations/0058_universal_trend_sources.sql"];
   const added = current.filter((file) => !mainFiles.includes(file) && !TREND_MIGRATIONS.includes(file));
   const removed = mainFiles.filter((file) => !current.includes(file));
   assert.deepEqual(added, [], "no new migration was needed for server-owned slot assignment");

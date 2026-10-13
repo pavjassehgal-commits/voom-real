@@ -1453,7 +1453,7 @@ test("migrations 0047-0051 apply cleanly and 0051 is the checked-in head", async
   assert.ok(applied.includes("0047_youtube_provider.sql"), "0047 applied through PGlite");
   assert.ok(applied.includes("0049_tiktok_provider.sql"), "0049 (TikTok) applied through PGlite");
   assert.ok(applied.includes("0050_approval_state_write_lockdown.sql"), "0050 (write lockdown) applied through PGlite");
-  assert.equal(applied[applied.length - 1], "0057_wikidata_event_source.sql", "Trend Intelligence 0055-0057 follow 0051");
+  assert.equal(applied[applied.length - 1], "0058_universal_trend_sources.sql", "Trend Intelligence 0055-0058 follow 0051");
   const tables = await all(
     "select table_name from information_schema.tables where table_schema = 'public' and table_name like 'youtube_%' order by table_name",
   );

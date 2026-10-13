@@ -15,11 +15,15 @@ import { ensureWorkflowMedia, type WorkflowMediaDeps } from "./media";
 import type { TrendPromptContext } from "@/lib/trends/opportunity";
 import { checkTrendGroundedContent, checkTrendUsage } from "@/lib/trends/claim-check";
 import { loadOwnerTrendPromptContext, type TrendWorkflowClient } from "@/lib/trends/workflow-context";
+import { loadBusinessTrendIdeas } from "@/lib/trends/business-trends";
+import { MAX_TREND_IDEAS_PER_RUN } from "@/lib/trends/relevance";
+import type { TrendRpcClient } from "@/lib/trends/supabase-rpc";
 import { buildPlannedContentPayload, plannedContentJsonSchema, plannedContentSchema, plannedContentSystemPrompt } from "./prompt";
 import { trendContextEnabled } from "./trend-flag";
 import {
   ensureRollingPlan,
   type GeneratedContent,
+  type IdeaBasis,
   type PlanSlot,
   type RollingPlanPorts,
   type RollingPlanResult,
@@ -108,6 +112,38 @@ export interface WorkflowPlanningDeps {
    * service-role loader; tests may inject a deterministic fixture.
    */
   trendContext?: (db: AdminClient, ownerId: string, now: Date) => Promise<TrendPromptContext | null>;
+  /**
+   * Automatically matched trend ideas for this business (flag-gated; used only
+   * when no reviewed owner context exists). Production reads governed evidence
+   * and matches it to the business's own profile; tests may inject fixtures.
+   */
+  trendIdeas?: (db: AdminClient, business: Record<string, unknown>, now: Date) => Promise<TrendPromptContext[]>;
+}
+
+type TrendPlan =
+  | { mode: "reviewed"; context: TrendPromptContext }
+  | { mode: "matched"; contexts: TrendPromptContext[] }
+  | { mode: "none"; enabled: boolean };
+
+function businessTrendProfileInput(business: Record<string, unknown>) {
+  const text = (value: unknown) => (typeof value === "string" ? value : null);
+  return {
+    brandName: text(business.brand_name),
+    description: text(business.brand_description),
+    industry: text(business.industry),
+    targetCustomer: Array.isArray(business.target_customer) ? business.target_customer.map(String) : text(business.target_customer),
+    goal: text(business.main_goal),
+  };
+}
+
+function ideaBasisFor(kind: "reviewed_trend" | "verified_trend", context: TrendPromptContext): IdeaBasis {
+  return {
+    kind,
+    topic: context.topic,
+    market: context.market.country,
+    sources: [...new Set(context.facts.flatMap((fact) => fact.sources))].slice(0, 3),
+    observedAt: context.observedAt,
+  };
 }
 
 /**
@@ -206,17 +242,30 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
       .catch(() => null);
     return performanceContext;
   };
-  // Trend evidence: flag-gated, loaded at most once per run, and any failure
-  // to load it simply plans without it.
-  let trendContext: Promise<TrendPromptContext | null> | null = null;
-  const trendContextForPlanning = () => {
-    const loader = trendContextEnabled()
-      ? (context.planningDeps?.trendContext
-          ?? ((db: AdminClient, ownerId: string, now: Date) => loadOwnerTrendPromptContext(db as unknown as TrendWorkflowClient, ownerId, now)))
-      : undefined;
-    if (!loader) return Promise.resolve(null);
-    trendContext ??= loader(admin, context.ownerId, context.now).catch(() => null);
-    return trendContext;
+  // Trend evidence: flag-gated and loaded at most once per run. A reviewed
+  // owner context applies to every slot (existing behavior). Otherwise up to
+  // MAX_TREND_IDEAS_PER_RUN automatically matched ideas fill the first slots
+  // and the rest stay evergreen. Any failure to load simply plans without it.
+  let trendPlan: Promise<TrendPlan> | null = null;
+  let matchedSlotsUsed = 0;
+  const trendPlanForRun = (): Promise<TrendPlan> => {
+    if (!trendContextEnabled()) return Promise.resolve({ mode: "none", enabled: false });
+    trendPlan ??= (async (): Promise<TrendPlan> => {
+      const reviewedLoader = context.planningDeps?.trendContext
+        ?? ((db: AdminClient, ownerId: string, now: Date) => loadOwnerTrendPromptContext(db as unknown as TrendWorkflowClient, ownerId, now));
+      const reviewed = await reviewedLoader(admin, context.ownerId, context.now).catch(() => null);
+      if (reviewed) return { mode: "reviewed", context: reviewed };
+      const matcher = context.planningDeps?.trendIdeas
+        ?? (async (db: AdminClient, business: Record<string, unknown>, now: Date) => {
+          const selection = await loadBusinessTrendIdeas(db as unknown as TrendRpcClient, businessTrendProfileInput(business), now, { max: MAX_TREND_IDEAS_PER_RUN });
+          return selection.status === "matched" ? selection.ideas.map((idea) => idea.context) : [];
+        });
+      const contexts = await matcher(admin, context.business, context.now).catch(() => [] as TrendPromptContext[]);
+      return contexts.length > 0
+        ? { mode: "matched", contexts: contexts.slice(0, MAX_TREND_IDEAS_PER_RUN) }
+        : { mode: "none", enabled: true };
+    })();
+    return trendPlan;
   };
 
   return {
@@ -314,7 +363,8 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
     },
 
     async generateContent(slot) {
-      return generateWorkflowPlannedContent({
+      const plan = await trendPlanForRun();
+      const base = {
         business: context.business,
         goal: context.goal,
         cadence: context.cadence,
@@ -322,9 +372,27 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
         slot,
         plannedConcepts,
         performance: slot.channel === "instagram" ? await performanceContextForPlanning() : null,
-        trendOpportunity: await trendContextForPlanning(),
         ...(context.planningDeps?.provider ? { provider: context.planningDeps.provider } : {}),
-      });
+      };
+      if (plan.mode === "reviewed") {
+        const content = await generateWorkflowPlannedContent({ ...base, trendOpportunity: plan.context });
+        return { ...content, ideaBasis: ideaBasisFor("reviewed_trend", plan.context) };
+      }
+      if (plan.mode === "matched" && matchedSlotsUsed < plan.contexts.length) {
+        const opportunity = plan.contexts[matchedSlotsUsed];
+        matchedSlotsUsed += 1;
+        try {
+          const content = await generateWorkflowPlannedContent({ ...base, trendOpportunity: opportunity });
+          return { ...content, ideaBasis: ideaBasisFor("verified_trend", opportunity) };
+        } catch (reason) {
+          // A trend idea that cannot be written within its evidence becomes an
+          // evergreen idea for this slot. A rate limit is never retried.
+          const failure = reason instanceof Error ? reason : null;
+          if (failure?.message !== "content_generation_failed") throw reason;
+        }
+      }
+      const content = await generateWorkflowPlannedContent({ ...base, trendOpportunity: null });
+      return plan.mode === "none" && !plan.enabled ? content : { ...content, ideaBasis: { kind: "evergreen" } };
     },
 
     async createDraft({ planId, slot, content }) {
@@ -341,6 +409,7 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
           hashtags: content.hashtags,
           script: content.script,
           productionGuidance: content.visualBrief,
+          ...(content.ideaBasis ? { ideaBasis: content.ideaBasis } : {}),
           scheduledAt: slot.publishAt,
           planSource: { planId, slotKey: slot.slotKey },
         });
@@ -380,6 +449,7 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
           hook: content.hook,
           cta: content.cta,
           hashtags: content.hashtags,
+          ...(content.ideaBasis ? { idea_basis: content.ideaBasis } : {}),
         },
       };
       const { data, error } = await admin.from("mara_drafts")

@@ -36,6 +36,8 @@ export const SOURCE_RETENTION_CAP_MS: Record<TrendSourceId, number> = {
   youtube_data_api: 30 * DAY_MS,
   manual_research: 365 * DAY_MS,
   wikidata_events: 30 * DAY_MS,
+  public_holidays_nager: 60 * DAY_MS,
+  wikimedia_pageviews: 30 * DAY_MS,
 };
 
 export type StoreErrorCode =
