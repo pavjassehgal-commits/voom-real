@@ -21,8 +21,9 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createResendClient } from "@/lib/email/client";
 import type { ResendApiClient, ResendConfig } from "@/lib/email/core";
+import type { EmailDeliveryProvider } from "@/lib/email/provider";
+import { createResendDeliveryProvider } from "@/lib/email/providers/resend";
 import { resolveSiteUrl } from "@/utils/site-url";
 import { loadEmailBrandProfile } from "./brand";
 import {
@@ -42,6 +43,8 @@ import { domainOf } from "./identity";
 export interface BrandedSendDeps extends ProviderDomainOptions {
   /** Provider test seam. Production uses the configured Resend client. */
   client?: ResendApiClient | null;
+  /** Provider-neutral test seam. Takes precedence over the legacy client. */
+  provider?: EmailDeliveryProvider | null;
   /** Override the site URL for unsubscribe links (preview surfaces). */
   siteUrl?: string | null;
 }
@@ -400,58 +403,21 @@ export async function dispatchBrandedEmail(
   providerMessageId: string | null;
   providerStatus: string | null;
   errorCode: string | null;
+  errorKind: "configuration" | "rejected" | "ambiguous" | "network" | null;
   errorMessage: string | null;
   ambiguous: boolean;
 }> {
-  const client = deps.client ?? createResendClient();
-
-  const body: Record<string, unknown> = {
+  const provider = deps.provider ?? createResendDeliveryProvider(deps.client ?? undefined);
+  return provider.send({
     from: payload.from,
-    to: [payload.to],
+    to: payload.to,
+    replyTo: payload.replyTo,
     subject: payload.subject,
+    preheader: payload.preheader,
     html: payload.html,
     text: payload.text,
-    preheader: payload.preheader,
-  };
-  if (payload.replyTo) body.reply_to = payload.replyTo;
-
-  const response = await client.post("emails", body, {
-    headers: { "Idempotency-Key": payload.idempotencyKey },
+    idempotencyKey: payload.idempotencyKey,
   });
-
-  const parsed = await safeProviderBody(response);
-  const accepted = response.ok && typeof parsed?.id === "string" && parsed.id.length > 0;
-  return {
-    ok: accepted,
-    providerMessageId: typeof parsed?.id === "string" ? parsed.id : null,
-    providerStatus: typeof parsed?.last_event === "string" ? parsed.last_event : response.ok ? "accepted" : null,
-    errorCode: response.ok ? accepted ? null : "provider_outcome_ambiguous" : `HTTP_${response.status}`,
-    errorMessage: response.ok ? accepted ? null : "The provider response did not include a message identifier." : providerErrorMessage(parsed, "Resend couldn't accept that email send."),
-    ambiguous: response.ok && !accepted,
-  };
-}
-
-async function safeProviderBody(response: Response) {
-  const text = await response.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    return { message: text } satisfies Record<string, unknown>;
-  }
-}
-
-function providerErrorMessage(body: Record<string, unknown> | null, fallback: string) {
-  const candidate = typeof body?.message === "string"
-    ? body.message
-    : typeof body?.error === "string"
-      ? body.error
-      : typeof body?.detail === "string"
-        ? body.detail
-        : typeof body?.more_info === "string"
-          ? body.more_info
-          : fallback;
-  return candidate.slice(0, 1000);
 }
 
 // Re-exported for callers that only need the resolver pieces.
