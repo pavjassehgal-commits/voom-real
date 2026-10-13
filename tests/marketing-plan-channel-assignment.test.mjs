@@ -1093,3 +1093,151 @@ test("feature flag off leaves the existing workflow payload and loader behavior 
     if (previous !== undefined) process.env.VOOM_TREND_CONTEXT_ENABLED = previous;
   }
 });
+
+/* ── Universal Trend Intelligence: automatic per-business matching in Replenish ── */
+
+const MATCHED_IDEAS = [
+  {
+    topic: "Pumpkin spice",
+    market: { country: "ZZ", language: "en" },
+    eventWindow: null,
+    facts: [{ statement: "\"Pumpkin spice\" was among the most-viewed English Wikipedia articles on 2026-09-11, with 51234 views, according to Wikimedia pageview statistics.", sources: ["Wikimedia pageviews"] }],
+    observedAt: "2026-09-12T03:00:00.000Z",
+    confidence: "medium",
+    caveats: ["Do not imply that the business is an official partner, sponsor or participant of Pumpkin spice.", "Worldwide signal; it is not specific to the business's location."],
+  },
+  {
+    topic: "Summer Bank Holiday",
+    market: { country: "GB", language: "en" },
+    eventWindow: { start: "2026-09-28", end: "2026-09-28" },
+    facts: [{ statement: "Summer Bank Holiday is a public holiday in the United Kingdom on 2026-09-28, according to the Nager.Date public holiday calendar.", sources: ["Nager.Date"] }],
+    observedAt: "2026-09-12T03:00:00.000Z",
+    confidence: "high",
+    caveats: ["Treat this as a calendar moment only; do not claim any official link to the holiday."],
+  },
+];
+
+/** Names the trend topic when one is supplied (no digits, so no unsupported numbers), otherwise generic evergreen copy. */
+function trendAwareProvider(captured = []) {
+  return {
+    async structured(request) {
+      const payload = JSON.parse(request.messages[1].content);
+      captured.push(payload);
+      const topic = payload.trendOpportunity?.topic ?? null;
+      const video = !(payload.assignedSocialSlot.channel === "instagram" && payload.assignedSocialSlot.format === "post");
+      return request.parse({
+        concept: topic ? `${topic} at our cafe` : "Behind the counter at our cafe",
+        hook: topic ? `Make ${topic} part of your week.` : "A simple idea for your week.",
+        caption: topic ? `Our cafe has a simple way to enjoy ${topic}.` : "A simple everyday idea from our cafe.",
+        cta: "Visit us.",
+        hashtags: ["cafe"],
+        description: payload.assignedSocialSlot.channel === "youtube" ? "A short, practical idea from our cafe team." : "",
+        script: video ? ["Open on the counter", "Show the idea", "Explain why it works", "Invite viewers in"] : [],
+        visualBrief: "Warm cafe visuals with the team; no third-party logos.",
+      });
+    },
+  };
+}
+
+async function withTrendFlag(value, run) {
+  const previous = process.env.VOOM_TREND_CONTEXT_ENABLED;
+  if (value === undefined) delete process.env.VOOM_TREND_CONTEXT_ENABLED;
+  else process.env.VOOM_TREND_CONTEXT_ENABLED = value;
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) delete process.env.VOOM_TREND_CONTEXT_ENABLED;
+    else process.env.VOOM_TREND_CONTEXT_ENABLED = previous;
+  }
+}
+
+const basisOf = (draft) => draft.content_meta?.idea_basis ?? draft.content_meta?.ideaBasis ?? null;
+
+test("Replenish without a reviewed context uses at most two automatically matched trends and labels every idea", async () => {
+  await withTrendFlag("true", async () => {
+    const captured = [];
+    let ideaReads = 0;
+    const admin = createMemoryAdmin(adminSeed({
+      preferredChannels: ["Instagram", "TikTok", "YouTube"],
+      businessOverrides: { brand_name: "Copper Kettle Cafe", brand_description: "Neighbourhood cafe and bakery in London.", industry: "Restaurant" },
+    }));
+    const result = await service.runOwnerWorkflow(admin, {
+      ownerId: OWNER, now: NOW, trigger: "replenish", stage: "planning_only",
+      planningDeps: {
+        provider: trendAwareProvider(captured),
+        performanceContext: async () => null,
+        trendContext: async () => null,
+        trendIdeas: async (_db, business) => {
+          ideaReads += 1;
+          assert.equal(business.brand_name, "Copper Kettle Cafe", "matching sees the business's own profile");
+          return MATCHED_IDEAS;
+        },
+      },
+    });
+    assert.equal(result.created, 7);
+    assert.equal(result.failures.length, 0);
+    assert.equal(ideaReads, 1, "matching runs at most once per Replenish run");
+    const withTrend = captured.filter((payload) => payload.trendOpportunity);
+    assert.deepEqual(withTrend.map((payload) => payload.trendOpportunity.topic), ["Pumpkin spice", "Summer Bank Holiday"]);
+    assert.ok(captured.slice(2).every((payload) => !("trendOpportunity" in payload)), "remaining slots are evergreen");
+    const drafts = admin.tables.get("mara_drafts");
+    const bases = drafts.map(basisOf);
+    assert.ok(bases.every(Boolean), "every planned idea records its basis");
+    assert.deepEqual(bases.filter((b) => b.kind === "verified_trend").map((b) => b.topic).sort(), ["Pumpkin spice", "Summer Bank Holiday"]);
+    assert.equal(bases.filter((b) => b.kind === "evergreen").length, 5);
+    const trendDraft = drafts.find((draft) => basisOf(draft).topic === "Summer Bank Holiday");
+    assert.deepEqual(basisOf(trendDraft).sources, ["Nager.Date"]);
+  });
+});
+
+test("a matched trend idea that cannot stay within its evidence falls back to an evergreen idea, not a failure", async () => {
+  await withTrendFlag("true", async () => {
+    const captured = [];
+    const admin = createMemoryAdmin(adminSeed({ preferredChannels: ["Instagram"] }));
+    const result = await service.runOwnerWorkflow(admin, {
+      ownerId: OWNER, now: NOW, trigger: "replenish", stage: "planning_only",
+      planningDeps: {
+        // Generic copy never names the topic, so the grounding check rejects it.
+        provider: structuredProvider(captured),
+        performanceContext: async () => null,
+        trendContext: async () => null,
+        trendIdeas: async () => MATCHED_IDEAS,
+      },
+    });
+    assert.equal(result.created, 7);
+    assert.equal(result.failures.length, 0);
+    assert.ok(admin.tables.get("mara_drafts").every((draft) => basisOf(draft)?.kind === "evergreen"));
+    assert.equal(captured.filter((payload) => payload.trendOpportunity).length, 2, "each matched idea was attempted once");
+  });
+});
+
+test("with no relevant evidence every Replenish idea is evergreen and clearly labelled", async () => {
+  await withTrendFlag("true", async () => {
+    const admin = createMemoryAdmin(adminSeed({ preferredChannels: ["Instagram", "TikTok"] }));
+    const captured = [];
+    const result = await service.runOwnerWorkflow(admin, {
+      ownerId: OWNER, now: NOW, trigger: "replenish", stage: "planning_only",
+      // No injected loaders: the production loaders read the (unavailable) RPC and fail closed.
+      planningDeps: { provider: structuredProvider(captured), performanceContext: async () => null },
+    });
+    assert.equal(result.created, 7);
+    assert.ok(captured.every((payload) => !("trendOpportunity" in payload)));
+    assert.ok(admin.tables.get("mara_drafts").every((draft) => basisOf(draft)?.kind === "evergreen"));
+  });
+});
+
+test("with the flag off no idea basis is recorded and no matcher runs", async () => {
+  await withTrendFlag(undefined, async () => {
+    const admin = createMemoryAdmin(adminSeed({ preferredChannels: ["Instagram", "TikTok"] }));
+    const result = await service.runOwnerWorkflow(admin, {
+      ownerId: OWNER, now: NOW, trigger: "replenish", stage: "planning_only",
+      planningDeps: {
+        provider: structuredProvider(),
+        performanceContext: async () => null,
+        trendIdeas: async () => { throw new Error("flag-off matcher must not run"); },
+      },
+    });
+    assert.equal(result.created, 7);
+    assert.ok(admin.tables.get("mara_drafts").every((draft) => basisOf(draft) === null));
+  });
+});

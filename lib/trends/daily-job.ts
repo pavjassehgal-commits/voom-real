@@ -4,6 +4,7 @@ import { runWikidataCollection, type CollectionReport } from "./collection-runne
 import { getTrendRetentionStatus, runTrendRetentionPurge, type PurgeResult, type RetentionStatus } from "./governance";
 import { listUsableTrendObservationsRpc } from "./read-model";
 import type { TrendRpcClient } from "./supabase-rpc";
+import { runUniversalTrendCollection, type UniversalCollectionReport } from "./universal-collection";
 
 /**
  * The daily Trend Intelligence job (cron route: app/api/cron/trend-collection).
@@ -15,14 +16,17 @@ import type { TrendRpcClient } from "./supabase-rpc";
  *   3. otherwise the governed collection: approval/coverage preflight, ONE
  *      bounded Wikidata GET, storage through the store RPC (duplicates are
  *      reported, never overwritten);
- *   4. retention health for monitoring.
+ *   4. the multi-industry sources (public holidays per approved country,
+ *      Wikipedia attention per approved language), each behind the same
+ *      approval/coverage preflight and a 20-hour rate limit;
+ *   5. retention health for monitoring.
  * It never approves evidence and never creates MARA contexts. Every outcome
  * is a safe code; no credentials or raw errors are returned.
  */
 
 export const DAILY_COLLECTION_MIN_INTERVAL_MS = 20 * 60 * 60 * 1000;
 
-type FetchLike = (input: string, init: RequestInit) => Promise<{ ok: boolean; json(): Promise<unknown> }>;
+type FetchLike = (input: string, init: RequestInit) => Promise<{ ok: boolean; status?: number; json(): Promise<unknown> }>;
 
 export type DailyTrendJobReport = {
   runAt: string;
@@ -31,6 +35,7 @@ export type DailyTrendJobReport = {
     | { status: "skipped_recently_collected"; lastRetrievedAt: string }
     | { status: "skipped_read_failed"; code: string }
     | CollectionReport;
+  universal: UniversalCollectionReport;
   retention: RetentionStatus | null;
   healthy: boolean;
 };
@@ -57,6 +62,7 @@ export async function runDailyTrendJob(input: {
       : await runWikidataCollection({ client: input.client, now: input.now, fetch: input.fetch, projectId: input.projectId });
   }
 
+  const universal = await runUniversalTrendCollection({ client: input.client, now: input.now, fetch: input.fetch });
   const status = await getTrendRetentionStatus(input.client);
   const retention = status.ok ? status.status : null;
   const collectionOk = collection.status === "completed" || collection.status === "skipped_recently_collected";
@@ -64,6 +70,7 @@ export async function runDailyTrendJob(input: {
     runAt: input.now.toISOString(),
     purge,
     collection,
+    universal,
     retention,
     healthy: purge.status === "succeeded" && collectionOk && retention !== null && !retention.breach,
   };

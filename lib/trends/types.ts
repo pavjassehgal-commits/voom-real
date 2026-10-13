@@ -304,7 +304,7 @@ export type ApiAvailability = {
 export type TrendSourceDefinition = {
   id: string;
   name: string;
-  provider: "google" | "youtube" | "wikimedia" | "voom";
+  provider: "google" | "youtube" | "wikimedia" | "voom" | "nager";
   dataSchema: "supported";
   apiAvailability: ApiAvailability;
   /** Platforms this source can describe. An observation's platform must be one of them. */
@@ -542,6 +542,64 @@ export const TREND_SOURCES = {
     requiresEvidenceUrl: true,
     metrics: [],
     freshness: { freshForMs: 1 * DAY, staleAfterMs: 3 * DAY, expiresAfterMs: 14 * DAY },
+    connection: "connected",
+  },
+  public_holidays_nager: {
+    id: "public_holidays_nager",
+    name: "Nager.Date public holidays",
+    provider: "nager",
+    dataSchema: "supported",
+    apiAvailability: {
+      status: "generally_available",
+      note: "Free, keyless JSON API from the open-source (MIT) Nager.Date project: official public holidays by country and year. Calendar facts only; no popularity metric. Coverage varies by country (for example AE returns no data).",
+      reference: "https://date.nager.at/Api",
+      checkedAt: "2026-10-13T00:00:00Z",
+    },
+    platforms: ["web"],
+    subjectKinds: ["topic"],
+    languageScope: "optional",
+    // The evidence URL is the country/year calendar page; its fragment carries the holiday date.
+    requiresEvidenceUrl: true,
+    metrics: [],
+    freshness: { freshForMs: 7 * DAY, staleAfterMs: 21 * DAY, expiresAfterMs: 45 * DAY },
+    connection: "connected",
+  },
+  wikimedia_pageviews: {
+    id: "wikimedia_pageviews",
+    name: "Wikimedia pageviews (most-viewed articles)",
+    provider: "wikimedia",
+    dataSchema: "supported",
+    apiAvailability: {
+      status: "generally_available",
+      note: "Wikimedia Analytics REST API, keyless (a descriptive User-Agent is required). Daily most-viewed articles per Wikipedia language edition; pageview data is CC0. Measures reader attention on Wikipedia only, not searches, sales or social popularity. It is a language-edition signal, not a country signal, so it is stored under the worldwide market ZZ.",
+      reference: "https://doc.wikimedia.org/generated-data-platform/aqs/analytics-api/reference/page-views.html",
+      checkedAt: "2026-10-13T00:00:00Z",
+    },
+    platforms: ["web"],
+    subjectKinds: ["topic"],
+    languageScope: "optional",
+    requiresEvidenceUrl: true,
+    metrics: [
+      {
+        key: "daily_views",
+        label: "Wikipedia views (one UTC day)",
+        unit: "count",
+        versions: [
+          {
+            id: "wikimedia_pageviews.daily_views.v1",
+            definition:
+              "Views of one Wikipedia article on one UTC day, all access methods, as reported in the Wikimedia most-viewed-articles list for that language edition. Reader attention on Wikipedia only.",
+            effectiveFrom: null,
+            effectiveUntil: null,
+          },
+        ],
+        min: 0,
+        max: null,
+        integer: true,
+        required: true,
+      },
+    ],
+    freshness: { freshForMs: 2 * DAY, staleAfterMs: 4 * DAY, expiresAfterMs: 10 * DAY },
     connection: "connected",
   },
 } as const satisfies Record<string, TrendSourceDefinition>;

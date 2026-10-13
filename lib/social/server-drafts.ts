@@ -134,6 +134,8 @@ export interface CreateSocialDraftInput {
   privacy?: "public" | "private" | "unlisted" | null;
   /** Explicit TikTok privacy declaration (policy-sensitive; never defaulted here). */
   tiktokPrivacy?: string | null;
+  /** Where a planned idea came from (verified trend evidence or evergreen); informational only. */
+  ideaBasis?: { kind: string; topic?: string; market?: string; sources?: string[]; observedAt?: string };
 }
 
 /** Creates one TikTok/YouTube planning draft. Rolling-plan writes are idempotent. */
@@ -164,6 +166,15 @@ export async function createSocialDraft(
     ...(typeof input.madeForKids === "boolean" ? { madeForKids: input.madeForKids } : {}),
     ...(input.privacy === "public" || input.privacy === "private" || input.privacy === "unlisted" ? { privacy: input.privacy } : {}),
     ...(typeof input.tiktokPrivacy === "string" && isTikTokPrivacy(input.tiktokPrivacy) ? { tiktokPrivacy: input.tiktokPrivacy } : {}),
+    ...(input.ideaBasis && ["reviewed_trend", "verified_trend", "evergreen"].includes(input.ideaBasis.kind) ? {
+      ideaBasis: {
+        kind: input.ideaBasis.kind,
+        ...(typeof input.ideaBasis.topic === "string" ? { topic: input.ideaBasis.topic.slice(0, 200) } : {}),
+        ...(typeof input.ideaBasis.market === "string" ? { market: input.ideaBasis.market.slice(0, 2) } : {}),
+        ...(Array.isArray(input.ideaBasis.sources) ? { sources: input.ideaBasis.sources.filter((v) => typeof v === "string").map((v) => v.slice(0, 200)).slice(0, 3) } : {}),
+        ...(typeof input.ideaBasis.observedAt === "string" ? { observedAt: input.ideaBasis.observedAt.slice(0, 40) } : {}),
+      },
+    } : {}),
   };
   const row = {
     conversation_id: conversationId,

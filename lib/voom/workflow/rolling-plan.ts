@@ -54,7 +54,17 @@ export interface PlanSlot {
   publishAt: string;
 }
 
+/**
+ * Where a planned idea came from. Present only while trend context is enabled:
+ * "reviewed_trend" (owner-reviewed context), "verified_trend" (automatically
+ * matched governed evidence) or "evergreen" (no current signal was used).
+ */
+export type IdeaBasis =
+  | { kind: "reviewed_trend" | "verified_trend"; topic: string; market: string; sources: string[]; observedAt: string }
+  | { kind: "evergreen" };
+
 export interface GeneratedContent {
+  ideaBasis?: IdeaBasis;
   concept: string;
   hook: string;
   caption: string;

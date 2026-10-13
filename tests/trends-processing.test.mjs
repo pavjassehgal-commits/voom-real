@@ -449,10 +449,10 @@ function sourceFiles(dir) {
   });
 }
 
-const PURE_TREND_FILES = ["claim-check.ts", "confidence.ts", "dedupe.ts", "freshness.ts", "opportunity.ts", "schema.ts", "types.ts"];
+const PURE_TREND_FILES = ["claim-check.ts", "confidence.ts", "dedupe.ts", "freshness.ts", "industry.ts", "opportunity.ts", "relevance.ts", "schema.ts", "types.ts"];
 // Stage 2B: server-only storage modules. They reach the database only through
 // the injected TrendDatabase port (db.ts) — no client, network or environment.
-const SERVER_TREND_FILES = ["collection-runner.ts", "daily-job.ts", "db.ts", "discovery.ts", "governance.ts", "policy-store.ts", "read-model.ts", "storage.ts", "supabase-rpc.ts", "workflow-context.ts"];
+const SERVER_TREND_FILES = ["business-trends.ts", "collection-runner.ts", "daily-job.ts", "db.ts", "discovery.ts", "governance.ts", "policy-store.ts", "read-model.ts", "storage.ts", "supabase-rpc.ts", "universal-collection.ts", "workflow-context.ts"];
 // The single module allowed to bind the trend RPCs to Voom's Supabase admin client.
 const RPC_ADAPTER = "supabase-rpc.ts";
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -476,6 +476,7 @@ test("lib/trends server-only modules: server-only, injected database access, no 
     for (const specifier of imports) {
       const allowed = /^\.\/[a-z-]+$/.test(specifier)
         || (file === "discovery.ts" && specifier === "./connectors/wikidata-events")
+        || (file === "universal-collection.ts" && ["./connectors/public-holidays", "./connectors/wikimedia-pageviews"].includes(specifier))
         || (file === RPC_ADAPTER && specifier === "@/utils/supabase/admin");
       assert.ok(allowed, `${file} imports only sibling modules: ${specifier}`);
     }
@@ -509,6 +510,9 @@ const TREND_TYPE_IMPORTERS = new Map([
     'import type { TrendPromptContext } from "@/lib/trends/opportunity";',
     'import { checkTrendGroundedContent, checkTrendUsage } from "@/lib/trends/claim-check";',
     'import { loadOwnerTrendPromptContext, type TrendWorkflowClient } from "@/lib/trends/workflow-context";',
+    'import { loadBusinessTrendIdeas } from "@/lib/trends/business-trends";',
+    'import { MAX_TREND_IDEAS_PER_RUN } from "@/lib/trends/relevance";',
+    'import type { TrendRpcClient } from "@/lib/trends/supabase-rpc";',
   ]],
   // The daily collection cron route (disabled by default, unscheduled).
   [path.join("app", "api", "cron", "trend-collection", "route.ts"), [

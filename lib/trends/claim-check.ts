@@ -10,7 +10,11 @@
  *   - prices, currencies, discounts and percentages not in the allowed text;
  *   - partnership / sponsorship / "official" claims about the trend topic;
  *   - links (MARA is told never to invent links);
- *   - guarantees and results claims ("guaranteed", "proven", "#1", ...).
+ *   - guarantees and results claims ("guaranteed", "proven", "#1", ...);
+ *   - popularity claims ("trending", "viral", "popular on TikTok/Instagram")
+ *     that the stored facts do not state: no current source measures social
+ *     or search popularity, so attention on Wikipedia can never be presented
+ *     as an Instagram, TikTok, YouTube or search trend.
  * It is a screen for review, not proof of truth: a clean result means no
  * known pattern of unsupported claim was found.
  */
@@ -18,7 +22,7 @@
 import type { TrendPromptContext } from "./opportunity";
 
 export type ClaimFinding = {
-  kind: "unsupported_number" | "price_or_discount" | "partnership_claim" | "link" | "guarantee_or_result";
+  kind: "unsupported_number" | "price_or_discount" | "partnership_claim" | "link" | "guarantee_or_result" | "popularity_claim";
   text: string;
   field: string;
 };
@@ -68,6 +72,8 @@ function allowedNumbers(context: TrendPromptContext, businessText: string): Set<
 const PRICE = /(?:\b(?:aed|dhs?|usd|eur|gbp)\b\s*\d|\d+\s*(?:aed|dhs?|usd|eur|gbp)\b|[$€£]\s*\d|\d+\s*%|\b\d+\s*per\s*cent\b|\b(?:discount|% off|off\s+(?:all|your|every)|free\s+(?:smoothie|drink|bowl|coffee|item|gift)|buy\s+one|bogo|promo\s*code|coupon)\b)/i;
 const PARTNERSHIP = /\b(?:official\s+(?:partner|sponsor|supplier|venue|hub|cafe|café)|(?:proud(?:ly)?\s+)?sponsor(?:ed|ing|s)?\b|in\s+partnership\s+with|partnered\s+with|endorsed\s+by|affiliated\s+with)/i;
 const LINK = /\bhttps?:\/\/\S+|\bwww\.\S+|\b[a-z0-9-]+\.(?:com|ae|net|org|io)\b/i;
+/** Claims of social, search or general popularity. Allowed only when the stored facts say the same words. */
+const POPULARITY = /\b(trending|trends? on|viral|went viral|going viral|blowing up|everyone(?:'s| is) talking|all over (?:tiktok|instagram|youtube|social)|(?:popular|hot|huge|big) (?:on|across) (?:tiktok|instagram|youtube|social media|google)|most[- ](?:searched|popular|liked|shared)|top (?:trend|search)(?:es|s)?)\b/i;
 const GUARANTEE = /\b(?:guarantee[sd]?|proven|clinically|#1|number\s+one|best\s+in\s+(?:dubai|the\s+uae|town)|award[- ]winning|lose\s+\d+)/i;
 
 const normalizeReference = (text: string) => text
@@ -132,6 +138,8 @@ export function checkTrendGroundedContent(
     if (link) findings.push({ kind: "link", text: link[0], field });
     const guarantee = GUARANTEE.exec(text);
     if (guarantee) findings.push({ kind: "guarantee_or_result", text: guarantee[0], field });
+    const popularity = POPULARITY.exec(text);
+    if (popularity && !allowedText.toLowerCase().includes(popularity[0].toLowerCase())) findings.push({ kind: "popularity_claim", text: popularity[0], field });
   }
   return { clean: findings.length === 0, findings, checkedFields: fields.filter(([, t]) => t).map(([f]) => f) };
 }
