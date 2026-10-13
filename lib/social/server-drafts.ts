@@ -52,6 +52,8 @@ import {
   type TikTokQueueRow,
 } from "@/lib/tiktok/publish-queue";
 import { isTikTokPrivacy } from "@/lib/tiktok/publishing";
+import { parseTikTokPostConsent, type TikTokPostConsent } from "@/lib/tiktok/post-consent";
+import { tiktokPostFields, type TikTokPostSettings } from "@/lib/tiktok/post-settings";
 import {
   cancelYouTubePublishItem,
   enqueueYouTubePublishItem,
@@ -94,6 +96,17 @@ export interface SocialDraftView {
    * visible state that parks the queue row in `needs_declaration`.
    */
   tiktokPrivacy: string | null;
+  /**
+   * The owner's confirmation of this exact TikTok post (account, caption,
+   * settings, disclosures, video), or null when they have not confirmed it.
+   * Without it the TikTok worker sends nothing.
+   */
+  tiktokPost: {
+    settings: TikTokPostSettings;
+    creatorNickname: string | null;
+    declaration: "music" | "music_and_branded";
+    consentedAt: string;
+  } | null;
   /** The durable provider queue state, when a queue row exists. */
   queueStatus: string | null;
   /** The queue's truthful failure message, when it carries one. */
@@ -319,6 +332,7 @@ function toSocialDraftView(row: Record<string, unknown>, asset: Record<string, u
   const madeForKids = typeof meta.madeForKids === "boolean" ? meta.madeForKids : null;
   const privacy = meta.privacy === "public" || meta.privacy === "private" || meta.privacy === "unlisted" ? meta.privacy : null;
   const tiktokPrivacy = typeof meta.tiktokPrivacy === "string" && isTikTokPrivacy(meta.tiktokPrivacy) ? meta.tiktokPrivacy : null;
+  const consent = pair.channel === "tiktok" ? parseTikTokPostConsent(meta.tiktokPost) : null;
 
   // Truthful state. Both social video channels read their DURABLE QUEUE: the
   // state the provider machinery really established — scheduled, uploading /
@@ -378,6 +392,13 @@ function toSocialDraftView(row: Record<string, unknown>, asset: Record<string, u
     madeForKids,
     privacy,
     tiktokPrivacy,
+    // Sanitized: the fingerprint and the TikTok account id stay on the server.
+    tiktokPost: consent ? {
+      settings: consent.settings,
+      creatorNickname: consent.creatorNickname,
+      declaration: consent.declaration,
+      consentedAt: consent.consentedAt,
+    } : null,
     queueStatus: queue ? String(queue.status) : null,
     queueFailureMessage: queue && queue.failure_message ? String(queue.failure_message) : null,
     asset: asset ? { displayName: String(asset.display_name ?? ""), mimeType: String(asset.mime_type ?? "") } : null,
@@ -391,7 +412,7 @@ export function tikTokQueueLabel(queueStatus: string): string {
   switch (queueStatus) {
     case "scheduled": return "Scheduled — publishes through the TikTok queue";
     case "waiting_for_media": return "Waiting for the video file";
-    case "needs_declaration": return "Needs a privacy choice (TikTok has no default privacy)";
+    case "needs_declaration": return "Needs your confirmation to post on TikTok";
     case "permission_required": return "TikTok connection needs attention";
     case "posting": return "Uploading to TikTok";
     case "provider_processing": return "TikTok is processing the video";
@@ -435,6 +456,16 @@ export interface UpdateSocialDraftInput {
   privacy?: "public" | "private" | "unlisted" | null;
   /** Explicit TikTok privacy declaration (policy-sensitive; never defaulted here). */
   tiktokPrivacy?: string | null;
+  /**
+   * SERVER ONLY — never accepted from a request body. The consent the owner
+   * just gave in the TikTok post sheet (app/api/social-drafts/[id]/tiktok-post).
+   */
+  tiktokPostConsent?: TikTokPostConsent;
+}
+
+/** The TikTok post title Voom queues: the caption (TikTok's limit is 2200 characters). */
+export function tiktokQueueTitle(caption: string, title: string): string {
+  return caption.trim().slice(0, 2200) || title.trim().slice(0, 2200) || "Untitled";
 }
 
 async function cancelAndVerifyYouTubeQueue(admin: AdminClient, ownerId: string, draftId: string): Promise<void> {
@@ -518,9 +549,31 @@ export async function updateSocialDraft(
   // to undeclared (which parks the queue row visibly — never a silent guess).
   const madeForKids = input.madeForKids !== undefined ? input.madeForKids : existing.madeForKids;
   const privacy = input.privacy !== undefined ? input.privacy : existing.privacy;
-  const tiktokPrivacy = input.tiktokPrivacy !== undefined
+  let tiktokPrivacy = input.tiktokPrivacy !== undefined
     ? (isTikTokPrivacy(input.tiktokPrivacy) ? input.tiktokPrivacy : null)
     : existing.tiktokPrivacy;
+
+  // TikTok consent covers exactly what the owner reviewed. A new consent
+  // replaces it; un-approving, or changing the caption, title or privacy
+  // afterwards withdraws it, so the worker cannot send what was not confirmed.
+  let tiktokPost: TikTokPostConsent | null = null;
+  if (existing.channel === "tiktok") {
+    if (input.tiktokPostConsent) {
+      tiktokPost = input.tiktokPostConsent;
+      tiktokPrivacy = tiktokPost.settings.privacy;
+    } else {
+      const { data: raw, error: rawError } = await admin.from("mara_drafts").select("content_meta")
+        .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
+      if (rawError) throw new Error("social_draft_read_failed");
+      const rawMeta = raw?.content_meta && typeof raw.content_meta === "object" ? raw.content_meta as Record<string, unknown> : {};
+      const stored = parseTikTokPostConsent(rawMeta.tiktokPost);
+      const withdrawn = status !== "approved"
+        || title !== existing.title
+        || caption !== existing.caption
+        || (stored !== null && tiktokPrivacy !== stored.settings.privacy);
+      tiktokPost = stored && !withdrawn ? stored : null;
+    }
+  }
 
   const meta: Record<string, unknown> = {
     ...(description ? { description } : {}),
@@ -529,6 +582,7 @@ export async function updateSocialDraft(
     ...(typeof madeForKids === "boolean" ? { madeForKids } : {}),
     ...(privacy ? { privacy } : {}),
     ...(tiktokPrivacy ? { tiktokPrivacy } : {}),
+    ...(tiktokPost ? { tiktokPost } : {}),
   };
 
   const needsQueueCancellation = status !== "approved" || !scheduledAt;
@@ -597,7 +651,7 @@ export async function updateSocialDraft(
       scheduledAt,
       title,
       caption,
-      tiktokPrivacy,
+      tiktokPost,
     });
   }
 
@@ -684,18 +738,19 @@ export async function syncSocialDraftToYouTubeQueue(
  *     provider-owned rows are returned untouched by the RPC itself);
  *   - anything else → cancel, which the RPC refuses for rows the provider
  *     already owns (posting/processing/published) — history is preserved;
- *   - TikTok has NO default privacy level: the privacy resolves explicit
- *     item value first, then the owner's explicit connection default; an
- *     unresolved choice stays null and the row parks in
- *     `needs_declaration` — Voom never invents a policy-sensitive value.
- *     The live creator-info options TikTok returns still win at publish time
- *     (an unaudited client may be refused even an offered non-private level).
+ *   - every Direct Post field (privacy, Comment/Duet/Stitch, commercial
+ *     disclosure, AI label) comes ONLY from the owner's confirmation of this
+ *     post in the TikTok post sheet. TikTok's guidelines require a manual
+ *     privacy choice with no default for every post, so there is no owner
+ *     default or campaign value to fall back on: without a confirmation the
+ *     privacy stays null and the row parks in `needs_declaration` (shown as
+ *     "Needs your confirmation") — this is what keeps Autopilot and campaign
+ *     approvals from posting to TikTok on their own;
  *   - the post title is the CAPTION (TikTok's own limit: 2200 characters);
- *   - interaction/brand disclosures are not yet surfaced in the UI and are
- *     passed as null (omitted from the request — TikTok's own defaults apply);
  *   - a missing video asset holds the row truthfully in waiting_for_media.
- * This module performs NO TikTok call: only the cron worker uploads, and
- * only TikTok's own PUBLISH_COMPLETE ever establishes Published.
+ * This module performs NO TikTok call: only the cron worker uploads, it
+ * re-checks the confirmation against the queued row before sending anything,
+ * and only TikTok's own PUBLISH_COMPLETE ever establishes Published.
  */
 export async function syncSocialDraftToTikTokQueue(
   admin: AdminClient,
@@ -706,7 +761,7 @@ export async function syncSocialDraftToTikTokQueue(
     scheduledAt: string | null;
     title: string;
     caption: string;
-    tiktokPrivacy: string | null;
+    tiktokPost: TikTokPostConsent | null;
   },
 ): Promise<void> {
   if (draft.status !== "approved" || !draft.scheduledAt) {
@@ -714,16 +769,7 @@ export async function syncSocialDraftToTikTokQueue(
     return;
   }
 
-  // Owner-level explicit default (nullable — no default is a real state:
-  // TikTok has no default privacy level).
-  const { data: connection, error: connectionError } = await admin.from("tiktok_connections")
-    .select("default_privacy")
-    .eq("owner_user_id", ownerId).maybeSingle();
-  if (connectionError) throw new Error("tiktok_connection_read_failed");
-  const connectionDefault = connection && typeof connection.default_privacy === "string" && isTikTokPrivacy(connection.default_privacy)
-    ? connection.default_privacy
-    : null;
-  const privacy = draft.tiktokPrivacy ?? connectionDefault;
+  const fields = draft.tiktokPost ? tiktokPostFields(draft.tiktokPost.settings) : null;
 
   const { data: asset, error: assetError } = await admin.from("post_draft_assets")
     .select("id,status").eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
@@ -734,21 +780,18 @@ export async function syncSocialDraftToTikTokQueue(
     .select("id").eq("owner_user_id", ownerId).eq("source_draft_id", draftId).maybeSingle();
   if (calendarError) throw new Error("tiktok_calendar_read_failed");
 
-  // The TikTok post title is the caption; TikTok's own limit is 2200 chars.
-  const title = draft.caption.trim().slice(0, 2200) || draft.title.trim().slice(0, 2200) || "Untitled";
-
   const queued = await enqueueTikTokPublishItem(admin, {
     ownerId,
     draftId,
     calendarItemId: calendar ? String(calendar.id) : null,
-    title,
-    privacyLevel: privacy,
-    disableComment: null,
-    disableDuet: null,
-    disableStitch: null,
-    brandContentToggle: null,
-    brandOrganicToggle: null,
-    isAigc: null,
+    title: tiktokQueueTitle(draft.caption, draft.title),
+    privacyLevel: fields ? fields.privacyLevel : null,
+    disableComment: fields ? fields.disableComment : null,
+    disableDuet: fields ? fields.disableDuet : null,
+    disableStitch: fields ? fields.disableStitch : null,
+    brandContentToggle: fields ? fields.brandContentToggle : null,
+    brandOrganicToggle: fields ? fields.brandOrganicToggle : null,
+    isAigc: fields ? fields.isAigc : null,
     scheduledAt: draft.scheduledAt,
     waitingForMedia,
   });

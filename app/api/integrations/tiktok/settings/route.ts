@@ -5,15 +5,13 @@ import { createAdminClient } from "@/utils/supabase/admin";
 export const runtime = "nodejs";
 
 /**
- * The owner's explicit TikTok privacy default.
+ * The owner's stored TikTok privacy default (legacy).
  *
- * TikTok has NO default privacy level: this is an OPTIONAL owner-level
- * declaration that fills gaps for items that carry no explicit declaration
- * of their own. Setting it to null clears the default — undeclared items
- * then park visibly in `needs_declaration`. Voom never invents a default
- * here: until the owner speaks, the system stays silent rather than
- * guessing a policy-sensitive value. The live creator-info options TikTok
- * returns still win at publish time.
+ * TikTok's Content Sharing Guidelines require a manual privacy choice with no
+ * default for every post, so this value is NO LONGER used for posting: every
+ * TikTok post takes its privacy from the owner's confirmation in the "Post to
+ * TikTok" sheet (lib/tiktok/post-consent.ts). The route is kept so existing
+ * stored values can still be cleared; it can never make Voom post.
  */
 const settingsSchema = z.object({
   defaultPrivacy: z.enum(["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"]).nullable(),

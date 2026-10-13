@@ -47,7 +47,7 @@ export const TERMINAL_TIKTOK_PUBLISH_STATES: TikTokPublishState[] = ["published"
 export const TIKTOK_PUBLISH_STATE_LABELS: Record<TikTokPublishState, string> = {
   scheduled: "Scheduled",
   waiting_for_media: "Waiting for media",
-  needs_declaration: "Needs privacy declaration",
+  needs_declaration: "Needs your confirmation",
   permission_required: "Needs attention",
   posting: "Posting to TikTok",
   provider_processing: "TikTok is processing",
@@ -339,6 +339,16 @@ export const TIKTOK_PUBLISH_FAILURES = {
     status: "needs_declaration",
     code: "privacy_declaration_required",
     message: "This item needs its privacy choice before TikTok allows a post. TikTok has no default privacy — set it on the item or in TikTok settings.",
+    retryable: false,
+  },
+  consent_required: {
+    // TikTok's Content Sharing Guidelines: content is sent only after the
+    // user expressly consented to THAT upload. No consent (an item approved
+    // by Autopilot or a campaign) or a consent that no longer matches the
+    // caption, settings, account or video parks the item for the owner.
+    status: "needs_declaration",
+    code: "tiktok_post_confirmation_required",
+    message: "This video needs your confirmation before Voom sends it to TikTok. Open it and choose Post to TikTok to review the account, privacy, interaction settings and disclosures. Nothing was sent.",
     retryable: false,
   },
   privacy_not_allowed: {

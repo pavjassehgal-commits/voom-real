@@ -19,8 +19,11 @@ import type { TikTokConnectionView } from "@/lib/tiktok/types";
  *   - TikTok's unaudited-app restriction is stated plainly while it applies:
  *     until Voom's app passes the content-sharing audit, TikTok restricts
  *     posts through it to SELF_ONLY viewership;
- *   - TikTok has NO default privacy level: the default selector is an
- *     explicit owner declaration, and "no default" is a real, visible state;
+ *   - every TikTok post is confirmed individually in the "Post to TikTok"
+ *     sheet (account, who can view, Comment/Duet/Stitch, disclosures). TikTok
+ *     requires a manual privacy choice with no default, so this page offers
+ *     no default privacy, and nothing Autopilot or a campaign approves is sent
+ *     to TikTok until the owner confirms it;
  *   - the queue list shows the durable queue's own states. "Published"
  *     appears only when TikTok's own post-status endpoint returned
  *     PUBLISH_COMPLETE — the provider's own evidence, never Voom's guess;
@@ -46,13 +49,6 @@ type QueueItem = {
   attempts: number;
 };
 
-const PRIVACY_OPTIONS: { value: string; label: string }[] = [
-  { value: "PUBLIC_TO_EVERYONE", label: "Everyone" },
-  { value: "MUTUAL_FOLLOW_FRIENDS", label: "Friends of friends (mutual follow)" },
-  { value: "FOLLOWER_OF_CREATOR", label: "Followers" },
-  { value: "SELF_ONLY", label: "Only me (private)" },
-];
-
 export default function TikTokPage() {
   return <Suspense fallback={null}><TikTokPageContent /></Suspense>;
 }
@@ -63,9 +59,6 @@ function TikTokPageContent() {
   const [connection, setConnection] = useState<TikTokConnectionView | null>(null);
   const [queue, setQueue] = useState<QueueItem[] | null>(null);
   const [loadError, setLoadError] = useState(false);
-  const [defaultPrivacy, setDefaultPrivacy] = useState<string>("");
-  const [settingsBusy, setSettingsBusy] = useState(false);
-  const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const connectionError = searchParams.get("tiktok_error");
   const justConnected = searchParams.get("tiktok") === "connected";
 
@@ -79,7 +72,6 @@ function TikTokPageContent() {
       if (!statusResponse.ok) throw new Error("status_failed");
       const statusBody = await statusResponse.json() as { connection: TikTokConnectionView };
       setConnection(statusBody.connection);
-      setDefaultPrivacy(statusBody.connection.defaultPrivacy ?? "");
       setQueue(queueResponse.ok ? (await queueResponse.json() as { items: QueueItem[] }).items : null);
     } catch {
       setLoadError(true);
@@ -91,26 +83,6 @@ function TikTokPageContent() {
     window.addEventListener("voom:data-changed", () => void load());
     return () => { window.removeEventListener("voom:data-changed", () => void load()); window.clearTimeout(timer); };
   }, [load]);
-
-  async function saveDefaults() {
-    setSettingsBusy(true);
-    setSettingsMessage(null);
-    try {
-      const response = await fetch("/api/integrations/tiktok/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ defaultPrivacy: defaultPrivacy === "" ? null : defaultPrivacy }),
-      });
-      const body = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Could not save those defaults.");
-      setSettingsMessage("Default saved. It fills gaps for items with no explicit choice — TikTok's live options still win at publish time.");
-      await load();
-    } catch (cause) {
-      setSettingsMessage(cause instanceof Error ? cause.message : "Could not save those defaults.");
-    } finally {
-      setSettingsBusy(false);
-    }
-  }
 
   const connected = connection?.connected === true;
 
@@ -177,30 +149,13 @@ function TikTokPageContent() {
 
       {connected && (
         <Card className="mt-3.5 p-4">
-          <h2 className="font-display text-lg font-semibold">Publishing defaults</h2>
+          <h2 className="font-display text-lg font-semibold">Posting to TikTok</h2>
           <p className="mt-1 text-xs leading-relaxed text-text-3">
-            Optional, explicit default for items that carry no privacy choice of their own. TikTok has NO default
-            privacy level: with no default and no per-item choice, the item waits visibly in &quot;Needs a privacy
-            choice&quot; instead of publishing with a value nobody chose. The options TikTok returns for your
-            account at publish time still win.
+            You confirm every TikTok post yourself. Open a TikTok Video in the Studio and choose Post to TikTok to
+            see which account it goes to, choose who can view it, allow or block comments, Duet and Stitch, and
+            disclose promotional content. Voom sends nothing to TikTok without that confirmation — including
+            videos that Autopilot or a campaign approved. Those wait here as &quot;Needs your confirmation&quot;.
           </p>
-          <div className="mt-3">
-            <label className="block">
-              <span className="text-xs font-medium text-text-2">Default privacy</span>
-              <select
-                value={defaultPrivacy}
-                onChange={(event) => setDefaultPrivacy(event.target.value)}
-                className="mt-1 w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm sm:max-w-sm"
-              >
-                <option value="">No default (declare per item)</option>
-                {PRIVACY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            </label>
-          </div>
-          <div className="mt-3 flex items-center gap-3">
-            <Btn variant="outline" size="sm" disabled={settingsBusy} onClick={() => void saveDefaults()}>{settingsBusy ? "Saving…" : "Save default"}</Btn>
-            {settingsMessage ? <span className="text-xs text-text-3">{settingsMessage}</span> : null}
-          </div>
         </Card>
       )}
 
@@ -211,7 +166,7 @@ function TikTokPageContent() {
           means TikTok&apos;s own post-status endpoint confirmed PUBLISH_COMPLETE.
         </p>
         {!queue || queue.length === 0 ? (
-          <p className="mt-3 text-sm text-text-3">Nothing on the TikTok queue yet. Approve and schedule a TikTok Video in the Studio or a campaign.</p>
+          <p className="mt-3 text-sm text-text-3">Nothing on the TikTok queue yet. Open a TikTok Video in the Studio and choose Post to TikTok.</p>
         ) : (
           <div className="mt-3 divide-y divide-line">
             {queue.map((item) => (
@@ -249,8 +204,8 @@ function TikTokPageContent() {
         <Card className="mt-3.5 p-4">
           <h2 className="font-display text-lg font-semibold">How TikTok publishing works in Voom</h2>
           <ul className="mt-2 space-y-1.5 text-[13px] leading-relaxed text-text-2">
-            <li>1. Plan a TikTok Video in the Studio or a campaign, declare its privacy choice, approve and schedule it.</li>
-            <li>2. Approval puts it on Voom&apos;s durable TikTok queue — one publish identity per item, impossible to double-post.</li>
+            <li>1. Plan a TikTok Video in the Studio or a campaign and attach the video.</li>
+            <li>2. Choose Post to TikTok: review the account, who can view it, interaction settings and disclosures, then confirm. Only then does it join Voom&apos;s durable TikTok queue — one publish identity per item, impossible to double-post.</li>
             <li>3. At the scheduled time the worker checks TikTok&apos;s live creator options, then starts the Direct Post and streams the video in resumable chunks; interrupted uploads resume, they never restart or duplicate.</li>
             <li>4. TikTok processes the video; Voom reports Published only when TikTok&apos;s own post-status endpoint confirms PUBLISH_COMPLETE.</li>
             <li>5. Until Voom&apos;s app passes TikTok&apos;s content-sharing audit, TikTok restricts posts to private viewership — Voom says so plainly and never claims more.</li>

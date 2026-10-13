@@ -70,13 +70,20 @@ export default function PrivacyPage() {
           channel, and does not request monetary or revenue analytics scopes.
         </p>
         <p>
-          <b>TikTok:</b> Voom&apos;s TikTok integration is being configured and
-          tested in the TikTok developer sandbox. When authorized via TikTok
-          OAuth under minimal required scopes (including basic user profile and
-          video publishing), Voom uses TikTok&apos;s official Content Posting API
-          to prepare, schedule, and publish video content directly to your
-          TikTok account while respecting your chosen privacy level and posting
-          preferences.
+          <b>TikTok:</b> When you connect TikTok through TikTok&apos;s OAuth,
+          Voom requests only <b>user.info.basic</b> (your TikTok account ID,
+          display name, and avatar) and <b>video.publish</b> (to post videos
+          you confirm). Voom uses TikTok&apos;s official Content Posting API to
+          send a video to your TikTok account only after you review and confirm
+          that specific post in Voom, including the account it goes to, who can
+          view it, whether comments, Duet, and Stitch are allowed, and any
+          commercial content disclosure. Before each post, Voom reads your
+          current TikTok posting options (such as the privacy levels TikTok
+          offers your account) and stores your confirmed choices with the post.
+          Voom does not request access to your TikTok videos, followers, or
+          analytics. While TikTok has not yet completed its review of
+          Voom&apos;s app, TikTok only allows posts from Voom to be visible to
+          you (private).
         </p>
         <p>
           <b>OAuth Token Security:</b> All provider OAuth access tokens, refresh
