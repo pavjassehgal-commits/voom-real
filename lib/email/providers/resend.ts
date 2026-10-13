@@ -102,7 +102,10 @@ function normalizeResendEventStatus(eventType: string): NormalizedEmailEventStat
   if (type === "email.clicked") return "clicked";
   if (type === "email.bounced") return "bounced";
   if (type === "email.complained") return "complained";
-  if (type === "email.failed" || type === "email.delivery_delayed") return "failed";
+  if (type === "email.failed") return "failed";
+  // A delay is temporary (Resend keeps retrying); it is recorded as an event
+  // but must never mark the send as failed.
+  if (type === "email.delivery_delayed") return "delayed";
   if (type === "email.canceled") return "canceled";
   return "unknown";
 }

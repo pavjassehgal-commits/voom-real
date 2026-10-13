@@ -53,6 +53,8 @@ export type NormalizedEmailEventStatus =
   | "complained"
   | "failed"
   | "canceled"
+  /** A temporary delay: Resend is still trying. Never a failure. */
+  | "delayed"
   | "unknown";
 
 export interface NormalizedEmailDeliveryEvent {
