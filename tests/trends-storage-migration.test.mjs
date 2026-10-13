@@ -266,7 +266,9 @@ test("no merchant or customer data can live in trend storage, and nothing is sch
   )).map((r) => r.target).sort();
   assert.deepEqual(foreignTargets, ["public.trend_observations", "public.trend_sources"]);
   assert.doesNotMatch(MIGRATION, /cron\.schedule|pg_cron|net\.http/i);
-  assert.doesNotMatch(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"), /trend/i);
+  // The only trend schedule is the governed daily collection route (inert without TREND_COLLECTION_ENABLED).
+  const crons = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8")).crons;
+  assert.deepEqual(crons.filter((c) => /trend/i.test(c.path)).map((c) => c.path), ["/api/cron/trend-collection"]);
 });
 
 /* ──────────────────────────────────────────────────────────────
