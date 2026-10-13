@@ -12,7 +12,11 @@ import { canUseAutomationMode, normalizePlan } from "@/lib/billing/plans";
 import { CADENCE_LABELS, normalizeCadence, type Cadence, type ContentType } from "@/lib/voom/cadence";
 import { accountTimezone, formatLocalTime, localDate } from "@/lib/voom/timezone";
 import { ensureWorkflowMedia, type WorkflowMediaDeps } from "./media";
-import { buildPlannedContentPayload, plannedContentJsonSchema, plannedContentSchema, PLANNED_CONTENT_SYSTEM_PROMPT } from "./prompt";
+import type { TrendPromptContext } from "@/lib/trends/opportunity";
+import { checkTrendGroundedContent, checkTrendUsage } from "@/lib/trends/claim-check";
+import { loadOwnerTrendPromptContext, type TrendWorkflowClient } from "@/lib/trends/workflow-context";
+import { buildPlannedContentPayload, plannedContentJsonSchema, plannedContentSchema, plannedContentSystemPrompt } from "./prompt";
+import { trendContextEnabled } from "./trend-flag";
 import {
   ensureRollingPlan,
   type GeneratedContent,
@@ -98,6 +102,12 @@ export interface WorkflowRunInput {
 export interface WorkflowPlanningDeps {
   provider?: AiProvider;
   performanceContext?: (db: AdminClient, ownerId: string) => Promise<PerformancePlanContext | null>;
+  /**
+   * Verified trend evidence for this owner. Consulted ONLY when the
+   * VOOM_TREND_CONTEXT_ENABLED flag is on. Production uses the fail-closed
+   * service-role loader; tests may inject a deterministic fixture.
+   */
+  trendContext?: (db: AdminClient, ownerId: string, now: Date) => Promise<TrendPromptContext | null>;
 }
 
 /**
@@ -195,6 +205,18 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
     performanceContext ??= (context.planningDeps?.performanceContext ?? loadPerformancePlanContext)(admin, context.ownerId)
       .catch(() => null);
     return performanceContext;
+  };
+  // Trend evidence: flag-gated, loaded at most once per run, and any failure
+  // to load it simply plans without it.
+  let trendContext: Promise<TrendPromptContext | null> | null = null;
+  const trendContextForPlanning = () => {
+    const loader = trendContextEnabled()
+      ? (context.planningDeps?.trendContext
+          ?? ((db: AdminClient, ownerId: string, now: Date) => loadOwnerTrendPromptContext(db as unknown as TrendWorkflowClient, ownerId, now)))
+      : undefined;
+    if (!loader) return Promise.resolve(null);
+    trendContext ??= loader(admin, context.ownerId, context.now).catch(() => null);
+    return trendContext;
   };
 
   return {
@@ -300,6 +322,7 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
         slot,
         plannedConcepts,
         performance: slot.channel === "instagram" ? await performanceContextForPlanning() : null,
+        trendOpportunity: await trendContextForPlanning(),
         ...(context.planningDeps?.provider ? { provider: context.planningDeps.provider } : {}),
       });
     },
@@ -596,6 +619,8 @@ export async function generateWorkflowPlannedContent(input: {
   slot: PlanSlot;
   plannedConcepts: string[];
   performance?: PerformancePlanContext | null;
+  /** Verified trend evidence (flag-gated by the caller); null/absent = none. */
+  trendOpportunity?: TrendPromptContext | null;
   /** Test seam only; production uses the configured AI provider. */
   provider?: AiProvider;
 }): Promise<GeneratedContent> {
@@ -618,11 +643,12 @@ export async function generateWorkflowPlannedContent(input: {
     timezone: input.timeZone,
     recentConcepts: input.plannedConcepts,
     performance: input.performance ?? null,
+    trendOpportunity: input.trendOpportunity ?? null,
   });
   try {
     const plan = await (input.provider ?? createAiProvider()).structured({
       messages: [
-        { role: "system", content: PLANNED_CONTENT_SYSTEM_PROMPT },
+        { role: "system", content: plannedContentSystemPrompt({ trendEvidence: Boolean(input.trendOpportunity) }) },
         { role: "user", content: JSON.stringify(payload) },
       ],
       temperature: 0.7,
@@ -640,6 +666,20 @@ export async function generateWorkflowPlannedContent(input: {
       if (slot.channel === "tiktok" && composeSocialVideoCaption({ ...plan, script }).length > 2200) {
         throw new Error("tiktok_caption_too_long");
       }
+    }
+    if (input.trendOpportunity) {
+      const generated = { ...plan, script };
+      if (!checkTrendUsage(generated, input.trendOpportunity).grounded) throw new Error("trend_not_referenced");
+      const claims = checkTrendGroundedContent(generated, input.trendOpportunity, {
+        name: String(business.brand_name ?? "Your business"),
+        description: String(business.brand_description ?? ""),
+        industry: String(business.industry ?? ""),
+        goal: input.goal,
+        targetCustomer: Array.isArray(business.target_customer)
+          ? business.target_customer.map(String)
+          : business.target_customer ? [String(business.target_customer)] : [],
+      });
+      if (!claims.clean) throw new Error("trend_unsupported_claim");
     }
     return {
       concept: plan.concept,

@@ -6,6 +6,20 @@ export interface AiConfig {
   apiKey?: string;
   baseUrl: string;
   model: string;
+  requestTimeoutMs: number;
+}
+
+export const DEFAULT_AI_REQUEST_TIMEOUT_MS = 30_000;
+export const MAX_AI_REQUEST_TIMEOUT_MS = 120_000;
+
+function requestTimeoutMs(value: string | undefined): number {
+  const raw = value?.trim();
+  if (!raw) return DEFAULT_AI_REQUEST_TIMEOUT_MS;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new AiError("not_configured", "MARA's AI request timeout is invalid.");
+  }
+  return Math.min(parsed, MAX_AI_REQUEST_TIMEOUT_MS);
 }
 
 const PROVIDER_DEFAULTS: Record<string, string> = {
@@ -20,11 +34,12 @@ export function getAiConfig(env: NodeJS.ProcessEnv = process.env): AiConfig {
   const apiKey = env.AI_API_KEY?.trim();
   const model = env.AI_MODEL?.trim();
   const baseUrl = (env.AI_BASE_URL?.trim() || PROVIDER_DEFAULTS[provider])?.replace(/\/$/, "");
+  const timeoutMs = requestTimeoutMs(env.AI_REQUEST_TIMEOUT_MS);
 
   const requiresApiKey = provider !== "local";
   if ((requiresApiKey && !apiKey) || !model || !baseUrl) {
     throw new AiError("not_configured", "MARA's AI provider is not configured.");
   }
 
-  return { provider, apiKey, baseUrl, model };
+  return { provider, apiKey, baseUrl, model, requestTimeoutMs: timeoutMs };
 }

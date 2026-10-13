@@ -91,7 +91,10 @@ export class OpenAiCompatibleProvider implements AiProvider {
     // schema use json_schema structured output and may retry a transient
     // failure up to STRUCTURED_MAX_ATTEMPTS - 1 times.
     let mode: StructuredMode = !schema ? "json_object" : schema.strict === false ? "json_schema_best_effort" : "json_schema_strict";
-    const maxAttempts = schema ? STRUCTURED_MAX_ATTEMPTS : 1;
+    const explicitMaxAttempts = request.maxAttempts === undefined
+      ? null
+      : Math.min(Math.max(Math.trunc(request.maxAttempts), 1), STRUCTURED_MAX_ATTEMPTS);
+    const maxAttempts = schema ? explicitMaxAttempts ?? STRUCTURED_MAX_ATTEMPTS : 1;
 
     let attempts = 0;
     let lastError: AiError | null = null;
@@ -106,6 +109,10 @@ export class OpenAiCompatibleProvider implements AiProvider {
           // all (its model only supports a weaker mode). Degrade
           // strict -> best-effort -> json_object. A capability probe is not a
           // generation failure, so it does not spend a retry.
+          // A request-scoped cap counts every provider request, including a
+          // capability failure. This lets the live demo enforce exactly one
+          // inference while preserving the historical fallback elsewhere.
+          if (explicitMaxAttempts !== null && attempts >= maxAttempts) throw error;
           attempts -= 1;
           mode = mode === "json_schema_strict" ? "json_schema_best_effort" : "json_object";
           continue;
@@ -131,13 +138,13 @@ export class OpenAiCompatibleProvider implements AiProvider {
     // sample can succeed. Legacy json_object calls keep transient = false.
     const transient = request.jsonSchema !== undefined;
     if (typeof content !== "string") {
-      throw new AiError("malformed_response", "The AI provider returned no structured response.", undefined, transient);
+      throw new AiError("malformed_response", "The AI provider returned no structured response.", undefined, transient, "structured_content_missing");
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(stripJsonFence(content));
     } catch {
-      throw new AiError("malformed_response", "The AI provider returned malformed structured data.", undefined, transient);
+      throw new AiError("malformed_response", "The AI provider returned malformed structured data.", undefined, transient, "structured_json_parse");
     }
     try {
       return request.parse(parsed);
@@ -146,7 +153,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
       // The local schema rejected what the provider returned. That is a
       // deterministic schema/input failure — never retried — surfaced with the
       // same truthful malformed_response code the callers already translate.
-      throw new AiError("malformed_response", "The AI provider returned malformed structured data.");
+      throw new AiError("malformed_response", "The AI provider returned malformed structured data.", undefined, false, "structured_schema_validation");
     }
   }
 
@@ -157,7 +164,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
         method: "POST",
         headers: { ...(this.config.apiKey ? { Authorization: `Bearer ${this.config.apiKey}` } : {}), "Content-Type": "application/json" },
         body: JSON.stringify({ model: this.config.model, messages: request.messages, tools: request.tools, tool_choice: "auto", temperature: 0.2, max_tokens: request.maxTokens ?? 1200, stream: false }),
-        signal: AbortSignal.timeout(30_000), cache: "no-store",
+        signal: AbortSignal.timeout(this.config.requestTimeoutMs ?? 30_000), cache: "no-store",
       });
     } catch { throw new AiError("unavailable", "The AI provider is temporarily unavailable."); }
     if (response.status === 429) throw new AiError("rate_limited", "The AI provider is rate limited.", Number(response.headers.get("retry-after")) || undefined);
@@ -183,6 +190,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
           messages: request.messages,
           temperature: request.temperature ?? 0.6,
           max_tokens: request.maxTokens ?? 1200,
+          ...(request.reasoningEffort ? { reasoning: { effort: request.reasoningEffort } } : {}),
           stream,
           ...(json
             ? json.kind === "json_schema"
@@ -190,11 +198,11 @@ export class OpenAiCompatibleProvider implements AiProvider {
               : { response_format: { type: "json_object" } }
             : {}),
         }),
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(this.config.requestTimeoutMs ?? 30_000),
         cache: "no-store",
       });
     } catch {
-      throw new AiError("unavailable", "The AI provider is temporarily unavailable.", undefined, true);
+      throw new AiError("unavailable", "The AI provider is temporarily unavailable.", undefined, true, "transport");
     }
 
     if (response.status === 429) {
@@ -224,7 +232,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
       }
       // Every other 4xx is a deterministic request/input failure (bad model,
       // bad schema, auth) — retried never, surfaced truthfully.
-      throw new AiError("unavailable", `The AI provider returned HTTP ${response.status}.`);
+      throw new AiError("unavailable", `The AI provider returned HTTP ${response.status}.`, undefined, false, "provider_http");
     }
     return response;
   }
@@ -251,7 +259,7 @@ async function safeJson(response: Response): Promise<unknown> {
   try {
     return await response.json();
   } catch {
-    throw new AiError("malformed_response", "The AI provider returned invalid JSON.");
+    throw new AiError("malformed_response", "The AI provider returned invalid JSON.", undefined, false, "response_json");
   }
 }
 

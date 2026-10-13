@@ -9,6 +9,8 @@ export interface AiRequest {
   messages: AiMessage[];
   temperature?: number;
   maxTokens?: number;
+  /** Optional provider reasoning control. Omitted by every existing production caller. */
+  reasoningEffort?: "low" | "medium" | "high";
 }
 
 /**
@@ -28,6 +30,8 @@ export interface AiJsonSchemaSpec {
 
 export interface AiStructuredRequest<T> extends AiRequest {
   parse: (value: unknown) => T;
+  /** Optional hard request cap. Omitted = the existing bounded retry policy. */
+  maxAttempts?: number;
   /**
    * The provider-side schema for this structured call. When set, the request
    * uses `json_schema` structured output (strict unless marked otherwise)
@@ -71,6 +75,14 @@ export interface AiProvider {
 
 export type AiErrorCode = "not_configured" | "rate_limited" | "unavailable" | "malformed_response";
 
+export type AiFailureStage =
+  | "transport"
+  | "response_json"
+  | "structured_content_missing"
+  | "structured_json_parse"
+  | "structured_schema_validation"
+  | "provider_http";
+
 export class AiError extends Error {
   public readonly code: AiErrorCode;
   public readonly retryAfterSeconds?: number;
@@ -81,12 +93,15 @@ export class AiError extends Error {
    * failures, which must never be retried.
    */
   public readonly transient: boolean;
+  /** Safe diagnostic category only; never contains provider output or request data. */
+  public readonly stage?: AiFailureStage;
 
-  constructor(code: AiErrorCode, message: string, retryAfterSeconds?: number, transient: boolean = false) {
+  constructor(code: AiErrorCode, message: string, retryAfterSeconds?: number, transient: boolean = false, stage?: AiFailureStage) {
     super(message);
     this.name = "AiError";
     this.code = code;
     this.retryAfterSeconds = retryAfterSeconds;
     this.transient = transient;
+    this.stage = stage;
   }
 }

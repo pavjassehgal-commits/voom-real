@@ -570,13 +570,16 @@ test("migrations 0001–0045 are untouched and 0046–0051 are the only new ones
   // ACL fix (0048), the TikTok provider (0049), the approval-state write
   // lockdown (0050) and AI request rate limits (0051) are the only
   // migrations after Campaigns v3.
-  assert.equal(files[files.length - 1], "0051_ai_request_rate_limits.sql", "0051 (AI request rate limits) is the newest migration");
-  assert.equal(files[files.length - 2], "0050_approval_state_write_lockdown.sql", "0050 (approval-state write lockdown) precedes it");
-  assert.equal(files[files.length - 3], "0049_tiktok_provider.sql", "0049 (TikTok provider) precedes 0050");
-  assert.equal(files[files.length - 4], "0048_youtube_oauth_state_acl.sql", "0048 (YouTube OAuth ACL fix) precedes 0049");
-  assert.equal(files[files.length - 5], "0047_youtube_provider.sql", "0047 (YouTube provider) precedes 0048");
-  assert.equal(files[files.length - 6], "0046_multi_social_core.sql", "0046 (Multi-Social Core) precedes 0047");
-  assert.equal(files[files.length - 7], "0045_campaigns_v3_unified_channels.sql", "0045 remains intact");
+  // Trend Intelligence (0055-0057) follows 0051; 0052-0054 are reserved for the Admin Panel release.
+  assert.deepEqual(files.slice(-3), ["0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql"], "0055-0057 (Trend Intelligence) are the newest migrations");
+  const beforeTrend = files.filter((name) => name < "0055");
+  assert.equal(beforeTrend[beforeTrend.length - 1], "0051_ai_request_rate_limits.sql", "0051 (AI request rate limits) precedes Trend Intelligence");
+  assert.equal(beforeTrend[beforeTrend.length - 2], "0050_approval_state_write_lockdown.sql", "0050 (approval-state write lockdown) precedes it");
+  assert.equal(beforeTrend[beforeTrend.length - 3], "0049_tiktok_provider.sql", "0049 (TikTok provider) precedes 0050");
+  assert.equal(beforeTrend[beforeTrend.length - 4], "0048_youtube_oauth_state_acl.sql", "0048 (YouTube OAuth ACL fix) precedes 0049");
+  assert.equal(beforeTrend[beforeTrend.length - 5], "0047_youtube_provider.sql", "0047 (YouTube provider) precedes 0048");
+  assert.equal(beforeTrend[beforeTrend.length - 6], "0046_multi_social_core.sql", "0046 (Multi-Social Core) precedes 0047");
+  assert.equal(beforeTrend[beforeTrend.length - 7], "0045_campaigns_v3_unified_channels.sql", "0045 remains intact");
   for (const expected of [
     "0033_automated_campaigns.sql",
     "0034_automated_campaign_shape_check_fix.sql",

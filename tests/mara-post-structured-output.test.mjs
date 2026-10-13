@@ -145,6 +145,7 @@ test("output failing the local schema is rejected deterministically (a single at
   const error = await provider().structured(copyRequest()).catch((reason) => reason);
   assert.ok(error instanceof AiError);
   assert.equal(error.code, "malformed_response", "the truthful failure code the routes already translate is preserved");
+  assert.equal(error.stage, "structured_schema_validation");
   assert.equal(error.transient, false, "a local schema/input failure is deterministic");
   assert.equal(calls.length, 1, "deterministic schema failures are never retried");
 });
@@ -191,6 +192,42 @@ test("bad provider samples retry only within the bounded policy", async () => {
     (error) => error instanceof AiError && error.code === "malformed_response",
   );
   assert.equal(persistent.length, STRUCTURED_MAX_ATTEMPTS, "persistent failures stop at the bound — they never loop");
+});
+
+test("request-scoped maxAttempts=1 disables retries without changing the default policy", async () => {
+  const one = mockFetch([okJson("not json")]);
+  await assert.rejects(
+    () => provider().structured(copyRequest({ maxAttempts: 1 })),
+    (error) => error instanceof AiError && error.stage === "structured_json_parse",
+  );
+  assert.equal(one.length, 1);
+
+  const normal = mockFetch([okJson("not json"), okJson(VALID_COPY)]);
+  assert.deepEqual(await provider().structured(copyRequest()), postDraftSchema.parse(VALID_COPY));
+  assert.equal(normal.length, 2, "omitting maxAttempts preserves the existing retry behavior");
+});
+
+test("reasoning effort is opt-in and serialized only when requested", async () => {
+  const calls = mockFetch([okJson(VALID_COPY)]);
+  await provider().structured(copyRequest({ maxAttempts: 1, reasoningEffort: "low", maxTokens: 2200 }));
+  assert.deepEqual(calls[0].body.reasoning, { effort: "low" });
+  assert.equal(calls[0].body.max_tokens, 2200);
+
+  const unchanged = mockFetch([okJson(VALID_COPY)]);
+  await provider().structured(copyRequest());
+  assert.equal("reasoning" in unchanged[0].body, false, "existing callers remain byte-shape compatible");
+});
+
+test("safe failure stages distinguish missing content and invalid structured JSON", async () => {
+  mockFetch([{ status: 200, body: JSON.stringify({ choices: [{ message: { reasoning: "hidden" }, finish_reason: "length" }] }) }]);
+  const missingError = await provider().structured(copyRequest()).catch((reason) => reason);
+  assert.ok(missingError instanceof AiError);
+  assert.equal(missingError.stage, "structured_content_missing");
+
+  mockFetch([okJson("{not-json")]);
+  const malformedError = await provider().structured(copyRequest()).catch((reason) => reason);
+  assert.ok(malformedError instanceof AiError);
+  assert.equal(malformedError.stage, "structured_json_parse");
 });
 
 test("rate limits and 5xx faults are transient and bounded", async () => {
