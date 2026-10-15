@@ -11,6 +11,7 @@ import {
   TIKTOK_COMMERCIAL_CHOICE_REQUIRED,
   TIKTOK_MUSIC_USAGE_URL,
   TIKTOK_UNAUDITED_PRIVATE_ONLY,
+  isTikTokVideoPreviewReady,
   tiktokCommercialLabel,
   tiktokDeclaration,
   tiktokPrivacyChoices,
@@ -101,6 +102,8 @@ export function TikTokPostSheet({
   const [when, setWhen] = useState<"now" | "schedule">("now");
   const [schedule, setSchedule] = useState("");
   const [duration, setDuration] = useState<number | null>(null);
+  const [previewState, setPreviewState] = useState<"loading" | "ready" | "error">("loading");
+  const [previewError, setPreviewError] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -112,6 +115,9 @@ export function TikTokPostSheet({
       const body = await response.json() as SheetData & { error?: string };
       if (!response.ok) throw new Error(body.error ?? "Voom couldn't prepare this TikTok post.");
       setData(body);
+      setDuration(null);
+      setPreviewState(body.video?.previewUrl ? "loading" : "error");
+      setPreviewError(body.video?.previewUrl ? "" : "The video preview isn't available. Reload before posting to TikTok.");
       setCaption(body.caption ?? "");
       // A previous confirmation pre-fills the choices; a first post starts empty.
       setSettings(body.settings ?? EMPTY_TIKTOK_POST_SETTINGS);
@@ -144,7 +150,16 @@ export function TikTokPostSheet({
   const declaration = tiktokDeclaration(settings);
   const label = tiktokCommercialLabel(settings);
   const scheduleValid = when === "now" || schedule !== "";
-  const canPost = Boolean(data?.video?.publishable && data.video && caption.trim() && check?.ok && scheduleValid && confirmed && !busy);
+  const canPost = Boolean(
+    data?.video?.publishable
+    && data.video
+    && isTikTokVideoPreviewReady(previewState, duration)
+    && caption.trim()
+    && check?.ok
+    && scheduleValid
+    && confirmed
+    && !busy,
+  );
   // Branded content needs a visibility other than private; until Voom's app is audited TikTok only allows private.
   const brandedUnavailable = Boolean(data && !data.appAudited);
 
@@ -227,7 +242,33 @@ export function TikTokPostSheet({
               playsInline
               preload="metadata"
               src={data.video.previewUrl}
-              onLoadedMetadata={(e) => setDuration(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : null)}
+              onLoadStart={() => {
+                setDuration(null);
+                setPreviewState("loading");
+                setPreviewError("");
+              }}
+              onLoadedMetadata={(e) => {
+                const seconds = e.currentTarget.duration;
+                if (!Number.isFinite(seconds) || seconds <= 0) {
+                  setDuration(null);
+                  setPreviewState("error");
+                  setPreviewError("Voom couldn't verify this video's duration. Reload or attach a different video.");
+                  return;
+                }
+                setDuration(seconds);
+              }}
+              onCanPlay={(e) => {
+                const seconds = e.currentTarget.duration;
+                if (!Number.isFinite(seconds) || seconds <= 0) return;
+                setDuration(seconds);
+                setPreviewState("ready");
+                setPreviewError("");
+              }}
+              onError={() => {
+                setDuration(null);
+                setPreviewState("error");
+                setPreviewError("Voom couldn't load this video preview. Reload or attach a different video before posting.");
+              }}
               className="max-h-72 w-full rounded-lg bg-black object-contain"
             />
           ) : (
@@ -238,6 +279,7 @@ export function TikTokPostSheet({
           {data.video && !data.video.publishable ? (
             <p className="mt-1.5 text-xs text-red">TikTok accepts MP4, WebM or MOV videos.</p>
           ) : null}
+          {previewError ? <p role="alert" className="mt-1.5 text-xs text-red">{previewError}</p> : null}
         </div>
 
         <Field label="Caption" hint={`Shown with your video on TikTok. Up to ${TIKTOK_TITLE_MAX} characters.`}>
@@ -337,7 +379,7 @@ export function TikTokPostSheet({
           ) : null}
         </div>
 
-        {check && !check.ok && check.code === "video_too_long" ? (
+        {check && !check.ok && ["video_duration_required", "creator_video_limit_unavailable", "video_too_long"].includes(check.code) ? (
           <div role="alert" className="mb-3 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-[12.5px] text-red">{check.message}</div>
         ) : null}
 

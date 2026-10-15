@@ -72,6 +72,17 @@ export const TIKTOK_BRANDED_CONTENT_NOT_PRIVATE = "Branded content visibility ca
 export const TIKTOK_UNAUDITED_PRIVATE_ONLY =
   "Until Voom completes TikTok's app review, TikTok only allows posts that are visible to you (Only me).";
 
+/** The publish control may unlock only after the browser proves the preview is playable. */
+export function isTikTokVideoPreviewReady(
+  state: "loading" | "ready" | "error",
+  durationSeconds: number | null,
+): boolean {
+  return state === "ready"
+    && typeof durationSeconds === "number"
+    && Number.isFinite(durationSeconds)
+    && durationSeconds > 0;
+}
+
 export interface TikTokPrivacyChoice {
   value: TikTokPrivacy;
   label: string;
@@ -114,6 +125,8 @@ export type TikTokPostSettingsError =
   | "comment_disabled_by_creator"
   | "duet_disabled_by_creator"
   | "stitch_disabled_by_creator"
+  | "video_duration_required"
+  | "creator_video_limit_unavailable"
   | "video_too_long";
 
 /** Every rule above, in one place. The server re-runs it against live creator info. */
@@ -140,8 +153,15 @@ export function checkTikTokPostSettings(
   if (settings.allowDuet && creator.duetDisabled) return fail("duet_disabled_by_creator", "Duet is turned off for this account in TikTok.");
   if (settings.allowStitch && creator.stitchDisabled) return fail("stitch_disabled_by_creator", "Stitch is turned off for this account in TikTok.");
   const duration = context.videoDurationSec;
-  if (creator.maxVideoPostDurationSec && typeof duration === "number" && Number.isFinite(duration)
-      && duration > creator.maxVideoPostDurationSec) {
+  if (typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0) {
+    return fail("video_duration_required", "Wait for the video preview to load so Voom can verify its duration.");
+  }
+  if (typeof creator.maxVideoPostDurationSec !== "number"
+      || !Number.isFinite(creator.maxVideoPostDurationSec)
+      || creator.maxVideoPostDurationSec <= 0) {
+    return fail("creator_video_limit_unavailable", "TikTok didn't provide a video duration limit for this account. Refresh and try again.");
+  }
+  if (duration > creator.maxVideoPostDurationSec) {
     return fail("video_too_long", `This video is longer than this account can post (${creator.maxVideoPostDurationSec} seconds maximum).`);
   }
   return { ok: true, privacy: settings.privacy };
