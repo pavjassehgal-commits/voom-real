@@ -157,8 +157,8 @@ const postSchema = z.object({
   aiGenerated: z.boolean(),
   /** null posts as soon as the TikTok queue runs (within about 5 minutes). */
   scheduledAt: z.string().datetime({ offset: true }).nullable(),
-  /** Measured from the video in the browser; checked against the account's maximum. */
-  videoDurationSec: z.number().positive().max(86_400).nullable(),
+  /** Required from a playable preview; re-checked server-side against the creator's live maximum. */
+  videoDurationSec: z.number().finite().positive().max(86_400),
   /** The owner's express consent to this upload. Nothing else counts. */
   consent: z.literal(true),
 }).strict();
@@ -172,7 +172,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   let body: unknown;
   try { body = await request.json(); } catch { return json({ error: "That request was not valid." }, 400); }
   const parsed = postSchema.safeParse(body);
-  if (!parsed.success) return json({ error: "Review the TikTok post details and confirm before posting." }, 400);
+  if (!parsed.success) {
+    const invalidDuration = parsed.error.issues.some((issue) => issue.path[0] === "videoDurationSec");
+    return invalidDuration
+      ? json({ error: "Voom couldn't verify this video's duration. Reload the preview before posting.", code: "video_duration_required" }, 400)
+      : json({ error: "Review the TikTok post details and confirm before posting." }, 400);
+  }
   const input = parsed.data;
   const scheduledAt = input.scheduledAt ?? new Date().toISOString();
   if (input.scheduledAt && Date.parse(input.scheduledAt) < Date.now() - 5 * 60_000) {

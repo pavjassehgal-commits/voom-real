@@ -28,8 +28,8 @@ const CREATOR = {
   stitchDisabled: false,
   maxVideoPostDurationSec: 60,
 };
-const AUDITED = { appAudited: true };
-const UNAUDITED = { appAudited: false };
+const AUDITED = { appAudited: true, videoDurationSec: 30 };
+const UNAUDITED = { appAudited: false, videoDurationSec: 30 };
 const settings = (patch = {}) => ({ ...rules.EMPTY_TIKTOK_POST_SETTINGS, ...patch });
 
 test("privacy has no default and comes only from the options TikTok returned for this account", () => {
@@ -103,9 +103,30 @@ test("commercial disclosure: a choice is required, branded content cannot be pri
   assert.deepEqual([off.brandOrganicToggle, off.brandContentToggle], [false, false], "nothing is disclosed while the switch is off");
 });
 
-test("a video longer than the account's maximum is refused", () => {
+test("unknown, excessive and valid video durations fail closed correctly", () => {
+  assert.equal(
+    rules.checkTikTokPostSettings(settings({ privacy: "SELF_ONLY" }), CREATOR, { appAudited: true }).code,
+    "video_duration_required",
+  );
+  assert.equal(
+    rules.checkTikTokPostSettings(settings({ privacy: "SELF_ONLY" }), CREATOR, { appAudited: true, videoDurationSec: Number.NaN }).code,
+    "video_duration_required",
+  );
+  assert.equal(
+    rules.checkTikTokPostSettings(settings({ privacy: "SELF_ONLY" }), { ...CREATOR, maxVideoPostDurationSec: null }, { appAudited: true, videoDurationSec: 30 }).code,
+    "creator_video_limit_unavailable",
+  );
   assert.equal(rules.checkTikTokPostSettings(settings({ privacy: "SELF_ONLY" }), CREATOR, { appAudited: true, videoDurationSec: 61 }).code, "video_too_long");
   assert.equal(rules.checkTikTokPostSettings(settings({ privacy: "SELF_ONLY" }), CREATOR, { appAudited: true, videoDurationSec: 59.5 }).ok, true);
+});
+
+test("a failed or incomplete preview can never unlock the post action", () => {
+  assert.equal(rules.isTikTokVideoPreviewReady("loading", null), false);
+  assert.equal(rules.isTikTokVideoPreviewReady("error", 30), false, "a failed preview stays blocked even if stale duration exists");
+  assert.equal(rules.isTikTokVideoPreviewReady("ready", null), false);
+  assert.equal(rules.isTikTokVideoPreviewReady("ready", Number.NaN), false);
+  assert.equal(rules.isTikTokVideoPreviewReady("ready", 0), false);
+  assert.equal(rules.isTikTokVideoPreviewReady("ready", 30), true);
 });
 
 const SUBJECT = {
@@ -217,6 +238,8 @@ test("the consent route re-checks everything server-side and accepts only an exp
   assert.match(route, /\}\)\.strict\(\)/, "no undocumented field (such as a forged consent record) is accepted");
   assert.match(route, /queryCreatorInfo/, "live creator info before recording consent");
   assert.match(route, /checkTikTokPostSettings\(settings, loaded\.creator/, "the same rules as the sheet, against live data");
+  assert.match(route, /videoDurationSec: z\.number\(\)\.finite\(\)\.positive\(\)/, "the server requires a finite positive duration");
+  assert.match(route, /issue\.path\[0\] === "videoDurationSec"/, "invalid duration receives a specific fail-closed response");
   assert.match(route, /tiktokConsentFingerprint/, "the consent is bound to the exact post");
   assert.doesNotMatch(route, /accessToken[,}]\s*$|refresh_token|upload_url/m, "no token or upload URL in responses");
   const patch = await read("app/api/social-drafts/[id]/route.ts");
@@ -227,6 +250,10 @@ test("the post sheet shows everything TikTok requires before an explicit confirm
   const sheet = await flat("components/voom/modals/TikTokPostSheet.tsx");
   assert.match(sheet, /Posting to TikTok as/, "the receiving account is shown");
   assert.match(sheet, /<video/, "the video is previewed");
+  assert.match(sheet, /isTikTokVideoPreviewReady\(previewState, duration\)/, "posting stays disabled until the preview is playable");
+  assert.match(sheet, /onCanPlay=/, "the browser must confirm the preview can play");
+  assert.match(sheet, /onError=/, "preview failures are handled explicitly");
+  assert.match(sheet, /role="alert"/, "preview failures are announced clearly");
   assert.match(sheet, /Who can view this video/);
   assert.match(sheet, /<option value="" disabled>Select who can view<\/option>/, "no default privacy");
   assert.match(sheet, /Allow users to/);
