@@ -1,4 +1,9 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "tiktok-sandbox": false
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/weekly-plans",
