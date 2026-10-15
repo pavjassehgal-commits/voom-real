@@ -14,7 +14,8 @@ import {
 } from "@/lib/tiktok/post-settings";
 import { isTikTokPublishableMime, TIKTOK_TITLE_MAX } from "@/lib/tiktok/publishing";
 import { hasPublishPermission } from "@/lib/tiktok/scopes";
-import { inspectTikTokVideoDuration, validateTikTokVideoDuration } from "@/lib/tiktok/video-duration";
+import { validateTikTokVideoDuration } from "@/lib/tiktok/video-duration";
+import { inspectTikTokVideoDurationFromUrl } from "@/lib/tiktok/video-duration-server";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 
@@ -117,9 +118,9 @@ async function load(ownerId: string, draftId: string): Promise<Loaded> {
 
 async function trustedStoredDuration(storagePath: string, expectedBytes: number): Promise<number | null> {
   try {
-    const { data, error } = await createAdminClient().storage.from(ASSET_BUCKET).download(storagePath);
-    if (error || !data || data.size !== expectedBytes) return null;
-    return inspectTikTokVideoDuration(new Uint8Array(await data.arrayBuffer()));
+    const { data, error } = await createAdminClient().storage.from(ASSET_BUCKET).createSignedUrl(storagePath, PREVIEW_TTL_SECONDS);
+    if (error || !data?.signedUrl) return null;
+    return inspectTikTokVideoDurationFromUrl(data.signedUrl, expectedBytes);
   } catch {
     return null;
   }

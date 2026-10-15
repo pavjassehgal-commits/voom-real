@@ -21,7 +21,7 @@ import {
   TIKTOK_UPLOAD_BUDGET_MS,
   TIKTOK_SIGNED_URL_TTL_SECONDS,
 } from "./publishing.ts";
-import { inspectTikTokVideoDuration } from "./video-duration.ts";
+import { inspectTikTokVideoDurationFromUrl } from "./video-duration-server.ts";
 
 const ASSET_BUCKET = "mara-media";
 
@@ -230,11 +230,7 @@ export function buildTikTokFlowPorts(
       if (options.inspectVideoDuration) return options.inspectVideoDuration(storagePath, byteSize);
       const url = await signedUrlFor(storagePath);
       if (!url) return null;
-      const response = await fetch(url, { headers: { Range: `bytes=0-${byteSize - 1}` } });
-      if (!response.ok && response.status !== 206) return null;
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.length !== byteSize) return null;
-      return inspectTikTokVideoDuration(bytes);
+      return inspectTikTokVideoDurationFromUrl(url, byteSize);
     },
     async openMediaRange(storagePath, start, end) {
       // HTTP Range read of the PRIVATE object through a short-lived signed

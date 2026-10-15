@@ -18,6 +18,7 @@ const rules = await import("../lib/tiktok/post-settings.ts");
 const consentMod = await import("../lib/tiktok/post-consent.ts");
 const flowMod = await import("../lib/tiktok/publish-flow.ts");
 const durationMod = await import("../lib/tiktok/video-duration.ts");
+const durationServerMod = await import("../lib/tiktok/video-duration-server.ts");
 
 const u32 = (value) => { const bytes = Buffer.alloc(4); bytes.writeUInt32BE(value >>> 0); return bytes; };
 const box = (type, payload) => Buffer.concat([u32(8 + payload.length), Buffer.from(type, "ascii"), payload]);
@@ -147,6 +148,62 @@ test("trusted duration is parsed from stored MP4 bytes and browser duration is o
   assert.equal(durationMod.validateTikTokVideoDuration({ trustedDurationSeconds: 30, reportedDurationSeconds: 35, maxDurationSeconds: 60 }).code, "video_duration_mismatch");
   assert.equal(durationMod.validateTikTokVideoDuration({ trustedDurationSeconds: 61, reportedDurationSeconds: 61, maxDurationSeconds: 60 }).code, "video_too_long");
   assert.equal(durationMod.validateTikTokVideoDuration({ trustedDurationSeconds: 30, maxDurationSeconds: null }).code, "video_duration_unavailable");
+});
+
+test("trusted duration inspection skips large media payloads with bounded range reads", async () => {
+  const metadata = inspectableMp4(30);
+  const ftypSize = metadata.readUInt32BE(0);
+  const moovSize = metadata.readUInt32BE(ftypSize);
+  const ftyp = metadata.subarray(0, ftypSize);
+  const moov = metadata.subarray(ftypSize, ftypSize + moovSize);
+  const mdatSize = 512 * 1024 * 1024;
+  const mdatHeader = box("mdat", Buffer.alloc(0));
+  mdatHeader.writeUInt32BE(mdatSize, 0);
+  const moovOffset = ftypSize + mdatSize;
+  const byteSize = moovOffset + moovSize;
+  const reads = [];
+  const source = async (start, end) => {
+    reads.push([start, end]);
+    const length = end - start + 1;
+    if (start === 0) return Buffer.concat([ftyp, mdatHeader]).subarray(0, length);
+    if (start === ftypSize) return Buffer.concat([mdatHeader, Buffer.alloc(Math.max(0, length - 8))]).subarray(0, length);
+    if (start === moovOffset) return moov.subarray(0, length);
+    return null;
+  };
+
+  assert.equal(await durationMod.inspectTikTokVideoDurationFromRanges(byteSize, source), 30);
+  assert.ok(reads.every(([start, end]) => end - start + 1 <= durationMod.TIKTOK_MAX_METADATA_BOX_BYTES));
+  assert.ok(!reads.some(([start, end]) => start === ftypSize && end >= moovOffset), "the 512 MB mdat payload is never read");
+});
+
+test("trusted duration inspection fails closed before reading oversized metadata", async () => {
+  const ftyp = box("ftyp", Buffer.from("isom", "ascii"));
+  const oversizedMoov = Buffer.concat([u32(durationMod.TIKTOK_MAX_METADATA_BOX_BYTES + 1), Buffer.from("moov", "ascii"), Buffer.alloc(8)]);
+  const bytes = Buffer.concat([ftyp, oversizedMoov]);
+  const reads = [];
+  const result = await durationMod.inspectTikTokVideoDurationFromRanges(100_000_000, async (start, end) => {
+    reads.push([start, end]);
+    if (start >= bytes.length) return Buffer.alloc(end - start + 1);
+    const slice = bytes.subarray(start, Math.min(end + 1, bytes.length));
+    return slice.length === end - start + 1 ? slice : Buffer.concat([slice, Buffer.alloc(end - start + 1 - slice.length)]);
+  });
+  assert.equal(result, null);
+  assert.ok(reads.every(([start, end]) => end - start + 1 <= 16), "the oversized moov body is not fetched");
+});
+
+test("signed storage must honor byte ranges instead of returning the whole video", async () => {
+  let cancelled = false;
+  const body = new ReadableStream({
+    pull(controller) { controller.enqueue(new Uint8Array(1024)); },
+    cancel() { cancelled = true; },
+  });
+  const result = await durationServerMod.inspectTikTokVideoDurationFromUrl(
+    "https://storage.invalid/video.mp4",
+    20 * 1024 * 1024,
+    async () => new Response(body, { status: 200 }),
+  );
+  assert.equal(result, null);
+  assert.equal(cancelled, true, "an ignored Range response is cancelled before its body is buffered");
 });
 
 test("a failed or incomplete preview can never unlock the post action", () => {
@@ -284,6 +341,8 @@ test("the consent route re-checks everything server-side and accepts only an exp
   assert.match(route, /\}\)\.strict\(\)/, "no undocumented field (such as a forged consent record) is accepted");
   assert.match(route, /queryCreatorInfo/, "live creator info before recording consent");
   assert.match(route, /trustedStoredDuration/, "stored bytes are independently inspected by the server");
+  assert.match(route, /inspectTikTokVideoDurationFromUrl/, "inspection uses bounded HTTP ranges");
+  assert.doesNotMatch(route, /\.download\(|arrayBuffer\(/, "the route never buffers the whole video");
   assert.match(route, /reportedDurationSeconds: input\.videoDurationSec/, "browser duration is comparison-only");
   assert.match(route, /checkTikTokPostSettings\(settings, loaded\.creator/, "the same rules as the sheet, against live data");
   assert.match(route, /videoDurationSec: z\.number\(\)\.finite\(\)\.positive\(\)/, "the server requires a finite positive duration");
@@ -292,6 +351,12 @@ test("the consent route re-checks everything server-side and accepts only an exp
   assert.doesNotMatch(route, /accessToken[,}]\s*$|refresh_token|upload_url/m, "no token or upload URL in responses");
   const patch = await read("app/api/social-drafts/[id]/route.ts");
   assert.doesNotMatch(patch, /tiktokPostConsent/, "the general edit route cannot record a TikTok consent");
+});
+
+test("the publishing worker uses the same bounded metadata inspection", async () => {
+  const worker = await read("lib/tiktok/publish-worker.ts");
+  assert.match(worker, /inspectTikTokVideoDurationFromUrl/);
+  assert.doesNotMatch(worker, /arrayBuffer\(\)|Range: `bytes=0-\$\{byteSize - 1\}`/, "duration validation never requests the whole object");
 });
 
 test("the post sheet shows everything TikTok requires before an explicit confirmation", async () => {
