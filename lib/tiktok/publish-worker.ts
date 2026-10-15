@@ -21,6 +21,7 @@ import {
   TIKTOK_UPLOAD_BUDGET_MS,
   TIKTOK_SIGNED_URL_TTL_SECONDS,
 } from "./publishing.ts";
+import { inspectTikTokVideoDurationFromUrl } from "./video-duration-server.ts";
 
 const ASSET_BUCKET = "mara-media";
 
@@ -45,6 +46,8 @@ export interface TikTokWorkerDeps {
   budgetMs?: number;
   /** Structured diagnostics sink. Never receives tokens or upload URLs. */
   timeline?: (event: string, detail?: Record<string, unknown>) => void;
+  /** Test seam for byte-derived duration inspection; production always reads private storage. */
+  inspectVideoDuration?: (storagePath: string, byteSize: number) => Promise<number | null>;
 }
 
 /**
@@ -97,7 +100,11 @@ export async function runTikTokPublishing(deps: TikTokWorkerDeps = {}): Promise<
   for (const row of items) {
     const item = toTikTokFlowItem(row);
     timeline("tiktok_claimed", { itemId: row.id, ownerUserId: row.owner_user_id, draftId: row.draft_id, attempt: row.attempts, hasPublishId: Boolean(row.tiktok_publish_id) });
-    const ports = buildTikTokFlowPorts(db, client, keyRing, config, sleep, signedUrls, { remainingBudgetMs, timeline });
+    const ports = buildTikTokFlowPorts(db, client, keyRing, config, sleep, signedUrls, {
+      remainingBudgetMs,
+      timeline,
+      inspectVideoDuration: deps.inspectVideoDuration,
+    });
     try {
       const outcome = await runTikTokPublishFlow(item, ports);
       if (outcome.outcome === "published") result.published += 1;
@@ -153,6 +160,7 @@ export function buildTikTokFlowPorts(
   options: {
     remainingBudgetMs?: () => number;
     timeline?: (event: string, detail?: Record<string, unknown>) => void;
+    inspectVideoDuration?: (storagePath: string, byteSize: number) => Promise<number | null>;
   } = {},
 ): TikTokFlowPorts {
   const remainingBudgetMs = options.remainingBudgetMs;
@@ -215,7 +223,14 @@ export function buildTikTokFlowPorts(
         isAigc: item.isAigc,
         assetStoragePath: subject.storagePath,
         assetByteSize: subject.byteSize,
+        videoDurationSec: subject.videoDurationSec,
       });
+    },
+    async inspectVideoDuration(storagePath, byteSize) {
+      if (options.inspectVideoDuration) return options.inspectVideoDuration(storagePath, byteSize);
+      const url = await signedUrlFor(storagePath);
+      if (!url) return null;
+      return inspectTikTokVideoDurationFromUrl(url, byteSize);
     },
     async openMediaRange(storagePath, start, end) {
       // HTTP Range read of the PRIVATE object through a short-lived signed

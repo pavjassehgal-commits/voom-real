@@ -59,6 +59,7 @@ import {
   type TikTokFailureKey,
   type TikTokProviderStatus,
 } from "./publishing";
+import { validateTikTokVideoDuration } from "./video-duration";
 
 export interface TikTokFlowItem {
   id: string;
@@ -118,7 +119,9 @@ export interface TikTokFlowPorts {
    * The owner's per-post consent, checked against exactly what is queued
    * (lib/tiktok/post-consent.ts). Only "valid" lets a fresh post start.
    */
-  verifyPostConsent(item: TikTokFlowItem, subject: { openId: string; storagePath: string; byteSize: number }): Promise<"valid" | "missing" | "stale">;
+  verifyPostConsent(item: TikTokFlowItem, subject: { openId: string; storagePath: string; byteSize: number; videoDurationSec: number }): Promise<"valid" | "missing" | "stale">;
+  /** Duration parsed independently from the stored bytes, never from browser input. */
+  inspectVideoDuration(storagePath: string, byteSize: number): Promise<number | null>;
   openMediaRange(storagePath: string, start: number, end: number): Promise<ReadableStream<Uint8Array> | Uint8Array | null>;
   queryCreatorInfo(accessToken: string): Promise<TikTokCreatorInfo>;
   initDirectPost(
@@ -258,6 +261,14 @@ export async function runTikTokPublishFlow(
   if (!asset.byteSize || asset.byteSize <= 0 || asset.byteSize > TIKTOK_MAX_VIDEO_BYTES) return fail("media_too_large", "The video is larger than TikTok allows (4 GB)");
   if (!isTikTokPublishableMime(asset.mimeType)) return fail("media_unsupported", `TikTok accepts MP4, WebM, or MOV videos, not ${asset.mimeType || "this file"}`);
 
+  let trustedDuration: number | null;
+  try {
+    trustedDuration = await ports.inspectVideoDuration(asset.storagePath, asset.byteSize);
+  } catch {
+    trustedDuration = null;
+  }
+  if (!trustedDuration) return fail("media_duration_untrusted", "Voom could not independently verify the stored video's duration");
+
   // Resume guard: the upload task holds the file that was active at init
   // time. If the stored media changed afterwards, resuming with the new
   // bytes would corrupt the post — fail closed and let reconciliation read
@@ -282,7 +293,7 @@ export async function runTikTokPublishFlow(
     // owner confirmed — nothing is sent and the item waits for the owner.
     let consent: "valid" | "missing" | "stale";
     try {
-      consent = await ports.verifyPostConsent(item, { openId: credentials.openId, storagePath: asset.storagePath, byteSize: asset.byteSize });
+      consent = await ports.verifyPostConsent(item, { openId: credentials.openId, storagePath: asset.storagePath, byteSize: asset.byteSize, videoDurationSec: trustedDuration });
     } catch {
       consent = "missing";
     }
@@ -312,6 +323,16 @@ export async function runTikTokPublishFlow(
     }
     if (!creator.privacyLevelOptions.includes(item.privacyLevel as (typeof TIKTOK_PRIVACY_VALUES)[number])) {
       return fail("privacy_not_allowed", `TikTok no longer offers "${privacyLabel(item.privacyLevel)}" for this account — pick one of the options TikTok allows`);
+    }
+    const durationCheck = validateTikTokVideoDuration({
+      trustedDurationSeconds: trustedDuration,
+      maxDurationSeconds: creator.maxVideoPostDurationSec,
+    });
+    if (!durationCheck.ok) {
+      return fail(durationCheck.code === "video_too_long" ? "media_duration_too_long" : "media_duration_untrusted",
+        durationCheck.code === "video_too_long"
+          ? `The stored video is longer than this TikTok account can post (${creator.maxVideoPostDurationSec} seconds maximum)`
+          : "TikTok did not provide a trustworthy video duration limit for this account");
     }
 
     plan = tiktokChunkPlan(asset.byteSize);
