@@ -17,6 +17,24 @@ const flat = async (path) => (await read(path)).replace(/\s+/g, " ");
 const rules = await import("../lib/tiktok/post-settings.ts");
 const consentMod = await import("../lib/tiktok/post-consent.ts");
 const flowMod = await import("../lib/tiktok/publish-flow.ts");
+const durationMod = await import("../lib/tiktok/video-duration.ts");
+
+const u32 = (value) => { const bytes = Buffer.alloc(4); bytes.writeUInt32BE(value >>> 0); return bytes; };
+const box = (type, payload) => Buffer.concat([u32(8 + payload.length), Buffer.from(type, "ascii"), payload]);
+function inspectableMp4(durationSeconds) {
+  const timescale = 1_000;
+  const duration = Math.round(durationSeconds * timescale);
+  const ftyp = box("ftyp", Buffer.concat([Buffer.from("isom", "ascii"), u32(0x200)]));
+  const mvhd = box("mvhd", Buffer.concat([Buffer.alloc(12), u32(timescale), u32(duration)]));
+  const hdlr = box("hdlr", Buffer.concat([Buffer.alloc(8), Buffer.from("vide", "ascii")]));
+  const mdhd = box("mdhd", Buffer.concat([Buffer.alloc(12), u32(timescale), u32(duration)]));
+  const tkhd = Buffer.alloc(24);
+  u32(1).copy(tkhd, 8);
+  u32(1080 << 16).copy(tkhd, 16);
+  u32(1920 << 16).copy(tkhd, 20);
+  const trak = box("trak", Buffer.concat([box("mdia", Buffer.concat([hdlr, mdhd])), box("tkhd", tkhd)]));
+  return Buffer.concat([ftyp, box("moov", Buffer.concat([mvhd, trak])), Buffer.from("mdat")]);
+}
 
 const CREATOR = {
   nickname: "Corner Cafe",
@@ -120,6 +138,17 @@ test("unknown, excessive and valid video durations fail closed correctly", () =>
   assert.equal(rules.checkTikTokPostSettings(settings({ privacy: "SELF_ONLY" }), CREATOR, { appAudited: true, videoDurationSec: 59.5 }).ok, true);
 });
 
+test("trusted duration is parsed from stored MP4 bytes and browser duration is only a consistency check", () => {
+  const bytes = new Uint8Array(inspectableMp4(30));
+  assert.equal(durationMod.inspectTikTokVideoDuration(bytes), 30);
+  assert.equal(durationMod.inspectTikTokVideoDuration(new Uint8Array(Buffer.from("not video"))), null);
+  assert.deepEqual(durationMod.validateTikTokVideoDuration({ trustedDurationSeconds: 30, reportedDurationSeconds: 30.2, maxDurationSeconds: 60 }), { ok: true, durationSeconds: 30 });
+  assert.equal(durationMod.validateTikTokVideoDuration({ trustedDurationSeconds: null, reportedDurationSeconds: 30, maxDurationSeconds: 60 }).code, "video_duration_unavailable");
+  assert.equal(durationMod.validateTikTokVideoDuration({ trustedDurationSeconds: 30, reportedDurationSeconds: 35, maxDurationSeconds: 60 }).code, "video_duration_mismatch");
+  assert.equal(durationMod.validateTikTokVideoDuration({ trustedDurationSeconds: 61, reportedDurationSeconds: 61, maxDurationSeconds: 60 }).code, "video_too_long");
+  assert.equal(durationMod.validateTikTokVideoDuration({ trustedDurationSeconds: 30, maxDurationSeconds: null }).code, "video_duration_unavailable");
+});
+
 test("a failed or incomplete preview can never unlock the post action", () => {
   assert.equal(rules.isTikTokVideoPreviewReady("loading", null), false);
   assert.equal(rules.isTikTokVideoPreviewReady("error", 30), false, "a failed preview stays blocked even if stale duration exists");
@@ -142,6 +171,7 @@ const SUBJECT = {
   isAigc: false,
   assetStoragePath: "owner/post-assets/video.mp4",
   assetByteSize: 4096,
+  videoDurationSec: 30,
 };
 
 function storedConsent(subject = SUBJECT) {
@@ -152,6 +182,7 @@ function storedConsent(subject = SUBJECT) {
     creatorNickname: "Corner Cafe",
     declaration: "music",
     consentedAt: "2026-10-13T10:00:00.000Z",
+    videoDurationSec: subject.videoDurationSec,
     fingerprint: consentMod.tiktokConsentFingerprint(subject),
   };
 }
@@ -172,6 +203,7 @@ test("consent covers exactly the reviewed post: any change to account, caption, 
     isAigc: true,
     assetStoragePath: "owner/post-assets/other.mp4",
     assetByteSize: 4097,
+    videoDurationSec: 31,
   };
   for (const [key, value] of Object.entries(changes)) {
     assert.equal(consentMod.evaluateTikTokPostConsent(storedConsent(), { ...SUBJECT, [key]: value }), "stale", `changing ${key} needs a new confirmation`);
@@ -189,6 +221,7 @@ function flowPorts(overrides = {}) {
     async loadCredentials() { calls.push("loadCredentials"); return { openId: "open-1", accessToken: "token" }; },
     async loadAsset() { calls.push("loadAsset"); return { status: "uploaded", mimeType: "video/mp4", byteSize: 1024, storagePath: "a/video.mp4" }; },
     async verifyPostConsent() { calls.push("verifyPostConsent"); return overrides.consent ?? "valid"; },
+    async inspectVideoDuration() { calls.push("inspectVideoDuration"); return "trustedDuration" in overrides ? overrides.trustedDuration : 30; },
     async queryCreatorInfo() {
       calls.push("queryCreatorInfo");
       return { creatorUsername: "c", creatorNickname: "C", creatorAvatarUrl: null, privacyLevelOptions: ["SELF_ONLY"], commentDisabled: true, duetDisabled: false, stitchDisabled: false, maxVideoPostDurationSec: 60, ...overrides.creator };
@@ -224,6 +257,19 @@ test("the worker refuses missing or stale consent before contacting TikTok, and 
   assert.equal(failedClosed.code, "tiktok_post_confirmation_required", "an unreadable consent is no consent");
 });
 
+test("queued publishing cannot bypass trusted duration inspection or the creator's live duration limit", async () => {
+  const missing = flowPorts({ trustedDuration: null });
+  const missingResult = await flowMod.runTikTokPublishFlow({ ...ITEM }, missing);
+  assert.equal(missingResult.code, "media_duration_untrusted");
+  assert.ok(!missing.calls.includes("verifyPostConsent") && !missing.calls.includes("queryCreatorInfo"));
+
+  const excessive = flowPorts({ trustedDuration: 61, creator: { maxVideoPostDurationSec: 60 } });
+  const excessiveResult = await flowMod.runTikTokPublishFlow({ ...ITEM }, excessive);
+  assert.equal(excessiveResult.code, "media_duration_too_long");
+  assert.ok(excessive.calls.includes("queryCreatorInfo"));
+  assert.ok(!excessive.calls.includes("initDirectPost"), "TikTok init is never reached");
+});
+
 test("an interaction the creator has since turned off in TikTok is sent as disabled", async () => {
   const ports = flowPorts();
   const result = await flowMod.runTikTokPublishFlow({ ...ITEM }, ports);
@@ -237,6 +283,8 @@ test("the consent route re-checks everything server-side and accepts only an exp
   assert.match(route, /consent: z\.literal\(true\)/, "consent must be literally true");
   assert.match(route, /\}\)\.strict\(\)/, "no undocumented field (such as a forged consent record) is accepted");
   assert.match(route, /queryCreatorInfo/, "live creator info before recording consent");
+  assert.match(route, /trustedStoredDuration/, "stored bytes are independently inspected by the server");
+  assert.match(route, /reportedDurationSeconds: input\.videoDurationSec/, "browser duration is comparison-only");
   assert.match(route, /checkTikTokPostSettings\(settings, loaded\.creator/, "the same rules as the sheet, against live data");
   assert.match(route, /videoDurationSec: z\.number\(\)\.finite\(\)\.positive\(\)/, "the server requires a finite positive duration");
   assert.match(route, /issue\.path\[0\] === "videoDurationSec"/, "invalid duration receives a specific fail-closed response");

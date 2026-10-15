@@ -438,11 +438,13 @@ async function confirmPost(ownerId, draftId, { title = "Launch teaser", privacy 
     creatorNickname: "Voom Studio",
     declaration: "music",
     consentedAt: nowIso(),
+    videoDurationSec: 30,
     fingerprint: consentMod.tiktokConsentFingerprint({
       draftId, creatorOpenId: openId, title, privacyLevel: privacy,
       disableComment: null, disableDuet: null, disableStitch: null,
       brandContentToggle: null, brandOrganicToggle: null, isAigc: null,
       assetStoragePath: `tiktok/${ownerId}/${draftId}-video.mp4`, assetByteSize: byteSize,
+      videoDurationSec: 30,
     }),
   };
   await db.query("update public.mara_drafts set content_meta = jsonb_build_object('tiktokPost', $2::jsonb) where id = $1", [draftId, JSON.stringify(tiktokPost)]);
@@ -772,7 +774,7 @@ test("Direct Post post_info sends only documented fields and only explicitly dec
 
 test("the provider failure taxonomy keeps rate, auth, media, unaudited, cap and ambiguity apart", () => {
   const failures = pub.TIKTOK_PUBLISH_FAILURES;
-  assert.equal(Object.keys(failures).length, 23, "every documented outcome class has its own key");
+  assert.equal(Object.keys(failures).length, 25, "every documented outcome class has its own key");
   // Missing or stale per-post consent waits for the owner; it is never retried on its own.
   assert.equal(failures.consent_required.status, "needs_declaration");
   assert.equal(failures.consent_required.retryable, false);
@@ -794,6 +796,8 @@ test("the provider failure taxonomy keeps rate, auth, media, unaudited, cap and 
   // Ambiguous outcomes FAIL CLOSED.
   assert.equal(failures.publish_ambiguous.retryable, false);
   assert.equal(failures.upload_task_gone.retryable, false);
+  assert.equal(failures.media_duration_untrusted.retryable, false, "unknown stored duration fails closed");
+  assert.equal(failures.media_duration_too_long.retryable, false, "an excessive trusted duration is terminal until the media changes");
   // A published row can never be downgraded: only PUBLISH_COMPLETE is proof.
   assert.equal(pub.isTikTokPublishedEvidence("PUBLISH_COMPLETE"), true);
   assert.equal(pub.isTikTokPublishedEvidence("PROCESSING_UPLOAD"), false);
@@ -1154,6 +1158,7 @@ function fakePorts(overrides = {}) {
       return "asset" in overrides ? overrides.asset : { status: "uploaded", mimeType: "video/mp4", byteSize: 1024, storagePath: "tiktok/a/video.mp4" };
     },
     async verifyPostConsent() { calls.push(["verifyPostConsent"]); return overrides.consent ?? "valid"; },
+    async inspectVideoDuration() { calls.push(["inspectVideoDuration"]); return "trustedDuration" in overrides ? overrides.trustedDuration : 30; },
     async openMediaRange(storagePath, start, end) { calls.push(["openMediaRange", { start, end }]); return new Uint8Array(end - start + 1); },
     async queryCreatorInfo() { calls.push(["queryCreatorInfo"]); if (overrides.creatorInfoError) throw overrides.creatorInfoError; return "creatorInfo" in overrides ? overrides.creatorInfo : fakeCreatorInfo(); },
     async initDirectPost(accessToken, metadata, sourceInfo) { calls.push(["initDirectPost", { metadata, sourceInfo }]); if (overrides.initError) throw overrides.initError; return { publishId: "7364580667079849990", uploadUrl: "https://upload.tiktok.test/task" }; },
@@ -1196,7 +1201,7 @@ test("the flow follows the documented order: approval re-check, connection+scope
   const names = callNames(ports);
   const order = [
     "loadDraft", "loadConnection", "loadCredentials", "loadAsset",
-    "verifyPostConsent", "queryCreatorInfo", "initDirectPost", "persistPublish",
+    "inspectVideoDuration", "verifyPostConsent", "queryCreatorInfo", "initDirectPost", "persistPublish",
     "openMediaRange", "putChunk", "persistProgress",
     "enterProviderProcessing",
     "loadCredentials", "fetchPostStatus", "recordProviderStatus",
@@ -2002,6 +2007,8 @@ globalThis.fetch = async (url) => {
   throw new Error(`tiktok-provider.test: unexpected real network call to ${url}`);
 };
 
+const inspectStoredVideoDuration = async () => 30;
+
 test("an unconfigured deployment claims NOTHING â€” a misconfigured cron never burns attempts", async () => {
   const { admin } = await liteDb();
   await clearClaimable();
@@ -2029,7 +2036,7 @@ test("the publish worker drives a due, approved, declared item to 'published' â€
   await queueMod.enqueueTikTokPublishItem(admin, enqueueInput(draftId));
 
   const tiktok = fakeTikTok({ publishId });
-  const result = await workerMod.runTikTokPublishing({ db: admin, config: fakeConfig(), clientFor: () => tiktok, sleep: noopSleep });
+  const result = await workerMod.runTikTokPublishing({ db: admin, config: fakeConfig(), clientFor: () => tiktok, sleep: noopSleep, inspectVideoDuration: inspectStoredVideoDuration });
   assert.equal(result.claimed, 1);
   assert.equal(result.published, 1);
   assert.equal(result.failed, 0);
@@ -2051,7 +2058,7 @@ test("the publish worker drives a due, approved, declared item to 'published' â€
   assert.equal(chunk[1].contentRange, "bytes 0-1023/1024");
 
   // A second run finds nothing to do: the published row is never re-claimed.
-  const second = await workerMod.runTikTokPublishing({ db: admin, config: fakeConfig(), clientFor: () => tiktok, sleep: noopSleep });
+  const second = await workerMod.runTikTokPublishing({ db: admin, config: fakeConfig(), clientFor: () => tiktok, sleep: noopSleep, inspectVideoDuration: inspectStoredVideoDuration });
   assert.equal(second.claimed, 0);
   assert.equal(second.published, 0);
 });
@@ -2069,7 +2076,7 @@ test("an interrupted upload parks at the cron boundary with the id persisted; th
   const flaky = fakeTikTok({
     uploadChunk: async () => { throw new clientMod.TikTokApiError("network", "upload_chunk"); },
   });
-  const first = await workerMod.runTikTokPublishing({ db: admin, config: fakeConfig(), clientFor: () => flaky, sleep: noopSleep });
+  const first = await workerMod.runTikTokPublishing({ db: admin, config: fakeConfig(), clientFor: () => flaky, sleep: noopSleep, inspectVideoDuration: inspectStoredVideoDuration });
   assert.equal(first.claimed, 1);
   assert.equal(first.retrying, 1);
   const parked = await one("select * from public.tiktok_publish_queue where draft_id = $1", [draftId]);
@@ -2081,7 +2088,7 @@ test("an interrupted upload parks at the cron boundary with the id persisted; th
   // Run 2 (network recovered): the boundary arrives, the same post resumes.
   await db.query("update public.tiktok_publish_queue set scheduled_at = now() where draft_id = $1", [draftId]);
   const stable = fakeTikTok({ publishId: parked.tiktok_publish_id });
-  const second = await workerMod.runTikTokPublishing({ db: admin, config: fakeConfig(), clientFor: () => stable, sleep: noopSleep });
+  const second = await workerMod.runTikTokPublishing({ db: admin, config: fakeConfig(), clientFor: () => stable, sleep: noopSleep, inspectVideoDuration: inspectStoredVideoDuration });
   assert.equal(second.claimed, 1);
   assert.equal(second.published, 1);
   assert.equal(stable.calls.filter(([kind]) => kind === "init").length, 0, "RESUME: the persisted id means no second init, ever");
@@ -2112,7 +2119,7 @@ test("without the owner's per-post confirmation the worker sends NOTHING to TikT
   await queueMod.enqueueTikTokPublishItem(admin, enqueueInput(otherVideo));
 
   const tiktok = fakeTikTok();
-  const result = await workerMod.runTikTokPublishing({ db: admin, config: fakeConfig(), clientFor: () => tiktok, sleep: noopSleep });
+  const result = await workerMod.runTikTokPublishing({ db: admin, config: fakeConfig(), clientFor: () => tiktok, sleep: noopSleep, inspectVideoDuration: inspectStoredVideoDuration });
   assert.equal(result.claimed, 3);
   assert.equal(result.published, 0);
   assert.deepEqual(tiktok.calls.filter(([kind]) => kind === "creatorInfo" || kind === "init" || kind === "chunk"), [], "no TikTok posting call of any kind");
@@ -2153,9 +2160,11 @@ test("approval alone (Autopilot, campaigns, an old privacy choice or owner defau
     creatorNickname: "Voom Studio",
     declaration: settingsMod.tiktokDeclaration(settings).kind,
     consentedAt: nowIso(),
+    videoDurationSec: 30,
     fingerprint: consentMod.tiktokConsentFingerprint({
       draftId, creatorOpenId: openId, title: socialDrafts.tiktokQueueTitle(caption, "Launch teaser"), ...fields,
       assetStoragePath: `tiktok/${OWNER_A}/${draftId}-video.mp4`, assetByteSize: 1024,
+      videoDurationSec: 30,
     }),
   };
   const confirmed = await socialDrafts.updateSocialDraft(admin, OWNER_A, draftId, { caption, scheduledAt, decision: "approved", tiktokPostConsent: consent });
@@ -2173,7 +2182,7 @@ test("approval alone (Autopilot, campaigns, an old privacy choice or owner defau
 
   // 3. The worker accepts exactly that confirmation and posts with those settings.
   const tiktok = fakeTikTok();
-  const result = await workerMod.runTikTokPublishing({ db: admin, config: fakeConfig(), clientFor: () => tiktok, sleep: noopSleep });
+  const result = await workerMod.runTikTokPublishing({ db: admin, config: fakeConfig(), clientFor: () => tiktok, sleep: noopSleep, inspectVideoDuration: inspectStoredVideoDuration });
   assert.equal(result.published, 1);
   const init = tiktok.calls.find(([kind]) => kind === "init");
   assert.deepEqual(init[1].metadata.post_info, {
@@ -2187,6 +2196,7 @@ test("approval alone (Autopilot, campaigns, an old privacy choice or owner defau
   const secondConsent = { ...consent, fingerprint: consentMod.tiktokConsentFingerprint({
     draftId: second, creatorOpenId: openId, title: caption, ...fields,
     assetStoragePath: `tiktok/${OWNER_A}/${second}-video.mp4`, assetByteSize: 1024,
+    videoDurationSec: 30,
   }) };
   await socialDrafts.updateSocialDraft(admin, OWNER_A, second, { caption, scheduledAt, decision: "approved", tiktokPostConsent: secondConsent });
   // (scheduledAt is passed because PGlite returns timestamps as Date objects, unlike Supabase's ISO strings.)

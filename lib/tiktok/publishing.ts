@@ -397,6 +397,18 @@ export const TIKTOK_PUBLISH_FAILURES = {
     message: "TikTok's maximum video size is 4 GB. This file is larger than TikTok accepts.",
     retryable: false,
   },
+  media_duration_untrusted: {
+    status: "failed",
+    code: "media_duration_untrusted",
+    message: "Voom could not independently verify this video's duration. Reattach a valid MP4 or MOV video before posting.",
+    retryable: false,
+  },
+  media_duration_too_long: {
+    status: "failed",
+    code: "media_duration_too_long",
+    message: "The stored video is longer than this TikTok account currently allows.",
+    retryable: false,
+  },
   media_url_failed: {
     status: "scheduled",
     code: "media_url_failed",

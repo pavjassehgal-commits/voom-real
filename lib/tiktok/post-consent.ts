@@ -28,6 +28,8 @@ export interface TikTokPostConsent {
   /** Which declaration was shown next to the post button. */
   declaration: "music" | "music_and_branded";
   consentedAt: string;
+  /** Duration independently derived from the stored bytes by Voom's server. */
+  videoDurationSec: number;
   fingerprint: string;
 }
 
@@ -45,6 +47,7 @@ export interface TikTokConsentSubject {
   isAigc: boolean | null;
   assetStoragePath: string;
   assetByteSize: number;
+  videoDurationSec: number;
 }
 
 export function tiktokConsentFingerprint(subject: TikTokConsentSubject): string {
@@ -62,6 +65,7 @@ export function tiktokConsentFingerprint(subject: TikTokConsentSubject): string 
     subject.isAigc,
     subject.assetStoragePath,
     subject.assetByteSize,
+    subject.videoDurationSec,
   ]);
   return createHash("sha256").update(canonical).digest("hex");
 }
@@ -74,6 +78,7 @@ export function parseTikTokPostConsent(value: unknown): TikTokPostConsent | null
   if (!settings || !settings.privacy) return null;
   if (typeof v.creatorOpenId !== "string" || !v.creatorOpenId) return null;
   if (typeof v.consentedAt !== "string" || Number.isNaN(Date.parse(v.consentedAt))) return null;
+  if (typeof v.videoDurationSec !== "number" || !Number.isFinite(v.videoDurationSec) || v.videoDurationSec <= 0) return null;
   if (typeof v.fingerprint !== "string" || !/^[0-9a-f]{64}$/.test(v.fingerprint)) return null;
   if (v.declaration !== "music" && v.declaration !== "music_and_branded") return null;
   return {
@@ -83,6 +88,7 @@ export function parseTikTokPostConsent(value: unknown): TikTokPostConsent | null
     creatorNickname: typeof v.creatorNickname === "string" ? v.creatorNickname : null,
     declaration: v.declaration,
     consentedAt: v.consentedAt,
+    videoDurationSec: v.videoDurationSec,
     fingerprint: v.fingerprint,
   };
 }

@@ -14,6 +14,7 @@ import {
 } from "@/lib/tiktok/post-settings";
 import { isTikTokPublishableMime, TIKTOK_TITLE_MAX } from "@/lib/tiktok/publishing";
 import { hasPublishPermission } from "@/lib/tiktok/scopes";
+import { inspectTikTokVideoDuration, validateTikTokVideoDuration } from "@/lib/tiktok/video-duration";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 
@@ -114,6 +115,16 @@ async function load(ownerId: string, draftId: string): Promise<Loaded> {
   };
 }
 
+async function trustedStoredDuration(storagePath: string, expectedBytes: number): Promise<number | null> {
+  try {
+    const { data, error } = await createAdminClient().storage.from(ASSET_BUCKET).download(storagePath);
+    if (error || !data || data.size !== expectedBytes) return null;
+    return inspectTikTokVideoDuration(new Uint8Array(await data.arrayBuffer()));
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user) return json({ error: "Please log in again." }, 401);
@@ -190,6 +201,24 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!loaded.asset) return json({ error: "Attach the video before posting to TikTok." }, 409);
     if (!isTikTokPublishableMime(loaded.asset.mimeType)) return json({ error: "TikTok accepts MP4, WebM or MOV videos." }, 409);
 
+    const trustedDuration = await trustedStoredDuration(loaded.asset.storagePath, loaded.asset.byteSize);
+    const durationCheck = validateTikTokVideoDuration({
+      trustedDurationSeconds: trustedDuration,
+      reportedDurationSeconds: input.videoDurationSec,
+      maxDurationSeconds: loaded.creator.maxVideoPostDurationSec,
+    });
+    if (!durationCheck.ok) {
+      if (durationCheck.code === "video_too_long") {
+        return json({ error: `This video is longer than this TikTok account can post (${loaded.creator.maxVideoPostDurationSec} seconds maximum).`, code: durationCheck.code }, 400);
+      }
+      return json({
+        error: durationCheck.code === "video_duration_mismatch"
+          ? "The video changed after its preview loaded. Reload the preview before posting."
+          : "Voom couldn't independently verify this video's duration. Use a valid MP4 or MOV video and try again.",
+        code: durationCheck.code,
+      }, 400);
+    }
+
     const settings = {
       privacy: input.privacy,
       allowComment: input.allowComment,
@@ -203,7 +232,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     };
     const check = checkTikTokPostSettings(settings, loaded.creator, {
       appAudited: loaded.config.appAudited,
-      videoDurationSec: input.videoDurationSec,
+      // The shared settings validator receives only server-inspected media truth.
+      videoDurationSec: durationCheck.durationSeconds,
     });
     if (!check.ok) return json({ error: check.message, code: check.code }, 400);
 
@@ -216,6 +246,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       creatorNickname: loaded.creator.nickname,
       declaration: tiktokDeclaration(confirmed).kind,
       consentedAt: new Date().toISOString(),
+      videoDurationSec: durationCheck.durationSeconds,
       fingerprint: tiktokConsentFingerprint({
         draftId: id,
         creatorOpenId: loaded.openId,
@@ -223,6 +254,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         ...fields,
         assetStoragePath: loaded.asset.storagePath,
         assetByteSize: loaded.asset.byteSize,
+        videoDurationSec: durationCheck.durationSeconds,
       }),
     };
 
