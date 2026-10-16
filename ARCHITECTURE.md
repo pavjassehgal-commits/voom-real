@@ -1,6 +1,6 @@
 # Voom architecture (plain language)
 
-Last verified against the code: 2026-10-15. If the code and this file disagree, the code wins:
+Last verified against the code: 2026-10-16. If the code and this file disagree, the code wins:
 update this file in the same change.
 
 ## The big picture
@@ -27,22 +27,22 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 | Database + auth + storage | Supabase. Packages `@supabase/ssr`, `@supabase/supabase-js` |
 | Validation | zod |
 | Images | sharp (inspect/resize), image overlays |
-| Tests | Node's built-in test runner: `npm test` runs `tests/*.test.mjs` (≈1,600 tests). Some use PGlite (an in-memory Postgres) to test SQL. |
+| Tests | Node's built-in test runner: `npm test` runs `tests/*.test.mjs` (104 files, 1,669 tests; 4 are deliberately skipped in `voom-plans-credits-v1` with notes pointing to their replacements). Some use PGlite (an in-memory Postgres) to test SQL; 25 layout tests render pages in a real headless Chrome (found at `/Applications/Google Chrome.app`, or `VOOM_CHROMIUM_PATH`). Baseline counts live in `docs/baseline.md`. |
 | Hosting | Vercel (`vercel.json` has 2 daily crons) |
 
 ## Folder map
 | Folder | What lives there |
 |---|---|
-| `app/` | Pages and API. `app/page.tsx` = landing. `app/login`, `app/signup`, `app/auth/callback` = sign-in. `app/app/…` = the logged-in product. `app/api/…` = 73 backend endpoints. `app/privacy`, `terms`, `data-deletion`, `unsubscribe` = public pages. |
-| `app/app/(shell)/` | Logged-in screens inside the sidebar layout: today, plan, studio, calendar, performance, approvals, automations, campaigns, contacts, connections, instagram, tiktok, youtube, settings, pricing, mara, (ads, reels = redirects/placeholder) |
+| `app/` | Pages and API. `app/page.tsx` = landing. `app/login`, `app/signup`, `app/auth/callback` = sign-in. `app/app/…` = the logged-in product. `app/api/…` = 75 backend endpoints. `app/privacy`, `terms`, `data-deletion`, `unsubscribe` = public pages. `app/components/` = logo and legal-text pieces used by the public pages. |
+| `app/app/(shell)/` | Logged-in screens inside the sidebar layout: today, plan, studio, calendar, performance, approvals, automations, campaigns, contacts, connections, instagram, tiktok, youtube, settings, pricing, mara. `reels` only redirects to `studio`; `ads` is a real "not built yet" screen explaining what paid advertising will do |
 | `app/app/onboarding/` | Onboarding wizard page |
-| `components/voom/` | UI pieces: `shell/` (sidebar, top bar, nav list in `nav.ts`), `onboarding/`, `operating/` (plan, approvals), `modals/` (post editor, connect modals, campaign modals), `today/`, `contacts/`, `automations/`, `performance/`, `ui/` (buttons, modal, toast) |
+| `components/voom/` | UI pieces: `shell/` (sidebar, top bar, nav list in `nav.ts`), `onboarding/`, `operating/` (plan, approvals), `modals/` (post editor, connect modals, campaign modals), `today/`, `contacts/`, `automations/`, `campaigns/`, `performance/`, `workspace/` (loading skeleton and shared workspace bits), `ui/` (buttons, modal, toast) |
 | `lib/` | All business logic (see below) |
 | `utils/supabase/` | How code talks to Supabase: `server.ts` (as the logged-in user), `admin.ts` (server master key, bypasses database rules: server only), `client.ts` (browser), `proxy.ts` (refreshes login cookie) |
 | `proxy.ts` (root) | Runs on every request to keep the login session fresh |
 | `supabase/migrations/` | Database changes, numbered `0001`–`0058`, applied in order. **Note:** 0052–0054 are missing from this copy (see DECISIONS) |
 | `supabase/ops/schedule-workers.sql` | Sets up the 9 background job timers |
-| `supabase/proposed/` | Draft migrations not yet applied |
+| `supabase/proposed/` | Mostly rollback scripts (how to undo migrations 0055–0058) plus copies of 0055–0057 that are identical to the applied ones, and two older trend-intelligence drafts that never became numbered migrations. Nothing here is waiting to be applied. |
 | `tests/` | Automated tests, one file per feature |
 | `docs/` | Deploy runbook, audits, trend-intelligence plans |
 | `reference/Voomprot2.html` | Original design prototype. Look-and-feel reference only, not architecture |
@@ -65,6 +65,7 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 | `lib/coordinator/` | Background "what should MARA propose next" engine |
 | `lib/trends/` | Trend intelligence (built, switched off by flags, not released) |
 | `lib/rate-limit.ts` | Per-user limits on AI requests |
+| `lib/legal/` | Contact details shown on the privacy/terms pages |
 
 ## Key flows
 **Sign up / log in.** `app/signup/actions.ts` → Supabase sends a confirmation email → link lands on
@@ -75,7 +76,8 @@ without a finished onboarding to `/app/onboarding`.
 Missing today: forgot password, Google sign-in, 2FA.
 
 **Onboarding.** `components/voom/onboarding/OnboardingWizard.tsx` (8 steps, questions in
-`lib/voom/onboardingData.ts`) → `saveOnboarding` in `lib/voom/mutations.ts` → writes `profiles`
+`lib/voom/onboardingData.ts`; `AnalyzingScreen.tsx` is the "we're setting things up" screen shown
+at the end) → `saveOnboarding` in `lib/voom/mutations.ts` → writes `profiles`
 and `businesses` (website goes only to the email brand table).
 
 **Plan → content → approval → publish.**

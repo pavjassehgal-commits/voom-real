@@ -16,6 +16,19 @@ decision reverses an earlier one, add a new entry and mark the old one "Replaced
 
 ---
 
+## 2026-10-17: The 4 skipped tests are redundant on purpose; their replacements test real SQL
+- Decision (fact recorded): `npm test` always reports 4 skipped tests. They are tests 3, 5, 6 and 15 in `tests/voom-plans-credits-v1.test.mjs`, skipped deliberately by the original developers, not broken and not waiting on a missing tool. Leave them as they are; the baseline (`docs/baseline.md`) expects exactly 4.
+- Before: On 2026-10-16 we assumed the skips were browser-layout tests missing a Chromium install. That was wrong: Google Chrome is installed, the test helper finds it, and all 25 browser-layout tests pass.
+- Why they are redundant: migration `0035_voom_plans_credits.sql` moved the credit-ledger rules out of app code and into three Postgres functions (`reserve_media_credits`, `refund_media_credits`, `settle_media_credits`) plus `voom_plan_allowance`. The old v1 file uses a simple fake database that only imitates tables, not functions, so those four tests can no longer exercise the real logic. Rather than delete them, the developers skipped each one with a note pointing to its replacement.
+- Where the replacements are and what they cover:
+  - Test 3 (Autopilot only auto-generates when all conditions hold) → `tests/voom-plans-credits-safety.test.mjs` sub-tests 5 and 6, plus the mode rules still active in v1 tests 1, 2 and 8.
+  - Test 5 (refund when generation fails before creation) → `voom-plans-credits-safety` sub-test 9, and `tests/workflow-video-hard-timeout.test.mjs` test 4c.
+  - Test 6 (no double charge for the same generation id) → `voom-plans-credits-safety` sub-test 8, and `tests/manual-replenish-cost-safety.test.mjs` test 5b (two fast clicks pay once).
+  - Test 15 (remaining credits = allowance + purchased − charged) → `voom-plans-credits-safety` sub-tests 4 and 7.
+- How the replacements work: `voom-plans-credits-safety` uses the helper `tests/helpers/pglite-supabase.mjs`, which starts PGlite (a real Postgres running inside Node, no install needed), applies every file in `supabase/migrations/` in order, then calls the actual database functions. So the replacements prove the real SQL that production runs, which is stronger than the old fake-table tests ever were. All replacement tests pass (verified 2026-10-17).
+- Consequences: If someone later changes the credit rules, edit the SQL in a new migration and extend `voom-plans-credits-safety`, not the v1 file. If a future run shows a skip count other than 4, something changed and must be explained. Also noted: the browser-test helper (`tests/helpers/rendered-surface.mjs`) has no timeout on page measurements, so a stalled Chrome can hang `npm test`; seen once, fix not yet scheduled.
+- Status: Active
+
 ## 2026-10-16: 2FA comes before onboarding
 - Decision: Build 2FA (authenticator-app codes, optional per user) right after forgot-password and Google sign-in, before the onboarding rebuild.
 - Before: The audit recommended deferring 2FA until after onboarding because it changes the central "who is logged in" check.
