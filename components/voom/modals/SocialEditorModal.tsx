@@ -1,10 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Btn, Field, Input, Tag, Textarea } from "@/components/voom/ui/primitives";
 import { ModalBody, ModalFoot, ModalHead, ModalShell } from "@/components/voom/ui/Modal";
 import { TikTokPostSheet } from "@/components/voom/modals/TikTokPostSheet";
 import { TIKTOK_PRIVACY_LABELS, isTikTokPrivacy } from "@/lib/tiktok/publishing";
+
+const TIKTOK_VIDEO_UPLOAD_ACCEPT = ".mp4,video/mp4";
+const TIKTOK_VIDEO_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
 
 /**
  * Multi-Social Core — the editor for ONE TikTok or YouTube draft.
@@ -66,6 +69,8 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     try {
@@ -130,6 +135,39 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
   /** Saves any edits first, so the post sheet reviews exactly what is stored. */
   async function openPostSheet() {
     if (await save()) setPosting(true);
+  }
+
+  async function uploadTikTokVideo(file: File) {
+    if (!draft || draft.kind !== "tiktok_video") return;
+    setError("");
+    setNotice("");
+    if (!/\.mp4$/i.test(file.name)) {
+      setError("Choose an MP4 video.");
+      return;
+    }
+    if (file.size < 1 || file.size > TIKTOK_VIDEO_UPLOAD_MAX_BYTES) {
+      setError("Choose an MP4 video up to 20 MB.");
+      return;
+    }
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.set("file", file);
+      const response = await fetch(`/api/social-drafts/${draftId}/asset`, { method: "POST", body: form });
+      const body = await response.json() as { draft?: SocialDraft; error?: unknown; code?: unknown; message?: string };
+      if (!response.ok || !body.draft) {
+        throw new Error(typeof body.error === "string" ? body.error : "Voom couldn't upload that video.");
+      }
+      setDraft(body.draft);
+      setNotice(body.message ?? "Video attached. Nothing was published.");
+      onChanged?.();
+      window.dispatchEvent(new Event("voom:data-changed"));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Voom couldn't upload that video.");
+    } finally {
+      setUploading(false);
+      if (uploadInputRef.current) uploadInputRef.current.value = "";
+    }
   }
 
   if (!draft) {
@@ -198,6 +236,37 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
           <Tag tone={draft.status === "approved" ? "t-blue" : "t-amber"}>{draft.publishStateLabel}</Tag>
           {draft.asset ? <Tag tone="t-green">Video attached: {draft.asset.displayName}</Tag> : <Tag tone="t-grey">No video attached yet</Tag>}
         </div>
+
+        {draft.kind === "tiktok_video" ? (
+          <div className="mb-4 rounded-[14px] border border-line bg-surface-2 px-3.5 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-text-1">TikTok video</p>
+                <p className="mt-0.5 text-[12.5px] leading-relaxed text-text-3">
+                  MP4 only, up to 20 MB. Stored privately; replacing a video requires a fresh TikTok confirmation.
+                </p>
+              </div>
+              <input
+                ref={uploadInputRef}
+                type="file"
+                accept={TIKTOK_VIDEO_UPLOAD_ACCEPT}
+                className="sr-only"
+                aria-label="Choose an MP4 video for TikTok"
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  if (file) void uploadTikTokVideo(file);
+                }}
+              />
+              <Btn
+                variant="outline"
+                disabled={busy || uploading}
+                onClick={() => uploadInputRef.current?.click()}
+              >
+                {uploading ? "Uploading…" : draft.asset ? "Replace video" : "Upload MP4"}
+              </Btn>
+            </div>
+          </div>
+        ) : null}
 
         <Field label="Title" hint={isYouTubeVideo ? "Search-friendly — front-load the topic." : "A short internal name."}>
           <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={160} />
@@ -274,13 +343,13 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
         </Field>}
       </ModalBody>
       <ModalFoot className="justify-between">
-        <Btn variant="outline" disabled={busy} onClick={() => void save()}>Save draft</Btn>
+        <Btn variant="outline" disabled={busy || uploading} onClick={() => void save()}>Save draft</Btn>
         <div className="flex gap-2">
           {draft.status === "approved"
-            ? <Btn variant="ghost" disabled={busy} onClick={() => void save("draft")}>Move back to draft</Btn>
+            ? <Btn variant="ghost" disabled={busy || uploading} onClick={() => void save("draft")}>Move back to draft</Btn>
             : null}
           {draft.channel === "tiktok"
-            ? <Btn variant="primary" disabled={busy || !draft.asset} title={draft.asset ? undefined : "Attach a video first"} onClick={() => void openPostSheet()}>
+            ? <Btn variant="primary" disabled={busy || uploading || !draft.asset} title={draft.asset ? undefined : "Attach a video first"} onClick={() => void openPostSheet()}>
                 {draft.tiktokPost ? "Review TikTok post" : "Post to TikTok…"}
               </Btn>
             : draft.status !== "approved"
