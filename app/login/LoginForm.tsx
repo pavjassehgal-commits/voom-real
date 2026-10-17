@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import Link from "next/link";
 import { login, type LoginState } from "./actions";
@@ -22,7 +22,15 @@ function SubmitButton() {
 
 export default function LoginForm({ initialError }: { initialError?: string }) {
   const [state, formAction] = useActionState(login, initialState);
-  const formError = state.formError ?? initialError;
+  const resultId = state.submissionId ?? 0;
+  const [dismissedResultId, setDismissedResultId] = useState<number | null>(null);
+  const resultIsDismissed = dismissedResultId === resultId;
+  const dismissCurrentResult = () => setDismissedResultId(resultId);
+
+  const formError = resultIsDismissed
+    ? undefined
+    : (state.formError ?? initialError);
+  const fieldErrors = resultIsDismissed ? undefined : state.fieldErrors;
 
   return (
     <div className="w-full max-w-sm rounded-2xl border border-line bg-surface p-7 shadow-[0_1px_2px_rgba(0,0,0,.5),0_12px_32px_-16px_rgba(0,0,0,.8)]">
@@ -33,7 +41,11 @@ export default function LoginForm({ initialError }: { initialError?: string }) {
         MARA has been keeping an eye on things.
       </p>
 
-      <form action={formAction} className="mt-6 flex flex-col gap-4">
+      <form
+        action={formAction}
+        onSubmit={dismissCurrentResult}
+        className="mt-6 flex flex-col gap-4"
+      >
         {formError && (
           <p
             role="alert"
@@ -52,17 +64,20 @@ export default function LoginForm({ initialError }: { initialError?: string }) {
             name="email"
             type="email"
             required
+            key={`email-${resultId}`}
+            defaultValue={state.email ?? ""}
+            onChange={dismissCurrentResult}
             autoComplete="email"
             placeholder="you@business.com"
-            aria-invalid={state.fieldErrors?.email ? "true" : undefined}
+            aria-invalid={fieldErrors?.email ? "true" : undefined}
             aria-describedby={
-              state.fieldErrors?.email ? "email-error" : undefined
+              fieldErrors?.email ? "email-error" : undefined
             }
             className="h-11 w-full rounded-xl border border-line bg-surface-2 px-3.5 text-sm text-text placeholder:text-text-3 focus:border-brand focus:outline-none focus:ring-4 focus:ring-[var(--brand-soft)]"
           />
-          {state.fieldErrors?.email && (
+          {fieldErrors?.email && (
             <p id="email-error" role="alert" className="mt-1.5 text-xs text-red-400">
-              {state.fieldErrors.email}
+              {fieldErrors.email}
             </p>
           )}
         </label>
@@ -76,17 +91,20 @@ export default function LoginForm({ initialError }: { initialError?: string }) {
             name="password"
             type="password"
             required
+            key={`password-${resultId}`}
+            defaultValue=""
+            onChange={dismissCurrentResult}
             autoComplete="current-password"
             placeholder="••••••••"
-            aria-invalid={state.fieldErrors?.password ? "true" : undefined}
+            aria-invalid={fieldErrors?.password ? "true" : undefined}
             aria-describedby={
-              state.fieldErrors?.password ? "password-error" : undefined
+              fieldErrors?.password ? "password-error" : undefined
             }
             className="h-11 w-full rounded-xl border border-line bg-surface-2 px-3.5 text-sm text-text placeholder:text-text-3 focus:border-brand focus:outline-none focus:ring-4 focus:ring-[var(--brand-soft)]"
           />
-          {state.fieldErrors?.password && (
+          {fieldErrors?.password && (
             <p id="password-error" role="alert" className="mt-1.5 text-xs text-red-400">
-              {state.fieldErrors.password}
+              {fieldErrors.password}
             </p>
           )}
         </label>
