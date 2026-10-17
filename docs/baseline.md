@@ -30,10 +30,12 @@ Environment: Node v26.0.0, npm 11.12.1, macOS.
 - The 17 lint warnings are all pre-existing: unused variables (11), `<img>` instead of Next's
   `<Image>` (3), one `window.location.assign()` in `PostEditorModal.tsx`, and unused imports in
   two test files. New work must not add warnings; removing some is fine but not required.
-- Rule of thumb: pass count ≥ 1665, fail = 0, typecheck clean, lint errors = 0, lint warnings ≤ 17.
-  If a task legitimately adds or removes tests, record the new numbers here with the date.
+- Rule of thumb: pass count ≥ the latest row below, fail = 0, typecheck clean, lint errors = 0,
+  lint warnings ≤ the latest row below. If a task legitimately adds or removes tests, record the
+  new numbers here with the date.
 
 ## History
 | Date | Tests pass / fail / skip | Typecheck | Lint err / warn | Change |
 |---|---|---|---|---|
 | 2026-10-16 | 1665 / 0 / 4 | clean | 0 / 17 | Baseline, no code changes |
+| 2026-10-17 | 1668 / 0 / 4 | clean | 0 / 16 | Three truthfulness fixes (+3 tests, 5 tests reworded, 1 unused variable removed). See DECISIONS 2026-10-17. |

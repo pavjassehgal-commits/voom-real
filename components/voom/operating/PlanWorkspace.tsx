@@ -263,7 +263,7 @@ export function PlanWorkspace({
       {/* TEMPORARY: planning-only preview control — dev-flag gated. */}
       {SHOW_PLANNING_PREVIEW && <PlanningOnlyPreviewCard className="relative z-10 mb-3.5" />}
 
-      {outcome && outcome.state !== "no_supported_social_channels_selected" && <div className="relative z-10"><PlanOutcomeNotice outcome={outcome} error={error} /></div>}
+      {outcome && <div className="relative z-10"><PlanOutcomeNotice outcome={outcome} error={error} readiness={channelReadiness} /></div>}
 
       {error && !outcome && <p role="alert" className="relative z-10 mb-3.5 rounded-2xl border border-red/35 bg-red/10 px-4 py-3 text-[13px] text-red">{error}</p>}
 
@@ -369,11 +369,31 @@ function ReadinessNote({ readiness }: { readiness: ChannelReadiness[] }) {
   </p>;
 }
 
-function PlanOutcomeNotice({ outcome, error }: { outcome: PlanReplenishOutcome; error: string }) {
+/**
+ * The truthful result of one "Build plan" click. Exported so it can be
+ * rendered on its own in tests; the workspace renders it with the server's
+ * authoritative outcome and the real per-channel connection readiness.
+ */
+export function PlanOutcomeNotice({ outcome, error, readiness = [] }: { outcome: PlanReplenishOutcome; error: string; readiness?: ChannelReadiness[] }) {
   if (outcome.state === "failed") return <div role="alert" className="mb-3.5 rounded-2xl border border-red/35 bg-red/10 px-4 py-3 text-[13px] text-red">
     <p className="font-semibold">{"We couldn't replenish your plan"}</p>
     <p>{error || "Your existing plan hasn't been changed. Try again."}</p>
   </div>;
+  if (outcome.state === "no_supported_social_channels_selected") {
+    // The server planned nothing because no social channel is selected. Say
+    // so, and name the next step — including the channel that still needs
+    // connecting, read from the real connection rows, never assumed.
+    const unconnected = readiness.find((entry) => !entry.connected);
+    return <div role="alert" className="mb-3.5 rounded-2xl border border-amber/35 bg-amber/10 px-4 py-3 text-[13px] text-amber">
+      <p className="font-semibold">Nothing was planned: no social channel is selected</p>
+      <p className="text-text-2">
+        Choose Instagram, TikTok or YouTube in{" "}
+        <Link href="/app/settings" className="font-semibold underline">Settings</Link>, then build the plan again.
+        {unconnected && <> Connect {channelIdentity(unconnected.channel).label} first in{" "}
+          <Link href="/app/connections" className="font-semibold underline">Connections</Link> so approved posts can publish.</>}
+      </p>
+    </div>;
+  }
   if (outcome.state === "already_up_to_date") return <div role="status" className="mb-3.5 rounded-2xl border border-green/35 bg-green/10 px-4 py-3 text-[13px] text-green">
     <p className="font-semibold">Your marketing plan is already up to date</p>
     <p>You have complete marketing coverage{outcome.horizonEnd ? ` through ${formatLocalDate(outcome.horizonEnd)}` : " for the next 7 days"}. {"Voom will add more content when it's needed."}</p>

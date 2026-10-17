@@ -12,7 +12,6 @@ import { applyPostOverlay } from "@/lib/media/image-overlay";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { normalizePlan, canUseAutomationMode } from "@/lib/billing/plans";
-import { creditCostForMedia } from "@/lib/billing/credits";
 import { guardAndReserveMedia, releaseReservationOnFailure, confirmReservation } from "@/lib/billing/entitlement-guard";
 import { consumeAiRateLimit, rateLimitedResponse } from "@/lib/rate-limit";
 import { normalizeAutomationMode } from "@/lib/voom/automation";
@@ -22,16 +21,21 @@ export const maxDuration = 300;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const GENERATED_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 
+/** Thrown when the visual is stored but the draft's new copy could not be saved. */
+class DraftCopySaveError extends Error {}
+
 /**
  * "Create with MARA" for an Instagram Post, Reel or Story — now with Voom credit reservation.
  *
- * Before any provider call:
+ * Before any AI or provider call:
  * 1. calculate required Voom credits
  * 2. verify plan entitlement (Free has no AI generation)
  * 3. verify enough credits remain
  * 4. atomically reserve/deduct credits
- * 5. only then submit provider job
- * If provider fails before real paid job, refund reservation.
+ * 5. only then ask MARA for copy and submit the provider job
+ * The generated copy reaches the draft only after the visual is stored, so a
+ * refused or failed generation leaves the draft exactly as it was and the
+ * response says why. If anything fails before a real paid job, refund.
  */
 
 type BusinessBillingRow = { plan?: string | null; allow_automatic_paid_media?: unknown; automation_level?: string | null } | null;
@@ -127,9 +131,45 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const [brand, planContext] = await Promise.all([loadPostBrandContext(admin, user.id), loadPostPlanContext(admin, user.id)]);
   if (!brand) return Response.json({ error: "Complete your brand profile before creating posts with MARA." }, { status: 409 });
 
+  const format = post.kind === "story" ? "9:16" : post.format;
+  const generationId = randomUUID();
+
+  // Plan + credit check and reservation come FIRST — before any AI call and
+  // before anything is written to the draft. A Free account is refused here
+  // with its draft exactly as it was.
+  const guard = await guardAndReserveMedia(admin, {
+    ownerId: user.id,
+    planId: billing.plan,
+    mode: billing.mode,
+    allowAutomaticPaidMedia: billing.allowAutomatic,
+    mediaType: "image",
+    source: "user_request",
+    generationId,
+  });
+
+  if (!guard.allow) {
+    if (guard.code === "plan_not_allowed") {
+      return Response.json({
+        error: `${guard.message} Your draft is unchanged.`,
+        code: guard.code,
+        creditsNeeded: guard.credits,
+        upgradeRequired: true,
+      }, { status: 402 });
+    }
+    return Response.json({
+      error: `${guard.message} Your draft is unchanged.`,
+      code: guard.code,
+      creditsNeeded: guard.credits,
+      remaining: 0,
+    }, { status: 402 });
+  }
+
+  // The generated copy is held here and written to the draft only once the
+  // visual exists. Any refusal or failure before that leaves the draft untouched.
   let concept: string;
   let visualPrompt: string;
   let overlayCta = "";
+  let draftCopy: { title: string; content: string };
   if (post.kind === "story") {
     let storyPlan;
     try {
@@ -144,20 +184,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         parse: (value) => storyVisualSchema.parse(value),
       });
     } catch (reason) {
+      await releaseReservationOnFailure(admin, user.id, generationId).catch(() => null);
       if (reason instanceof AiError && reason.code === "not_configured") {
-        return Response.json({ error: "MARA's AI provider is not configured yet, so no Story visual was generated." }, { status: 503 });
+        return Response.json({ error: "MARA's AI provider is not configured yet, so no Story visual was generated. Your draft is unchanged." }, { status: 503 });
       }
       if (reason instanceof AiError && reason.code === "rate_limited") {
-        return Response.json({ error: "MARA is busy right now. Wait a moment and retry." }, { status: 429 });
+        return Response.json({ error: "MARA is busy right now. Wait a moment and retry. Your draft is unchanged." }, { status: 429 });
       }
-      return Response.json({ error: "MARA couldn't plan that Story. Please retry." }, { status: 502 });
+      return Response.json({ error: "MARA couldn't plan that Story. Please retry. Your draft is unchanged." }, { status: 502 });
     }
     concept = storyPlan.concept.trim().slice(0, 160);
     visualPrompt = storyPlan.visualPrompt;
-    const { error: titleError } = await admin.from("mara_drafts")
-      .update({ title: concept, content: concept })
-      .eq("owner_user_id", user.id).eq("id", id);
-    if (titleError) return Response.json({ error: "MARA planned the Story but Voom couldn't save it. Please retry." }, { status: 503 });
+    draftCopy = { title: concept, content: concept };
   } else {
     let copy;
     try {
@@ -172,55 +210,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         parse: (value) => postDraftSchema.parse(value),
       });
     } catch (reason) {
+      await releaseReservationOnFailure(admin, user.id, generationId).catch(() => null);
       if (reason instanceof AiError && reason.code === "not_configured") {
-        return Response.json({ error: "MARA's AI provider is not configured yet, so no copy was generated." }, { status: 503 });
+        return Response.json({ error: "MARA's AI provider is not configured yet, so no copy was generated. Your draft is unchanged." }, { status: 503 });
       }
       if (reason instanceof AiError && reason.code === "rate_limited") {
-        return Response.json({ error: "MARA is busy right now. Wait a moment and retry." }, { status: 429 });
+        return Response.json({ error: "MARA is busy right now. Wait a moment and retry. Your draft is unchanged." }, { status: 429 });
       }
-      return Response.json({ error: "MARA couldn't write that post. Please retry." }, { status: 502 });
+      return Response.json({ error: "MARA couldn't write that post. Please retry. Your draft is unchanged." }, { status: 502 });
     }
 
     const caption = composePostCaption({ caption: copy.caption, cta: copy.cta, hashtags: copy.hashtags });
-    const { error: copyError } = await admin.from("mara_drafts")
-      .update({ title: copy.concept.trim().slice(0, 160), content: caption.slice(0, 12000) })
-      .eq("owner_user_id", user.id).eq("id", id);
-    if (copyError) return Response.json({ error: "MARA wrote the copy but Voom couldn't save it. Please retry." }, { status: 503 });
     concept = copy.concept.trim().slice(0, 160);
     visualPrompt = copy.visualPrompt;
     overlayCta = copy.cta;
-  }
-
-  const format = post.kind === "story" ? "9:16" : post.format;
-  const generationId = randomUUID();
-
-  // Reserve credits BEFORE provider submission
-  const requiredCredits = creditCostForMedia({ mediaType: "image" });
-  const guard = await guardAndReserveMedia(admin, {
-    ownerId: user.id,
-    planId: billing.plan,
-    mode: billing.mode,
-    allowAutomaticPaidMedia: billing.allowAutomatic,
-    mediaType: "image",
-    source: "user_request",
-    generationId,
-  });
-
-  if (!guard.allow) {
-    if (guard.code === "plan_not_allowed") {
-      return Response.json({
-        error: guard.message,
-        code: guard.code,
-        creditsNeeded: guard.credits,
-        upgradeRequired: true,
-      }, { status: 402 });
-    }
-    return Response.json({
-      error: guard.message,
-      code: guard.code,
-      creditsNeeded: guard.credits,
-      remaining: 0,
-    }, { status: 402 });
+    draftCopy = { title: concept, content: caption.slice(0, 12000) };
   }
 
   const { error: queuedError } = await admin.from("mara_media_generations").insert({
@@ -280,6 +284,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (previousStoragePath && previousStoragePath !== storagePath) {
       await removePostAssetObject(admin, user.id, previousStoragePath);
     }
+
+    // Only now — with the visual stored — does the generated copy reach the draft.
+    const { error: copyError } = await admin.from("mara_drafts")
+      .update(draftCopy)
+      .eq("owner_user_id", user.id).eq("id", id);
+    if (copyError) throw new DraftCopySaveError();
+
     await confirmReservation(admin, user.id, generationId).catch(() => null);
     await syncPostToCalendar(admin, user.id, id).catch(() => null);
     const updated = await getPostDraft(admin, user.id, id);
@@ -292,16 +303,22 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     await admin.from("mara_media_generations").update({ status: "failed", error_code: code, provider_diagnostic: reason instanceof MediaError ? reason.diagnostic : null })
       .eq("id", generationId).eq("owner_user_id", user.id);
     await releaseReservationOnFailure(admin, user.id, generationId).catch(() => null);
+    if (reason instanceof DraftCopySaveError) {
+      return Response.json({
+        post: await getPostDraft(admin, user.id, id),
+        error: "MARA generated the visual, but Voom couldn't save the new caption, so your text is unchanged. Please retry.",
+      }, { status: 503 });
+    }
     if (code === "not_configured") {
       return Response.json({
         post: await getPostDraft(admin, user.id, id),
-        error: "MARA saved the copy, but the image provider is not configured, so no visual was generated.",
+        error: "The image provider is not configured, so no visual was generated. Your draft is unchanged.",
       }, { status: 503 });
     }
-    if (code === "rate_limited") return Response.json({ error: "The image provider is busy. Wait a moment and retry." }, { status: 429 });
+    if (code === "rate_limited") return Response.json({ error: "The image provider is busy. Wait a moment and retry. Your draft is unchanged." }, { status: 429 });
     return Response.json({
       post: await getPostDraft(admin, user.id, id),
-      error: "MARA saved the copy, but the visual could not be generated. No visual was attached.",
+      error: "The visual could not be generated, so nothing was changed. Your draft is unchanged. Please retry.",
     }, { status: 503 });
   }
 }

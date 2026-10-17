@@ -4,6 +4,8 @@ import { Icon } from "@/components/voom/icons";
 import { Card, Tag } from "@/components/voom/ui/primitives";
 import { getResendAvailability } from "@/lib/email/config";
 import { getOperatingData } from "@/lib/voom/operating-data";
+import { readInstagramConfig } from "@/lib/instagram/config";
+import { getInstagramConnection } from "@/lib/instagram/data";
 import { readTikTokConfig } from "@/lib/tiktok/config";
 import { getTikTokConnection } from "@/lib/tiktok/data";
 import { readYouTubeConfig } from "@/lib/youtube/config";
@@ -30,7 +32,14 @@ export default async function ConnectionsPage() {
 
   const youTubeConfig = readYouTubeConfig();
   const tikTokConfig = readTikTokConfig();
+  const instagramConfig = readInstagramConfig();
   const user = await getCurrentUser();
+  // Instagram reads its REAL instagram_connections row, exactly like TikTok and
+  // YouTube below. A failed read reports "not connected" rather than assuming.
+  const instagram = user
+    ? await getInstagramConnection(createAdminClient(), user.id, Boolean(instagramConfig)).catch(() => null)
+    : null;
+  const instagramConnected = Boolean(instagram?.connected);
   const youTube = user
     ? await getYouTubeConnection(createAdminClient(), user.id, Boolean(youTubeConfig), youTubeConfig?.projectAudited === true).catch(() => null)
     : null;
@@ -47,8 +56,14 @@ export default async function ConnectionsPage() {
         <Connection
           icon="ig"
           name="Instagram"
-          description="Professional account, live content and performance. Publishing is live through your connected account."
+          description={instagramConnected
+            ? `Connected${instagram?.username ? `: @${instagram.username}` : ""}. Professional account, live content and performance. Publishing is live through your connected account.`
+            : instagramConfig
+              ? "Connect your professional Instagram account to publish approved posts through Voom. Until you connect, Instagram content can be planned and approved inside Voom — nothing is published."
+              : "Planning connected: Instagram posts, Reels and Stories. The server-side Instagram integration is not configured yet, so nothing is published to Instagram."}
           selected={selected.has("instagram")}
+          connected={instagramConnected}
+          statusLabel={instagramConfig ? "Not connected" : "Planning only"}
           href="/app/instagram"
         />
         <Connection
@@ -85,6 +100,7 @@ export default async function ConnectionsPage() {
             : "Campaign delivery integration is not configured yet."}
           selected={selected.has("email")}
           configured={email.configured}
+          connected={email.configured}
         />
       </div>
       <p className="mt-4 max-w-2xl text-xs leading-relaxed text-text-3">
@@ -97,7 +113,9 @@ export default async function ConnectionsPage() {
   );
 }
 
-function Connection({ icon, name, description, selected, configured = false, connected = true, statusLabel, href }: { icon: string; name: string; description: string; selected: boolean; configured?: boolean; connected?: boolean; statusLabel?: string; href?: string }) {
+// `connected` defaults to false: a card may only say "Connected" when its
+// caller proved it from the provider's own connection row.
+function Connection({ icon, name, description, selected, configured = false, connected = false, statusLabel, href }: { icon: string; name: string; description: string; selected: boolean; configured?: boolean; connected?: boolean; statusLabel?: string; href?: string }) {
   const content = (
     <Card className="flex items-center gap-4 p-4 transition hover:border-line-2">
       <span className="grid h-11 w-11 place-items-center rounded-xl bg-surface-2 text-brand"><Icon name={icon} /></span>

@@ -135,10 +135,10 @@ test("client SELECT surfaces exclude provider diagnostics", async () => {
   assert.doesNotMatch(diagSql, /grant /i);
   assert.match(diagSql, /service-role only/);
 
-  assert.match(generate, /MARA saved the copy, but the visual could not be generated\. No visual was attached\./);
+  assert.match(generate, /The visual could not be generated, so nothing was changed\. Your draft is unchanged\. Please retry\./);
   assert.match(
     generate,
-    /return Response\.json\(\{\s*post: await getPostDraft\(admin, user\.id, id\),\s*error: "MARA saved the copy, but the visual could not be generated\. No visual was attached\.",\s*\}, \{ status: 503 \}\)/,
+    /return Response\.json\(\{\s*post: await getPostDraft\(admin, user\.id, id\),\s*error: "The visual could not be generated, so nothing was changed\. Your draft is unchanged\. Please retry\.",\s*\}, \{ status: 503 \}\)/,
   );
   assert.doesNotMatch(generate, /body_excerpt|provider_message|provider_code/);
   assert.match(mediaRoute, /error: friendlyMediaError\(code\)/);

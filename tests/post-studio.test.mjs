@@ -349,7 +349,7 @@ test("a post only shows a visual once a stored object exists", async () => {
   // Generation failures leave no visual attached.
   const route = await read("app/api/posts/[id]/generate/route.ts");
   assert.match(route, /status: "failed", error_code: code/);
-  assert.match(route, /No visual was attached/);
+  assert.match(route, /The visual could not be generated, so nothing was changed/);
 });
 
 // ---------------------------------------------------------------------------

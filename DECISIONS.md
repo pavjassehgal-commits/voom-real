@@ -16,6 +16,23 @@ decision reverses an earlier one, add a new entry and mark the old one "Replaced
 
 ---
 
+## 2026-10-17: Three truthfulness fixes: Instagram status, Free-plan Generate, empty-channel Build plan
+- Decision: Fix three places where the app told the user something untrue or nothing at all. Each fix has one automated test in `tests/truthful-status-and-guards.test.mjs` that failed before the fix and passes after.
+- Before:
+  1. The Connections page always showed Instagram as "Connected" because the card helper defaulted `connected` to true and the Instagram card never passed a value.
+  2. "Generate" in Post Studio asked MARA for copy and saved it into the draft *before* checking the plan and credits. A Free user was refused with a 402, but their caption had already been overwritten. When the image step failed afterwards, the copy stayed saved and the message said "MARA saved the copy".
+  3. "Build plan" with no social channel selected did nothing visible: the server returned a clear "no supported social channels selected" outcome, but the Plan screen deliberately hid that outcome (`PlanWorkspace.tsx`) and had no text for it.
+- What changed:
+  1. `app/app/(shell)/connections/page.tsx` reads the real `instagram_connections` row with `getInstagramConnection`, the same way TikTok and YouTube already did, and passes a real `connected` value, status label and description. The helper default is now `connected = false`, so no card can claim a connection it never proved. The Email card passes `connected={email.configured}` so its display is unchanged.
+  2. `app/api/posts/[id]/generate/route.ts`: the plan and credit guard now runs before any AI call. The generated title and caption are held in memory and written to the draft only after the visual is generated, validated and stored. Every refusal or failure path leaves the draft untouched, refunds any reservation, and says "Your draft is unchanged". An unused variable was removed (lint warnings 17 → 16).
+  3. `components/voom/operating/PlanWorkspace.tsx`: the outcome notice is now shown for the no-channel state and says "Nothing was planned: no social channel is selected", with links to Settings and, when the real connection rows show a channel not connected, "Connect Instagram first" in Connections. `PlanOutcomeNotice` is exported so the test can render it.
+- Why: Users must never see a status or a result the system cannot back up (same rule the TikTok and YouTube tiles already followed). Money matters: a refused generation must cost nothing and change nothing. Rejected: keeping the generated caption on image failure (simpler for the user, but it leaves the draft half-changed by a run that reported failure).
+- Trade-off accepted: when the image provider fails, the user now loses the generated caption as well and must click Generate again. Credits are refunded either way. Edge case: if the visual is stored but the caption save then fails, the response says exactly that, the credits are refunded, and the text stays unchanged.
+- Testing: `tests/truthful-status-and-guards.test.mjs` (A: source check on the page; B: runs the real route with the real plan rules and credit guard against doubled I/O in `tests/helpers/generate-route-doubles.mjs`, for Free refused / Pro image failure / Pro success; C: renders the notice). Five existing text-matching tests were updated to the new wording only. Full run: 1668 pass, 0 fail, 4 skipped; typecheck clean; lint 0 errors, 16 warnings. Browser check: not done in this session (see baseline notes).
+- Prompted by: Gurnoor's bug list on 2026-10-17.
+- Consequences: Any future change to the generate route must keep the order guard → copy → visual → save; test B enforces it. The test-doubles pattern (module hook scoped to one route file) can be reused for other API routes.
+- Status: Active
+
 ## 2026-10-17: The 4 skipped tests are redundant on purpose; their replacements test real SQL
 - Decision (fact recorded): `npm test` always reports 4 skipped tests. They are tests 3, 5, 6 and 15 in `tests/voom-plans-credits-v1.test.mjs`, skipped deliberately by the original developers, not broken and not waiting on a missing tool. Leave them as they are; the baseline (`docs/baseline.md`) expects exactly 4.
 - Before: On 2026-10-16 we assumed the skips were browser-layout tests missing a Chromium install. That was wrong: Google Chrome is installed, the test helper finds it, and all 25 browser-layout tests pass.

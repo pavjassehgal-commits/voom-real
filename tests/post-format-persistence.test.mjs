@@ -120,11 +120,14 @@ test("image generation does not overwrite the selected format", async () => {
   // Posts and Reels generate at the draft's own format; a Story is locked to
   // its single legal 9:16 format, which is still never a user overwrite.
   assert.match(route, /const format = post\.kind === "story" \? "9:16" : post\.format;/);
-  // Generating writes copy, the brief and media rows — never the draft's
-  // channel/format — so it cannot change the user's choice.
+  // Generating writes the brief, then (only once the visual exists) the held
+  // copy, plus media rows — never the draft's channel/format — so it cannot
+  // change the user's choice.
   const draftWrites = [...route.matchAll(/from\("mara_drafts"\)\s*\.update\(\{([^}]*)\}/g)].map((match) => match[1]);
-  assert.ok(draftWrites.length >= 2, "the route updates the draft (brief, copy)");
+  assert.ok(draftWrites.length >= 1, "the route updates the draft (brief)");
   for (const patch of draftWrites) assert.doesNotMatch(patch, /\b(channel|format)\b/, `a draft update never touches the format: {${patch.trim()}}`);
+  assert.match(route, /let draftCopy: \{ title: string; content: string \};/, "the held copy carries only title and content");
+  assert.match(route, /from\("mara_drafts"\)\s*\.update\(draftCopy\)/, "the held copy is written as-is");
   assert.doesNotMatch(route, /encodeDraftChannel|normalizePostFormat/);
   assert.doesNotMatch(route, /async function setFormat/);
   assert.doesNotMatch(route, /from\("post_draft_assets"\)\.update\(\{ format \}\)/);
