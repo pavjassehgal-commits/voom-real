@@ -28,6 +28,11 @@ export const TIKTOK_UPLOAD_FOLDER = "tiktok-uploads";
 export const TIKTOK_UPLOAD_STALE_MS = 26 * 60 * 60 * 1000;
 /** Supabase signed upload tokens are valid for 2 hours. */
 export const TIKTOK_UPLOAD_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
+/**
+ * At most this many unfinished uploads may sit in one draft's folder at once
+ * (each up to 50 MB), so repeated "start" requests cannot pile up storage.
+ */
+export const TIKTOK_MAX_PENDING_UPLOADS = 3;
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const UUID_RE = new RegExp(`^${UUID}$`, "i");
@@ -94,6 +99,7 @@ export function tiktokUploadErrorMessage(code: string): string {
     case "unreadable_duration": return "Voom couldn't read this video's length. Export it again as a standard MP4 and retry.";
     case "upload_incomplete": return "The upload didn't finish. Retry the upload.";
     case "provider_owned": return "TikTok already has this video, so it can't be replaced.";
+    case "too_many_pending": return "Several uploads for this video are still unfinished. Wait for them to finish or try again tomorrow.";
     default: return "Voom couldn't upload that video. Please retry.";
   }
 }

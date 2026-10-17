@@ -65,7 +65,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
 function failure(code: TikTokUploadFailure) {
   const status = code === "not_found" || code === "not_tiktok" || code === "no_business" ? 404
-    : code === "provider_owned" ? 409
+    : code === "provider_owned" || code === "too_many_pending" ? 409
       : code === "too_large" ? 413
         : code === "storage_failure" ? 503 : 400;
   const error = status === 404 ? "That TikTok draft was not found." : tiktokUploadErrorMessage(code);

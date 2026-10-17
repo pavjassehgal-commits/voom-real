@@ -26,6 +26,7 @@ import {
   isTikTokUploadPathFor,
   tiktokUploadFolder,
   tiktokUploadPath,
+  TIKTOK_MAX_PENDING_UPLOADS,
   TIKTOK_UPLOAD_CHUNK_BYTES,
   TIKTOK_UPLOAD_HEADER_BYTES,
   TIKTOK_UPLOAD_STALE_MS,
@@ -79,6 +80,7 @@ export type TikTokUploadFailure =
   | "upload_incomplete"
   | "invalid_video"
   | "unreadable_duration"
+  | "too_many_pending"
   | "storage_failure";
 
 export type StartResult =
@@ -107,8 +109,15 @@ export async function startTikTokUpload(
   const refused = await checkDraft(ports, input.ownerId, input.draftId);
   if (refused) return { ok: false, code: refused };
 
-  // Best effort: remove this draft's abandoned uploads before adding another.
-  await cleanupTikTokUploads(ports, { ownerId: input.ownerId, draftId: input.draftId }).catch(() => undefined);
+  // Remove this draft's abandoned uploads, then refuse to start another if
+  // too many recent unfinished ones remain (each could hold up to 50 MB).
+  let pending = 0;
+  try {
+    pending = (await cleanupTikTokUploads(ports, { ownerId: input.ownerId, draftId: input.draftId })).pending;
+  } catch {
+    return { ok: false, code: "storage_failure" };
+  }
+  if (pending >= TIKTOK_MAX_PENDING_UPLOADS) return { ok: false, code: "too_many_pending" };
 
   const path = tiktokUploadPath(input.ownerId, input.draftId, ports.newUploadId());
   let token: string;
@@ -176,22 +185,24 @@ export async function finalizeTikTokUpload(
 export async function cleanupTikTokUploads(
   ports: Pick<TikTokUploadPorts, "listUploads" | "currentAssetPath" | "removeObject" | "now">,
   input: { ownerId: string; draftId: string },
-): Promise<{ removed: string[]; kept: number }> {
+): Promise<{ removed: string[]; kept: number; pending: number }> {
   const folder = tiktokUploadFolder(input.ownerId, input.draftId);
   const objects = await ports.listUploads(folder);
   const current = await ports.currentAssetPath(input.ownerId, input.draftId);
   const cutoff = ports.now() - TIKTOK_UPLOAD_STALE_MS;
   const removed: string[] = [];
   let kept = 0;
+  let pending = 0;
   for (const object of objects) {
     const created = object.createdAt ? Date.parse(object.createdAt) : NaN;
     const stale = Number.isFinite(created) && created < cutoff;
     if (!stale || object.path === current || !isTikTokUploadPathFor(object.path, input.ownerId, input.draftId)) {
       kept += 1;
+      if (object.path !== current) pending += 1;
       continue;
     }
     await ports.removeObject(object.path);
     removed.push(object.path);
   }
-  return { removed, kept };
+  return { removed, kept, pending };
 }

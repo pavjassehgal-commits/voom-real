@@ -119,7 +119,13 @@ export function createTikTokUploadPorts(admin: AdminClient): TikTokUploadPorts {
   };
 }
 
-/** The resumable-upload endpoint for this project (Supabase's direct storage host). */
+/**
+ * The SIGNED resumable-upload endpoint for this project. Supabase serves
+ * token-authorized TUS uploads under `/upload/resumable/sign` (the storage
+ * server's SIGNED_URL_SUFFIX); the plain `/upload/resumable` route requires a
+ * user JWT instead. Uses the direct storage host Supabase recommends for
+ * large files.
+ */
 export function tiktokResumableEndpoint(): string | null {
   const raw = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   if (!raw) return null;
@@ -127,8 +133,8 @@ export function tiktokResumableEndpoint(): string | null {
     const url = new URL(raw);
     const match = /^([a-z0-9]{20})\.supabase\.co$/.exec(url.hostname);
     return match
-      ? `https://${match[1]}.storage.supabase.co/storage/v1/upload/resumable`
-      : `${url.origin}/storage/v1/upload/resumable`;
+      ? `https://${match[1]}.storage.supabase.co/storage/v1/upload/resumable/sign`
+      : `${url.origin}/storage/v1/upload/resumable/sign`;
   } catch {
     return null;
   }
@@ -148,9 +154,16 @@ export async function cleanupAbandonedTikTokUploads(
   const ports = createTikTokUploadPorts(admin);
   const bucket = admin.storage.from(POST_ASSET_BUCKET);
   const result = { owners: 0, drafts: 0, removed: 0, failed: 0 };
-  const { data: owners, error } = await bucket.list("", { limit: limits.owners ?? 200 });
-  if (error) throw new Error("upload_cleanup_list_failed");
-  for (const owner of owners ?? []) {
+  // Page through the bucket's top-level owner folders (bounded per run).
+  const maxOwners = limits.owners ?? 1000;
+  const owners: { id: string | null; name: string }[] = [];
+  for (let offset = 0; offset < maxOwners; offset += 100) {
+    const { data, error } = await bucket.list("", { limit: 100, offset, sortBy: { column: "name", order: "asc" } });
+    if (error) throw new Error("upload_cleanup_list_failed");
+    owners.push(...(data ?? []));
+    if (!data || data.length < 100) break;
+  }
+  for (const owner of owners) {
     if (owner.id || !UUID_NAME.test(owner.name)) continue; // folders only
     result.owners += 1;
     const { data: drafts } = await bucket.list(`${owner.name}/tiktok-uploads`, { limit: limits.draftsPerOwner ?? 50 });

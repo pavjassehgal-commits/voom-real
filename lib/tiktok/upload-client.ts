@@ -121,7 +121,9 @@ export function createTikTokUploadController<TDraft>(options: TikTokUploadOption
       // A session token only lives 2 hours, so resuming across page reloads is
       // not offered; in-page interruptions resume through retry().
       storeFingerprintForResuming: false,
-      headers: { apikey: options.publishableKey, "x-signature": current.token, "x-upsert": "false" },
+      // Supabase's signed TUS route takes the project's publishable key and the
+      // path-scoped token; overwrite permission comes from the token itself.
+      headers: { apikey: options.publishableKey, "x-signature": current.token },
       metadata: { bucketName: current.bucket, objectName: current.path, contentType: "video/mp4", cacheControl: "3600" },
       onProgress: (sent, total) => {
         if (state.phase === "uploading") set({ sentBytes: sent, totalBytes: total });

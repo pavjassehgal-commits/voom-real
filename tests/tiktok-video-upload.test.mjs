@@ -231,6 +231,65 @@ test("cleanup removes only stale, unlinked uploads in the owner's own draft fold
   assert.equal(ports.objects.has(LINKED), true, "the draft's linked video is never removed");
 });
 
+test("starting is refused while too many recent unfinished uploads sit in the draft's folder", async () => {
+  const young = new Date(NOW - 60_000).toISOString();
+  const objects = {};
+  for (const id of ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "cccccccc-cccc-4ccc-8ccc-cccccccccccc"]) {
+    objects[`${OWNER}/tiktok-uploads/${DRAFT}/${id}.mp4`] = { ...good(40 * MB), createdAt: young };
+  }
+  const ports = fakePorts({ objects });
+  assert.deepEqual(
+    await session.startTikTokUpload(ports, { ownerId: OWNER, draftId: DRAFT, fileName: "a.mp4", fileSize: MB }),
+    { ok: false, code: "too_many_pending" },
+  );
+  assert.equal(ports.calls.some((c) => c[0] === "sign"), false);
+  // The linked video does not count as unfinished.
+  const linked = Object.keys(objects)[0];
+  const withLinked = fakePorts({ objects: { [linked]: objects[linked] }, assetPath: linked });
+  assert.equal((await session.startTikTokUpload(withLinked, { ownerId: OWNER, draftId: DRAFT, fileName: "a.mp4", fileSize: MB })).ok, true);
+});
+
+test("uploads use Supabase's SIGNED resumable endpoint on the direct storage host", async () => {
+  const server = await import("../lib/tiktok/upload-session-server.ts");
+  const previous = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  try {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://qcdpegwjofrqnfudyrqq.supabase.co";
+    assert.equal(server.tiktokResumableEndpoint(), "https://qcdpegwjofrqnfudyrqq.storage.supabase.co/storage/v1/upload/resumable/sign");
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:54321";
+    assert.equal(server.tiktokResumableEndpoint(), "http://127.0.0.1:54321/storage/v1/upload/resumable/sign");
+    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    assert.equal(server.tiktokResumableEndpoint(), null);
+  } finally {
+    if (previous === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    else process.env.NEXT_PUBLIC_SUPABASE_URL = previous;
+  }
+});
+
+test("the all-owner cleanup pages through owner folders and only touches stale, unlinked TikTok uploads", async () => {
+  const server = await import("../lib/tiktok/upload-session-server.ts");
+  const owners = Array.from({ length: 150 }, (_, i) => `${String(i).padStart(8, "0")}-0000-4000-8000-000000000000`);
+  const stale = new Date(Date.now() - 30 * 3600_000).toISOString();
+  const target = owners[140];
+  const removed = [];
+  const admin = {
+    from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }) }),
+    storage: {
+      from: () => ({
+        async list(prefix, options = {}) {
+          if (prefix === "") return { data: owners.slice(options.offset ?? 0, (options.offset ?? 0) + options.limit).map((name) => ({ id: null, name })), error: null };
+          if (prefix === `${target}/tiktok-uploads`) return { data: [{ id: null, name: DRAFT }], error: null };
+          if (prefix === `${target}/tiktok-uploads/${DRAFT}`) return { data: [{ id: "obj", name: `${UPLOAD_ID}.mp4`, created_at: stale }], error: null };
+          return { data: [], error: null };
+        },
+        async remove(paths) { removed.push(...paths); return { data: [], error: null }; },
+      }),
+    },
+  };
+  const result = await server.cleanupAbandonedTikTokUploads(admin);
+  assert.equal(result.owners, 150, "owners beyond the first page are visited");
+  assert.deepEqual(removed, [`${target}/tiktok-uploads/${DRAFT}/${UPLOAD_ID}.mp4`]);
+});
+
 /* ── Browser controller with a fake TUS client ──────────────────────── */
 
 function harness({ finalizeStatus = [200] } = {}) {
@@ -266,7 +325,7 @@ test("uploads go straight to Supabase in 6 MB TUS chunks with a path-scoped toke
   const { options } = h.uploads[0];
   assert.equal(options.endpoint, "https://example.storage.supabase.co/storage/v1/upload/resumable");
   assert.equal(options.chunkSize, 6 * MB);
-  assert.deepEqual(options.headers, { apikey: "publishable-key", "x-signature": "token-1", "x-upsert": "false" });
+  assert.deepEqual(options.headers, { apikey: "publishable-key", "x-signature": "token-1" }, "Supabase's signed TUS route: publishable key + path-scoped token only");
   assert.deepEqual(options.metadata, { bucketName: "mara-media", objectName: PATH, contentType: "video/mp4", cacheControl: "3600" });
   options.onProgress(18 * MB, 49 * MB);
   assert.deepEqual([h.controller.snapshot().phase, h.controller.snapshot().sentBytes], ["uploading", 18 * MB]);
@@ -305,6 +364,16 @@ test("an expired or refused session gets exactly one fresh session; a second ref
   await flush();
   assert.equal(h.uploads.length, 2);
   assert.equal(h.controller.snapshot().phase, "failed");
+});
+
+test("Supabase refusing an oversized file (413) shows the 50 MB message and is not retried", async () => {
+  const h = harness();
+  await h.controller.start();
+  h.uploads[0].options.onError(Object.assign(new Error("Maximum size exceeded"), { originalResponse: { getStatus: () => 413 } }));
+  assert.equal(h.controller.snapshot().phase, "failed");
+  assert.equal(h.controller.snapshot().canRetry, false);
+  assert.match(h.controller.snapshot().error, /up to 50 MB/);
+  assert.equal(h.uploads.length, 1, "no new session for a size refusal");
 });
 
 test("cancel terminates the TUS upload and never finalizes; duplicate start clicks are ignored", async () => {
