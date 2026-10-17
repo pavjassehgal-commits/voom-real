@@ -87,6 +87,29 @@ function transpile(file) {
 const REQUIRE_PATTERN = /require\(\s*(["'])([^"']+)\1\s*\)/g;
 
 /**
+ * Applies a package's `"browser"` field the way browser bundlers (including
+ * Next) do, so a package that ships separate Node and browser builds — such as
+ * tus-js-client — contributes its browser build to the client graph.
+ */
+function browserMapped(file) {
+  const marker = `${path.sep}node_modules${path.sep}`;
+  const at = file.lastIndexOf(marker);
+  if (at < 0) return file;
+  const rest = file.slice(at + marker.length).split(path.sep);
+  const packageRoot = file.slice(0, at + marker.length) + (rest[0].startsWith("@") ? path.join(rest[0], rest[1]) : rest[0]);
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8"));
+  } catch {
+    return file;
+  }
+  if (!manifest.browser || typeof manifest.browser !== "object") return file;
+  const relative = `./${path.relative(packageRoot, file).split(path.sep).join("/")}`;
+  const mapped = manifest.browser[relative];
+  return typeof mapped === "string" ? path.join(packageRoot, mapped) : file;
+}
+
+/**
  * Bundles the module graph reachable from `entrySource`, which is compiled as a
  * module at the repository root (so `@/…` and `./…` both resolve).
  */
@@ -167,6 +190,7 @@ export function buildClientBundle(entrySource) {
       if (!file && specifier.startsWith("next/")) file = null;
     }
     if (!file) return null;
+    file = browserMapped(file);
     const proxy = serverActionProxy(file);
     if (proxy) {
       const id = `action:${file}`;

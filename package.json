@@ -18,6 +18,7 @@
     "react-dom": "19.2.8",
     "sharp": "^0.35.4",
     "standardwebhooks": "^1.1.1",
+    "tus-js-client": "^4.3.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

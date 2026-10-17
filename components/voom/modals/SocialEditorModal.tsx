@@ -5,9 +5,35 @@ import { Btn, Field, Input, Tag, Textarea } from "@/components/voom/ui/primitive
 import { ModalBody, ModalFoot, ModalHead, ModalShell } from "@/components/voom/ui/Modal";
 import { TikTokPostSheet } from "@/components/voom/modals/TikTokPostSheet";
 import { TIKTOK_PRIVACY_LABELS, isTikTokPrivacy } from "@/lib/tiktok/publishing";
+import { createTikTokUploadController, type TikTokUploadController, type TusFactory, type UploadSnapshot } from "@/lib/tiktok/upload-client";
+import { TIKTOK_VIDEO_UPLOAD_ACCEPT, tiktokUploadErrorMessage, validateTikTokUploadRequest } from "@/lib/tiktok/video-upload";
 
-const TIKTOK_VIDEO_UPLOAD_ACCEPT = ".mp4,video/mp4";
-const TIKTOK_VIDEO_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
+/** Loads tus-js-client only when an upload starts. */
+const createTusUpload: TusFactory = (() => {
+  let ctor: (typeof import("tus-js-client"))["Upload"] | null = null;
+  const pending = import("tus-js-client").then((module) => { ctor = module.Upload; });
+  return (file, options) => {
+    let upload: InstanceType<(typeof import("tus-js-client"))["Upload"]> | null = null;
+    let aborted = false;
+    return {
+      start() {
+        void pending.then(() => {
+          if (aborted || !ctor) return;
+          upload ??= new ctor(file, options);
+          upload.start();
+        }).catch(() => options.onError(new Error("upload_library_unavailable")));
+      },
+      async abort(shouldTerminate) {
+        aborted = true;
+        if (upload) await upload.abort(shouldTerminate);
+      },
+    };
+  };
+})();
+
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)} MB`;
+}
 
 /**
  * Multi-Social Core — the editor for ONE TikTok or YouTube draft.
@@ -69,8 +95,13 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [uploadState, setUploadState] = useState<UploadSnapshot | null>(null);
+  const uploadRef = useRef<TikTokUploadController | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const uploading = uploadState !== null && (uploadState.phase === "preparing" || uploadState.phase === "uploading" || uploadState.phase === "finalizing");
+
+  // Closing the editor mid-upload cancels it rather than leaving it running unseen.
+  useEffect(() => () => { void uploadRef.current?.cancel(); }, []);
 
   const load = useCallback(async () => {
     try {
@@ -137,37 +168,41 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
     if (await save()) setPosting(true);
   }
 
-  async function uploadTikTokVideo(file: File) {
-    if (!draft || draft.kind !== "tiktok_video") return;
+  function uploadTikTokVideo(file: File) {
+    if (!draft || draft.kind !== "tiktok_video" || uploading) return;
     setError("");
     setNotice("");
-    if (!/\.mp4$/i.test(file.name)) {
-      setError("Choose an MP4 video.");
+    if (uploadInputRef.current) uploadInputRef.current.value = "";
+    const declared = validateTikTokUploadRequest({ fileName: file.name, fileSize: file.size, contentType: file.type || undefined });
+    if (!declared.ok) {
+      setError(tiktokUploadErrorMessage(declared.code));
       return;
     }
-    if (file.size < 1 || file.size > TIKTOK_VIDEO_UPLOAD_MAX_BYTES) {
-      setError("Choose an MP4 video up to 20 MB.");
-      return;
-    }
-    setUploading(true);
-    try {
-      const form = new FormData();
-      form.set("file", file);
-      const response = await fetch(`/api/social-drafts/${draftId}/asset`, { method: "POST", body: form });
-      const body = await response.json() as { draft?: SocialDraft; error?: unknown; code?: unknown; message?: string };
-      if (!response.ok || !body.draft) {
-        throw new Error(typeof body.error === "string" ? body.error : "Voom couldn't upload that video.");
-      }
-      setDraft(body.draft);
-      setNotice(body.message ?? "Video attached. Nothing was published.");
-      onChanged?.();
-      window.dispatchEvent(new Event("voom:data-changed"));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Voom couldn't upload that video.");
-    } finally {
-      setUploading(false);
-      if (uploadInputRef.current) uploadInputRef.current.value = "";
-    }
+    const controller = createTikTokUploadController<SocialDraft>({
+      draftId,
+      file,
+      publishableKey: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "",
+      fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }),
+      createTus: createTusUpload,
+      onChange: (snapshot) => setUploadState(snapshot),
+      onDone: ({ draft: updated, message }) => {
+        setDraft(updated);
+        setNotice(message);
+        setUploadState(null);
+        uploadRef.current = null;
+        onChanged?.();
+        window.dispatchEvent(new Event("voom:data-changed"));
+      },
+    });
+    uploadRef.current = controller;
+    void controller.start();
+  }
+
+  async function cancelUpload() {
+    await uploadRef.current?.cancel();
+    uploadRef.current = null;
+    setUploadState(null);
+    setNotice("Upload cancelled. Nothing was attached.");
   }
 
   if (!draft) {
@@ -243,7 +278,7 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
               <div>
                 <p className="text-sm font-semibold text-text-1">TikTok video</p>
                 <p className="mt-0.5 text-[12.5px] leading-relaxed text-text-3">
-                  MP4 only, up to 20 MB. Stored privately; replacing a video requires a fresh TikTok confirmation.
+                  MP4 only, up to 50 MB. Uploaded straight to private storage; replacing a video requires a fresh TikTok confirmation.
                 </p>
               </div>
               <input
@@ -265,6 +300,45 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
                 {uploading ? "Uploading…" : draft.asset ? "Replace video" : "Upload MP4"}
               </Btn>
             </div>
+            {uploadState && uploadState.phase !== "done" ? (
+              <div className="mt-3" aria-live="polite">
+                {uploadState.phase === "uploading" || uploadState.phase === "preparing" || uploadState.phase === "finalizing" ? (
+                  <>
+                    <div
+                      role="progressbar"
+                      aria-label="Video upload progress"
+                      aria-valuemin={0}
+                      aria-valuemax={uploadState.totalBytes}
+                      aria-valuenow={uploadState.sentBytes}
+                      className="h-2 w-full overflow-hidden rounded-full bg-surface"
+                    >
+                      <div
+                        className="h-full rounded-full bg-[var(--brand)] transition-[width] duration-300"
+                        style={{ width: `${uploadState.totalBytes ? Math.min(100, Math.round((uploadState.sentBytes / uploadState.totalBytes) * 100)) : 0}%` }}
+                      />
+                    </div>
+                    <div className="mt-1.5 flex items-center justify-between gap-3 text-[12px] text-text-3">
+                      <span>
+                        {uploadState.phase === "preparing" ? "Preparing a secure upload…"
+                          : uploadState.phase === "finalizing" ? "Checking the video…"
+                            : `${formatMegabytes(uploadState.sentBytes)} of ${formatMegabytes(uploadState.totalBytes)}`}
+                      </span>
+                      {uploadState.phase !== "finalizing" ? (
+                        <Btn variant="ghost" size="sm" onClick={() => void cancelUpload()}>Cancel</Btn>
+                      ) : null}
+                    </div>
+                  </>
+                ) : uploadState.phase === "failed" ? (
+                  <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-red/35 bg-red/10 px-3 py-2 text-[12.5px] text-red">
+                    <span>{uploadState.error}</span>
+                    <span className="flex gap-2">
+                      {uploadState.canRetry ? <Btn variant="outline" size="sm" onClick={() => void uploadRef.current?.retry()}>Retry</Btn> : null}
+                      <Btn variant="ghost" size="sm" onClick={() => void cancelUpload()}>Dismiss</Btn>
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
 
