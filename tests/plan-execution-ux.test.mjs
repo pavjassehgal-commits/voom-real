@@ -289,12 +289,14 @@ test("6b. Assisted plans the horizon once, generates no media on its own, and a 
   assert.equal(first.stage, "planning_only");
   assert.equal(first.created, 7);
   assert.equal(store.providerCalls, 0, "Assisted never generates paid media without an explicit action");
+  assert.equal(store.approvals.size, 7, "each draft has one actionable approval");
   const idsAfterFirst = new Set([...store.drafts.keys()]);
   const second = await rolling.ensureRollingPlan(createPorts(store), input);
   assert.equal(second.created, 0);
   assert.equal(second.reused, 7);
   assert.equal(store.providerCalls, 0);
   assert.deepEqual(new Set([...store.drafts.keys()]), idsAfterFirst, "no duplicate drafts, ever");
+  assert.equal(store.approvals.size, 7, "retries reuse approvals rather than duplicating them");
   // Every item is a planned card offering the production choices; the SAME
   // item derives Ready for review once the owner produces its media.
   const item = [...store.drafts.values()][0];
@@ -306,16 +308,16 @@ test("6b. Assisted plans the horizon once, generates no media on its own, and a 
   assert.equal(state.deriveWorkflowStatus({ ...before, hasMedia: true, mediaStatus: "completed" }), "ready_for_review");
 });
 
-test("7. Assisted stops at Planned — nothing is generated, scheduled or queued on its own (v1)", async () => {
+test("7. Assisted requests approval but does not generate media, schedule or queue on its own", async () => {
   const store = createStore();
   const run = await rolling.ensureRollingPlan(createPorts(store), { now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "Grow awareness", selectedChannels: ["instagram"] });
   assert.equal(run.created, 7);
   assert.equal(run.autoApproved, 0);
   assert.equal(run.mediaQueued, 0, "no paid media stage in Assisted");
-  assert.equal(run.awaitingApproval, 0, "approval is asked for once media exists, not at planning");
+  assert.equal(run.awaitingApproval, 7);
   assert.equal(store.providerCalls, 0);
   assert.equal(store.media.size, 0);
-  assert.equal(store.approvals.size, 0);
+  assert.equal(store.approvals.size, 7);
   assert.equal(store.queue.size, 0, "assisted never queues anything on its own");
   for (const item of store.drafts.values()) assert.equal(item.status, "draft");
 });

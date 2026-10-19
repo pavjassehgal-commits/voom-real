@@ -344,7 +344,8 @@ test("approved plan content is independently and idempotently linked to the cale
   assert.match(data, /onConflict: "owner_user_id,source_draft_id"/);
   assert.match(tools, /status: "approved"/);
   assert.match(tools, /Nothing was published/);
-  assert.match(tools, /mara_drafts"\)\.update\(\{ status: "approved" \}\)/);
+  // approve_draft records user provenance and approves only the version it checked (0059).
+  assert.match(tools, /mara_drafts"\)\.update\(\{ status: "approved", approval_origin: "user" \}\)/);
 });
 
 test("approval edits persist atomically and confirmation uses the latest owned draft", async () => {
@@ -359,8 +360,11 @@ test("approval edits persist atomically and confirmation uses the latest owned d
   assert.match(migration, /owner_user_id = v_owner_id/);
   assert.match(migration, /update public\.mara_drafts/);
   assert.match(migration, /update public\.mara_pending_actions/);
-  assert.match(tools, /draft\?\.content \?\? a\.content/);
-  assert.match(tools, /draft\?\.proposed_publish_at \?\? a\.publishAt/);
+  // Confirmation uses the owned draft's stored content and schedule, and only
+  // when they still equal the card the user confirmed (compare-and-swap; see
+  // lib/mara/draft-approval.ts and tests/automation-resume-reliability.test.mjs).
+  assert.match(tools, /approveDraftFromConfirmedSnapshot\(c\.db, c\.ownerId, a\.sourceDraftId as string, a, draft,/);
+  assert.match(tools, /content: draft\.content, topic: a\.topic, publish_at: draft\.proposed_publish_at/);
 });
 
 test("saved calendar details are read-only, current, sanitized, and owner-scoped", async () => {

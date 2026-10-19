@@ -571,7 +571,7 @@ test("migrations 0001–0045 are untouched and 0046–0051 are the only new ones
   // lockdown (0050) and AI request rate limits (0051) are the only
   // migrations after Campaigns v3.
   // Trend Intelligence (0055-0058) follows 0051; 0052-0054 are reserved for the Admin Panel release.
-  assert.deepEqual(files.slice(-4), ["0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql"], "0055-0058 (Trend Intelligence) are the newest migrations");
+  assert.deepEqual(files.slice(-5), ["0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql"], "0055-0058 (Trend Intelligence) and 0059 (automation emergency pause/resume) are the newest migrations");
   const beforeTrend = files.filter((name) => name < "0055");
   assert.equal(beforeTrend[beforeTrend.length - 1], "0051_ai_request_rate_limits.sql", "0051 (AI request rate limits) precedes Trend Intelligence");
   assert.equal(beforeTrend[beforeTrend.length - 2], "0050_approval_state_write_lockdown.sql", "0050 (approval-state write lockdown) precedes it");

@@ -235,17 +235,15 @@ test("3. Manual: a scheduled run creates nothing and reaches no paid stage", asy
   assert.equal(automation.automationRunsAutomatically("manual"), false, "Manual is never picked up by the scheduled run");
 });
 
-test("3b. Assisted: the scheduled run plans and drafts, then waits — no paid media stage, no approval yet (v1)", async () => {
+test("3b. Assisted: the scheduled run drafts and opens approval without paid media", async () => {
   const { calls, result } = await runMode("assisted");
   assert.equal(result.stage, "planning_only", "Assisted is planning-only: paid media needs an explicit user action");
   assert.ok(calls.createDraft > 0, "Assisted drafts the horizon");
   assert.equal(calls.ensureMedia, 0, "paid media generation never happens on its own in Assisted");
   assert.equal(calls.autoApproveAndSchedule, 0, "Assisted never auto-approves");
-  // Approval is requested once the owner has produced the item's media on the
-  // planned card; the scheduled run itself asks for nothing.
-  assert.equal(calls.requestApproval, 0);
+  assert.equal(calls.requestApproval, calls.createDraft, "every valid draft reaches the existing approval queue");
   assert.equal(result.autoApproved, 0);
-  assert.equal(result.awaitingApproval, 0);
+  assert.equal(result.awaitingApproval, calls.createDraft);
   assert.equal(result.mediaQueued, 0);
   assert.deepEqual(result.failures, []);
   const copy = automation.AUTOMATION_MODE_COPY.assisted;

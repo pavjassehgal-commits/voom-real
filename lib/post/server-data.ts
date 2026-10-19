@@ -19,7 +19,7 @@ export const POST_ASSET_SIGNED_TTL_SECONDS = 600;
 export const POST_STUDIO_CONVERSATION_TITLE = "Instagram Post Studio";
 
 const POST_ASSET_TABLE = "post_draft_assets";
-const DRAFT_COLUMNS = "id,conversation_id,message_id,kind,channel,title,content,proposed_publish_at,status,created_at,updated_at,media_brief";
+const DRAFT_COLUMNS = "id,conversation_id,message_id,kind,channel,title,content,proposed_publish_at,status,created_at,updated_at,content_version,media_brief";
 // Production 0021 has no `format` column. Never select it.
 const ASSET_COLUMNS = "id,draft_id,display_name,mime_type,byte_size,origin,status,created_at,updated_at,storage_path";
 
@@ -61,6 +61,8 @@ export interface PostView {
   updatedAt: string;
   /** Persisted `What should MARA create?` brief for media generation (Post/Reel/Story). */
   mediaBrief: string;
+  /** Database-maintained publishable-content version (migration 0059). An approval covers exactly one. */
+  contentVersion: number;
 }
 
 export const ORIGIN_LABELS: Record<PostOrigin, string> = {
@@ -221,6 +223,7 @@ export async function toPostView(
     createdAt: String(draft.created_at ?? ""),
     updatedAt: String(draft.updated_at ?? ""),
     mediaBrief: mediaBriefRaw.slice(0, 800),
+    contentVersion: Number(draft.content_version ?? 0),
   };
 }
 
@@ -265,10 +268,108 @@ export async function savePostDraft(admin: AdminClient, ownerId: string, draftId
     const normalized = normalizeMediaBrief(input.mediaBrief);
     patch.media_brief = normalized;
   }
-  const { data, error } = await admin.from("mara_drafts").update(patch)
+  // Approval integrity (migration 0059): the database revokes an approval when
+  // publishable content changes. The owner's OWN reschedule of an approved
+  // post is the one change their existing approval already authorizes, so a
+  // schedule-only edit goes through the dedicated reschedule function.
+  const scheduleOnly = existing.status === "approved"
+    && scheduledAt !== existing.scheduledAt
+    && patch.title === existing.concept
+    && patch.content === existing.composedCaption
+    && patch.channel === encodeDraftChannel(existing.kind, existing.format)
+    && (input.mediaBrief === undefined || (patch.media_brief ?? "") === existing.mediaBrief);
+  if (scheduleOnly) {
+    const { error: rescheduleError } = await admin.rpc("reschedule_approved_draft", {
+      p_owner_user_id: ownerId, p_draft_id: draftId, p_publish_at: scheduledAt,
+    });
+    if (rescheduleError) throw new Error("post_update_failed");
+  }
+  const writePatch = { ...patch };
+  if (scheduleOnly) delete writePatch.proposed_publish_at;
+  const { data, error } = await admin.from("mara_drafts").update(writePatch)
     .eq("owner_user_id", ownerId).eq("id", draftId).select("id").maybeSingle();
   if (error || !data) throw new Error("post_update_failed");
-  return syncPostToCalendar(admin, ownerId, draftId);
+  const view = await syncPostToCalendar(admin, ownerId, draftId);
+  if (view) await refreshPendingDraftApproval(admin, ownerId, view);
+  return view;
+}
+
+/** Keeps an open Assisted approval bound to the current draft revision. */
+async function refreshPendingDraftApproval(admin: AdminClient, ownerId: string, view: PostView): Promise<void> {
+  const { data: actions, error } = await admin.from("mara_pending_actions")
+    .select("id,sanitized_arguments,new_value")
+    .eq("owner_user_id", ownerId).eq("tool_name", "propose_calendar_item")
+    .in("status", ["pending", "failed"])
+    .contains("sanitized_arguments", { sourceDraftId: view.id });
+  if (error) throw new Error("post_approval_refresh_failed");
+  for (const action of actions ?? []) {
+    if (!view.scheduledAt) {
+      await admin.from("mara_pending_actions").update({
+        status: "cancelled",
+        result_summary: "The draft schedule was removed. This approval is no longer valid.",
+        executed_at: new Date().toISOString(),
+      }).eq("id", action.id).eq("owner_user_id", ownerId).in("status", ["pending", "failed"]);
+      await admin.from("mara_tool_runs").update({
+        status: "rejected",
+        result_summary: "The draft changed and its approval was invalidated.",
+        completed_at: new Date().toISOString(),
+      }).eq("pending_action_id", action.id).eq("owner_user_id", ownerId);
+      continue;
+    }
+    const argumentsValue = (action.sanitized_arguments ?? {}) as Record<string, unknown>;
+    const next = {
+      ...argumentsValue,
+      title: view.concept,
+      content: view.composedCaption,
+      publishAt: view.scheduledAt,
+      sourceDraftId: view.id,
+      contentVersion: view.contentVersion,
+    };
+    await admin.from("mara_pending_actions").update({
+      sanitized_arguments: next,
+      new_value: { ...((action.new_value ?? {}) as Record<string, unknown>), ...next },
+      status: "pending",
+      error_summary: null,
+      result_summary: "Draft updated. Review the latest version before confirming.",
+      executed_at: null,
+    }).eq("id", action.id).eq("owner_user_id", ownerId).in("status", ["pending", "failed"]);
+    await admin.from("mara_tool_runs").update({
+      sanitized_arguments: next,
+      status: "pending_confirmation",
+      error_summary: null,
+      result_summary: "Draft updated and awaiting explicit user confirmation.",
+      completed_at: null,
+    }).eq("pending_action_id", action.id).eq("owner_user_id", ownerId);
+  }
+}
+
+/**
+ * A confirmation arrived for an approval whose draft changed underneath it
+ * (lib/mara/tools.ts APPROVAL_STALE). Nothing was approved. Re-open the card
+ * on the draft's CURRENT caption and schedule so the owner reviews what will
+ * actually publish, or close it if the draft was rejected meanwhile.
+ */
+export async function reopenStaleDraftApproval(admin: AdminClient, ownerId: string, actionId: string, draftId: string): Promise<void> {
+  const { error } = await admin.from("mara_pending_actions").update({
+    status: "failed",
+    error_summary: "The draft changed while you were confirming. Nothing was approved.",
+  }).eq("id", actionId).eq("owner_user_id", ownerId).eq("status", "executing");
+  if (error) throw new Error("approval_reopen_failed");
+  const view = await getPostDraft(admin, ownerId, draftId);
+  if (!view || view.status === "rejected") {
+    await admin.from("mara_pending_actions").update({
+      status: "cancelled",
+      result_summary: "The draft was cancelled. This approval is no longer valid.",
+      executed_at: new Date().toISOString(),
+    }).eq("id", actionId).eq("owner_user_id", ownerId).in("status", ["pending", "failed"]);
+    await admin.from("mara_tool_runs").update({
+      status: "rejected",
+      result_summary: "The draft was cancelled before this approval was applied.",
+      completed_at: new Date().toISOString(),
+    }).eq("pending_action_id", actionId).eq("owner_user_id", ownerId);
+    return;
+  }
+  await refreshPendingDraftApproval(admin, ownerId, view);
 }
 
 function normalizeFormatInput(value: unknown): PostFormat {
@@ -288,11 +389,72 @@ export async function cancelPostSchedule(admin: AdminClient, ownerId: string, dr
 }
 
 /** Approves a post. Approval saves state only; nothing is published. */
-export async function approvePostDraft(admin: AdminClient, ownerId: string, draftId: string): Promise<PostView | null> {
-  const { data, error } = await admin.from("mara_drafts").update({ status: "approved" })
+export async function approvePostDraft(admin: AdminClient, ownerId: string, draftId: string, options?: {
+  approvalOrigin?: "user" | "autopilot";
+  /**
+   * The content version the approver saw. When given, the approval is a
+   * compare-and-swap: a draft that changed since (caption, media, schedule,
+   * metadata) is NOT approved and APPROVAL_CONTENT_CHANGED is thrown.
+   */
+  expectedContentVersion?: number;
+}): Promise<PostView | null> {
+  let query = admin.from("mara_drafts").update({
+    status: "approved",
+    approval_origin: options?.approvalOrigin ?? "user",
+  }).eq("owner_user_id", ownerId).eq("id", draftId);
+  if (options?.expectedContentVersion !== undefined) {
+    query = query.eq("content_version", options.expectedContentVersion).neq("status", "rejected");
+  }
+  const { data, error } = await query.select("id").maybeSingle();
+  if (error) throw new Error("post_approve_failed");
+  if (!data && options?.expectedContentVersion !== undefined) throw new Error(APPROVAL_CONTENT_CHANGED);
+  if (!data) throw new Error("post_approve_failed");
+  const view = await syncPostToCalendar(admin, ownerId, draftId);
+  if (options?.approvalOrigin !== "autopilot") {
+    await resolveDraftApprovalActions(admin, ownerId, draftId, "confirmed", "Approved explicitly by the user.");
+  }
+  return view;
+}
+
+/** Thrown by approvePostDraft when the draft no longer matches the version that was approved. */
+export const APPROVAL_CONTENT_CHANGED = "approval_content_changed";
+
+/** Rejects one owned draft and closes its matching approval without deleting it. */
+export async function rejectPostDraft(admin: AdminClient, ownerId: string, draftId: string): Promise<PostView | null> {
+  const { data, error } = await admin.from("mara_drafts").update({ status: "rejected" })
     .eq("owner_user_id", ownerId).eq("id", draftId).select("id").maybeSingle();
-  if (error || !data) throw new Error("post_approve_failed");
-  return syncPostToCalendar(admin, ownerId, draftId);
+  if (error) throw new Error("post_reject_failed");
+  if (!data) return null;
+  await cancelPostSchedule(admin, ownerId, draftId);
+  await resolveDraftApprovalActions(admin, ownerId, draftId, "cancelled", "Rejected by the user. Nothing was published.");
+  return getPostDraft(admin, ownerId, draftId);
+}
+
+async function resolveDraftApprovalActions(
+  admin: AdminClient,
+  ownerId: string,
+  draftId: string,
+  status: "confirmed" | "cancelled",
+  summary: string,
+): Promise<void> {
+  const { data: actions } = await admin.from("mara_pending_actions").select("id")
+    .eq("owner_user_id", ownerId).eq("tool_name", "propose_calendar_item")
+    .in("status", ["pending", "failed"])
+    .contains("sanitized_arguments", { sourceDraftId: draftId });
+  const ids = (actions ?? []).map((action) => String(action.id));
+  if (!ids.length) return;
+  await admin.from("mara_pending_actions").update({
+    status,
+    result_summary: summary,
+    error_summary: null,
+    executed_at: new Date().toISOString(),
+  }).eq("owner_user_id", ownerId).in("id", ids).in("status", ["pending", "failed"]);
+  await admin.from("mara_tool_runs").update({
+    status: status === "confirmed" ? "succeeded" : "rejected",
+    result_summary: summary,
+    error_summary: null,
+    completed_at: new Date().toISOString(),
+  }).eq("owner_user_id", ownerId).in("pending_action_id", ids);
 }
 
 /**
@@ -310,6 +472,10 @@ export async function syncPostToCalendar(admin: AdminClient, ownerId: string, dr
     // Un-approving must also stop auto-publishing. Published/in-flight items
     // are never cancelled by this.
     await cancelPublishItem(admin, ownerId, draftId).catch(() => false);
+    // Media can arrive after a card opened: keep any open approval card on the
+    // draft's current version so the owner confirms the complete post (media
+    // included) instead of hitting a stale-version conflict.
+    await refreshPendingDraftApproval(admin, ownerId, view).catch(() => undefined);
     return getPostDraft(admin, ownerId, draftId);
   }
   await admin.from("content_calendar_items").upsert({
