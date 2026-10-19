@@ -184,7 +184,12 @@ export async function startVideoJob(service: VideoService, input: StartJobInput 
 export async function advanceVideoJob(service: VideoService, draftId: string, generationId: string, kind: "reel" | "story"): Promise<AdvanceResult & { view: ClientGenerationView | null }> {
   const result = await advanceVideoGeneration(service.ports, service.ownerId, generationId, kind);
   if (!result.ok) return { ...result, view: null };
-  if (result.attached) await syncPostToCalendar(service.admin, service.ownerId, draftId).catch(() => null);
+  if (result.attached) {
+    await syncPostToCalendar(service.admin, service.ownerId, draftId).catch(() => null);
+    // Autopilot re-evaluates the complete post when its awaited media lands.
+    const { completeAutopilotAfterMediaArrival } = await import("@/lib/voom/workflow/media-arrival");
+    await completeAutopilotAfterMediaArrival(service.admin, service.ownerId, draftId).catch(() => null);
+  }
   return { ...result, view: toClientGenerationView(result.generation, result.previewUrl) };
 }
 
