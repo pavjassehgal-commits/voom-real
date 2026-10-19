@@ -14,7 +14,6 @@ import { normalizePlan, type PlanId } from "@/lib/billing/plans";
 import { creditCostForMedia } from "@/lib/billing/credits";
 import { guardAndReserveMedia, releaseReservationOnFailure, confirmReservation } from "@/lib/billing/entitlement-guard";
 import { normalizeAllowAutomaticPaidMedia, estimateMediaCostUsd } from "@/lib/mara/media-spend";
-import { assertAutonomousWorkAllowed } from "@/lib/voom/automation-safety";
 
 /**
  * Media generation for one workflow item, reusing the EXISTING durable MARA
@@ -365,19 +364,6 @@ export async function produceWorkflowMedia(
     } catch { /* best effort */ }
   }
 
-  // This is the final boundary immediately before either paid provider is
-  // invoked. A pause, downgrade or entitlement change after reservation is
-  // honored and the unused reservation is released. Explicit user actions do
-  // not pass through this autonomous-only gate.
-  if (!isExplicit) {
-    try {
-      await assertAutonomousWorkAllowed(admin, request.ownerId);
-    } catch {
-      await releaseReservationOnFailure(admin, request.ownerId, generationIdForLedger).catch(() => null);
-      return { ok: false, code: "automatic_media_disabled" };
-    }
-  }
-
   if (request.contentType === "reel") {
     // For video, we already reserved with generationIdForLedger. Pass same id to startVideo
     // so its internal guard uses same ledger row and does not double-charge.
@@ -458,9 +444,6 @@ export async function produceWorkflowMedia(
     }
     await confirmReservation(admin, request.ownerId, generationIdForLedger).catch(() => null);
     await syncPostToCalendar(admin, request.ownerId, request.draftId).catch(() => null);
-    // No-op unless Autopilot parked this draft awaiting media.
-    const { completeAutopilotAfterMediaArrival } = await import("./media-arrival");
-    await completeAutopilotAfterMediaArrival(admin, request.ownerId, request.draftId).catch(() => null);
     return { ok: true, state: "completed" };
   } catch (reason) {
     const code = reason instanceof MediaError ? reason.code : "unavailable";

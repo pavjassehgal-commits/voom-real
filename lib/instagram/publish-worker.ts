@@ -163,26 +163,9 @@ export function buildPorts(
   const timeline = options.timeline;
   return {
     async loadDraft(ownerId, draftId) {
-      const { data } = await db.from("mara_drafts").select("status,content,content_version,approved_content_version")
+      const { data } = await db.from("mara_drafts").select("status,content")
         .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
-      if (!data) return null;
-      // An approval that does not cover the current version is no approval.
-      const current = data.approved_content_version !== null && data.approved_content_version !== undefined
-        && Number(data.approved_content_version) === Number(data.content_version);
-      return {
-        status: data.status === "approved" && !current ? "draft" : String(data.status ?? ""),
-        content: String(data.content ?? ""),
-        contentVersion: Number(data.content_version),
-      };
-    },
-    async approvalStillCurrent(ownerId, draftId, contentVersion) {
-      const { data, error } = await db.from("mara_drafts").select("status,content_version,approved_content_version")
-        .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
-      if (error) throw new Error("draft_unavailable");
-      if (!data) return false;
-      return data.status === "approved"
-        && Number(data.content_version) === contentVersion
-        && Number(data.approved_content_version) === contentVersion;
+      return data ? { status: String(data.status ?? ""), content: String(data.content ?? "") } : null;
     },
     async loadConnection(ownerId) {
       const { data } = await db.from("instagram_connections").select("status,scopes,token_expires_at")

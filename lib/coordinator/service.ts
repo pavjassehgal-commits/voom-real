@@ -224,9 +224,8 @@ export async function runFleetCoordinator(
   ownerIds?: string[],
 ) {
   let query = admin.from("businesses")
-    .select("id,owner_user_id,automation_level,automation_paused_at")
+    .select("id,owner_user_id,automation_level")
     .eq("onboarding_completed", true)
-    .is("automation_paused_at", null)
     .in("automation_level", ["assisted", "autopilot"]);
 
   if (ownerIds && ownerIds.length > 0) {

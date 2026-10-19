@@ -4,12 +4,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { AiError, createAiProvider, type AiProvider } from "@/lib/ai";
 import { evaluateAutopilotRecommendation } from "@/lib/mara/autopilot-safety";
 import { composePostCaption } from "@/lib/post/core";
-import { APPROVAL_CONTENT_CHANGED, approvePostDraft, syncPostToCalendar, type AdminClient } from "@/lib/post/server-data";
+import { approvePostDraft, syncPostToCalendar, type AdminClient } from "@/lib/post/server-data";
 import { loadPerformancePlanContext } from "@/lib/performance/data";
 import type { PerformancePlanContext } from "@/lib/performance/plan-context";
 import { mayAutomaticallyGeneratePaidMedia, normalizeAutomationMode, type AutomationModeValue, type WorkflowTrigger } from "@/lib/voom/automation";
 import { canUseAutomationMode, normalizePlan } from "@/lib/billing/plans";
-import { assertAutonomousWorkAllowed } from "@/lib/voom/automation-safety";
 import { CADENCE_LABELS, normalizeCadence, type Cadence, type ContentType } from "@/lib/voom/cadence";
 import { accountTimezone, formatLocalTime, localDate } from "@/lib/voom/timezone";
 import { ensureWorkflowMedia, type WorkflowMediaDeps } from "./media";
@@ -156,7 +155,7 @@ function ideaBasisFor(kind: "reviewed_trend" | "verified_trend", context: TrendP
 export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInput): Promise<RollingPlanResult> {
   const now = input.now ?? new Date();
   const { data: business } = await admin.from("businesses")
-    .select("id,brand_name,brand_description,industry,target_customer,main_goal,brand_personality,preferred_channels,content_frequency,automation_level,automation_paused_at,timezone,plan")
+    .select("id,brand_name,brand_description,industry,target_customer,main_goal,brand_personality,preferred_channels,content_frequency,automation_level,timezone,plan")
     .eq("owner_user_id", input.ownerId).maybeSingle();
   if (!business) throw new Error("business_not_found");
 
@@ -169,9 +168,6 @@ export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInp
     mode = planId === "pro" ? "assisted" : "manual";
   }
   const trigger: WorkflowTrigger = input.trigger === "replenish" ? "replenish" : "scheduled";
-  if (trigger === "scheduled" && (business as { automation_paused_at?: string | null }).automation_paused_at) {
-    throw new Error("automation_paused");
-  }
   const goal = String(business.main_goal ?? "Grow awareness");
   const selectedChannels = normalizeSelectedSocialChannels(business.preferred_channels);
 
@@ -321,7 +317,7 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
 
     async listItems(planId) {
       const { data, error } = await admin.from("mara_drafts")
-        .select("id,kind,social_channel,social_format,title,content,content_meta,proposed_publish_at,status,source_plan_item_key,content_version")
+        .select("id,kind,social_channel,social_format,title,content,content_meta,proposed_publish_at,status,source_plan_item_key")
         .eq("owner_user_id", context.ownerId).eq("source_plan_id", planId);
       if (error) throw new Error("plan_items_read_failed");
       const rows = (data ?? []) as Record<string, unknown>[];
@@ -481,7 +477,6 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
       if (!mayAutomaticallyGeneratePaidMedia(context.mode, context.trigger)) {
         return { ok: false, code: AUTOMATIC_MEDIA_FORBIDDEN };
       }
-      await assertAutonomousWorkAllowed(admin, context.ownerId);
       const { data: draft } = await admin.from("mara_drafts").select("media_brief")
         .eq("owner_user_id", context.ownerId).eq("id", item.draftId).maybeSingle();
       return ensureWorkflowMedia(admin, {
@@ -497,10 +492,6 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
 
     async requestApproval(item) {
       if (item.channel !== "instagram") return;
-      // Re-check the authoritative mode, plan entitlement and emergency pause
-      // immediately before opening automated approval work. A coordinator run
-      // that started before a downgrade or pause must fail closed here.
-      await assertAutonomousWorkAllowed(admin, context.ownerId, context.mode);
       await ensureApprovalAction(admin, {
         ownerId: context.ownerId, conversationId, item, timeZone: context.timeZone,
       });
@@ -510,30 +501,11 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
       if (item.channel !== "instagram" || context.mode !== "autopilot") {
         return { approved: false, reason: AUTOMATIC_MEDIA_FORBIDDEN };
       }
-      // Complete-content approval: Autopilot approves the FINAL post, media
-      // included. A visual still generating (async Reel video) parks the item
-      // as awaiting media; when it arrives, media-arrival.ts re-runs these
-      // same checks on the final content before approving. No card is opened
-      // for it in the meantime, so there is no approval loop.
-      if (!(await draftHasVisual(admin, context.ownerId, item.draftId))) {
-        await markAutopilotAwaitingMedia(admin, context.ownerId, item.draftId);
-        return { approved: false, reason: AUTOPILOT_AWAITING_MEDIA };
-      }
       const safety = evaluateAutopilotRecommendation({
         title: item.concept, content: item.caption, publishAt: item.publishAt,
       }, context.now);
       if (!safety.safe) return { approved: false, reason: safety.blockers.join(",") };
-      // Reload the authoritative mode, pause state and plan at the final
-      // boundary. A run that started before a downgrade/pause cannot approve.
-      await assertAutonomousWorkAllowed(admin, context.ownerId);
-      // The safety checks above ran on the content read at item.contentVersion;
-      // Autopilot approves exactly that version, never a concurrent edit.
-      try {
-        await approveWorkflowItem(admin, context.ownerId, item.draftId, "autopilot", item.contentVersion);
-      } catch (err) {
-        if (err instanceof Error && err.message === APPROVAL_CONTENT_CHANGED) return { approved: false, reason: "content_changed" };
-        throw err;
-      }
+      await approveWorkflowItem(admin, context.ownerId, item.draftId);
       await recordAutoApproval(admin, {
         ownerId: context.ownerId, conversationId, item, checks: safety.checks, timeZone: context.timeZone,
       });
@@ -565,20 +537,11 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
 }
 
 /** Approves a workflow draft and advances it into Scheduled. */
-export async function approveWorkflowItem(
-  admin: AdminClient,
-  ownerId: string,
-  draftId: string,
-  approvalOrigin: "user" | "autopilot" = "user",
-  expectedContentVersion?: number,
-) {
+export async function approveWorkflowItem(admin: AdminClient, ownerId: string, draftId: string) {
   // approvePostDraft -> syncPostToCalendar -> syncPostToPublishQueue reuses the
   // existing calendar mirror and the existing Instagram publishing queue. No
   // new scheduler exists.
-  const view = await approvePostDraft(admin, ownerId, draftId, {
-    approvalOrigin,
-    ...(expectedContentVersion !== undefined ? { expectedContentVersion } : {}),
-  });
+  const view = await approvePostDraft(admin, ownerId, draftId);
   if (!view) throw new Error("draft_not_found");
   return view;
 }
@@ -641,47 +604,19 @@ export async function ensureWorkflowApprovalCard(
     statusNote?: string;
   },
 ): Promise<void> {
-  // The card shows the draft exactly as stored, read in ONE row read together
-  // with its content version, so a confirmation can approve exactly what the
-  // owner saw (lib/mara/draft-approval.ts) — never a later edit or media swap.
-  const { data: source, error: sourceError } = await admin.from("mara_drafts")
-    .select("title,content,proposed_publish_at,content_version")
-    .eq("owner_user_id", ownerId).eq("id", input.draftId).maybeSingle();
-  if (sourceError || !source) throw new Error("approval_source_unavailable");
-  input = {
-    ...input,
-    concept: String(source.title ?? input.concept),
-    caption: String(source.content ?? input.caption),
-    publishAt: typeof source.proposed_publish_at === "string" ? source.proposed_publish_at : input.publishAt,
-  };
-  const contentVersion = Number(source.content_version);
-  const { data: open } = await admin.from("mara_pending_actions").select("id,sanitized_arguments,new_value")
+  const { data: open } = await admin.from("mara_pending_actions").select("id,new_value")
     .eq("owner_user_id", ownerId).eq("tool_name", "propose_calendar_item")
     .in("status", ["pending", "failed"]).contains("sanitized_arguments", { sourceDraftId: input.draftId })
     .limit(1).maybeSingle();
   if (open?.id) {
-    // Refresh the EXISTING card from the draft source of truth. This makes a
-    // retry idempotent and ensures a user never confirms an outdated caption,
-    // title or schedule after editing the draft.
-    const argumentsValue = (open.sanitized_arguments ?? {}) as Record<string, unknown>;
-    const newValue = (open.new_value ?? {}) as Record<string, unknown>;
-    const next = {
-      ...argumentsValue,
-      title: input.concept,
-      content: input.caption,
-      publishAt: input.publishAt,
-      sourceDraftId: input.draftId,
-      contentVersion,
-    };
-    const { error } = await admin.from("mara_pending_actions").update({
-      sanitized_arguments: next,
-      new_value: { ...newValue, ...next, ...(input.productionStatus ? { productionStatus: input.productionStatus } : {}) },
-      status: "pending",
-      error_summary: null,
-      result_summary: input.statusNote ?? "Draft is ready for your review. Nothing has been scheduled or published.",
-      executed_at: null,
-    }).eq("id", String(open.id)).eq("owner_user_id", ownerId).in("status", ["pending", "failed"]);
-    if (error) throw new Error("approval_refresh_failed");
+    // Record a production choice on the EXISTING card instead of a new one.
+    if (input.productionStatus) {
+      const value = (open.new_value ?? {}) as Record<string, unknown>;
+      await admin.from("mara_pending_actions").update({
+        new_value: { ...value, productionStatus: input.productionStatus },
+        result_summary: input.statusNote ?? "Production choice recorded.",
+      }).eq("id", String(open.id)).eq("owner_user_id", ownerId);
+    }
     return;
   }
   if (input.approved) return;
@@ -700,10 +635,9 @@ export async function ensureWorkflowApprovalCard(
     topic: item.concept,
     publishAt: item.publishAt,
     sourceDraftId: item.draftId,
-    contentVersion,
     reason: "Part of your rolling Voom content plan.",
   };
-  const { error } = await admin.from("mara_pending_actions").insert({
+  await admin.from("mara_pending_actions").insert({
     owner_user_id: ownerId,
     conversation_id: input.conversationId,
     tool_name: "propose_calendar_item",
@@ -713,43 +647,10 @@ export async function ensureWorkflowApprovalCard(
     // Stable per-draft key: re-running the plan never creates a second card.
     idempotency_key: `workflow-approval:${item.draftId}`,
   });
-  // A concurrent coordinator/restart may win the same stable key after our
-  // read. That is successful idempotent reuse; every other storage failure is
-  // surfaced so the run cannot falsely claim an actionable approval exists.
-  if (error && error.code !== "23505") throw new Error("approval_create_failed");
-}
-
-/** Autopilot parked this item until its generated media exists (rolling-plan holds it without a card). */
-export const AUTOPILOT_AWAITING_MEDIA = "autopilot_awaiting_media";
-
-/** True once the draft has its stored image/video. */
-export async function draftHasVisual(admin: AdminClient, ownerId: string, draftId: string): Promise<boolean> {
-  const { data, error } = await admin.from("post_draft_assets").select("id")
-    .eq("owner_user_id", ownerId).eq("draft_id", draftId).eq("status", "uploaded").maybeSingle();
-  if (error) throw new Error("workflow_media_read_failed");
-  return Boolean(data);
-}
-
-/**
- * Durable marker that Autopilot is waiting for THIS draft's media before it
- * evaluates and approves the final content. Kept in content_meta, which is
- * not publishable content (0059 draft_publishable_meta), so writing it never
- * moves the content version.
- */
-export async function markAutopilotAwaitingMedia(admin: AdminClient, ownerId: string, draftId: string): Promise<void> {
-  const { data, error } = await admin.from("mara_drafts").select("content_meta")
-    .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
-  if (error || !data) throw new Error("workflow_media_mark_failed");
-  const meta = data.content_meta && typeof data.content_meta === "object" ? data.content_meta as Record<string, unknown> : {};
-  if (meta.autopilotAwaitingMedia) return;
-  const { error: writeError } = await admin.from("mara_drafts")
-    .update({ content_meta: { ...meta, autopilotAwaitingMedia: { since: new Date().toISOString() } } })
-    .eq("owner_user_id", ownerId).eq("id", draftId);
-  if (writeError) throw new Error("workflow_media_mark_failed");
 }
 
 /** Records the Autopilot auto-approval in the existing audit trail. */
-export async function recordAutoApproval(
+async function recordAutoApproval(
   admin: AdminClient,
   input: { ownerId: string; conversationId: string; item: WorkflowItem; checks: string[]; timeZone: string },
 ): Promise<void> {
@@ -898,7 +799,6 @@ function toWorkflowItem(
     publishAt: String(row.proposed_publish_at ?? ""),
     status: String(row.status ?? "draft"),
     protected: options.protected === true,
-    ...(row.content_version !== undefined && row.content_version !== null ? { contentVersion: Number(row.content_version) } : {}),
   };
 }
 

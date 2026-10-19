@@ -67,7 +67,7 @@ export async function listDrafts(db: ServerSupabase, ownerId: string, status?: s
 }
 
 export async function getDraft(db: ServerSupabase, ownerId: string, id: string) {
-  const { data, error } = await db.from("mara_drafts").select("id,conversation_id,message_id,kind,channel,title,content,proposed_publish_at,status,content_version,created_at,updated_at")
+  const { data, error } = await db.from("mara_drafts").select("id,conversation_id,message_id,kind,channel,title,content,proposed_publish_at,status,created_at,updated_at")
     .eq("owner_user_id", ownerId).eq("id", id).maybeSingle();
   if (error) throw new Error("draft_unavailable");
   return data;

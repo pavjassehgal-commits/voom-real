@@ -13,8 +13,6 @@ import { readYouTubeConfig } from "@/lib/youtube/config";
 import { getYouTubeConnection } from "@/lib/youtube/data";
 import { getPlanConfig, normalizePlan } from "@/lib/billing/plans";
 import { classifyReelProduction } from "@/lib/mara/reel-production";
-import { APPROVAL_INCOMPLETE, APPROVAL_STALE as APPROVAL_STALE_DRAFT, approvalRequiresMedia, approveDraftFromConfirmedSnapshot } from "./draft-approval";
-export { APPROVAL_INCOMPLETE, APPROVAL_STALE } from "./draft-approval";
 import {
   createCalendarItem, createCampaign, deleteCalendarItem, getBrandProfile, getCalendarItem, getCampaign,
   getDraft, listCalendarItems, listCampaigns, listDrafts, updateCalendarItem, updateCampaign,
@@ -201,42 +199,14 @@ export async function executeConfirmedAction(c: Omit<ToolContext, "profile" | "b
   if (action.status !== "executing") return { ok: true, summary: "This action was already handled." };
   const a = action.sanitized_arguments;
   let result: unknown; let summary: string;
-  if (action.tool_name === "approve_draft") {
-    // Complete-content approval: an Instagram draft is approved only with its media.
-    const target = await getDraft(c.db, c.ownerId, a.draftId as string);
-    if (!target) throw new Error("approval_failed");
-    if (approvalRequiresMedia(target.kind)) {
-      const { data: asset, error: assetError } = await c.db.from("post_draft_assets").select("id")
-        .eq("owner_user_id", c.ownerId).eq("draft_id", a.draftId as string).eq("status", "uploaded").maybeSingle();
-      if (assetError) throw new Error("draft_media_unavailable");
-      if (!asset) throw new Error(APPROVAL_INCOMPLETE);
-    }
-    // Bound to the version just checked: a concurrent edit or media swap approves nothing.
-    const { data, error } = await c.db.from("mara_drafts").update({ status: "approved", approval_origin: "user" })
-      .eq("owner_user_id", c.ownerId).eq("id", a.draftId as string).eq("content_version", target.content_version).neq("status", "rejected")
-      .select("id,title").maybeSingle();
-    if (error) throw new Error("approval_failed");
-    if (!data) throw new Error(APPROVAL_STALE_DRAFT);
-    result = data; summary = `Approved “${data.title}”. Nothing was published.`;
-  }
+  if (action.tool_name === "approve_draft") { const { data, error } = await c.db.from("mara_drafts").update({ status: "approved" }).eq("owner_user_id", c.ownerId).eq("id", a.draftId as string).select("id,title").maybeSingle(); if (error || !data) throw new Error("approval_failed"); result = data; summary = `Approved “${data.title}”. Nothing was published.`; }
   else if (action.tool_name === "propose_calendar_item") {
     const draft = a.sourceDraftId ? await getDraft(c.db, c.ownerId, a.sourceDraftId as string) : null;
     if (a.sourceDraftId && (!draft || !draft.content.trim() || !draft.proposed_publish_at)) throw new Error("draft_missing");
-    if (a.sourceDraftId && draft) {
-      // Complete-content approval: an Instagram post is approved WITH its media.
-      // A card confirmed before the visual exists approves nothing. (A visual
-      // attached meanwhile also moves the version, so the CAS below catches it.)
-      if (approvalRequiresMedia(draft.kind)) {
-        const { data: asset, error: assetError } = await c.db.from("post_draft_assets").select("id")
-          .eq("owner_user_id", c.ownerId).eq("draft_id", a.sourceDraftId as string).eq("status", "uploaded").maybeSingle();
-        if (assetError) throw new Error("draft_media_unavailable");
-        if (!asset) throw new Error(APPROVAL_INCOMPLETE);
-      }
-      // Compare-and-swap against the confirmed card snapshot (see draft-approval.ts).
-      result = await approveDraftFromConfirmedSnapshot(c.db, c.ownerId, a.sourceDraftId as string, a, draft,
-        () => createCalendarItem(c.db, c.ownerId, { title: a.title, channel: a.channel, content: draft.content, topic: a.topic, publish_at: draft.proposed_publish_at, status: "approved", source_draft_id: a.sourceDraftId }));
-    } else {
-      result = await createCalendarItem(c.db, c.ownerId, { title: a.title, channel: a.channel, content: a.content, topic: a.topic, publish_at: a.publishAt, status: "approved", source_draft_id: null });
+    result = await createCalendarItem(c.db, c.ownerId, { title: a.title, channel: a.channel, content: draft?.content ?? a.content, topic: a.topic, publish_at: draft?.proposed_publish_at ?? a.publishAt, status: "approved", source_draft_id: a.sourceDraftId ?? null });
+    if (a.sourceDraftId) {
+      const { data: draft, error } = await c.db.from("mara_drafts").update({ status: "approved" }).eq("owner_user_id", c.ownerId).eq("id", a.sourceDraftId as string).select("id").maybeSingle();
+      if (error || !draft) throw new Error("draft_approval_failed");
     }
     summary = `Approved “${(result as { title: string }).title}” and added it to the Voom calendar. Nothing was published.`;
   }
