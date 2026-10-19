@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { automationModeChangeEffect, normalizeAutomationMode } from "@/lib/voom/automation";
-import { canUseAutomationMode, normalizePlan } from "@/lib/billing/plans";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createClient } from "@/utils/supabase/server";
 
@@ -18,13 +17,8 @@ export async function PATCH(request: Request) {
   // truthfully. A mode switch governs FUTURE automation only: it never
   // withdraws approvals, cancels schedules the user already accepted, or
   // deletes media they already paid for.
-  const { data: current, error: readError } = await db.from("businesses").select("automation_level,plan").eq("owner_user_id", user.id).maybeSingle();
-  if (readError || !current) return Response.json({ error: "Voom couldn't verify your automation settings." }, { status: 503 });
+  const { data: current } = await db.from("businesses").select("automation_level").eq("owner_user_id", user.id).maybeSingle();
   const previousMode = normalizeAutomationMode((current as { automation_level?: string | null } | null)?.automation_level);
-  const plan = normalizePlan((current as { plan?: string | null }).plan);
-  if (!canUseAutomationMode(plan, parsed.data.mode)) {
-    return Response.json({ error: "Your current plan doesn't include that automation mode." }, { status: 403 });
-  }
 
   const { error } = await db.from("businesses").update({ automation_level: parsed.data.mode }).eq("owner_user_id", user.id);
   if (error) return Response.json({ error: "Voom couldn't save that mode. Please retry." }, { status: 503 });

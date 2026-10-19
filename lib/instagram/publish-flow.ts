@@ -39,15 +39,7 @@ export interface FlowItem {
 
 export interface FlowPorts {
   /** Server-side re-resolution of the draft. */
-  loadDraft(ownerId: string, draftId: string): Promise<{ status: string; content: string; contentVersion?: number } | null>;
-  /**
-   * Approval-integrity re-check (migration 0059): true only while the draft is
-   * still approved at `contentVersion`. Called right before the container is
-   * created and right before media_publish, so an edit or a media swap after
-   * the first check can never publish unapproved content. Optional so legacy
-   * fakes keep their exact call order.
-   */
-  approvalStillCurrent?(ownerId: string, draftId: string, contentVersion: number): Promise<boolean>;
+  loadDraft(ownerId: string, draftId: string): Promise<{ status: string; content: string } | null>;
   /** Server-side re-resolution of the Instagram connection. */
   loadConnection(ownerId: string): Promise<{ status: string; scopes: string[]; tokenExpiresAt: string | null } | null>;
   /** Decrypted credentials. Throwing is treated as "not connected". */
@@ -102,7 +94,7 @@ export async function runPublishFlow(item: FlowItem, ports: FlowPorts): Promise<
   // approve. Only the latter is terminal: an unreadable draft is retried, so
   // one transient database blip can never permanently kill an approved
   // schedule by branding it "not approved".
-  let draft: { status: string; content: string; contentVersion?: number } | null;
+  let draft: { status: string; content: string } | null;
   try {
     draft = await ports.loadDraft(item.ownerUserId, item.draftId);
   } catch {
@@ -143,25 +135,9 @@ export async function runPublishFlow(item: FlowItem, ports: FlowPorts): Promise<
   // settle like feed images.
   const video = isVideoPublishMime(asset.mimeType);
 
-  // Approval integrity: the visual and caption must still be the approved
-  // version (an edit or media swap since step 1 revokes the approval).
-  // An unreadable draft is retried (like step 1), never branded "not approved".
-  const approvalCheck = async (): Promise<FlowOutcome | null> => {
-    if (!ports.approvalStillCurrent || draft?.contentVersion === undefined) return null;
-    let current: boolean;
-    try {
-      current = await ports.approvalStillCurrent(item.ownerUserId, item.draftId, draft.contentVersion);
-    } catch {
-      return fail(item, ports, timeline, endedAt, "draft_unavailable");
-    }
-    return current ? null : fail(item, ports, timeline, endedAt, "not_approved_custom");
-  };
-
   // 4) Container. Reused across attempts, never re-created.
   let containerId = item.containerId;
   if (!containerId) {
-    const blocked = await approvalCheck();
-    if (blocked) return blocked;
     try {
       containerId = await ports.createContainer({
         kind: item.mediaKind, accessToken: credentials.accessToken, igUserId: credentials.igUserId, mediaUrl, caption, video,
@@ -230,11 +206,7 @@ export async function runPublishFlow(item: FlowItem, ports: FlowPorts): Promise<
   timeline("container_ready", { containerId, polls, elapsedMs: endedAt() - pollingStartedAt });
 
   // 6) Publish, immediately — never deferred to another cron run. Only a
-  //    returned media id makes this Published. This is the last point an
-  //    approval withdrawal can still stop the post; after media_publish is
-  //    sent, cancellation can no longer be guaranteed.
-  const withdrawn = await approvalCheck();
-  if (withdrawn) return withdrawn;
+  //    returned media id makes this Published.
   timeline("publish_requested", { containerId });
   let mediaId: string | null = null;
   try {

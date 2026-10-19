@@ -172,13 +172,7 @@ export async function runVideoGenerationPoller(deps: VideoPollerDependencies = {
   if (!ports && provider) ports = buildVideoPollingPorts({ admin, provider });
   const advance = deps.advance ?? advanceVideoGeneration;
   const enforceTimeout = deps.enforceTimeout ?? (async (db, ownerId, generationId, at) => enforceVideoJobHardTimeout(db, ownerId, generationId, { now: at }));
-  // Newly stored media: mirror it, then let Autopilot evaluate the COMPLETE
-  // post if it was waiting for exactly this media (approval integrity, 0059).
-  const syncCalendar = deps.syncCalendar ?? (async (db, ownerId, draftId) => {
-    await syncPostToCalendar(db, ownerId, draftId);
-    const { completeAutopilotAfterMediaArrival } = await import("@/lib/voom/workflow/media-arrival");
-    await completeAutopilotAfterMediaArrival(db, ownerId, draftId);
-  });
+  const syncCalendar = deps.syncCalendar ?? ((db, ownerId, draftId) => syncPostToCalendar(db, ownerId, draftId));
 
   for (const job of jobs) {
     const { row, kind } = job;

@@ -104,11 +104,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         error: "Voom couldn't confirm the durable queue cancellation. No draft or calendar changes were saved. Retry when the queue is available.",
       }, { status: 503 });
     }
-    if (code === "social_draft_changed") {
-      return Response.json({
-        error: "This content changed while you were approving it. Nothing was approved or published — review the latest version and approve again.",
-      }, { status: 409 });
-    }
     if (code === "social_calendar_sync_failed") {
       return Response.json({
         error: "The draft was saved, but Voom couldn't sync the calendar mirror. Nothing was published. Retry saving or scheduling.",

@@ -86,8 +86,6 @@ export interface WorkflowItem extends ExistingPlanAssignment {
   publishAt: string;
   status: string;
   protected?: boolean;
-  /** Draft content version this item was read at (migration 0059); approvals are bound to it. */
-  contentVersion?: number;
 }
 
 export interface RollingPlanPorts {
@@ -372,22 +370,6 @@ export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingP
     // approval actions from this workflow (and no platform is auto-published).
     if (slot.channel !== "instagram") continue;
 
-    // Assisted deliberately remains planning-only for paid media, but its
-    // normal scheduled/Replenish workflow must still hand the finished draft
-    // to the existing human-approval queue. An explicitly requested
-    // planning_only run remains a strict preview with no approval side effect.
-    if (input.mode === "assisted" && input.stage !== "planning_only") {
-      if (item.status === "draft") {
-        try {
-          await ports.requestApproval(item);
-          result.awaitingApproval += 1;
-        } catch (reason) {
-          result.failures.push({ slot: slot.date, stage: "approval", code: codeOf(reason) });
-        }
-      }
-      continue;
-    }
-
     if (stage === "planning_only") continue;
     if (!mayAutomaticallyGeneratePaidMedia(input.mode, trigger)) continue;
 
@@ -406,9 +388,6 @@ export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingP
           result.autoApproved += 1;
           continue;
         }
-        // Media still generating: Autopilot evaluates and approves the final
-        // post when the media arrives (no card, no loop). See media-arrival.ts.
-        if (decision.reason === "autopilot_awaiting_media") continue;
         result.heldForReview += 1;
         await ports.requestApproval(item);
         result.awaitingApproval += 1;

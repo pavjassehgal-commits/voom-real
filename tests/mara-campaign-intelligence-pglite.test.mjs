@@ -473,21 +473,14 @@ test("editing an Instagram action keeps the caption limits and mirrors the calen
   };
   await one("select * from public.update_campaign_action_content($1::uuid, $2::uuid, $3::jsonb, null, false)", [OWNER_A, action.id, JSON.stringify(patch)]);
 
-  const draft = await one("select title, content, proposed_publish_at, status from public.mara_drafts where id = $1", [action.draft_id]);
+  const draft = await one("select title, content, proposed_publish_at from public.mara_drafts where id = $1", [action.draft_id]);
   assert.equal(draft.title, "Edited concept");
   assert.match(draft.content, /Edited caption written by the merchant/);
   assert.equal(new Date(draft.proposed_publish_at).toISOString(), UPDATED_INSTAGRAM_AT);
 
-  // Approval integrity (0059): edited content is new content. The previous
-  // approval no longer covers it, so the calendar mirror is withdrawn (it would
-  // otherwise show "Scheduled" while nothing publishes) and the action goes
-  // back to review until the merchant approves the edited version.
-  assert.equal(draft.status, "draft");
-  const calendar = await one("select count(*)::int as n from public.content_calendar_items where owner_user_id = $1 and source_draft_id = $2", [OWNER_A, action.draft_id]);
-  assert.equal(calendar.n, 0);
-  const reviewed = await one("select status from public.voom_campaign_actions where id = $1", [action.id]);
-  assert.equal(action.status, "approved", "fixture: the Autopilot-safe action was approved before the edit");
-  assert.equal(reviewed.status, "needs_approval");
+  const calendar = await one("select title, content from public.content_calendar_items where owner_user_id = $1 and source_draft_id = $2", [OWNER_A, action.draft_id]);
+  assert.equal(calendar.title, "Edited concept", "the approved calendar mirror stays truthful");
+  assert.match(calendar.content, /Edited caption/);
 
   // A caption longer than Instagram's limit is refused by the column check.
   await assert.rejects(

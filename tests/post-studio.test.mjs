@@ -277,10 +277,9 @@ test("0021 is marked already-applied; 0018-0020 are untouched and 0022-0028 stay
   // this suite has not been told about — it must be added deliberately.
   // 0050 (approval-state write lockdown) and 0051 (AI request rate limits)
   // are the production-hardening release and are the only migrations after 0049.
-  // Trend Intelligence (0055-0058) and the reviewed automation safety boundary
-  // (0059) follow; 0052-0054 remain reserved for the Admin Panel release.
-  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql"], "only reviewed post-0049 migrations are present");
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 59), "no unreviewed migration beyond 0059 may exist");
+  // Trend Intelligence (0055-0058) follows; 0052-0054 are reserved for the Admin Panel release.
+  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql"], "only the 0050/0051 hardening migrations follow 0049");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 58), "no migration beyond 0058 (universal trend sources) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],
@@ -432,14 +431,12 @@ test("existing-content suggestions are metadata-only and disclose that MARA did 
 test("posts can be saved as a draft, scheduled, and approved without publishing", async () => {
   const route = await read("app/api/posts/[id]/route.ts");
   assert.match(route, /action === "approve"/);
-  // Optionally bound to the content version the owner reviewed (approval integrity, 0059).
-  assert.match(route, /approvePostDraft\(admin, user\.id, id, expected === undefined \? undefined : \{ expectedContentVersion: expected \}\)/);
+  assert.match(route, /approvePostDraft\(admin, user\.id, id\)/);
   assert.match(route, /postApprovalBlockers\(\{ caption: existing\.caption, hasVisual: existing\.visualReady, kind: existing\.kind \}\)/);
   assert.match(route, /checkScheduleInstant/);
   assert.match(route, /Voom will automatically publish this to Instagram at the scheduled time\./);
   const data = await read("lib/post/server-data.ts");
-  assert.match(data, /status: "approved"/);
-  assert.match(data, /approval_origin: options\?\.approvalOrigin \?\? "user"/);
+  assert.match(data, /update\(\{ status: "approved" \}\)/);
   assert.match(data, /export async function syncPostToCalendar/);
 });
 

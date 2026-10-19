@@ -165,11 +165,6 @@ export async function repairNotApprovedItems(
     .eq("status", "failed")
     .eq("failure_code", NOT_APPROVED_FAILURE_CODE)
     .is("instagram_media_id", null)
-    // A row that already holds a Meta container was built from an earlier
-    // content version; reviving it could publish superseded content. Those
-    // rows re-arm only through a fresh approval sync, which clears the
-    // container (approval integrity, migration 0059).
-    .is("container_id", null)
     .limit(limit);
   if (error || !Array.isArray(data) || !data.length) return 0;
 
@@ -203,8 +198,7 @@ export async function repairNotApprovedItems(
       .eq("owner_user_id", row.owner_user_id)
       .eq("status", "failed")
       .eq("failure_code", NOT_APPROVED_FAILURE_CODE)
-      .is("instagram_media_id", null)
-      .is("container_id", null);
+      .is("instagram_media_id", null);
     if (!updateError) repaired += 1;
   }
   return repaired;
