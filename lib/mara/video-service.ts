@@ -171,6 +171,7 @@ export async function startVideoJob(service: VideoService, input: StartJobInput 
     ...rest,
     ownerId: service.ownerId,
     providerName: service.videoConfig.provider,
+    providerModel: service.videoConfig.model,
     supportsImageToVideo: service.videoConfig.supportsImageToVideo,
     estimatedCostUsd: estimatedCostUsdForDuration(service.videoConfig.durationSeconds ?? durationTarget),
     monthlySpendLimitUsd: monthlySpendLimitUsd(),

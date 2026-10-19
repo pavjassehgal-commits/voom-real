@@ -64,6 +64,69 @@ interface SettleCreditsRpcResult {
   settled?: unknown;
 }
 
+type ReconciliationAction = "settle" | "refund";
+
+interface CreditReconciliationRow {
+  id: string;
+  owner_user_id: string;
+  generation_id: string;
+  action: ReconciliationAction;
+  attempt_count: number;
+}
+
+async function recordReconciliationFailure(
+  admin: SupabaseClient,
+  ownerId: string,
+  generationId: string,
+  action: ReconciliationAction,
+  errorCode: string,
+): Promise<void> {
+  try {
+    await admin.from("credit_reconciliation_tasks").upsert({
+      owner_user_id: ownerId,
+      generation_id: generationId,
+      action,
+      status: "pending",
+      last_error_code: errorCode,
+      next_attempt_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "owner_user_id,generation_id,action" });
+  } catch {
+    // The failed settlement remains visible in server logs even if the
+    // reconciliation table itself is temporarily unavailable.
+    console.error("credit_reconciliation_enqueue_failed", { action, generationId });
+  }
+}
+
+async function resolveReconciliationTask(
+  admin: SupabaseClient,
+  ownerId: string,
+  generationId: string,
+  action: ReconciliationAction,
+): Promise<void> {
+  try {
+    await admin.from("credit_reconciliation_tasks").update({
+      status: "resolved",
+      resolved_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      last_error_code: null,
+    }).eq("owner_user_id", ownerId).eq("generation_id", generationId).eq("action", action);
+  } catch {
+    // Resolution bookkeeping can be retried; the idempotent ledger RPC is
+    // authoritative and prevents a duplicate charge/refund.
+  }
+}
+
+async function runCreditAction(admin: SupabaseClient, action: ReconciliationAction, ownerId: string, generationId: string) {
+  const rpcName = action === "settle" ? "settle_media_credits" : "refund_media_credits";
+  const { data, error } = await admin.rpc(rpcName, { p_owner_user_id: ownerId, p_generation_id: generationId });
+  if (error) throw error;
+  const applied = action === "settle"
+    ? Boolean((data as SettleCreditsRpcResult | null)?.settled)
+    : Boolean((data as RefundCreditsRpcResult | null)?.refunded);
+  return applied;
+}
+
 function monthStartUtc(now: Date): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 }
@@ -179,26 +242,71 @@ export async function reserveCredits(admin: SupabaseClient, input: ReserveInput)
 
 export async function refundCredits(admin: SupabaseClient, ownerId: string, generationId: string): Promise<{ ok: boolean; refunded: boolean }> {
   try {
-    const { data, error } = await admin.rpc("refund_media_credits", { p_owner_user_id: ownerId, p_generation_id: generationId });
-    if (!error && data) {
-      return { ok: true, refunded: Boolean((data as RefundCreditsRpcResult).refunded) };
-    }
-  } catch {
-    // Return false on failure
+    const refunded = await runCreditAction(admin, "refund", ownerId, generationId);
+    await resolveReconciliationTask(admin, ownerId, generationId, "refund");
+    return { ok: true, refunded };
+  } catch (error) {
+    await recordReconciliationFailure(admin, ownerId, generationId, "refund", safeCreditErrorCode(error));
   }
   return { ok: false, refunded: false };
 }
 
 export async function settleCredits(admin: SupabaseClient, ownerId: string, generationId: string): Promise<{ ok: boolean; settled: boolean }> {
   try {
-    const { data, error } = await admin.rpc("settle_media_credits", { p_owner_user_id: ownerId, p_generation_id: generationId });
-    if (!error && data) {
-      return { ok: true, settled: Boolean((data as SettleCreditsRpcResult).settled) };
-    }
-  } catch {
-    // Return false on failure
+    const settled = await runCreditAction(admin, "settle", ownerId, generationId);
+    await resolveReconciliationTask(admin, ownerId, generationId, "settle");
+    return { ok: true, settled };
+  } catch (error) {
+    await recordReconciliationFailure(admin, ownerId, generationId, "settle", safeCreditErrorCode(error));
   }
   return { ok: false, settled: false };
+}
+
+export async function reconcilePendingCreditTransactions(
+  admin: SupabaseClient,
+  limit = 25,
+): Promise<{ checked: number; resolved: number; pending: number }> {
+  const now = new Date();
+  const { data, error } = await admin.from("credit_reconciliation_tasks")
+    .select("id,owner_user_id,generation_id,action,attempt_count")
+    .eq("status", "pending")
+    .lte("next_attempt_at", now.toISOString())
+    .order("created_at", { ascending: true })
+    .limit(Math.min(Math.max(limit, 1), 100));
+  if (error) throw error;
+
+  const rows = (data ?? []) as CreditReconciliationRow[];
+  let resolved = 0;
+  for (const row of rows) {
+    try {
+      await runCreditAction(admin, row.action, row.owner_user_id, row.generation_id);
+      await admin.from("credit_reconciliation_tasks").update({
+        status: "resolved",
+        attempt_count: row.attempt_count + 1,
+        last_error_code: null,
+        resolved_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq("id", row.id).eq("status", "pending");
+      resolved += 1;
+    } catch (actionError) {
+      const attemptCount = row.attempt_count + 1;
+      const delayMinutes = Math.min(2 ** Math.min(attemptCount, 8), 360);
+      await admin.from("credit_reconciliation_tasks").update({
+        attempt_count: attemptCount,
+        last_error_code: safeCreditErrorCode(actionError),
+        next_attempt_at: new Date(Date.now() + delayMinutes * 60_000).toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq("id", row.id).eq("status", "pending");
+    }
+  }
+  return { checked: rows.length, resolved, pending: rows.length - resolved };
+}
+
+function safeCreditErrorCode(error: unknown): string {
+  if (typeof error === "object" && error && "code" in error && typeof error.code === "string") {
+    return error.code.slice(0, 80);
+  }
+  return "credit_rpc_failed";
 }
 
 export function __clearLocks() {

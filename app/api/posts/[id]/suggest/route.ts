@@ -5,6 +5,7 @@ import { buildExistingContentPayload, EXISTING_CONTENT_DISCLOSURE, POST_SUGGESTI
 import { getPostDraft, loadPostBrandContext, loadPostPlanContext } from "@/lib/post/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { consumeAiRateLimit, rateLimitedResponse } from "@/lib/rate-limit";
+import { randomUUID } from "node:crypto";
 
 export const runtime = "nodejs";
 // AI calls / sequential provider sends can exceed the platform default timeout.
@@ -60,6 +61,12 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
       ],
       temperature: 0.5,
       maxTokens: 900,
+      usage: {
+        ownerId: user.id,
+        operationKey: `post-suggest:${id}:${randomUUID()}`,
+        operationType: "post_caption_suggestion",
+        category: "caption",
+      },
       // Groq json_schema structured output (strict where supported); the zod
       // parse stays the second safety layer before any suggestion is returned.
       jsonSchema: postSuggestionJsonSchema,

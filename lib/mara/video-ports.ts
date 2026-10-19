@@ -27,6 +27,7 @@ import { normalizePlan } from "@/lib/billing/plans";
 import { normalizeAllowAutomaticPaidMedia } from "@/lib/mara/media-spend";
 import { guardAndReserveMedia, releaseReservationOnFailure, confirmReservation } from "@/lib/billing/entitlement-guard";
 import { normalizeAutomationMode } from "@/lib/voom/automation";
+import { createUsageRecorder } from "@/lib/ai/usage";
 
 export const MEDIA_GENERATIONS_TABLE = "mara_media_generations";
 const POST_ASSET_BUCKET = "mara-media";
@@ -66,6 +67,7 @@ async function loadBillingForVideo(admin: SupabaseClient, ownerId: string) {
 
 export function buildVideoGenerationPorts(deps: VideoPortDependencies): VideoGenerationPorts {
   const { admin, provider, imageProvider, brand, plan } = deps;
+  const usageRecorder = createUsageRecorder(admin);
 
   const readRow = (data: Record<string, unknown> | null): VideoJobRow | null => {
     if (!data) return null;
@@ -189,6 +191,10 @@ export function buildVideoGenerationPorts(deps: VideoPortDependencies): VideoGen
       await confirmReservation(admin, ownerId, generationId).catch(() => null);
     },
 
+    async recordUsageAttempt(attempt) {
+      await usageRecorder(attempt);
+    },
+
     async planMedia(input): Promise<VideoPlanResult> {
       const contentType = input.contentType;
       const systemPrompt = contentType === "reel" ? REEL_VIDEO_SYSTEM_PROMPT : STORY_VIDEO_SYSTEM_PROMPT;
@@ -208,6 +214,12 @@ export function buildVideoGenerationPorts(deps: VideoPortDependencies): VideoGen
         ],
         temperature: 0.6,
         maxTokens: 900,
+        usage: {
+          ownerId: input.ownerId,
+          operationKey: `video-plan:${input.draftId}`,
+          operationType: "video_generation_plan",
+          category: "planning",
+        },
         parse: (value) => (contentType === "reel" ? reelVideoPlanSchema.parse(value) : storyVideoPlanSchema.parse(value)),
       });
       if (contentType === "reel") {
