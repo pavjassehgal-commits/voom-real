@@ -29,7 +29,7 @@
  */
 import { createServer } from "node:http";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
@@ -239,10 +239,109 @@ export function findBrowser() {
   return provisionBrowser();
 }
 
+/* ──────────────────────────────────────────────────────────────
+   Temporary-resource lifecycle
+   ──────────────────────────────────────────────────────────────
+   Every browser profile and page folder is created by THIS process with
+   mkdtemp (unique, never shared) and recorded here. Cleanup only ever deletes
+   paths in this registry — never a glob — so directories of other test runs
+   or unrelated processes are never touched. A browser is always confirmed
+   exited before its profile is removed (Chromium keeps writing to it until
+   it dies). If a run is abandoned (a hung scenario hit the test timeout and
+   its finally never ran), the process-exit hook kills the browser and
+   removes what is left. */
+const liveBrowsers = new Set();
+const ownedTempDirs = new Set();
+
+export const TEMP_PREFIXES = Object.freeze({ profile: "voom-chrome-profile-", pages: "voom-rendered-page-" });
+
+function ownedTempDir(prefix) {
+  const directory = mkdtempSync(path.join(tmpdir(), `${prefix}${process.pid}-`));
+  ownedTempDirs.add(directory);
+  return directory;
+}
+
+function removeOwnedTempDir(directory) {
+  if (!directory || !ownedTempDirs.has(directory)) return;
+  try {
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } finally {
+    ownedTempDirs.delete(directory);
+  }
+}
+
+/*
+ * The browser runs in its own process group (spawned detached), so killing
+ * the group also stops Chromium's helper processes (renderer, GPU, crash
+ * handler). Those keep writing into the profile for a moment after the main
+ * process dies, so a profile is removed only once the WHOLE group is gone.
+ */
+function killBrowserGroup(child) {
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    try { child.kill("SIGKILL"); } catch { /* already gone */ }
+  }
+}
+
+function browserGroupAlive(child) {
+  try {
+    process.kill(-child.pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Kills the browser group (if still running) and resolves once every process in it has exited. */
+async function stopBrowserProcess(child, timeoutMs = 10_000) {
+  liveBrowsers.delete(child);
+  const deadline = Date.now() + timeoutMs;
+  if (child.exitCode === null && child.signalCode === null) {
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    killBrowserGroup(child);
+    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, timeoutMs))]);
+  } else {
+    killBrowserGroup(child);
+  }
+  while (browserGroupAlive(child) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return !browserGroupAlive(child);
+}
+
+/** Terminates a launched browser, then removes its profile. Safe to call twice. */
+async function disposeBrowser(launched) {
+  if (!launched) return;
+  const stopped = await stopBrowserProcess(launched.child);
+  // A browser that could not be confirmed dead keeps its profile registered;
+  // the process-exit hook retries.
+  if (stopped) removeOwnedTempDir(launched.profile);
+}
+
+process.once("exit", () => {
+  // Synchronous last resort for abandoned runs (e.g. a hung scenario hit the
+  // test timeout and its finally never ran): kill every browser group, wait
+  // briefly for the groups to disappear, then remove what this process owns.
+  for (const child of liveBrowsers) killBrowserGroup(child);
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + 5_000;
+  while ([...liveBrowsers].some(browserGroupAlive) && Date.now() < deadline) Atomics.wait(pause, 0, 0, 25);
+  for (const directory of ownedTempDirs) {
+    try { rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ }
+  }
+});
+
+/** Test-only view of what this process still owns. */
+export function renderedSurfaceResources() {
+  return { browsers: liveBrowsers.size, tempDirs: [...ownedTempDirs] };
+}
+
 function launchBrowser(browser) {
-  const profile = path.join(tmpdir(), `voom-chrome-profile-${process.pid}-${Date.now()}`);
-  mkdirSync(profile, { recursive: true });
-  const child = spawn(
+  const profile = ownedTempDir(TEMP_PREFIXES.profile);
+  let child;
+  try {
+    child = spawn(
     browser.executable,
     [
       "--headless=new",
@@ -257,24 +356,45 @@ function launchBrowser(browser) {
       `--user-data-dir=${profile}`,
       "about:blank",
     ],
-    { env: { ...process.env, ...browser.env }, stdio: ["ignore", "pipe", "pipe"] },
-  );
+    // detached: its own process group, so the whole browser can be stopped.
+    { env: { ...process.env, ...browser.env }, stdio: ["ignore", "pipe", "pipe"], detached: true },
+    );
+  } catch (error) {
+    removeOwnedTempDir(profile);
+    throw error;
+  }
+  liveBrowsers.add(child);
+  const launched = { child, profile, wsUrl: null };
   return new Promise((resolve, reject) => {
     let output = "";
+    let settled = false;
+    let startupTimer = null;
+    // A launch that fails (spawn error, early exit, startup timeout) cleans up
+    // after itself before rejecting: the caller never receives a handle.
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(startupTimer);
+      disposeBrowser(launched).finally(() => reject(error));
+    };
     const onData = (chunk) => {
       output += chunk.toString();
       const match = output.match(/ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[0-9a-f-]+/);
-      if (match) {
+      if (match && !settled) {
+        settled = true;
+        clearTimeout(startupTimer);
         child.stdout.off("data", onData);
         child.stderr.off("data", onData);
-        resolve({ child, wsUrl: match[0] });
+        launched.wsUrl = match[0];
+        resolve(launched);
       }
     };
     child.stdout.on("data", onData);
     child.stderr.on("data", onData);
-    child.on("error", reject);
-    child.on("exit", (code) => reject(new RenderedSurfaceUnavailable(`browser exited early (${code}): ${output.slice(-400)}`)));
-    setTimeout(() => reject(new RenderedSurfaceUnavailable(`browser did not start within 30s: ${output.slice(-400)}`)), 30_000).unref?.();
+    child.on("error", fail);
+    child.on("exit", (code) => fail(new RenderedSurfaceUnavailable(`browser exited early (${code}): ${output.slice(-400)}`)));
+    startupTimer = setTimeout(() => fail(new RenderedSurfaceUnavailable(`browser did not start within 30s: ${output.slice(-400)}`)), 30_000);
+    startupTimer.unref?.();
   });
 }
 
@@ -297,6 +417,9 @@ function connect(wsUrl) {
         const key = sessionId ?? "browser";
         client.listeners.set(key, [...(client.listeners.get(key) ?? []), handler]);
       },
+      close() {
+        try { socket.close(); } catch { /* already closed */ }
+      },
     };
     socket.addEventListener("open", () => resolve(client));
     socket.addEventListener("error", () => reject(new RenderedSurfaceUnavailable("could not connect to the browser DevTools socket")));
@@ -315,12 +438,9 @@ function connect(wsUrl) {
   });
 }
 
-let serverSequence = 0;
-
 /** Serves every scenario document (plus a blank page for state seeding). */
 function serveDocuments(documents) {
-  const directory = path.join(tmpdir(), `voom-rendered-page-${process.pid}-${++serverSequence}`);
-  mkdirSync(directory, { recursive: true });
+  const directory = ownedTempDir(TEMP_PREFIXES.pages);
   documents.forEach((html, index) => writeFileSync(path.join(directory, `page-${index}.html`), html));
   writeFileSync(path.join(directory, "blank.html"), "<!doctype html><html><body></body></html>");
   const server = createServer((request, response) => {
@@ -330,8 +450,15 @@ function serveDocuments(documents) {
     response.end(readFileSync(path.join(directory, file)));
   });
   return new Promise((resolve) => {
-    server.listen(0, "127.0.0.1", () => resolve({ server, origin: `http://127.0.0.1:${server.address().port}` }));
+    server.listen(0, "127.0.0.1", () => resolve({ server, directory, origin: `http://127.0.0.1:${server.address().port}` }));
   });
+}
+
+/** Stops the page server (dropping any kept-alive browser connections) and removes its folder. */
+async function disposeServer(server, directory) {
+  server.closeAllConnections?.();
+  await new Promise((resolve) => server.close(() => resolve()));
+  removeOwnedTempDir(directory);
 }
 
 /**
@@ -371,11 +498,12 @@ export async function measureRenderedPages(scenarios) {
       "no Chromium available (set VOOM_CHROMIUM_PATH, or allow the harness to provision one from npm)",
     );
   }
-  const { server, origin } = await serveDocuments(scenarios.map((scenario) => scenario.html));
+  const { server, directory, origin } = await serveDocuments(scenarios.map((scenario) => scenario.html));
   let launched = null;
+  let client = null;
   try {
     launched = await launchBrowser(browser);
-    const client = await connect(launched.wsUrl);
+    client = await connect(launched.wsUrl);
     const results = [];
     for (const [index, scenario] of scenarios.entries()) {
       const { width = 354, height = 900 } = scenario;
@@ -477,8 +605,11 @@ export async function measureRenderedPages(scenarios) {
     }
     return results;
   } finally {
-    launched?.child.kill("SIGKILL");
-    server.close();
+    // Runs on success, on a thrown scenario error and on a failed launch:
+    // browser first (and confirmed exited), then its profile, then the pages.
+    client?.close();
+    await disposeBrowser(launched);
+    await disposeServer(server, directory);
   }
 }
 

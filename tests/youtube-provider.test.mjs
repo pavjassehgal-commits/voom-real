@@ -1390,11 +1390,18 @@ async function makeDraft(ownerId, { kind = "youtube_short", format = "short", st
 
 async function makeAsset(ownerId, draftId, { mime = "video/mp4", byteSize = 1024 } = {}) {
   const { db } = await liteDb();
+  const before = await db.query("select status from public.mara_drafts where id = $1", [draftId]);
   await db.query(
     `insert into public.post_draft_assets (owner_user_id, draft_id, storage_path, display_name, mime_type, byte_size)
      values ($1, $2, $3, 'video.mp4', $4, $5)`,
     [ownerId, draftId, `yt/${ownerId}/${draftId}-video.mp4`, mime, byteSize],
   );
+  // Complete-content approval (0059): attaching the video revokes an earlier
+  // approval. Fixtures that model "an approved post" mean one approved WITH
+  // its video, so the owner's approval is given again for the complete post.
+  if (before.rows[0]?.status === "approved") {
+    await db.query("update public.mara_drafts set status = 'approved' where id = $1 and status = 'draft'", [draftId]);
+  }
 }
 
 let videoSeq = 0;
@@ -1448,12 +1455,15 @@ async function saveConnection(ownerId, overrides = {}) {
   });
 }
 
-test("migrations 0047-0051 apply cleanly and 0051 is the checked-in head", async () => {
+test("migrations 0047-0051 apply cleanly and retain their required ordering", async () => {
   const { applied } = await liteDb();
   assert.ok(applied.includes("0047_youtube_provider.sql"), "0047 applied through PGlite");
   assert.ok(applied.includes("0049_tiktok_provider.sql"), "0049 (TikTok) applied through PGlite");
   assert.ok(applied.includes("0050_approval_state_write_lockdown.sql"), "0050 (write lockdown) applied through PGlite");
-  assert.equal(applied[applied.length - 1], "0061_ai_usage_cost_tracking.sql", "AI usage tracking 0061 follows Trend Intelligence 0055-0058");
+  const ordered = ["0047_youtube_provider.sql", "0048_youtube_oauth_state_acl.sql", "0049_tiktok_provider.sql", "0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql"];
+  assert.deepEqual(applied.filter((name) => ordered.includes(name)), ordered, "provider migrations remain ordered through 0051");
+  assert.ok(applied.indexOf("0055_trend_intelligence.sql") > applied.indexOf("0051_ai_request_rate_limits.sql"), "Trend Intelligence follows 0051");
+  assert.equal(applied[applied.length - 1], "0061_ai_usage_cost_tracking.sql", "AI usage tracking 0061 follows Trend Intelligence 0055-0058 and automation safety 0059");
   const tables = await all(
     "select table_name from information_schema.tables where table_schema = 'public' and table_name like 'youtube_%' order by table_name",
   );

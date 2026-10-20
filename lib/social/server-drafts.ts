@@ -541,7 +541,7 @@ export async function updateSocialDraft(
     ? input.script.filter((line): line is string => typeof line === "string").map((line) => line.trim().slice(0, 400)).filter(Boolean).slice(0, 40)
     : existing.script;
   const scheduledAt = input.scheduledAt !== undefined ? normalizeSchedule(input.scheduledAt) : existing.scheduledAt;
-  const status = input.decision === "approved" ? "approved"
+  let status = input.decision === "approved" ? "approved"
     : input.decision === "draft" ? "draft"
       : input.decision === "rejected" ? "rejected" : existing.status;
 
@@ -552,6 +552,24 @@ export async function updateSocialDraft(
   let tiktokPrivacy = input.tiktokPrivacy !== undefined
     ? (isTikTokPrivacy(input.tiktokPrivacy) ? input.tiktokPrivacy : null)
     : existing.tiktokPrivacy;
+
+  // Approval integrity (migration 0059): an approval covers one content
+  // version. Changing what will be published — title, caption, YouTube
+  // description/audience/privacy, TikTok privacy — withdraws it unless this
+  // same request explicitly approves the new version (decision "approved" or
+  // a fresh TikTok post consent). The owner's own reschedule keeps it.
+  const explicitAuthorization = input.decision === "approved" || Boolean(input.tiktokPostConsent);
+  const publishableChanged = title !== existing.title
+    || (caption || title) !== existing.caption
+    || (description || null) !== (existing.description || null)
+    || madeForKids !== existing.madeForKids
+    || privacy !== existing.privacy
+    || (input.tiktokPostConsent ? input.tiktokPostConsent.settings.privacy : tiktokPrivacy) !== existing.tiktokPrivacy;
+  const scheduleChanged = scheduledAt !== existing.scheduledAt;
+  const wasApproved = existing.status === "approved";
+  if (wasApproved && status === "approved" && !explicitAuthorization && publishableChanged) status = "draft";
+  const ownerReschedule = wasApproved && status === "approved" && !explicitAuthorization && !publishableChanged && scheduleChanged;
+  const reapprove = wasApproved && status === "approved" && explicitAuthorization && (publishableChanged || scheduleChanged);
 
   // TikTok consent covers exactly what the owner reviewed. A new consent
   // replaces it; un-approving, or changing the caption, title or privacy
@@ -594,14 +612,31 @@ export async function updateSocialDraft(
     await cancelAndVerifyTikTokQueue(admin, ownerId, draftId);
   }
 
-  const { error } = await admin.from("mara_drafts").update({
+  const { data: written, error } = await admin.from("mara_drafts").update({
     title,
     content: caption || title,
-    proposed_publish_at: scheduledAt,
+    ...(ownerReschedule ? {} : { proposed_publish_at: scheduledAt }),
     status,
     content_meta: meta,
-  }).eq("owner_user_id", ownerId).eq("id", draftId);
-  if (error) throw new Error("social_draft_update_failed");
+  }).eq("owner_user_id", ownerId).eq("id", draftId).select("status,content_version").maybeSingle();
+  if (error || !written) throw new Error("social_draft_update_failed");
+  if (ownerReschedule) {
+    const { error: rescheduleError } = await admin.rpc("reschedule_approved_draft", {
+      p_owner_user_id: ownerId, p_draft_id: draftId, p_publish_at: scheduledAt,
+    });
+    if (rescheduleError) throw new Error("social_draft_update_failed");
+  } else if (reapprove && written.status !== "approved") {
+    // The edit moved the version (and the database withdrew the old
+    // approval); this request's explicit approval covers exactly the version
+    // it just wrote — never a concurrent edit that landed in between.
+    const { data: reapproved, error: reapproveError } = await admin.from("mara_drafts")
+      .update({ status: "approved", approval_origin: "user" })
+      .eq("owner_user_id", ownerId).eq("id", draftId)
+      .eq("content_version", written.content_version).eq("status", "draft")
+      .select("id").maybeSingle();
+    if (reapproveError) throw new Error("social_draft_update_failed");
+    if (!reapproved) throw new Error("social_draft_changed");
+  }
 
   // Calendar mirror: approved + scheduled shows on the one marketing
   // calendar; anything else removes the mirror.

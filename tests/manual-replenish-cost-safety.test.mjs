@@ -287,7 +287,7 @@ function seedAccount(options = {}) {
 }
 
 /** Everything a Manual Replenish must NOT have done. */
-function assertNoPaidOrAutomaticSideEffects(db, run) {
+function assertNoPaidOrAutomaticSideEffects(db, run, { allowApprovalRequests = false } = {}) {
   assert.equal(imageRequests().length, 0, "zero image provider (Seedream) requests");
   assert.equal(videoRequests().length, 0, "zero video provider (Seedance / Magic Hour) requests");
   assert.equal(nonCopyNetwork().length, 0, "nothing but MARA copy ever touched the network");
@@ -296,9 +296,9 @@ function assertNoPaidOrAutomaticSideEffects(db, run) {
   assert.equal(db.rows("post_draft_assets").length, 0, "no stored media bytes");
   assert.equal(run.mediaQueued, 0);
   assert.equal(run.autoApproved, 0, "no auto-approval");
-  assert.equal(run.awaitingApproval, 0, "no approval card opened");
+  if (!allowApprovalRequests) assert.equal(run.awaitingApproval, 0, "no approval card opened");
   assert.equal(run.heldForReview, 0);
-  assert.equal(db.rows("mara_pending_actions").length, 0, "no approval rows");
+  if (!allowApprovalRequests) assert.equal(db.rows("mara_pending_actions").length, 0, "no approval rows");
   assert.equal(db.rows("mara_tool_runs").length, 0, "no autopilot audit rows");
   assert.equal(db.rows("content_calendar_items").length, 0, "no calendar scheduling");
   assert.equal(db.rows("instagram_publish_queue").length, 0, "no Instagram queue entry");
@@ -545,7 +545,7 @@ function countingPorts() {
   return { ports, calls };
 }
 
-test("4a. Assisted: Replenish and scheduled runs plan and draft every slot, and never reach the paid stage (v1)", async () => {
+test("4a. Assisted: Replenish and scheduled runs draft approvals without reaching the paid stage", async () => {
   for (const trigger of ["replenish", "scheduled", undefined]) {
     const { ports, calls } = countingPorts();
     const run = await rolling.ensureRollingPlan(ports, { now: NOW, timeZone: TZ, cadence: "daily", mode: "assisted", goal: "awareness", trigger, selectedChannels: ["instagram"] });
@@ -557,10 +557,8 @@ test("4a. Assisted: Replenish and scheduled runs plan and draft every slot, and 
     assert.equal(calls.image + calls.video, 0);
     assert.equal(run.mediaQueued, 0);
     assert.equal(calls.autoApprove, 0, "Assisted never auto-approves");
-    // Approval is asked for once the owner has produced the item's media
-    // (the planned card offers Create with MARA / Upload), not at planning.
-    assert.equal(calls.requestApproval, 0);
-    assert.equal(run.awaitingApproval, 0);
+    assert.equal(calls.requestApproval, 7);
+    assert.equal(run.awaitingApproval, 7);
     assert.equal(run.autoApproved, 0);
     assert.deepEqual(run.failures, []);
   }
@@ -580,7 +578,7 @@ test("4b. Autopilot: Replenish and scheduled runs still generate media and auto-
   }
 });
 
-test("4c. through the REAL service, an Assisted (Pro) Replenish drafts the horizon and submits nothing paid (v1)", async () => {
+test("4c. through the REAL service, Assisted drafts approval requests and submits nothing paid", async () => {
   resetNetwork();
   // Pro is the plan that includes Assisted, so the saved mode is honoured.
   const db = seedAccount({ mode: "assisted", cadence: "3x per week", plan: "pro" });
@@ -597,12 +595,10 @@ test("4c. through the REAL service, an Assisted (Pro) Replenish drafts the horiz
   assert.equal(videoRequests().length, 0, "Assisted submits no Seedance request on its own");
   assert.deepEqual(run.failures, [], "nothing paid ran, so nothing paid could fail");
   assert.deepEqual(db.ledger.rows(), [], "no credit reservation was even attempted");
-  assertNoPaidOrAutomaticSideEffects(db, run);
-  // Approval comes after the owner produces media on the planned card, so
-  // nothing sits in Approvals yet and nothing was auto-approved.
-  assert.equal(run.awaitingApproval, 0);
+  assertNoPaidOrAutomaticSideEffects(db, run, { allowApprovalRequests: true });
+  assert.equal(run.awaitingApproval, 3);
   assert.equal(run.autoApproved, 0);
-  assert.equal(db.rows("mara_pending_actions").length, 0);
+  assert.equal(db.rows("mara_pending_actions").length, 3);
   for (const draft of db.rows("mara_drafts")) assert.equal(draft.status, "draft");
 });
 
