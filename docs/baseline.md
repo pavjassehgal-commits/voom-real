@@ -39,3 +39,5 @@ Environment: Node v26.0.0, npm 11.12.1, macOS.
 |---|---|---|---|---|
 | 2026-10-16 | 1665 / 0 / 4 | clean | 0 / 17 | Baseline, no code changes |
 | 2026-10-17 | 1668 / 0 / 4 | clean | 0 / 16 | Three truthfulness fixes (+3 tests, 5 tests reworded, 1 unused variable removed). See DECISIONS 2026-10-17. |
+| 2026-10-17 | 1673 / 0 / 4 | clean | 0 / 16 | Forgot-password flow (+5 tests). See DECISIONS 2026-10-17. |
+| 2026-10-20 | 1674 / 0 / 4 | clean | 0 / 16 | Password reset signs out everywhere and returns to login (+1 test, 2 tests extended). See DECISIONS 2026-10-20. |

@@ -16,6 +16,34 @@ decision reverses an earlier one, add a new entry and mark the old one "Replaced
 
 ---
 
+## 2026-10-20: After a password reset, sign out everywhere and return to login
+- Decision: A successful password reset no longer logs the user in. The reset action sets the new password, ends every session for the account (`signOut({ scope: "global" })`, this browser and any other device), and sends the user to `/login?notice=password_reset`, where a fixed green notice says "Your password has been updated. Log in with your new password."
+- Before: The reset action went straight to `/app` using the recovery session the email link had created (2026-10-17 entry, "then `/app`").
+- Why: Gurnoor's call after testing the flow: "there's a layer of safety involved there". Re-entering the new password proves the person who clicked the link also knows the password they just set, and the global sign-out means a reset also kicks out anyone else who was sitting in the account, which is what most people expect "reset my password" to do. Rejected: keeping the automatic login (one click less for the user, but a stolen or forwarded link would land straight in the app and leave other sessions alive).
+- How it is kept safe: the login page can only show text for its two fixed keys (`error=confirm_failed`, `notice=password_reset`); anything else in the address bar shows nothing. If the sign-out call fails after the password was already changed, the user still goes to login (the recovery session is single-use and the new password is in place), and the failure is logged on the server.
+- Side effect: a logged-in user who opens `/reset-password` directly and changes their password is also signed out everywhere and must log in again. Acceptable; it is the same safety rule.
+- Testing: `tests/forgot-password.test.mjs` test 4 now expects the sign-out call and the login target (failed before the change), test 5 checks the form no longer promises an automatic login, and new test 6 renders the login page with the notice key, an unknown key and no key. Full run and the three checks: see `docs/baseline.md` row for 2026-10-20. Browser check: done by Gurnoor on 2026-10-20 on the development project (`handover/production-setup.md` Part D item 2), works.
+- Prompted by: Gurnoor's browser test of the forgot-password flow on 2026-10-19.
+- Consequences: No Supabase or Vercel step, so no `handover/changes-log.md` row. The 2026-10-17 entry's "then `/app`" is replaced by this one; its other choices stand.
+- Status: Active
+
+## 2026-10-17: Forgot-password flow, built account-agnostic; a `handover/` folder for production setup
+- Decision: Add forgot password using Supabase's own reset email and the existing callback, with no project-specific value in code. Create `handover/` holding the production setup runbook and a running log of code changes that need an outside step.
+- Before: No way to recover a lost password (the audit's step 1). Production setup knowledge lived only in `docs/deploy-voom-today.md` and chat history.
+- What was built: `app/forgot-password/` (email form, server action `requestPasswordReset`), `app/reset-password/` (new password + confirm, server action `resetPassword`), a "Forgot password?" link on `/login`, and `/reset-password` added to the callback's exact allowlist. The callback now sends a broken reset link to `/reset-password?error=link_invalid` instead of the login error, so the user gets a reset-specific message and a "Request a new link" button.
+- Why these choices:
+  - **Same reply for every address.** The request action ignores Supabase's result entirely, so the form cannot be used to discover who has an account. Only a malformed address gets a field error.
+  - **Reuse the callback.** Supabase's reset link is the same "code exchange" mechanism as signup confirmation, so one allowlisted `?next=` value covers it. Rejected: a separate `/auth/reset` route (duplicate code, second allowlist).
+  - **Server actions, not browser calls.** Matches login/signup; the password never passes through client-side Supabase code.
+  - **Account-agnostic.** The link is built from `NEXT_PUBLIC_SITE_URL`; the email template is Supabase's default `{{ .ConfirmationURL }}`. Switching to the production project needs only env vars plus the dashboard checklist.
+  - **No Resend requirement.** Login emails are sent by Supabase, not by the app, so any SMTP provider works, or none in development (built-in mailer, ~2 emails/hour). Resend is listed as one option because campaign email already uses it.
+  - **Config-as-code deferred.** Supabase's CLI can push auth settings from a file in the repo (`supabase config push`). Rejected for now because it requires linking the CLI to production and we have not confirmed how production's migrations are applied; revisit once that is known.
+- Known limits: the emailed link must be opened in the same browser that requested it (code-exchange flow; same as signup). Any logged-in user can open `/reset-password` and change their password there (harmless). `same_password` and `weak_password` errors from Supabase are shown as field errors; any other error is treated as an expired link.
+- Testing: `tests/forgot-password.test.mjs` (5 tests, all failed before the code existed) run the real actions, callback and reset page against doubled Supabase/Next modules (`tests/helpers/auth-doubles.mjs`). Full run 1673 pass / 0 fail / 4 skipped; typecheck clean; lint 0 errors, 16 warnings. Browser check: pending on the development Supabase project (needs A4/A5 from `handover/production-setup.md` done first).
+- Prompted by: Gurnoor's task on 2026-10-17, plus "make it plug-and-play for production".
+- Consequences: `handover/changes-log.md` must get a row for every future change that needs an outside step. `docs/deploy-voom-today.md` now defers to `handover/production-setup.md`.
+- Status: Active, except "then `/app`" after the reset: Replaced by 2026-10-20 "After a password reset, sign out everywhere and return to login".
+
 ## 2026-10-17: Three truthfulness fixes: Instagram status, Free-plan Generate, empty-channel Build plan
 - Decision: Fix three places where the app told the user something untrue or nothing at all. Each fix has one automated test in `tests/truthful-status-and-guards.test.mjs` that failed before the fix and passes after.
 - Before:

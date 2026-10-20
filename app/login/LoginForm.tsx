@@ -20,9 +20,17 @@ function SubmitButton() {
   );
 }
 
-export default function LoginForm({ initialError }: { initialError?: string }) {
+export default function LoginForm({
+  initialError,
+  initialNotice,
+}: {
+  initialError?: string;
+  initialNotice?: string;
+}) {
   const [state, formAction] = useActionState(login, initialState);
   const formError = state.formError ?? initialError;
+  // A good-news notice (e.g. "password updated") stays until the form reports something.
+  const notice = state.formError || state.fieldErrors ? undefined : initialNotice;
 
   return (
     <div className="w-full max-w-sm rounded-2xl border border-line bg-surface p-7 shadow-[0_1px_2px_rgba(0,0,0,.5),0_12px_32px_-16px_rgba(0,0,0,.8)]">
@@ -34,6 +42,14 @@ export default function LoginForm({ initialError }: { initialError?: string }) {
       </p>
 
       <form action={formAction} className="mt-6 flex flex-col gap-4">
+        {notice && (
+          <p
+            role="status"
+            className="rounded-xl border border-emerald-900/40 bg-emerald-950/30 px-3.5 py-2.5 text-sm text-emerald-300"
+          >
+            {notice}
+          </p>
+        )}
         {formError && (
           <p
             role="alert"
@@ -94,7 +110,13 @@ export default function LoginForm({ initialError }: { initialError?: string }) {
         <SubmitButton />
       </form>
 
-      <p className="mt-6 text-center text-xs text-text-3">
+      <p className="mt-4 text-center text-xs text-text-3">
+        <Link href="/forgot-password" className="font-medium text-text-2 hover:text-text">
+          Forgot password?
+        </Link>
+      </p>
+
+      <p className="mt-3 text-center text-xs text-text-3">
         Don&apos;t have an account?{" "}
         <Link href="/signup" className="font-medium text-text-2 hover:text-text">
           Sign up
