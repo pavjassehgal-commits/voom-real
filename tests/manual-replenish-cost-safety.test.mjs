@@ -655,7 +655,7 @@ test("5a. an explicit Create with MARA click in Manual (Pro) starts exactly ONE 
   // for a still-draft post — there is none, so nothing is enqueued or cancelled.
   assert.deepEqual(
     db.rpcs.map((call) => call.name).filter((name) => !name.endsWith("_media_credits")),
-    ["cancel_instagram_publish_queue_item"],
+    ["record_ai_usage_attempt", "cancel_instagram_publish_queue_item"],
   );
   const ledgerRows = db.ledger.rows();
   assert.equal(ledgerRows.length, 1);

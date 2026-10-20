@@ -158,7 +158,16 @@ export async function createEmailFlow(
     brand: brand.context,
     allowedUrls: input.allowedUrls ?? [],
   });
-  const generated = await generateFlowIntelligence(context, input.deps ?? {});
+  const generated = await generateFlowIntelligence(context, {
+    ...(input.deps ?? {}),
+    usage: input.deps?.usage ?? {
+      ownerId: input.ownerId,
+      businessId: brand.businessId,
+      operationKey: `email-flow-create:${input.idempotencyKey}`,
+      operationType: "email_flow_create",
+      category: "planning",
+    },
+  });
 
   // 3) Strict schema + safety validation, then a validated merge.
   const applied = applyFlowIntelligence({

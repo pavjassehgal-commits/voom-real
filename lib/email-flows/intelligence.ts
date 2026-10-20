@@ -16,6 +16,7 @@ import "server-only";
 
 import { AiError, createAiProvider } from "@/lib/ai";
 import type { AiProvider } from "@/lib/ai";
+import type { AiUsageContext } from "@/lib/ai";
 import {
   FLOW_INTELLIGENCE_SYSTEM_PROMPT,
   flowIntelligenceJsonSchema,
@@ -31,6 +32,7 @@ export interface FlowTextAi {
 export interface FlowIntelligenceDeps {
   /** Test seam. Production uses the existing MARA text provider. */
   ai?: FlowTextAi;
+  usage?: AiUsageContext;
 }
 
 export type FlowIntelligenceOutcome =
@@ -60,6 +62,7 @@ export async function generateFlowIntelligence(
       ],
       temperature: 0.6,
       maxTokens: FLOW_INTELLIGENCE_MAX_TOKENS,
+      usage: deps.usage,
       // Strict structured output where the provider supports it; the zod parse
       // below stays the second safety layer in every case.
       jsonSchema: flowIntelligenceJsonSchema,

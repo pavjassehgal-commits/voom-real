@@ -365,6 +365,8 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
     async generateContent(slot) {
       const plan = await trendPlanForRun();
       const base = {
+        ownerId: context.ownerId,
+        businessId: context.businessId,
         business: context.business,
         goal: context.goal,
         cadence: context.cadence,
@@ -682,6 +684,8 @@ async function recordAutoApproval(
  * testable without a network call.
  */
 export async function generateWorkflowPlannedContent(input: {
+  ownerId?: string;
+  businessId?: string;
   business: Record<string, unknown>;
   goal: string;
   cadence: Cadence;
@@ -723,6 +727,13 @@ export async function generateWorkflowPlannedContent(input: {
       ],
       temperature: 0.7,
       maxTokens: slot.channel === "youtube" && slot.format === "video" ? 2200 : 1500,
+      ...(input.ownerId ? { usage: {
+        ownerId: input.ownerId,
+        businessId: input.businessId ?? null,
+        operationKey: `workflow-plan:${input.businessId ?? input.ownerId}:${slot.channel}:${slot.format}:${slot.publishAt}`,
+        operationType: "mara_workflow_plan",
+        category: "recommendation" as const,
+      } } : {}),
       jsonSchema: plannedContentJsonSchema,
       parse: (value) => plannedContentSchema.parse(value),
     });
