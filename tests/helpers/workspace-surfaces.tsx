@@ -24,7 +24,7 @@ import { ApprovalsWorkspace } from "@/components/voom/operating/ApprovalsWorkspa
 import type { ApprovalItem } from "@/components/voom/operating/ApprovalsBoard";
 import CalendarPage from "@/app/app/(shell)/calendar/page";
 import StudioPage from "@/app/app/(shell)/studio/page";
-import { PerformanceView } from "@/app/app/(shell)/performance/page";
+import { PerformanceView } from "@/components/voom/performance/PerformanceView";
 import type { WorkflowSnapshot, WorkflowView } from "@/lib/voom/workflow/read";
 import type { SocialCalendarItemView } from "@/lib/social/server-drafts";
 import type { BusinessRecord } from "@/lib/voom/types";

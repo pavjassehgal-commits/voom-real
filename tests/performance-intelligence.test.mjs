@@ -909,7 +909,11 @@ test("the Today insight exists only when there is enough measured data", async (
   assert.match(dashboard, /report\.headline/, "Today V2 only presents a performance claim backed by the real report");
   assert.doesNotMatch(dashboard, /fake|sample chart|12\.4K/i);
 
-  const page = await readFile(new URL("../app/app/(shell)/performance/page.tsx", import.meta.url), "utf8");
+  // The page loads the data; its presentation lives in components/voom/performance/PerformanceView.tsx.
+  const page = [
+    await readFile(new URL("../app/app/(shell)/performance/page.tsx", import.meta.url), "utf8"),
+    await readFile(new URL("../components/voom/performance/PerformanceView.tsx", import.meta.url), "utf8"),
+  ].join("\n");
   assert.match(page, /loadPerformanceReport/);
   assert.match(page, /createClient/, "the page reads through the session client, so RLS is the isolation boundary");
   for (const section of ["Best-performing recent content", "Recent published content", "What is working", "Performance intelligence"]) {

@@ -1096,7 +1096,7 @@ test("the ONE Studio and calendar surfaces present every channel truthfully", as
   const studio = await read("app/app/(shell)/studio/page.tsx");
   const calendar = await read("app/app/(shell)/calendar/page.tsx");
   const connections = await read("app/app/(shell)/connections/page.tsx");
-  const performance = await read("app/app/(shell)/performance/page.tsx");
+  const performance = (await read("app/app/(shell)/performance/page.tsx")) + (await read("components/voom/performance/PerformanceView.tsx"));
 
   assert.match(studio, /SocialEditorModal/, "the Studio opens the social editor for social drafts");
   assert.match(studio, /isSocialVideoDraftKind/, "the Studio routes by kind");

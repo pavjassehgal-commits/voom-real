@@ -61,7 +61,13 @@ test("every cron worker uses the constant-time Bearer check", async () => {
   const { readdirSync } = await import("node:fs");
   const dir = new URL("../app/api/cron/", import.meta.url);
   for (const name of readdirSync(dir)) {
-    const source = readFileSync(new URL(`${name}/route.ts`, dir), "utf8");
+    let source = readFileSync(new URL(`${name}/route.ts`, dir), "utf8");
+    // Next.js route files may only export handlers, so the email-flows check
+    // lives in lib/email-flows/cron-auth.ts; follow it and hold it to the same rule.
+    if (/isAuthorizedEmailFlowCron\(request, secret\)/.test(source)) {
+      assert.match(source, /from "@\/lib\/email-flows\/cron-auth"/, name);
+      source += readFileSync(new URL("../lib/email-flows/cron-auth.ts", import.meta.url), "utf8");
+    }
     assert.match(source, /bearerMatches\(request, secret\)/, name);
     assert.doesNotMatch(source, /headers\.get\("authorization"\)/, name);
   }

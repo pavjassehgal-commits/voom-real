@@ -58,7 +58,7 @@ const FILES = {
   plan: ["app/app/(shell)/plan/page.tsx", "components/voom/operating/PlanWorkspace.tsx", "components/voom/operating/PlanItemCard.tsx"],
   calendar: ["app/app/(shell)/calendar/page.tsx"],
   studio: ["app/app/(shell)/studio/page.tsx"],
-  performance: ["app/app/(shell)/performance/page.tsx"],
+  performance: ["app/app/(shell)/performance/page.tsx", "components/voom/performance/PerformanceView.tsx"],
   approvals: ["app/app/(shell)/approvals/page.tsx", "components/voom/operating/ApprovalsWorkspace.tsx", "components/voom/operating/ApprovalsBoard.tsx"],
 };
 
@@ -70,7 +70,7 @@ const FILES = {
 const REQUIRES_PRESENTATION = new Set(["plan", "calendar", "studio"]);
 
 /** Server components only: the pages Next renders on the server. */
-const SERVER_PAGES = ["app/app/(shell)/plan/page.tsx", "app/app/(shell)/performance/page.tsx", "app/app/(shell)/approvals/page.tsx"];
+const SERVER_PAGES = ["app/app/(shell)/plan/page.tsx", "app/app/(shell)/performance/page.tsx", "components/voom/performance/PerformanceView.tsx", "app/app/(shell)/approvals/page.tsx"];
 
 /** Strips comments so a check never trips over documentation that names the pattern. */
 const withoutComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
