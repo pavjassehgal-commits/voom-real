@@ -128,6 +128,32 @@ Words used below:
   address in the middle: browser → Google → Supabase → our callback. The production project has
   its own callback URL, so production needs its own OAuth client (or a second redirect URI on a
   shared one; a separate client is simpler to revoke).
+- **Production checklist (done on the development project 2026-10-20; repeat every item for
+  production, nothing carries over):**
+  1. **Supabase production project** → Authentication → Providers → Google → copy *its* Callback
+     URL. It contains the production project ref, so it differs from the development one.
+  2. **Google Cloud** → Credentials → create a second OAuth client, Web application, name
+     "Voom login (production)", Authorized redirect URI = the production Callback URL from 1.
+     Do not add it to the development client; keep dev and prod separable.
+  3. **Supabase production project** → Providers → Google: enable, paste the *production*
+     client's ID and secret, Save. Pasting the development client's values here will fail with
+     "redirect_uri_mismatch" on Google's screen.
+  4. **Google Cloud** → OAuth consent screen → **Publish app** (status changes from Testing to
+     In production). Until this is done, every customer who is not on the Test users list is
+     blocked at Google's screen with "Voom has not completed the Google verification process".
+     With only the default scopes (email, profile, openid) there is no Google review; the
+     confirmation dialog just asks you to confirm. Optional but recommended on the same screen:
+     add `voom.today` under *Authorized domains*, and set the app's home page, privacy policy
+     (`https://voom.today/privacy`) and terms (`https://voom.today/terms`) links so the consent
+     screen shows "Voom" with those links instead of looking unverified.
+  5. **Supabase production project** → Authentication → URL Configuration: Site URL
+     `https://voom.today`, Redirect URLs contains `https://voom.today/**` (A4). Without this
+     Google's return trip ends on the home page, logged out.
+  6. **Vercel** → `NEXT_PUBLIC_SITE_URL=https://voom.today` (B3), because the action builds the
+     return address from it.
+  7. Run Part D items 6 to 8 on the live site with a Gmail that is **not** on the old Test users
+     list, to prove step 4 took effect.
+  Nothing in the code changes between development and production for this feature.
 - **Same email, one account:** Supabase links a Google sign-in to an existing email/password
   account with the same address automatically, because Google reports its emails as verified and
   our signups are verified by the confirmation link. No setting is needed; leave *Manual linking*
