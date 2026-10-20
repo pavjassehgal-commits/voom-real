@@ -155,6 +155,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ act
       ],
       temperature: 0.25,
       maxTokens: 300,
+      usage: {
+        ownerId: user.id,
+        operationKey: `reel-viewer-copy:${actionId}`,
+        operationType: "reel_viewer_copy",
+        category: "caption",
+      },
       parse: (value) => viewerCopySchema.parse(value),
     });
     viewerCopy = enforceViewerCopy(generated, copyContext);

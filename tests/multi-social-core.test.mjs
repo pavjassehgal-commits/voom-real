@@ -853,7 +853,7 @@ test("migration 0046 backfills Instagram rows and keeps every channel on one cal
   );
 
   const applied = await applyPending();
-  assert.equal(applied[applied.length - 1], "0059_automation_emergency_pause.sql", "0059 (automation emergency pause) is the final checked-in migration");
+  assert.equal(applied[applied.length - 1], "0061_ai_usage_cost_tracking.sql", "0061 (AI usage and cost tracking) is the final checked-in migration");
 
   const legacy = await one(
     "select social_channel, social_format from public.mara_drafts where title = 'Legacy Reel'",
@@ -1096,7 +1096,7 @@ test("the ONE Studio and calendar surfaces present every channel truthfully", as
   const studio = await read("app/app/(shell)/studio/page.tsx");
   const calendar = await read("app/app/(shell)/calendar/page.tsx");
   const connections = await read("app/app/(shell)/connections/page.tsx");
-  const performance = await read("app/app/(shell)/performance/page.tsx");
+  const performance = (await read("app/app/(shell)/performance/page.tsx")) + (await read("components/voom/performance/PerformanceView.tsx"));
 
   assert.match(studio, /SocialEditorModal/, "the Studio opens the social editor for social drafts");
   assert.match(studio, /isSocialVideoDraftKind/, "the Studio routes by kind");

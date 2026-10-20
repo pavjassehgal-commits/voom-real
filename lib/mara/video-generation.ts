@@ -6,6 +6,7 @@ import { MediaError, type GeneratedMedia } from "@/lib/media/types";
 import type { MediaAspectRatio } from "@/lib/media/types";
 import { GENERATED_VIDEO_MAX_BYTES } from "@/lib/media/video-provider";
 import type { CreatedVideoJob, ReferenceImage, VideoJobPoll } from "@/lib/media/video-provider";
+import type { ProviderUsageAttempt } from "@/lib/ai/usage";
 import {
   VIDEO_JOB_POLL_INTERVAL_MS,
   VIDEO_JOB_TIMEOUT_MINUTES,
@@ -78,7 +79,7 @@ export interface VideoGenerationPorts {
   insertGeneration(row: Record<string, unknown>): Promise<"inserted" | "idempotency_conflict" | "active_conflict" | "error">;
   updateGeneration(ownerId: string, id: string, patch: Record<string, unknown>, whereStatuses?: string[]): Promise<VideoJobRow | null>;
   claimGenerationForPoll?(ownerId: string, id: string, nowIso: string, eligibleBeforeIso: string): Promise<VideoJobRow | null>;
-  planMedia(input: { concept: string; script: string; brief: string; contentType: "reel" | "instagram_story"; hasSourceImage: boolean }): Promise<VideoPlanResult>;
+  planMedia(input: { ownerId: string; draftId: string; concept: string; script: string; brief: string; contentType: "reel" | "instagram_story"; hasSourceImage: boolean }): Promise<VideoPlanResult>;
   generateBaseImage(input: { prompt: string; aspectRatio: MediaAspectRatio }): Promise<GeneratedMedia>;
   createVideoJob(input: { prompt: string; durationSeconds: number; referenceImage: ReferenceImage | null; name: string }): Promise<CreatedVideoJob>;
   pollVideoJob(providerJobId: string, pollingUrl?: string | null): Promise<VideoJobPoll>;
@@ -92,6 +93,7 @@ export interface VideoGenerationPorts {
   reserveCredits?(input: { ownerId: string; generationId: string; mediaType: "video"; source: "user_request" | "autopilot" }): Promise<{ ok: boolean; reason?: string; message?: string }>;
   refundCredits?(ownerId: string, generationId: string): Promise<void>;
   settleCredits?(ownerId: string, generationId: string): Promise<void>;
+  recordUsageAttempt?(attempt: ProviderUsageAttempt): Promise<void>;
 }
 
 export type StartResult =
@@ -113,6 +115,7 @@ export interface StartInput {
   idempotencyKey: string;
   sourceAsset: { storagePath: string; assetId: string | null } | null;
   providerName: string;
+  providerModel?: string | null;
   supportsImageToVideo: boolean;
   estimatedCostUsd: number | null;
   monthlySpendLimitUsd: number | null;
@@ -171,6 +174,8 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
   let plan: VideoPlanResult;
   try {
     plan = await ports.planMedia({
+      ownerId: input.ownerId,
+      draftId: input.draftId,
       concept: input.concept,
       script: input.script,
       brief: input.brief,
@@ -311,7 +316,28 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
       referenceImage,
       name: `Voom ${input.kind} · ${plan.concept.slice(0, 60)}`.slice(0, 120),
     });
+    await ports.recordUsageAttempt?.({
+      context: { ownerId: input.ownerId, operationKey: `video:${generationId}`, operationType: "video_generation", category: "video" },
+      attemptNumber: 1,
+      provider: input.providerName,
+      model: input.providerModel ?? "unknown",
+      status: "succeeded",
+      mediaUnits: 1,
+      durationSeconds: plan.durationSeconds,
+      estimatedCostUsd: input.estimatedCostUsd,
+    });
   } catch (reason) {
+    await ports.recordUsageAttempt?.({
+      context: { ownerId: input.ownerId, operationKey: `video:${generationId}`, operationType: "video_generation", category: "video" },
+      attemptNumber: 1,
+      provider: input.providerName,
+      model: input.providerModel ?? "unknown",
+      status: "failed",
+      mediaUnits: 1,
+      durationSeconds: plan.durationSeconds,
+      estimatedCostUsd: input.estimatedCostUsd,
+      errorCode: reason instanceof Error ? (reason as Error & { code?: string }).code ?? "unavailable" : "unavailable",
+    });
     const code = reason instanceof Error ? (reason as Error & { code?: string }).code ?? "unavailable" : "unavailable";
     await ports.updateGeneration(input.ownerId, generationId, {
       status: "failed",
