@@ -15,11 +15,13 @@ export const state = {
   updateCalls: [],
   exchangeCalls: [],
   signOutCalls: [],
+  oauthCalls: [],
   redirects: [],
   resetError: null,
   updateError: null,
   exchangeError: null,
   signOutError: null,
+  oauthError: null,
   claims: null,
 };
 
@@ -28,11 +30,13 @@ export function reset(overrides = {}) {
   state.updateCalls = [];
   state.exchangeCalls = [];
   state.signOutCalls = [];
+  state.oauthCalls = [];
   state.redirects = [];
   state.resetError = null;
   state.updateError = null;
   state.exchangeError = null;
   state.signOutError = null;
+  state.oauthError = null;
   state.claims = null;
   Object.assign(state, overrides);
 }
@@ -77,6 +81,14 @@ export async function createClient() {
       async exchangeCodeForSession(code, options) {
         state.exchangeCalls.push({ code, options });
         return { data: {}, error: state.exchangeError };
+      },
+      async signInWithOAuth(credentials) {
+        state.oauthCalls.push(credentials);
+        if (state.oauthError) return { data: { provider: credentials.provider, url: null }, error: state.oauthError };
+        return {
+          data: { provider: credentials.provider, url: `https://accounts.google.com/o/oauth2/v2/auth?client_id=fake&state=${credentials.provider}` },
+          error: null,
+        };
       },
       async signOut(options) {
         state.signOutCalls.push(options);

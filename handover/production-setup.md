@@ -1,6 +1,6 @@
 # Production setup, step by step
 
-Last updated 2026-10-17. Every step says **what** to do, **why** it is needed, and **how**.
+Last updated 2026-10-20. Every step says **what** to do, **why** it is needed, and **how**.
 Steps are ordered. Do them on a *new* Supabase project and a *new* Vercel project; never
 re-point the development project at real customers.
 
@@ -102,6 +102,39 @@ Words used below:
 - **What:** Nothing manual. The migrations create the buckets the app needs.
 - **Why:** Listed so you do not go looking for a step that does not exist.
 
+### A9. "Continue with Google" (Google Cloud + Authentication → Providers → Google)
+- **What:** Create a **new** OAuth client in Google Cloud for login (do not reuse the YouTube
+  one: different purpose, different scopes, and the YouTube keys stay in env vars), then paste
+  its ID and secret into Supabase. The app code has no Google login keys at all, so this is the
+  whole step.
+  1. Supabase → Authentication → Providers → Google. Copy the **Callback URL** shown there. It
+     looks like `https://<project-ref>.supabase.co/auth/v1/callback`. Keep this tab open.
+  2. Google Cloud console (console.cloud.google.com) → pick or create a project → APIs & Services
+     → **OAuth consent screen**: User type External; app name "Voom"; your support email; developer
+     contact email. Scopes: leave the defaults (email, profile, openid). While the app's
+     publishing status is **Testing**, only addresses listed under *Test users* can sign in, so
+     add your own Gmail there. Click **Publish app** before real customers use it (the default
+     scopes need no Google review).
+  3. APIs & Services → **Credentials** → Create credentials → **OAuth client ID** → Application
+     type **Web application** → name "Voom login". Under *Authorized redirect URIs* paste the
+     Supabase callback URL from step 1, exactly. *Authorized JavaScript origins* can stay empty.
+     Create, then copy the **Client ID** and **Client secret**.
+  4. Back in Supabase (step 1 tab): switch **Enable Sign in with Google** on, paste the Client ID
+     and Client secret, leave "Skip nonce check" off, Save.
+  5. Confirm A4 is done: Redirect URLs must contain `https://voom.today/**` (and
+     `http://localhost:3000/**` on the development project), because Google's flow returns to
+     `/auth/callback?next=/app` like the email links do.
+- **Why:** Google only sends users back to addresses it was told about, and Supabase is the
+  address in the middle: browser → Google → Supabase → our callback. The production project has
+  its own callback URL, so production needs its own OAuth client (or a second redirect URI on a
+  shared one; a separate client is simpler to revoke).
+- **Same email, one account:** Supabase links a Google sign-in to an existing email/password
+  account with the same address automatically, because Google reports its emails as verified and
+  our signups are verified by the confirmation link. No setting is needed; leave *Manual linking*
+  off. Known limit the other way round: someone who only ever used Google and then tries
+  email/password signup with the same address gets the "check your email" screen but no new
+  account; they should use "Forgot password?" to set a password.
+
 ---
 
 ## Part B: Vercel (where the app runs)
@@ -171,9 +204,18 @@ Do these in a private browser window with an email address you can read.
    must be opened in the browser that requested it) and is the same for signup confirmation.
 5. **Unknown email:** `/forgot-password` with an address that has no account → the identical
    "we've sent a link" message. *Proves nobody can use the form to discover accounts.*
-6. **Jobs are locked:** `curl -I https://voom.today/api/cron/email-flows` returns 401.
-7. **Security headers:** `curl -I https://voom.today` shows HSTS, X-Frame-Options and CSP.
-8. **Publishing:** connect Instagram, approve one scheduled post, watch it publish.
+6. **Google, new user:** `/signup` → "Continue with Google" with a Gmail that has no Voom
+   account → Google's consent screen → you land in `/app/onboarding`. *Proves A9 and A4.*
+7. **Google, existing user:** log out → `/login` → "Continue with Google" with the Gmail from
+   step 1 (the email/password account) → you land in `/app` with the same business data, no
+   second account. In Supabase → Authentication → Users that address has one row with two
+   identities (email, google). *Proves automatic account linking.*
+8. **Google, cancelled:** click the button, then Cancel on Google's screen → back on `/login`
+   with "Google sign-in didn't complete". (A failure *after* Google, at the code exchange, shows
+   the generic "confirmation link" message instead; accepted trade-off, see `DECISIONS.md`.)
+9. **Jobs are locked:** `curl -I https://voom.today/api/cron/email-flows` returns 401.
+10. **Security headers:** `curl -I https://voom.today` shows HSTS, X-Frame-Options and CSP.
+11. **Publishing:** connect Instagram, approve one scheduled post, watch it publish.
 
 ---
 
@@ -181,7 +223,7 @@ Do these in a private browser window with an email address you can read.
 
 | When | Do |
 |---|---|
-| Today, development | A4 (with localhost), A5. A6 is optional (built-in mailer, 2/hour). |
-| Before the first production deploy | A1, A2, A3, A4, A5, A6 (custom SMTP, mandatory), A7, B1, B2, B3. Then Part D. |
+| Today, development | A4 (with localhost), A5, A9 (dev project's callback URL). A6 is optional (built-in mailer, 2/hour). |
+| Before the first production deploy | A1, A2, A3, A4, A5, A6 (custom SMTP, mandatory), A7, A9 (production callback URL, publish the consent screen), B1, B2, B3. Then Part D. |
 | Every later deploy | Check `changes-log.md` for rows not yet done in production; apply any new migrations (A2) **before** deploying the code that needs them. |
 | When a channel goes live | The matching row in Part C, then its app review. |

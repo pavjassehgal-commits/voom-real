@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import Link from "next/link";
+import GoogleButton from "../components/GoogleButton";
 import { login, type LoginState } from "./actions";
 
 const initialState: LoginState = {};
@@ -41,7 +42,9 @@ export default function LoginForm({
         MARA has been keeping an eye on things.
       </p>
 
-      <form action={formAction} className="mt-6 flex flex-col gap-4">
+      <GoogleButton />
+
+      <form action={formAction} className="flex flex-col gap-4">
         {notice && (
           <p
             role="status"

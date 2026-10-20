@@ -7,6 +7,8 @@ import LoginForm from "./LoginForm";
 const SAFE_ERRORS: Record<string, string> = {
   confirm_failed:
     "Your confirmation link is invalid or has expired. Please log in, or sign up again to receive a new link.",
+  google_failed:
+    "Google sign-in didn't complete. Please try again, or log in with your email.",
 };
 const SAFE_NOTICES: Record<string, string> = {
   password_reset: "Your password has been updated. Log in with your new password.",

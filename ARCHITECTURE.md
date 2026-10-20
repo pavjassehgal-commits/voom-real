@@ -33,7 +33,7 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 ## Folder map
 | Folder | What lives there |
 |---|---|
-| `app/` | Pages and API. `app/page.tsx` = landing. `app/login`, `app/signup`, `app/forgot-password`, `app/reset-password`, `app/auth/callback` = sign-in. `app/app/…` = the logged-in product. `app/api/…` = 75 backend endpoints. `app/privacy`, `terms`, `data-deletion`, `unsubscribe` = public pages. `app/components/` = logo and legal-text pieces used by the public pages. |
+| `app/` | Pages and API. `app/page.tsx` = landing. `app/login`, `app/signup`, `app/forgot-password`, `app/reset-password`, `app/auth/callback`, `app/auth/google` = sign-in. `app/app/…` = the logged-in product. `app/api/…` = 75 backend endpoints. `app/privacy`, `terms`, `data-deletion`, `unsubscribe` = public pages. `app/components/` = logo, legal-text pieces and the Google button used by the public pages. |
 | `app/app/(shell)/` | Logged-in screens inside the sidebar layout: today, plan, studio, calendar, performance, approvals, automations, campaigns, contacts, connections, instagram, tiktok, youtube, settings, pricing, mara. `reels` only redirects to `studio`; `ads` is a real "not built yet" screen explaining what paid advertising will do |
 | `app/app/onboarding/` | Onboarding wizard page |
 | `components/voom/` | UI pieces: `shell/` (sidebar, top bar, nav list in `nav.ts`), `onboarding/`, `operating/` (plan, approvals), `modals/` (post editor, connect modals, campaign modals), `today/`, `contacts/`, `automations/`, `campaigns/`, `performance/`, `workspace/` (loading skeleton and shared workspace bits), `ui/` (buttons, modal, toast) |
@@ -75,6 +75,15 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 `lib/voom/server-data.ts`. `app/app/layout.tsx` sends logged-out users to `/login`;
 `app/app/(shell)/layout.tsx` sends users without a finished onboarding to `/app/onboarding`.
 
+**Continue with Google.** `app/components/GoogleButton.tsx` (on `/login` and `/signup`) submits
+`continueWithGoogle` in `app/auth/google/actions.ts`, which asks Supabase for the Google sign-in
+URL (`signInWithOAuth`, return address `/auth/callback?next=/app`) and sends the browser there.
+Google → Supabase → the same callback route, which exchanges the code for a session → `/app`;
+a new user has no business row, so the onboarding gate above takes over. Same email as an
+existing email/password account → Supabase links the two to one account. The Google client ID
+and secret live only in the Supabase dashboard (`handover/production-setup.md` A9); the
+`GOOGLE_*` env vars are YouTube's, not login's.
+
 **Forgot password.** `/login` → `app/forgot-password/` (action `requestPasswordReset`: always
 replies "if that email has an account, we've sent a link", never reveals whether one exists) →
 Supabase emails a link → `app/auth/callback/route.ts?next=/reset-password` exchanges the code for
@@ -84,7 +93,7 @@ account with `signOut({ scope: "global" })`, then sends the user to `/login?noti
 to log in with the new password; the login page shows a fixed notice for that key only). A dead
 link goes to `/reset-password?error=link_invalid`, which offers a new one. The email sender and
 link expiry are Supabase dashboard settings, not code: see `handover/production-setup.md`.
-Missing today: Google sign-in, 2FA.
+Missing today: 2FA.
 
 **Onboarding.** `components/voom/onboarding/OnboardingWizard.tsx` (8 steps, questions in
 `lib/voom/onboardingData.ts`; `AnalyzingScreen.tsx` is the "we're setting things up" screen shown
@@ -128,5 +137,5 @@ All keys go in `.env.local` (copy from `.env.example`). Never commit real values
 `NEXT_PUBLIC_` is visible in the browser; everything else is server-only.
 
 ## Not built yet
-Google sign-in · 2FA · LinkedIn · Stripe billing · brand asset uploads / website
+2FA · LinkedIn · Stripe billing · brand asset uploads / website
 reading in onboarding · reference images in image generation.
