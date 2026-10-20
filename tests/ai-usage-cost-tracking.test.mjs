@@ -158,3 +158,51 @@ test("0061 applies to a fresh database without changing existing credit ledger r
     await db.close();
   }
 });
+
+test("0061 rollback refuses accounting data, removes only 0061 objects, and permits reapplication", async () => {
+  const ownerId = "20000000-0000-4000-8000-000000000001";
+  const rollbackSql = await readFile(new URL("../supabase/proposed/0061_ai_usage_cost_tracking.rollback.sql", import.meta.url), "utf8");
+  const migrationSql = await readFile(new URL("../supabase/migrations/0061_ai_usage_cost_tracking.sql", import.meta.url), "utf8");
+  const { db } = await createSupabaseLite();
+
+  try {
+    await db.exec(`
+      create table public.rollback_sentinel (id integer primary key);
+      insert into public.rollback_sentinel values (1);
+      insert into auth.users (id, email) values ('${ownerId}', 'rollback-guard@example.invalid');
+      insert into public.voom_credit_ledger
+        (owner_user_id, generation_id, media_type, credits, source, status)
+      values ('${ownerId}', 'rollback-preserved-credit', 'image', 5, 'user_request', 'settled');
+      insert into public.ai_usage_operations
+        (owner_user_id, operation_key, operation_type, category, provider, model, status)
+      values ('${ownerId}', 'rollback-guard', 'caption_generation', 'caption', 'test', 'test', 'succeeded');
+    `);
+
+    await assert.rejects(db.exec(rollbackSql), /rollback refused: AI usage or reconciliation records exist/);
+    await db.exec("rollback");
+    assert.equal((await db.query("select count(*)::int as n from public.ai_usage_operations")).rows[0].n, 1);
+
+    await db.exec("delete from public.ai_usage_operations");
+    await db.exec(`
+      insert into public.credit_reconciliation_tasks
+        (owner_user_id, generation_id, action)
+      values ('${ownerId}', 'rollback-guard-reconciliation', 'refund');
+    `);
+    await assert.rejects(db.exec(rollbackSql), /rollback refused: AI usage or reconciliation records exist/);
+    await db.exec("rollback");
+    await db.exec("delete from public.credit_reconciliation_tasks");
+    await db.exec(rollbackSql);
+
+    assert.equal((await db.query("select to_regclass('public.ai_usage_operations') is null as absent")).rows[0].absent, true);
+    assert.equal((await db.query("select to_regclass('public.ai_provider_attempts') is null as absent")).rows[0].absent, true);
+    assert.equal((await db.query("select to_regclass('public.credit_reconciliation_tasks') is null as absent")).rows[0].absent, true);
+    assert.equal((await db.query("select count(*)::int as n from public.rollback_sentinel")).rows[0].n, 1);
+    assert.equal((await db.query("select count(*)::int as n from public.voom_credit_ledger where generation_id = 'rollback-preserved-credit'")).rows[0].n, 1);
+
+    await db.exec(migrationSql);
+    assert.equal((await db.query("select to_regclass('public.ai_usage_operations') is not null as present")).rows[0].present, true);
+    assert.equal((await db.query("select count(*)::int as n from public.voom_credit_ledger where generation_id = 'rollback-preserved-credit'")).rows[0].n, 1);
+  } finally {
+    await db.close();
+  }
+});
