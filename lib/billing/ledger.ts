@@ -279,7 +279,12 @@ export async function reconcilePendingCreditTransactions(
   let resolved = 0;
   for (const row of rows) {
     try {
-      await runCreditAction(admin, row.action, row.owner_user_id, row.generation_id);
+      const applied = await runCreditAction(admin, row.action, row.owner_user_id, row.generation_id);
+      // "Not applied" is only success when the owner's ledger entry is already
+      // in the target state (an earlier attempt landed). A missing entry or a
+      // conflicting state (e.g. settling a refunded entry) stays pending and
+      // flagged with backoff instead of being silently resolved.
+      if (!applied) await assertLedgerAlreadyReconciled(admin, row.action, row.owner_user_id, row.generation_id);
       await admin.from("credit_reconciliation_tasks").update({
         status: "resolved",
         attempt_count: row.attempt_count + 1,
@@ -300,6 +305,20 @@ export async function reconcilePendingCreditTransactions(
     }
   }
   return { checked: rows.length, resolved, pending: rows.length - resolved };
+}
+
+async function assertLedgerAlreadyReconciled(
+  admin: SupabaseClient,
+  action: ReconciliationAction,
+  ownerId: string,
+  generationId: string,
+): Promise<void> {
+  const { data, error } = await admin.from("voom_credit_ledger").select("status")
+    .eq("owner_user_id", ownerId).eq("generation_id", generationId).maybeSingle();
+  if (error) throw error;
+  if (!data) throw { code: "ledger_entry_missing" };
+  const target = action === "settle" ? "settled" : "refunded";
+  if ((data as { status?: unknown }).status !== target) throw { code: "ledger_state_conflict" };
 }
 
 function safeCreditErrorCode(error: unknown): string {
