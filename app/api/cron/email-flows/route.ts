@@ -1,14 +1,10 @@
 import { runEmailFlowsFleet, EMAIL_FLOW_CRON_CADENCE_MINUTES } from "@/lib/email-flows/engine";
+import { isAuthorizedEmailFlowCron } from "@/lib/email-flows/cron-auth";
 import { createAdminClient } from "@/utils/supabase/admin";
-import { bearerMatches } from "@/utils/bearer-auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
-
-export function isAuthorizedEmailFlowCron(request: Request, secret = process.env.CRON_SECRET): boolean {
-  return bearerMatches(request, secret);
-}
 
 /**
  * The lifecycle email worker.
