@@ -18,10 +18,10 @@ export interface NavGroup {
  * Manage: Channels (the existing Connections hub), Campaigns, Contacts
  * System: Settings
  *
- * The reference also shows "Content" and "MARA" entries. Neither has a real
- * screen yet (/app/mara only redirects to Today and the MARA chat API is
- * retired), so they are deliberately NOT listed: no nav item may lead to a
- * dead or placeholder destination. They return when their screens ship.
+ * Content is the Batch 2 library (/app/content). The reference also shows a
+ * "MARA" entry; it has no real screen (/app/mara only redirects to Today and
+ * the MARA chat API is retired), so it is deliberately NOT listed: no nav
+ * item may lead to a dead or placeholder destination.
  * Every existing route keeps resolving; nothing is orphaned.
  */
 export const NAV: NavGroup[] = [
@@ -31,6 +31,7 @@ export const NAV: NavGroup[] = [
       { id: "today", n: "Today", i: "home" },
       { id: "studio", n: "Create", i: "pencil" },
       { id: "calendar", n: "Calendar", i: "cal" },
+      { id: "content", n: "Content", i: "file" },
       { id: "performance", n: "Performance", i: "bars" },
     ],
   },
@@ -64,6 +65,7 @@ export const TITLES: Record<string, string> = {
   studio: "Create",
   create: "Create",
   calendar: "Calendar",
+  content: "Content",
   performance: "Performance",
   campaigns: "Campaigns",
   contacts: "Contacts",

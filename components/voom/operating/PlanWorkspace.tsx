@@ -1,9 +1,8 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/voom/icons";
-import { Btn, Tag } from "@/components/voom/ui/primitives";
 import { replenishPlanDescription } from "@/lib/voom/automation";
 import { CADENCES, CADENCE_LABELS, DEFAULT_HORIZON_DAYS, type Cadence } from "@/lib/voom/cadence";
 import type { WorkflowSnapshot, WorkflowView } from "@/lib/voom/workflow/read";
@@ -13,17 +12,12 @@ import { PlanItemCard } from "@/components/voom/operating/PlanItemCard";
 // lib/voom/planning-only-preview.ts when the experiment ends.
 import { PlanningOnlyPreviewCard } from "@/components/voom/operating/PlanningOnlyPreview";
 import type { PlanReplenishOutcome } from "@/lib/voom/workflow/marketing-plan";
-import {
-  ChannelPill,
-  MetaChip,
-  Panel,
-  PanelHead,
-  QuietState,
-  SectionLabel,
-  WorkspaceFrame,
-  WorkspaceHeader,
-} from "@/components/voom/workspace/ui";
-import { channelIdentity } from "@/lib/voom/workflow/presentation";
+import { ChannelPill, QuietState } from "@/components/voom/workspace/ui";
+import { BTN, ChannelGlyph, PageHeader, StatCard, StatusChip } from "@/components/voom/redesign/ui";
+import { CreateContentModal } from "@/components/voom/modals/CreateContentModal";
+import { channelIdentity, stateGroup, STATE_GROUP_LABELS } from "@/lib/voom/workflow/presentation";
+import { useModal } from "@/lib/voom/modal";
+import { cx } from "@/lib/voom/cx";
 
 /**
  * The preview control is a developer/test-only affordance. It stays available
@@ -117,246 +111,270 @@ export function PlanWorkspace({
   const horizonLabel = `${shortDate(snapshot.today)} – ${shortDate(addDays(snapshot.today, DEFAULT_HORIZON_DAYS - 1))}`;
   const uncoveredInHorizon = horizon.filter((day) => day.uncovered && day.date >= snapshot.today);
 
+  const [view, setView] = useState<"week" | "list">("week");
+  const [channelFilter, setChannelFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [openId, setOpenId] = useState<string | null>(null);
+  const { open: openModal } = useModal();
+  const visible = (items: WorkflowView[]) => items.filter((item) =>
+    (channelFilter === "all" || item.channel === channelFilter)
+    && (statusFilter === "all" || stateGroup(item.status) === statusFilter));
+  const statusOptions = [...new Set(snapshot.items.map((item) => stateGroup(item.status)))];
+  const selected = openId ? snapshot.items.find((item) => item.draftId === openId) ?? null : null;
+  const buildLabel = busy ? "Building…" : outcome?.state === "already_up_to_date" ? "✓ Plan up to date" : snapshot.items.length ? "Replenish plan" : "Build plan";
+  const addContent = () => openModal(<CreateContentModal onChanged={() => window.dispatchEvent(new Event("voom:data-changed"))} />);
+
   return (
-    <WorkspaceFrame>
-      <WorkspaceHeader
-        eyebrow="Marketing Plan"
-        title="The next seven days, decided."
-        question={snapshot.items.length
-          ? `Voom's strategy for ${horizonLabel}: ${describeMix(mix)} across ${byDay.length} planned day${byDay.length === 1 ? "" : "s"}.`
-          : "Voom's strategy for your next seven days: one executable piece per slot, on the platforms you chose."}
-        description={snapshot.planGoal ? `Goal: ${snapshot.planGoal}` : "No goal set yet — Voom plans from your brand, channels and posting frequency."}
-        meta={<>
-          <MetaChip accent>
-            <Icon name="cal" size={12} /> Rolling {DEFAULT_HORIZON_DAYS}-day · {horizonLabel}
-          </MetaChip>
-          <MetaChip>{CADENCE_LABELS[snapshot.cadence]}</MetaChip>
-          <MetaChip>{snapshot.timeZone.replace("_", " ")}</MetaChip>
-          <MetaChip>{modeLabel(snapshot.mode)}</MetaChip>
-          {attention.length > 0 && <MetaChip><span className="text-[var(--amber)]">{attention.length} need{attention.length === 1 ? "s" : ""} attention</span></MetaChip>}
-          {waiting.length > 0 && <MetaChip>{waiting.length} waiting on you</MetaChip>}
-        </>}
+    <div className="min-w-0">
+      <PageHeader
+        title="Your next 7 days, planned."
+        subtitle={snapshot.items.length
+          ? "One plan across every channel. Review it, edit it, or let MARA replenish it."
+          : "One plan across every channel. Build it, review it, or let MARA replenish it."}
         actions={<>
-          <Btn variant="ghost" size="sm" onClick={() => document.getElementById("plan-frequency")?.scrollIntoView({ behavior: "smooth", block: "center" })}>
-            <Icon name="cal" size={14} /> Posting frequency
-          </Btn>
-          <Btn variant="brand" size="sm" disabled={busy} onClick={() => void build(cadence)}>
-            <Icon name="spark" size={14} />
-            {busy ? "Building…" : outcome?.state === "already_up_to_date" ? "✓ Plan up to date" : snapshot.items.length ? "Replenish plan" : "Build plan"}
-          </Btn>
+          <span className="voom-card flex items-center gap-3 px-4 py-2.5">
+            <Icon name="cal" size={18} className="text-text-2" />
+            <span><span className="block text-[14px] font-semibold text-text">Rolling 7-day · {horizonLabel}</span><span className="block text-[12.5px] text-text-2">{snapshot.items.length} post{snapshot.items.length === 1 ? "" : "s"} · {modeLabel(snapshot.mode)} · {snapshot.timeZone.replace("_", " ")}</span></span>
+          </span>
+          <button type="button" className={BTN.primary} disabled={busy} onClick={() => void build(cadence)}><Icon name="sparkle" size={14} />{buildLabel}</button>
         </>}
       />
 
       {snapshot.selectedChannels.length === 0 && (
-        <div role="status" className="relative z-10 mb-4 rounded-2xl border border-amber/35 bg-amber/10 px-4 py-3 text-[13px] text-amber">
+        <div role="status" className="mb-4 rounded-[16px] border border-[var(--amber)]/30 bg-[var(--amber-soft)] px-4 py-3 text-[14px] text-[var(--amber)]">
           <p className="font-semibold">Choose your marketing channels</p>
           <p className="mt-0.5 text-text-2">Select at least one social channel before building your Marketing Plan. <a href="/app/settings" className="font-semibold underline">Update channel preferences</a>.</p>
         </div>
       )}
 
-      {/* ── Strategy surface: horizon, coverage, controls ───────────────── */}
-      <Panel className="relative z-10 mb-3.5" padded={false}>
-        <div className="grid min-w-0 gap-0 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-          <div className="min-w-0 border-b border-line p-4 sm:p-5 lg:border-b-0 lg:border-r">
-            <PanelHead
-              icon="cal"
-              title="Rolling horizon"
-              hint={`Starts ${formatLocalDate(snapshot.today)} · every date below is the account's own local date`}
-            />
-            <div className="mt-4 grid grid-cols-7 gap-1 sm:gap-1.5" aria-label="Seven-day marketing coverage">
-              {horizon.map((day) => (
-                <div key={day.date} className="min-w-0">
-                  <span className="block truncate text-center text-[9.5px] font-bold uppercase tracking-[0.08em] text-text-3">{day.weekday}</span>
-                  <div
-                    className={[
-                      "mt-1.5 grid min-h-[52px] min-w-0 grid-rows-[auto_1fr] gap-1 rounded-[13px] border p-1.5 transition",
-                      day.isToday ? "border-transparent voom-grad text-white shadow-[0_8px_20px_-12px_rgba(105,75,255,.9)]" : "border-line bg-surface-2",
-                      !day.isToday && day.uncovered ? "border-amber/45 bg-[var(--amber-soft)]" : "",
-                    ].join(" ")}
-                  >
-                    <span className={["text-[11.5px] font-bold leading-none", day.isToday ? "text-white" : "text-text-2"].join(" ")}>{day.dayNumber}</span>
-                    <span className="flex min-w-0 flex-col justify-end gap-0.5">
-                      {day.channels.map((channel) => (
-                        <span key={channel} className="flex min-w-0 items-center gap-1">
-                          <span aria-hidden="true" className="h-1.5 w-1.5 flex-none rounded-full" style={{ background: day.isToday ? "rgba(255,255,255,.92)" : channelIdentity(channel).accent }} />
-                          <span className={["truncate text-[8.5px] font-semibold", day.isToday ? "text-white/90" : "text-text-3"].join(" ")}>{channelIdentity(channel).short}</span>
-                        </span>
-                      ))}
-                      {day.channels.length === 0 && (
-                        <span className={["text-[8.5px] font-semibold leading-tight", day.isToday ? "text-white/85" : day.uncovered ? "text-[var(--amber)]" : "text-text-3"].join(" ")}>
-                          {day.uncovered ? "Open" : "Free"}
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-[11.5px] text-text-3">
-              <span className="inline-flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-text-3" aria-hidden="true" /><span>Free — no slot planned</span></span>
-              <span className="inline-flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-[var(--amber)]" aria-hidden="true" /><span>Open — Voom has not covered this date</span></span>
-              <span className="inline-flex items-center gap-1.5"><span className="voom-grad h-1.5 w-1.5 rounded-full" aria-hidden="true" /><span>Today</span></span>
-            </div>
-          </div>
-
-          <div className="min-w-0 p-4 sm:p-5">
-            <PanelHead
-              icon="spark"
-              title={snapshot.items.length ? "Replenish" : "Build the plan"}
-              hint={replenishPlanDescription(snapshot.mode)}
-            />
-            <div id="plan-frequency" className="mt-4">
-              <SectionLabel>Posting frequency</SectionLabel>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {CADENCES.map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    disabled={busy}
-                    onClick={() => { setCadence(value); void build(value); }}
-                    aria-pressed={value === cadence}
-                    className={[
-                      "rounded-full border px-3 py-1.5 text-[12.5px] font-semibold transition disabled:opacity-50",
-                      value === cadence
-                        ? "border-transparent voom-grad text-white shadow-[0_8px_22px_-14px_rgba(104,79,255,.9)]"
-                        : "border-line bg-surface-2 text-text-2 hover:border-line-2 hover:text-text",
-                    ].join(" ")}
-                  >
-                    {CADENCE_LABELS[value]}
-                  </button>
-                ))}
-              </div>
-              <p className="mt-2 text-[12px] leading-relaxed text-text-3">
-                Changing this changes how many items Voom keeps ready in the next 7 days. Existing items for a date are reused, never duplicated.
-              </p>
-            </div>
-            <div className="mt-4">
-              <Btn variant="outline" size="sm" disabled={busy} onClick={() => void build(cadence)} className="w-full sm:w-auto">
-                <Icon name="spark" size={14} />{busy ? "Building…" : outcome?.state === "already_up_to_date" ? "✓ Plan up to date" : snapshot.items.length ? "Replenish plan" : "Build plan"}
-              </Btn>
-            </div>
-            {channelReadiness.length > 0 && (
-              <div className="mt-4 border-t border-line pt-3">
-                <SectionLabel>Channel readiness</SectionLabel>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {channelReadiness.map((entry) => (
-                    <span
-                      key={entry.channel}
-                      className={[
-                        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-semibold ring-1",
-                        entry.connected ? "bg-[var(--green-soft)] text-[var(--green)] ring-[var(--green)]/20" : "bg-surface-2 text-text-3 ring-line",
-                      ].join(" ")}
-                    >
-                      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ background: channelIdentity(entry.channel).accent }} />
-                      {channelIdentity(entry.channel).label}
-                      <span className="font-medium">{entry.connected ? "connected" : entry.configured ? "not connected" : "not configured"}</span>
-                    </span>
-                  ))}
-                </div>
-                <ReadinessNote readiness={channelReadiness} />
-              </div>
-            )}
-          </div>
-        </div>
-      </Panel>
-
       {/* TEMPORARY: planning-only preview control — dev-flag gated. */}
-      {SHOW_PLANNING_PREVIEW && <PlanningOnlyPreviewCard className="relative z-10 mb-3.5" />}
+      {SHOW_PLANNING_PREVIEW && <PlanningOnlyPreviewCard className="mb-4" />}
 
-      {outcome && outcome.state !== "no_supported_social_channels_selected" && <div className="relative z-10"><PlanOutcomeNotice outcome={outcome} error={error} /></div>}
-
-      {error && !outcome && <p role="alert" className="relative z-10 mb-3.5 rounded-2xl border border-red/35 bg-red/10 px-4 py-3 text-[13px] text-red">{error}</p>}
-
+      {outcome && outcome.state !== "no_supported_social_channels_selected" && <PlanOutcomeNotice outcome={outcome} error={error} />}
+      {error && !outcome && <p role="alert" className="mb-4 rounded-[16px] border border-[var(--red)]/30 bg-[var(--red-soft)] px-4 py-3 text-[14px] text-[var(--red)]">{error}</p>}
       {/* A blocked automatic generation is not an error: the plan and its drafts
           were created, and only the media waits for the owner's decision. */}
-      {spendNotice && <p role="status" className="relative z-10 mb-3.5 rounded-2xl border border-amber/35 bg-amber/10 px-4 py-3 text-[13px] text-amber">{spendNotice}</p>}
+      {spendNotice && <p role="status" className="mb-4 rounded-[16px] border border-[var(--amber)]/30 bg-[var(--amber-soft)] px-4 py-3 text-[14px] text-[var(--amber)]">{spendNotice}</p>}
 
-      {/* ── The strategy timeline ────────────────────────────────────────── */}
-      <Panel className="relative z-10">
-        <PanelHead
-          icon="film"
-          title="Seven-day plan"
-          hint={snapshot.items.length ? `${snapshot.items.length} executable item${snapshot.items.length === 1 ? "" : "s"} · newest state first per day · every item is the same record Voom executes` : undefined}
-          action={mix.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-1.5">
-              {mix.map((entry) => (
-                <ChannelPill key={entry.key} channel={entry.channel} format={entry.format} dense className="opacity-95" />
-              ))}
-            </div>
-          ) : undefined}
-        />
+      <div className="mb-5 flex min-w-0 flex-wrap items-center gap-2.5">
+        <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Plan layout">
+          {(["week", "list"] as const).map((mode) => (
+            <button key={mode} type="button" aria-pressed={view === mode} onClick={() => setView(mode)}
+              className={cx("rounded-full px-4 py-1.5 text-[14px] font-medium transition", view === mode ? "bg-[var(--brand-soft)] font-semibold text-[var(--brand-ink)]" : "text-text-2 hover:text-text")}>
+              {mode === "week" ? "Week" : "List"}
+            </button>
+          ))}
+        </div>
+        <label className="sr-only" htmlFor="plan-channel">Channels</label>
+        <select id="plan-channel" value={channelFilter} onChange={(event) => setChannelFilter(event.target.value)} className={cx(BTN.field, "rounded-full")}>
+          <option value="all">Channels: All</option>
+          {snapshot.selectedChannels.map((channel) => <option key={channel} value={channel}>{channelIdentity(channel).label}</option>)}
+        </select>
+        <label className="sr-only" htmlFor="plan-status">Status</label>
+        <select id="plan-status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className={cx(BTN.field, "rounded-full")}>
+          <option value="all">Status: All</option>
+          {statusOptions.map((group) => <option key={group} value={group}>{STATE_GROUP_LABELS[group]}</option>)}
+        </select>
+      </div>
 
-        {snapshot.items.length ? (
-          <div className="mt-4 min-w-0">
-            <ol className="min-w-0 space-y-4">
-              {byDay.map(([day, items]) => (
-                <PlanDay key={day} day={day} items={items} snapshot={snapshot} onChanged={refresh} />
-              ))}
-            </ol>
-            {uncoveredInHorizon.length > 0 && (
-              <div className="mt-4 rounded-2xl border border-amber/35 bg-[var(--amber-soft)] p-4">
-                <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-[12.5px] font-bold text-[var(--amber)]">{uncoveredInHorizon.length} uncovered date{uncoveredInHorizon.length === 1 ? "" : "s"} in this horizon</p>
-                    <p className="mt-1 text-[12.5px] leading-relaxed text-text-2">
-                      {uncoveredInHorizon.map((day) => day.label).join(" · ")} — Voom has no executable item on these dates. Replenish asks the existing rolling planner to fill them.
-                    </p>
-                  </div>
-                  <Btn variant="outline" size="sm" disabled={busy} onClick={() => void build(cadence)}>
-                    <Icon name="spark" size={14} /> Replenish plan
-                  </Btn>
-                </div>
-              </div>
-            )}
-            <p className="mt-4 text-[12px] leading-relaxed text-text-3">
-              Every row above is the real item Voom will execute — produce, review, approve, schedule and publish it from here. It appears identically in{" "}
-              <Link href="/app/today" className="font-semibold text-brand hover:underline">Today</Link>,{" "}
-              <Link href="/app/approvals" className="font-semibold text-brand hover:underline">Approvals</Link> and the{" "}
-              <Link href="/app/calendar" className="font-semibold text-brand hover:underline">Content Calendar</Link>.
-              Email keeps its own cadence in <Link href="/app/campaigns" className="font-semibold text-brand hover:underline">Campaigns</Link> and{" "}
-              <Link href="/app/automations" className="font-semibold text-brand hover:underline">Email Flows</Link> — it never fills a social slot.
-            </p>
-          </div>
-        ) : (
+      {view === "week" && (
+        <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard icon="cal" value={snapshot.items.length} label="Planned posts" tone="brand" />
+          <StatCard icon="warn" value={uncoveredInHorizon.length} label="Days with no content" tone="coral" note={uncoveredInHorizon.length ? <span className="text-[var(--coral)]">Need your attention</span> : undefined} />
+          <StatCard icon="checkCircle" value={waiting.length} label="Waiting on you" tone="blue" />
+          <StatCard icon="bolt" value={attention.length} label="Need attention" tone={attention.length ? "coral" : "green"} />
+        </div>
+      )}
+
+      <section className="voom-card min-w-0 p-4 sm:p-5" aria-labelledby="plan-title">
+        <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 id="plan-title" className="text-[17px] font-semibold text-text">Seven-day plan · {horizonLabel}</h2>
+          {mix.length > 0 && <div className="flex flex-wrap gap-1.5">{mix.map((entry) => <ChannelPill key={entry.key} channel={entry.channel} format={entry.format} dense />)}</div>}
+        </div>
+        {!snapshot.items.length ? (
           <QuietState icon="spark" title="Build your rolling marketing plan">
             <p>Voom creates one executable item per slot for the next 7 days, starting today, using your brand, goal and chosen posting frequency.</p>
             <p className="mt-1.5 text-text-3">{replenishPlanDescription(snapshot.mode)}</p>
-            <div className="mt-4">
-              <Btn variant="brand" disabled={busy} onClick={() => void build(cadence)}>
-                <Icon name="spark" size={15} />{busy ? "Building your plan…" : "Build plan"}
-              </Btn>
-            </div>
+            <div className="mt-4"><button type="button" className={BTN.primary} disabled={busy} onClick={() => void build(cadence)}><Icon name="sparkle" size={14} />{busy ? "Building your plan…" : "Build plan"}</button></div>
           </QuietState>
+        ) : view === "week" ? (
+          <div className="min-w-0">
+            <ol className="grid grid-cols-[minmax(0,1fr)] gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7" aria-label="Seven-day plan by day">
+              {horizon.map((day) => {
+                const dayItems = visible(itemsPerDay.get(day.date) ?? []);
+                return (
+                  <li key={day.date} className="flex min-w-0 flex-col rounded-[16px] border border-line">
+                    <div className="border-b border-line px-2 py-3 text-center">
+                      <div className="text-[14px] font-semibold text-text">{day.weekday}</div>
+                      <div className="text-[12.5px] text-text-2">{shortDate(day.date)}</div>
+                      <span className={cx("mt-1.5 inline-block rounded-full px-2.5 py-0.5 text-[11.5px] font-semibold",
+                        day.isToday ? "voom-create-btn text-white" : day.uncovered ? "bg-[var(--coral-soft)] text-[var(--coral)]" : dayItems.length ? "bg-[var(--brand-soft)] text-[var(--brand-ink)]" : "bg-surface-3 text-text-3")}>
+                        {dayItems.length ? `${dayItems.length} post${dayItems.length === 1 ? "" : "s"}` : day.uncovered ? "No content" : "Free"}{day.isToday ? " · Today" : ""}
+                      </span>
+                    </div>
+                    <div className="flex flex-1 flex-col gap-2.5 p-2">
+                      {dayItems.map((item) => <WeekCard key={item.draftId} item={item} onOpen={() => setOpenId(item.draftId)} />)}
+                      {day.uncovered && dayItems.length === 0 ? (
+                        <div className="rounded-[14px] border border-dashed border-[var(--coral)]/40 bg-[var(--coral-soft)] p-3 text-center">
+                          <Icon name="warn" size={18} className="mx-auto text-[var(--coral)]" />
+                          <p className="mt-1.5 text-[12.5px] font-medium text-[var(--coral)]">No content planned</p>
+                          <button type="button" onClick={addContent} className="mt-2 w-full rounded-[10px] border border-[var(--brand-line)] bg-surface px-2 py-1.5 text-[12.5px] font-semibold text-[var(--brand-ink)]">Create post</button>
+                          <button type="button" disabled={busy} onClick={() => void build(cadence)} className="mt-1.5 w-full text-[12.5px] font-semibold text-[var(--coral)] hover:underline">Fill with MARA</button>
+                        </div>
+                      ) : (
+                        <button type="button" onClick={addContent} className="grid min-h-[96px] place-items-center rounded-[14px] border border-dashed border-line-2 text-[12.5px] text-text-2 transition hover:border-[var(--brand-line)] hover:text-[var(--brand-ink)]">
+                          <span className="flex flex-col items-center gap-1.5"><span className="grid h-7 w-7 place-items-center rounded-full border border-line-2"><Icon name="plus" size={13} /></span>Add content</span>
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left text-[14px]">
+              <thead className="text-[11.5px] uppercase tracking-[0.12em] text-text-3">
+                <tr className="border-b border-line"><th className="py-3 pr-3 font-semibold">Content</th><th className="py-3 pr-3 font-semibold">Channel</th><th className="py-3 pr-3 font-semibold">Date and time</th><th className="py-3 pr-3 font-semibold">Status</th><th className="py-3 font-semibold"><span className="sr-only">Open</span></th></tr>
+              </thead>
+              <tbody>
+                {visible(snapshot.items).map((item) => (
+                  <tr key={item.draftId} className="border-b border-line last:border-b-0">
+                    <td className="py-3 pr-3">
+                      <span className="flex min-w-0 items-center gap-3">
+                        <Thumb item={item} />
+                        <span className="min-w-0"><span className="block max-w-[280px] truncate font-semibold text-text">{item.concept}</span><span className="block text-[12.5px] text-text-2">{item.contentTypeLabel}</span></span>
+                      </span>
+                    </td>
+                    <td className="py-3 pr-3"><ChannelGlyph channel={item.channel} size={22} /></td>
+                    <td className="py-3 pr-3 text-text-2">{item.dayLabel}, {formatLocalDate(item.localDate)}<span className="block text-[12.5px] text-text-3">{item.localTime || "No time set"}</span></td>
+                    <td className="py-3 pr-3"><StatusChip status={item.status} label={item.statusLabel} small /></td>
+                    <td className="py-3 text-right"><button type="button" onClick={() => setOpenId(item.draftId)} className="rounded-full border border-[var(--brand-line)] px-3.5 py-1.5 text-[13px] font-semibold text-[var(--brand-ink)] hover:bg-[var(--brand-soft-2)]">Open</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-3 text-[13.5px] text-text-2">Showing {visible(snapshot.items).length} of {snapshot.items.length} posts in this plan</p>
+          </div>
         )}
-      </Panel>
-    </WorkspaceFrame>
+        {uncoveredInHorizon.length > 0 && (
+          <div className="mt-4 flex min-w-0 flex-wrap items-start justify-between gap-3 rounded-[16px] bg-[var(--coral-soft)] p-4">
+            <div className="min-w-0">
+              <p className="text-[14px] font-semibold text-[var(--coral)]">{uncoveredInHorizon.length} uncovered date{uncoveredInHorizon.length === 1 ? "" : "s"} in this horizon</p>
+              <p className="mt-1 text-[13.5px] leading-relaxed text-text-2">{uncoveredInHorizon.map((day) => day.label).join(" · ")} — Voom has no executable item on these dates. Replenish asks the existing rolling planner to fill them.</p>
+            </div>
+            <button type="button" className={BTN.outline} disabled={busy} onClick={() => void build(cadence)}><Icon name="sparkle" size={14} /> Replenish plan</button>
+          </div>
+        )}
+      </section>
+
+      <div className="mt-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5 lg:grid-cols-2">
+        <section className="voom-card p-5 sm:p-6" aria-labelledby="plan-mix">
+          <h2 id="plan-mix" className="text-[16px] font-semibold text-text">This week’s mix</h2>
+          <p className="mt-1 text-[13.5px] text-text-2">{CADENCE_LABELS[snapshot.cadence]} · {describeMix(mix)}</p>
+          <ul className="mt-4 space-y-3">
+            {(snapshot.selectedChannels.length ? snapshot.selectedChannels : [...new Set(snapshot.items.map((item) => item.channel))]).map((channel) => {
+              const count = snapshot.items.filter((item) => item.channel === channel).length;
+              const readiness = channelReadiness.find((entry) => entry.channel === channel);
+              return (
+                <li key={channel} className="flex items-center gap-3 text-[14px]">
+                  <ChannelGlyph channel={channel} size={20} />
+                  <span className="w-24 shrink-0 text-text">{channelIdentity(channel).label}</span>
+                  <span className="h-2 flex-1 overflow-hidden rounded-full bg-surface-3"><span className="block h-full rounded-full bg-[linear-gradient(90deg,#8f5cfb,#d062f1)]" style={{ width: `${snapshot.items.length ? (count / snapshot.items.length) * 100 : 0}%` }} /></span>
+                  <span className="w-8 text-right font-semibold text-text">{count}</span>
+                  {readiness && <span className={cx("w-28 text-right text-[12px]", readiness.connected ? "text-[var(--green)]" : "text-text-3")}>{readiness.connected ? "connected" : readiness.configured ? "not connected" : "not configured"}</span>}
+                </li>
+              );
+            })}
+          </ul>
+          {channelReadiness.length > 0 && <ReadinessNote readiness={channelReadiness} />}
+        </section>
+
+        <section className="voom-card p-5 sm:p-6" aria-labelledby="plan-frequency-title">
+          <h2 id="plan-frequency-title" className="text-[16px] font-semibold text-text">Posting frequency</h2>
+          <p className="mt-1 text-[13.5px] leading-relaxed text-text-2">{replenishPlanDescription(snapshot.mode)}</p>
+          <div id="plan-frequency" className="mt-4 flex flex-wrap gap-2">
+            {CADENCES.map((value) => (
+              <button key={value} type="button" disabled={busy} onClick={() => { setCadence(value); void build(value); }} aria-pressed={value === cadence}
+                className={cx("rounded-full border px-3.5 py-1.5 text-[13.5px] font-semibold transition disabled:opacity-50",
+                  value === cadence ? "border-transparent voom-create-btn text-white" : "border-line bg-surface text-text-2 hover:border-[var(--brand-line)] hover:text-text")}>
+                {CADENCE_LABELS[value]}
+              </button>
+            ))}
+          </div>
+          <p className="mt-3 text-[12.5px] leading-relaxed text-text-3">Changing this changes how many items Voom keeps ready in the next 7 days. Existing items for a date are reused, never duplicated.</p>
+          {snapshot.planGoal && <p className="mt-3 text-[13px] text-text-2"><b className="font-semibold text-text">Goal:</b> {snapshot.planGoal}</p>}
+        </section>
+      </div>
+
+      <p className="mt-5 text-[13px] leading-relaxed text-text-3">
+        Every item above is the real item Voom will execute — produce, review, approve, schedule and publish it from here. It appears identically in{" "}
+        <Link href="/app/today" className="font-semibold text-[var(--brand-ink)] hover:underline">Today</Link>,{" "}
+        <Link href="/app/approvals" className="font-semibold text-[var(--brand-ink)] hover:underline">Approvals</Link> and the{" "}
+        <Link href="/app/calendar" className="font-semibold text-[var(--brand-ink)] hover:underline">Content Calendar</Link>.
+        Email keeps its own cadence in <Link href="/app/campaigns" className="font-semibold text-[var(--brand-ink)] hover:underline">Campaigns</Link> and{" "}
+        <Link href="/app/automations" className="font-semibold text-[var(--brand-ink)] hover:underline">Email Flows</Link> — it never fills a social slot.
+      </p>
+
+      {selected && (
+        <PlanItemDialog onClose={() => setOpenId(null)} title={selected.concept}>
+          <ul className="min-w-0 divide-y divide-line">
+            <PlanItemCard item={selected} mode={snapshot.mode} timeZone={snapshot.timeZone} onChanged={refresh} />
+          </ul>
+        </PlanItemDialog>
+      )}
+    </div>
   );
 }
 
-function PlanDay({ day, items, snapshot, onChanged }: {
-  day: string;
-  items: WorkflowView[];
-  snapshot: WorkflowSnapshot;
-  onChanged: (snapshot: WorkflowSnapshot) => void;
-}) {
-  const first = items[0];
-  const priority = items.filter((item) => ["needs_approval", "missed", "failed", "media_delayed", "media_timed_out"].includes(item.status));
+/** One plan item in the week grid; opening it shows the full item actions. */
+function WeekCard({ item, onOpen }: { item: WorkflowView; onOpen: () => void }) {
   return (
-    <li className="min-w-0 rounded-2xl border border-line bg-[var(--surface)]/60">
-      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-line px-3.5 py-2.5 sm:px-4">
-        <div className="flex min-w-0 items-baseline gap-2">
-          <b className="font-display text-[14px] font-semibold tracking-[-0.02em]">{first.dayLabel}</b>
-          <span className="text-[12px] text-text-3">{formatLocalDate(day)}</span>
-          {priority.length > 0 && <Tag tone="t-amber">{priority.length} waiting on you</Tag>}
+    <button type="button" onClick={onOpen} className="min-w-0 overflow-hidden rounded-[14px] border border-line bg-surface text-left transition hover:border-[var(--brand-line)] hover:shadow-[var(--shadow)]">
+      <span className="relative block h-[72px] bg-surface-3">
+        {item.mediaPreviewUrl && !item.mediaMimeType?.startsWith("video")
+          // eslint-disable-next-line @next/next/no-img-element -- short-lived signed preview URL
+          ? <img src={item.mediaPreviewUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+          : null}
+        <span className="absolute bottom-1.5 left-1.5"><ChannelGlyph channel={item.channel} size={18} /></span>
+      </span>
+      <span className="block px-2.5 py-2">
+        <span className="line-clamp-2 text-[13px] font-semibold leading-snug text-text">{item.concept}</span>
+        <span className="mt-0.5 block text-[11.5px] text-text-3">{item.localTime || "No time set"}</span>
+        <span className="mt-1.5 block"><StatusChip status={item.status} label={item.statusLabel} small /></span>
+      </span>
+    </button>
+  );
+}
+
+function Thumb({ item }: { item: WorkflowView }) {
+  return (
+    <span className="relative grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-[10px] bg-[var(--brand-soft)] text-[var(--brand-ink)]">
+      {item.mediaPreviewUrl && !item.mediaMimeType?.startsWith("video")
+        // eslint-disable-next-line @next/next/no-img-element -- short-lived signed preview URL
+        ? <img src={item.mediaPreviewUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        : <Icon name={item.format === "post" ? "img" : "video"} size={16} />}
+    </span>
+  );
+}
+
+function PlanItemDialog({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-[95] grid place-items-center bg-[rgba(26,31,48,0.35)] p-4 backdrop-blur-[3px]" role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
+      <div className="max-h-[88vh] w-full max-w-[720px] overflow-y-auto rounded-[22px] bg-surface p-4 shadow-[var(--shadow-lg)] sm:p-5" onClick={(event) => event.stopPropagation()}>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h2 className="truncate text-[17px] font-semibold text-text">{title}</h2>
+          <button type="button" onClick={onClose} aria-label="Close" className="grid h-9 w-9 place-items-center rounded-full text-text-2 hover:bg-surface-3"><Icon name="x" size={16} /></button>
         </div>
-        <span className="text-[11.5px] text-text-3">{items.length} item{items.length === 1 ? "" : "s"}</span>
+        {children}
       </div>
-      <ul className="min-w-0 divide-y divide-line px-2.5 sm:px-3">
-        {items.map((item) => (
-          <PlanItemCard key={item.draftId} item={item} mode={snapshot.mode} timeZone={snapshot.timeZone} onChanged={onChanged} />
-        ))}
-      </ul>
-    </li>
+    </div>
   );
 }
 

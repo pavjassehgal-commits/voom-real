@@ -1,6 +1,5 @@
 import Link from "next/link";
 import Image from "next/image";
-import type { ReactNode } from "react";
 import { AutomationMode } from "@/components/voom/operating/AutomationMode";
 import { Icon } from "@/components/voom/icons";
 import type { PerformanceReport } from "@/lib/performance/insights";
@@ -8,6 +7,7 @@ import type { AutomationModeValue } from "@/lib/voom/automation";
 import { cx } from "@/lib/voom/cx";
 import { compactNumber, type TodayMetrics } from "@/lib/voom/today-metrics";
 import type { TodayCoverageDay, TodayItem } from "@/lib/voom/today-view";
+import { ChannelGlyph, StatusChip } from "@/components/voom/redesign/ui";
 import { DismissibleNotice, QuickCreate } from "./TodayClient";
 
 type View = {
@@ -263,7 +263,7 @@ function NextUpCard({ item }: { item: TodayItem | null }) {
               <p className="mt-1.5 text-[14px] text-text-2">{item.dayLabel ?? item.localDate}, {item.localTime}</p>
             </div>
           </div>
-          <div className="mt-4"><StatusChip status={item.status} label={item.statusLabel ?? item.status} /></div>
+          <div className="mt-4"><StatusChip status={item.status} label={item.statusLabel ?? item.status} icon="cal" /></div>
           {item.caption && <p className="mt-3 line-clamp-2 text-[14px] leading-relaxed text-text-2">{item.caption}</p>}
         </Link>
       ) : (
@@ -465,41 +465,6 @@ function RecentCard({ items }: { items: TodayContentCard[] }) {
   );
 }
 
-function StatusChip({ status, label, small = false }: { status: string; label: string; small?: boolean }) {
-  return (
-    <span className={cx("inline-flex items-center gap-1.5 rounded-full font-semibold", small ? "px-2 py-0.5 text-[11.5px]" : "px-3 py-1 text-[13px]", statusTone(status))}>
-      {!small && <Icon name="cal" size={13} />}
-      {label}
-    </span>
-  );
-}
-
-function statusTone(status: string) {
-  if (status === "published") return "bg-[var(--green-soft)] text-[var(--green)]";
-  if (["failed", "media_timed_out", "rejected"].includes(status)) return "bg-[var(--red-soft)] text-[var(--red)]";
-  if (status === "needs_approval") return "bg-[var(--coral-soft)] text-[var(--coral)]";
-  if (["missed", "waiting_for_media", "media_delayed"].includes(status)) return "bg-[var(--amber-soft)] text-[var(--amber)]";
-  if (["scheduled", "publishing", "generating", "approved"].includes(status)) return "bg-[var(--blue-soft)] text-[var(--blue)]";
-  return "bg-surface-3 text-text-2";
-}
-
 function uniqueChannels(items: TodayItem[]) {
   return [...new Set(items.map((item) => item.channelLabel))].slice(0, 3);
-}
-
-/** Small network badges (Instagram, TikTok, YouTube, Email) in their own colours. */
-function ChannelGlyph({ channel, channelLabel, size = 20 }: { channel?: string; channelLabel?: string; size?: number }) {
-  const key = (channel ?? channelLabel ?? "").toLowerCase();
-  const kind = key.startsWith("instagram") ? "instagram" : key.startsWith("tiktok") ? "tiktok" : key.startsWith("youtube") ? "youtube" : key.startsWith("email") ? "email" : "other";
-  const label = kind === "other" ? channelLabel ?? "Channel" : kind.charAt(0).toUpperCase() + kind.slice(1);
-  const frame = (background: string, children: ReactNode) => (
-    <span className="grid shrink-0 place-items-center rounded-[6px] ring-2 ring-[var(--surface)]" style={{ width: size, height: size, background }} role="img" aria-label={label}>
-      <svg viewBox="0 0 24 24" width={size * 0.62} height={size * 0.62} fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{children}</svg>
-    </span>
-  );
-  if (kind === "instagram") return frame("linear-gradient(135deg,#f9a03f 0%,#e1306c 50%,#833ab4 100%)", <><rect x="4" y="4" width="16" height="16" rx="5" /><circle cx="12" cy="12" r="3.6" /><circle cx="16.8" cy="7.2" r="0.9" fill="#fff" stroke="none" /></>);
-  if (kind === "tiktok") return frame("#111111", <path d="M14 4v10.5a3.5 3.5 0 11-3.5-3.5M14 4c.6 2.6 2.4 4.1 5 4.3" />);
-  if (kind === "youtube") return frame("#ff0033", <path d="M10 8.5l5.5 3.5-5.5 3.5z" fill="#fff" stroke="none" />);
-  if (kind === "email") return frame("#2c6fb0", <><rect x="3.5" y="6" width="17" height="12" rx="2" /><path d="M4.5 7.5l7.5 5.5 7.5-5.5" /></>);
-  return frame("var(--text-3)", <circle cx="12" cy="12" r="4" />);
 }

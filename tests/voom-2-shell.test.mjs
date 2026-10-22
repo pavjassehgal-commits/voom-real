@@ -51,9 +51,10 @@ test("Voom 2.0 utility navigation destinations exist", async () => {
   const nav = await read("components/voom/shell/nav.ts");
   assert.match(nav, /id:\s*"settings"/, "System must include settings");
   assert.match(nav, /g:\s*"System"/, "NAV must have the System group");
-  // The reference's Content and MARA entries have no real screen yet; the
-  // nav must not link to placeholders or the MARA redirect.
-  assert.doesNotMatch(nav, /id:\s*"(mara|content)"/, "no nav entry may lead to a placeholder destination");
+  // Content has a real library screen (Batch 2); the reference's MARA entry
+  // has none, so the nav must not link to the MARA redirect.
+  assert.match(nav, /id:\s*"content"/, "the Content library is reachable from navigation");
+  assert.doesNotMatch(nav, /id:\s*"mara"/, "no nav entry may lead to a placeholder destination");
 });
 
 // ──────────────────────────────────────────────────────────────────
