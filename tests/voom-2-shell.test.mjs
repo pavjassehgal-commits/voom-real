@@ -51,10 +51,12 @@ test("Voom 2.0 utility navigation destinations exist", async () => {
   const nav = await read("components/voom/shell/nav.ts");
   assert.match(nav, /id:\s*"settings"/, "System must include settings");
   assert.match(nav, /g:\s*"System"/, "NAV must have the System group");
-  // Content has a real library screen (Batch 2); the reference's MARA entry
-  // has none, so the nav must not link to the MARA redirect.
+  // Content (Batch 2) and MARA (Batch 3) now have real screens; MARA's page
+  // is an overview, never the retired chat.
   assert.match(nav, /id:\s*"content"/, "the Content library is reachable from navigation");
-  assert.doesNotMatch(nav, /id:\s*"mara"/, "no nav entry may lead to a placeholder destination");
+  assert.match(nav, /id:\s*"mara"/, "the MARA overview is reachable from navigation");
+  const maraPage = await read("app/app/(shell)/mara/page.tsx");
+  assert.doesNotMatch(maraPage, /\/api\/mara["'`]|Ask MARA anything|Chat with MARA/, "the retired MARA chat is not recreated");
 });
 
 // ──────────────────────────────────────────────────────────────────

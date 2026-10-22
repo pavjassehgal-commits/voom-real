@@ -88,7 +88,7 @@ export function ContentLibrary({ items, limited, unavailable, performance, initi
 
       <section className="voom-card min-w-0 overflow-hidden" aria-label="Content library">
         <div className="flex min-w-0 flex-col gap-3 border-b border-line px-4 pt-2 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
-          <div role="tablist" aria-label="Content status" className="-mb-px flex min-w-0 gap-1 overflow-x-auto">
+          <div role="tablist" aria-label="Content status" className="-mb-px flex min-w-0 flex-wrap gap-x-1">
             {tabs.map((entry) => {
               const count = entry.id === "all" ? items.length : counts[entry.id] ?? 0;
               const active = tab === entry.id;

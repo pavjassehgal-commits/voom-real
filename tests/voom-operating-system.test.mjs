@@ -7,13 +7,15 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 test("the demo MARA chat UI is removed from the product and navigation", async () => {
   const nav = await read("components/voom/shell/nav.ts");
   // The fake MARA chat was removed outright; protected MARA actions live on
-  // Approvals and the /app/mara route simply forwards to Today.
-  assert.doesNotMatch(nav, /n: "MARA"/);
+  // Approvals. Batch 3 gives /app/mara a real, read-only MARA overview
+  // (Figma "19 — MARA") — never the chat.
+  assert.match(nav, /id: "mara", n: "MARA"/, "MARA links to its real overview");
   let missing = false;
   try { await read("components/voom/mara/LegacyMaraChat.tsx"); } catch { missing = true; }
   assert.equal(missing, true, "LegacyMaraChat.tsx must not exist in production");
   const route = await read("app/app/(shell)/mara/page.tsx");
-  assert.match(route, /redirect\("\/app\/today"\)/);
+  assert.match(route, /getOperatingData\(\)/, "the overview reads the shared operating data");
+  assert.doesNotMatch(route, /fetch\(|\/api\/mara["'`]|<input|<textarea/i, "no chat input and no call to the retired chat API");
 });
 
 test("marketing plans are owner-scoped, anonymous-blocked, and server-written", async () => {

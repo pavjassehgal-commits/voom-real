@@ -18,10 +18,9 @@ export interface NavGroup {
  * Manage: Channels (the existing Connections hub), Campaigns, Contacts
  * System: Settings
  *
- * Content is the Batch 2 library (/app/content). The reference also shows a
- * "MARA" entry; it has no real screen (/app/mara only redirects to Today and
- * the MARA chat API is retired), so it is deliberately NOT listed: no nav
- * item may lead to a dead or placeholder destination.
+ * Content is the Batch 2 library (/app/content); MARA is the Batch 3 overview
+ * (/app/mara) — a read-only view of MARA's work, not the retired chat.
+ * No nav item may lead to a dead or placeholder destination.
  * Every existing route keeps resolving; nothing is orphaned.
  */
 export const NAV: NavGroup[] = [
@@ -38,6 +37,7 @@ export const NAV: NavGroup[] = [
   {
     g: "Automation",
     items: [
+      { id: "mara", n: "MARA", i: "sparkle" },
       { id: "plan", n: "Marketing Plan", i: "map" },
       { id: "approvals", n: "Approvals", i: "checkCircle" },
       { id: "automations", n: "Automations", i: "bolt" },
@@ -103,7 +103,7 @@ export function pageIdFromPath(pathname: string): string {
  * - /app/reels — redirects to /app/studio (real Create Content studio)
  * - /app/instagram, /app/tiktok, /app/youtube — via /app/connections hub,
  *   direct URLs, and settings/connections flows
- * - /app/mara — redirects to /app/today (MARA is ambient, not chatbot)
+ * - /app/mara — MARA overview (read-only; the chat API stays retired)
  * - /app/pricing — via account menu (Plans & billing) and settings
  *
  * No route is silently orphaned; all existing functionality remains
