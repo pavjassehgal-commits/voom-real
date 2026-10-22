@@ -70,6 +70,7 @@ const MODULE_DOUBLES = {
     const font = (options) => ({ variable: options?.variable ?? "--font-stub", className: options?.variable ?? "font-stub", style: { fontFamily: "system-ui" } });
     export const Bricolage_Grotesque = font;
     export const Public_Sans = font;
+    export const DM_Sans = font;
     export const IBM_Plex_Mono = font;
     export default font;
   `)}`,

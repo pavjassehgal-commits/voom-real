@@ -278,6 +278,8 @@
 }
 
 @theme inline {
+  /* Redesign Batch 1: Today's 3-column composition needs ≥1380px. */
+  --breakpoint-wide: 86.25rem;
   --color-bg: var(--bg);
   --color-bg-soft: var(--bg-soft);
   --color-surface: var(--surface);
@@ -608,4 +610,145 @@ body::before {
   .ws-aurora,
   .ws-orbit { animation: none !important; }
   .ws-disclosure-caret { transition: none; }
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Voom redesign (Batch 1) — application shell tokens
+   Source: Figma export "15 — Today · Dashboard home" (PDF p.52).
+   Scoped to `.voom-shell` so the signed-in workspace adopts the
+   redesign while public, auth and onboarding surfaces keep their
+   current tokens until their own batches ship.
+   ────────────────────────────────────────────────────────────── */
+.voom-shell {
+  --font-public-sans: var(--font-dm-sans);
+  --font-bricolage: var(--font-dm-sans);
+  font-family: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+
+  --bg: #f7f7f8;
+  --bg-soft: #f2f2f5;
+  --surface: #fdfcfd;
+  --surface-2: #f7f7fa;
+  --surface-3: #f0eff5;
+  --surface-hover: #f4f3fa;
+
+  --line: #e8e6ee;
+  --line-2: #dddbe6;
+  --line-strong: #c9c6d6;
+
+  --text: #1a1f30;
+  --text-2: #5b6274;
+  --text-3: #8a90a0;
+
+  --brand: #6b4ef6;
+  --brand-2: #c35bf0;
+  --brand-ink: #382e9c;
+  --brand-soft: #f2f0ff;
+  --brand-soft-2: #f8f7ff;
+  --brand-tile: #e6e2ff;
+  --brand-line: #d6d0ff;
+  --create: linear-gradient(95deg, #8f5cfb 0%, #b45ff6 55%, #d062f1 100%);
+  --hero: radial-gradient(120% 140% at 85% 0%, #7b3fb0 0%, transparent 55%),
+          linear-gradient(150deg, #4a35a0 0%, #3a2a7a 45%, #241c3a 100%);
+
+  --green: #1f8f6c;
+  --green-soft: #e8f6f1;
+  --green-dot: #35ac8f;
+  --coral: #c65828;
+  --coral-soft: #fff4ef;
+  --amber: #a96a07;
+  --amber-soft: #fdf3e2;
+  --red: #c0352d;
+  --red-soft: #fdecea;
+  --blue: #2c6fb0;
+  --blue-soft: #e9f2fb;
+
+  --shadow-sm: 0 1px 2px rgba(26, 31, 48, 0.04);
+  --shadow: 0 1px 2px rgba(26, 31, 48, 0.04), 0 8px 24px -18px rgba(44, 38, 92, 0.18);
+  --shadow-md: 0 10px 30px -18px rgba(44, 38, 92, 0.24), 0 2px 6px rgba(26, 31, 48, 0.04);
+  --shadow-lg: 0 24px 60px -30px rgba(44, 38, 92, 0.32), 0 8px 20px -14px rgba(26, 31, 48, 0.12);
+  --atmosphere: none;
+
+  --sidebar-bg: #fdfcfd;
+  --sidebar-bg-2: #f7f7fa;
+  --sidebar-bg-3: #f0eff5;
+  --sidebar-bg-hover: #f6f5fb;
+  --sidebar-bg-active: #f2f0ff;
+  --sidebar-bg-active-2: #f2f0ff;
+  --sidebar-line: #ebe9f1;
+  --sidebar-line-2: #dddbe6;
+  --sidebar-text: #1a1f30;
+  --sidebar-text-2: #262b3c;
+  --sidebar-text-3: #5f677a;
+  --sidebar-text-active: #1a1f30;
+  --sidebar-green-dot: #35ac8f;
+
+  --topbar-bg: rgba(247, 247, 248, 0.86);
+  --topbar-line: #ebe9f1;
+}
+
+:root[data-theme="dark"] .voom-shell {
+  --bg: #0c0d13;
+  --bg-soft: #101119;
+  --surface: #15161f;
+  --surface-2: #1b1c27;
+  --surface-3: #232433;
+  --surface-hover: #20212e;
+  --line: #272838;
+  --line-2: #33344a;
+  --line-strong: #45465f;
+  --text: #f2f2f7;
+  --text-2: #b4b7c6;
+  --text-3: #8b8fa3;
+  --brand: #9b84ff;
+  --brand-ink: #c9bdff;
+  --brand-soft: rgba(139, 112, 255, 0.16);
+  --brand-soft-2: rgba(139, 112, 255, 0.10);
+  --brand-tile: rgba(139, 112, 255, 0.26);
+  --brand-line: rgba(139, 112, 255, 0.38);
+  --green: #4cc9a2;
+  --green-soft: rgba(53, 172, 143, 0.16);
+  --coral: #f08a5d;
+  --coral-soft: rgba(240, 138, 93, 0.12);
+  --amber: #e2a63d;
+  --amber-soft: rgba(226, 166, 61, 0.14);
+  --red: #f0766e;
+  --red-soft: rgba(240, 118, 110, 0.14);
+  --blue: #7cb3ec;
+  --blue-soft: rgba(124, 179, 236, 0.14);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 26px -18px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 28px 60px -28px rgba(0, 0, 0, 0.8);
+  --sidebar-bg: #15161f;
+  --sidebar-bg-2: #1b1c27;
+  --sidebar-bg-3: #232433;
+  --sidebar-bg-hover: #1e1f2b;
+  --sidebar-bg-active: rgba(139, 112, 255, 0.16);
+  --sidebar-bg-active-2: rgba(139, 112, 255, 0.16);
+  --sidebar-line: #272838;
+  --sidebar-line-2: #33344a;
+  --sidebar-text: #f2f2f7;
+  --sidebar-text-2: #d7d8e2;
+  --sidebar-text-3: #8b8fa3;
+  --sidebar-text-active: #ffffff;
+  --topbar-bg: rgba(12, 13, 19, 0.86);
+  --topbar-line: #272838;
+}
+
+/* The redesign workspace is calm and flat: no page-wide atmosphere layer. */
+body:has(.voom-shell)::before { display: none; }
+
+.voom-create-btn { background: var(--create); }
+.voom-hero-card { background: var(--hero); }
+.voom-shell .voom-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  box-shadow: var(--shadow-sm);
+}
+.voom-shell .voom-tile {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+@media (min-width: 640px) {
+  .today-perf-tiles { grid-template-columns: repeat(var(--tiles, 3), minmax(0, 1fr)); }
 }

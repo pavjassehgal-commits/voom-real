@@ -11,51 +11,47 @@ export interface NavGroup {
 }
 
 /**
- * Voom 2.0 — Application shell navigation
+ * Application shell navigation — redesign Batch 1 (Figma "15 — Today").
  *
- * Primary: Today, Marketing Plan, Create, Calendar, Performance
- * Secondary: Campaigns, Contacts, Connections
- * Utility: Settings
+ * Workspace: Today, Create, Calendar, Performance
+ * Automation: Marketing Plan, Approvals, Automations
+ * Manage: Channels (the existing Connections hub), Campaigns, Contacts
+ * System: Settings
  *
- * Legacy / System: Approvals, Automations are preserved for current
- * functionality. They remain reachable via sidebar (System group) and via
- * direct routes. Ads, Reels, and other unimplemented surfaces are NOT in
- * navigation — their routes still resolve (reels → studio, ads → truthful
- * empty state) so no dead links are introduced.
- *
- * This structure satisfies:
- * - Voom 2.0 spec primary/secondary/utility hierarchy
- * - Preservation of existing functionality (Approvals, Automations)
- * - Existing tests that assert kept entries are registered
+ * The reference also shows "Content" and "MARA" entries. Neither has a real
+ * screen yet (/app/mara only redirects to Today and the MARA chat API is
+ * retired), so they are deliberately NOT listed: no nav item may lead to a
+ * dead or placeholder destination. They return when their screens ship.
+ * Every existing route keeps resolving; nothing is orphaned.
  */
 export const NAV: NavGroup[] = [
   {
-    g: "Primary",
+    g: "Workspace",
     items: [
       { id: "today", n: "Today", i: "home" },
-      { id: "plan", n: "Marketing Plan", i: "spark" },
-      { id: "studio", n: "Create", i: "plus" },
+      { id: "studio", n: "Create", i: "pencil" },
       { id: "calendar", n: "Calendar", i: "cal" },
-      { id: "performance", n: "Performance", i: "trend" },
+      { id: "performance", n: "Performance", i: "bars" },
     ],
   },
   {
-    g: "Secondary",
+    g: "Automation",
     items: [
-      { id: "campaigns", n: "Campaigns", i: "mail" },
-      { id: "contacts", n: "Contacts", i: "users" },
-      { id: "connections", n: "Connections", i: "globe" },
-    ],
-  },
-  {
-    g: "System",
-    items: [
-      { id: "approvals", n: "Approvals", i: "check" },
+      { id: "plan", n: "Marketing Plan", i: "map" },
+      { id: "approvals", n: "Approvals", i: "checkCircle" },
       { id: "automations", n: "Automations", i: "bolt" },
     ],
   },
   {
-    g: "Utility",
+    g: "Manage",
+    items: [
+      { id: "connections", n: "Channels", i: "share" },
+      { id: "campaigns", n: "Campaigns", i: "folder" },
+      { id: "contacts", n: "Contacts", i: "user" },
+    ],
+  },
+  {
+    g: "System",
     items: [
       { id: "settings", n: "Settings", i: "cog" },
     ],
@@ -71,7 +67,7 @@ export const TITLES: Record<string, string> = {
   performance: "Performance",
   campaigns: "Campaigns",
   contacts: "Contacts",
-  connections: "Connections",
+  connections: "Channels",
   approvals: "Approvals",
   automations: "Automations",
   settings: "Settings",

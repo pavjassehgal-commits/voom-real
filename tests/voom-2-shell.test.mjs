@@ -34,22 +34,26 @@ test("Voom 2.0 primary navigation destinations exist", async () => {
   for (const { id } of primary) {
     assert.match(nav, new RegExp(`id:\\s*"${id}"`), `Primary must include ${id}`);
   }
-  // Primary group must exist
-  assert.match(nav, /g:\s*"Primary"/, "NAV must have Primary group");
+  // Redesign Batch 1 groups (Figma "15 — Today"): Workspace + Automation
+  assert.match(nav, /g:\s*"Workspace"/, "NAV must have the Workspace group");
+  assert.match(nav, /g:\s*"Automation"/, "NAV must have the Automation group");
 });
 
 test("Voom 2.0 secondary navigation destinations exist", async () => {
   const nav = await read("components/voom/shell/nav.ts");
   for (const id of ["campaigns", "contacts", "connections"]) {
-    assert.match(nav, new RegExp(`id:\\s*"${id}"`), `Secondary must include ${id}`);
+    assert.match(nav, new RegExp(`id:\\s*"${id}"`), `Manage must include ${id}`);
   }
-  assert.match(nav, /g:\s*"Secondary"/, "NAV must have Secondary group");
+  assert.match(nav, /g:\s*"Manage"/, "NAV must have the Manage group");
 });
 
 test("Voom 2.0 utility navigation destinations exist", async () => {
   const nav = await read("components/voom/shell/nav.ts");
-  assert.match(nav, /id:\s*"settings"/, "Utility must include settings");
-  assert.match(nav, /g:\s*"Utility"/, "NAV must have Utility group");
+  assert.match(nav, /id:\s*"settings"/, "System must include settings");
+  assert.match(nav, /g:\s*"System"/, "NAV must have the System group");
+  // The reference's Content and MARA entries have no real screen yet; the
+  // nav must not link to placeholders or the MARA redirect.
+  assert.doesNotMatch(nav, /id:\s*"(mara|content)"/, "no nav entry may lead to a placeholder destination");
 });
 
 // ──────────────────────────────────────────────────────────────────
@@ -273,8 +277,9 @@ test("iridescent identity remains decorative, restrained and motion-safe", async
   const appShell = await read("components/voom/shell/AppShell.tsx");
   const primitives = await read("components/voom/ui/primitives.tsx");
 
-  assert.match(appShell, /aria-hidden="true"/, "decorative light volumes must be hidden from assistive technology");
-  assert.match(appShell, /pointer-events-none/, "decorative light volumes must never obstruct controls");
+  // The redesign workspace is flat: the shell adds no decorative layers at all
+  // (so none can obstruct controls or reach assistive technology).
+  assert.doesNotMatch(appShell, /voom-atmospheric-orbit|bg-\[var\(--atmosphere\)\]/, "the redesign shell adds no atmosphere layers");
   assert.match(css, /prefers-reduced-motion:\s*reduce/, "atmospheric motion must respect reduced motion");
   assert.doesNotMatch(css + appShell, /three|webgl|canvas/i, "the shell must not add a heavy 3D runtime");
   assert.match(primitives, /VoomMark/, "the shell must expose the Voom iridescent brand mark");

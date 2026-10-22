@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { useVoomActions, useVoomState, getInitials } from "@/lib/voom/store";
 import { getPlanConfig } from "@/lib/billing/plans";
 import { Icon } from "../icons";
-import { IconBtn, VoomMark } from "../ui/primitives";
+import { IconBtn } from "../ui/primitives";
+import { VoomLogoMark } from "./VoomLogo";
 import { useModal } from "@/lib/voom/modal";
 import { NotificationsModal } from "../modals/NotificationsModal";
 import { CreateContentModal } from "../modals/CreateContentModal";
@@ -16,6 +17,69 @@ interface SearchGroup {
   label: string;
   href: string;
   items: { id: string; title: string; subtitle: string; href: string }[];
+}
+
+/**
+ * Real workflow counts shared by the shell: the bell counts items that need
+ * the user's decision or attention, and the sidebar's Approvals badge counts
+ * items awaiting approval. Both come from ONE read of the same workflow model
+ * the workflow screens use (`/api/voom/workflow`), refreshed whenever the app
+ * reports a data change. No count is ever invented.
+ */
+type WorkflowCounts = { attention: number; approvals: number };
+let workflowCounts: WorkflowCounts = { attention: 0, approvals: 0 };
+let workflowCountsLoaded = false;
+let workflowCountsInFlight: Promise<void> | null = null;
+const workflowCountListeners = new Set<() => void>();
+
+function refreshWorkflowCounts(): Promise<void> {
+  if (workflowCountsInFlight) return workflowCountsInFlight;
+  workflowCountsInFlight = (async () => {
+    try {
+      const response = await fetch("/api/voom/workflow", { cache: "no-store" });
+      const body = (await response.json()) as { snapshot?: { items?: { status: string }[] } };
+      if (response.ok && body.snapshot) {
+        const items = body.snapshot.items ?? [];
+        workflowCounts = {
+          attention: items.filter(
+            (item) =>
+              item.status === "needs_approval" ||
+              item.status === "failed" ||
+              item.status === "media_delayed" ||
+              item.status === "media_timed_out",
+          ).length,
+          approvals: items.filter((item) => item.status === "needs_approval").length,
+        };
+        workflowCountListeners.forEach((listener) => listener());
+      }
+    } catch {
+      /* counts stay at their last known value */
+    } finally {
+      workflowCountsLoaded = true;
+      workflowCountsInFlight = null;
+    }
+  })();
+  return workflowCountsInFlight;
+}
+
+function onWorkflowDataChanged() {
+  void refreshWorkflowCounts();
+}
+
+function subscribeWorkflowCounts(listener: () => void) {
+  workflowCountListeners.add(listener);
+  if (workflowCountListeners.size === 1) window.addEventListener("voom:data-changed", onWorkflowDataChanged);
+  if (!workflowCountsLoaded) void refreshWorkflowCounts();
+  return () => {
+    workflowCountListeners.delete(listener);
+    if (workflowCountListeners.size === 0) window.removeEventListener("voom:data-changed", onWorkflowDataChanged);
+  };
+}
+
+const NO_COUNTS: WorkflowCounts = { attention: 0, approvals: 0 };
+
+export function useWorkflowCounts(): WorkflowCounts {
+  return useSyncExternalStore(subscribeWorkflowCounts, () => workflowCounts, () => NO_COUNTS);
 }
 
 /**
@@ -30,7 +94,21 @@ function AppSearch() {
   const [state, setState] = useState<"idle" | "loading" | "error">("idle");
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const seq = useRef(0);
+
+  // ⌘K / Ctrl+K focuses the real search field (the shortcut shown in it).
+  useEffect(() => {
+    function onShortcut(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        inputRef.current?.focus();
+        setOpen(true);
+      }
+    }
+    document.addEventListener("keydown", onShortcut);
+    return () => document.removeEventListener("keydown", onShortcut);
+  }, []);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -78,9 +156,10 @@ function AppSearch() {
   }
 
   return (
-    <div className="relative hidden max-w-[400px] flex-1 md:block" ref={wrapRef}>
-      <Icon name="search" size={16} className="pointer-events-none absolute left-3.5 top-[11px] text-text-3" />
+    <div className="relative hidden max-w-[480px] flex-1 md:block" ref={wrapRef}>
+      <Icon name="search" size={17} className="pointer-events-none absolute left-4 top-[13px] text-text-3" />
       <input
+        ref={inputRef}
         value={query}
         onChange={(event) => {
           setQuery(event.target.value);
@@ -89,10 +168,12 @@ function AppSearch() {
         onFocus={() => setOpen(true)}
         placeholder="Search content, campaigns, contacts…"
         aria-label="Search your workspace"
-        className="h-[40px] w-full rounded-[12px] border border-line bg-surface-2 pl-[40px] pr-3.5 text-[13.5px] outline-none backdrop-blur-xl placeholder:text-text-3 transition focus:border-brand/60 focus:bg-surface focus:shadow-[0_0_0_4px_var(--brand-soft)]"
+        aria-keyshortcuts="Meta+K Control+K"
+        className="h-[44px] w-full rounded-[14px] border border-line bg-surface pl-[44px] pr-14 text-[14px] text-text outline-none placeholder:text-text-3 transition focus:border-[var(--brand-line)] focus:shadow-[0_0_0_4px_var(--brand-soft)]"
       />
+      <kbd aria-hidden="true" className="pointer-events-none absolute right-3 top-[11px] rounded-[7px] border border-line bg-surface-2 px-1.5 py-[2px] font-sans text-[11px] font-medium text-text-3">⌘K</kbd>
       {open && searchActive && (
-        <div className="absolute left-0 right-0 top-[48px] z-[70] max-h-[440px] overflow-y-auto rounded-[14px] border border-line bg-surface p-1.5 shadow-[var(--shadow-lg)]">
+        <div className="absolute left-0 right-0 top-[52px] z-[70] max-h-[440px] overflow-y-auto rounded-[14px] border border-line bg-surface p-1.5 shadow-[var(--shadow-lg)]">
           {state === "error" && (
             <p role="alert" className="px-3 py-3 text-[13px] text-red">
               Search couldn’t load right now. Please try again.
@@ -130,7 +211,9 @@ export function Topbar() {
   const { toggleSidebar, setTheme, toggleMenu, closeMenu } = useVoomActions();
   const { open } = useModal();
   const menuRef = useRef<HTMLDivElement>(null);
-  const [attention, setAttention] = useState(0);
+  // The notification badge is real: it counts workflow items that need the
+  // user's decision or attention (see useWorkflowCounts above).
+  const { attention } = useWorkflowCounts();
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
@@ -140,38 +223,6 @@ export function Topbar() {
     return () => document.removeEventListener("click", onClick, true);
   }, [closeMenu]);
 
-  // The notification badge is real: it counts workflow items that need the
-  // user's decision or attention, from the same read model the workflow
-  // screens use.
-  const syncAttention = useCallback(async () => {
-    try {
-      const response = await fetch("/api/voom/workflow", { cache: "no-store" });
-      const body = (await response.json()) as { snapshot?: { items?: { status: string }[] } };
-      if (response.ok && body.snapshot) {
-        const items = body.snapshot.items ?? [];
-        setAttention(
-          items.filter(
-            (item) =>
-              item.status === "needs_approval" ||
-              item.status === "failed" ||
-              item.status === "media_delayed" ||
-              item.status === "media_timed_out",
-          ).length,
-        );
-      }
-    } catch {
-      /* badge stays at its last known value */
-    }
-  }, []);
-  useEffect(() => {
-    const timer = window.setTimeout(() => void syncAttention(), 0);
-    window.addEventListener("voom:data-changed", syncAttention);
-    return () => {
-      window.clearTimeout(timer);
-      window.removeEventListener("voom:data-changed", syncAttention);
-    };
-  }, [syncAttention]);
-
   const planName = getPlanConfig(plan === "max" ? "max" : plan === "pro" ? "pro" : "free").name;
 
   function handleNotifOpen() {
@@ -179,89 +230,87 @@ export function Topbar() {
   }
 
   return (
-    <header className="sticky top-0 z-30 flex h-[64px] items-center gap-3 border-b border-[var(--topbar-line)] bg-[var(--topbar-bg)] px-4 shadow-[0_10px_30px_-28px_rgba(72,83,180,.7)] backdrop-blur-[20px] backdrop-saturate-[1.2] supports-[backdrop-filter]:bg-[var(--topbar-bg)] sm:px-6">
+    <header className="sticky top-0 z-30 flex h-[76px] items-center gap-2 border-b border-[var(--topbar-line)] bg-[var(--topbar-bg)] px-4 backdrop-blur-[16px] supports-[backdrop-filter]:bg-[var(--topbar-bg)] sm:gap-3 sm:px-6 lg:px-8">
       {/* Mobile: menu + wordmark */}
       <IconBtn
-        className="md:hidden !h-9 !w-9 rounded-[10px] border border-line bg-surface-2"
+        className="md:hidden !h-10 !w-10 rounded-[12px] border border-line bg-surface"
         onClick={() => toggleSidebar(true)}
         aria-label="Open navigation"
       >
         <Icon name="menu" size={18} />
       </IconBtn>
-      <div className="flex items-center gap-2 text-[16px] font-bold md:hidden">
-        <VoomMark size={27} />
-        <span className="font-display tracking-tight">Voom</span>
+      <div className="flex items-center gap-2 md:hidden">
+        <VoomLogoMark size={28} />
+        <span className="text-[19px] font-bold tracking-[-0.03em] text-text">voom</span>
       </div>
 
       <AppSearch />
 
       <div className="flex-1" />
 
-      {/* Create — restrained, not giant gradient. Dark graphite primary. */}
       <button
         onClick={() => open(<CreateContentModal />)}
-        className="hidden h-[36px] items-center gap-1.5 rounded-[11px] bg-text px-3.5 text-[13px] font-semibold tracking-[-0.01em] text-surface shadow-[0_1px_2px_rgba(0,0,0,0.06),0_4px_12px_-4px_rgba(0,0,0,0.12)] transition hover:translate-y-[-1px] hover:shadow-[0_4px_16px_-6px_rgba(0,0,0,0.18)] active:translate-y-0 active:scale-[0.98] md:inline-flex"
+        className="voom-create-btn hidden h-[44px] items-center gap-2 rounded-full px-5 text-[14.5px] font-semibold text-white shadow-[0_8px_20px_-10px_rgba(140,82,240,.85)] transition hover:brightness-[1.04] hover:shadow-[0_10px_24px_-10px_rgba(140,82,240,.95)] active:scale-[0.98] md:inline-flex"
       >
-        <Icon name="plus" size={14} />
+        <Icon name="plus" size={16} />
         Create
       </button>
-
-      <div className="hidden h-5 w-px bg-line md:block" aria-hidden="true" />
 
       <IconBtn
         onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
         title={themeToggleLabel(theme)}
         aria-label={themeToggleLabel(theme)}
-        className="rounded-[10px] border border-transparent hover:border-line hover:bg-surface-2"
+        className="!h-10 !w-10 rounded-full text-text-2 hover:bg-surface-3 hover:text-text sm:ml-2"
       >
-        <Icon name={themeToggleIcon(theme)} size={18} />
+        <Icon name={themeToggleIcon(theme)} size={19} />
       </IconBtn>
 
       <IconBtn
-        className="relative rounded-[10px] border border-transparent hover:border-line hover:bg-surface-2"
+        className="relative !h-10 !w-10 rounded-full text-text-2 hover:bg-surface-3 hover:text-text"
         onClick={handleNotifOpen}
         title="Notifications"
         aria-label={attention > 0 ? `Notifications, ${attention} need attention` : "Notifications"}
       >
-        <Icon name="bell" size={18} />
+        <Icon name="bell" size={19} />
         {attention > 0 && (
           <span
-            className="voom-grad absolute -right-0.5 -top-0.5 grid h-[18px] min-w-[18px] place-items-center rounded-full px-1 text-[10px] font-bold text-white ring-2 ring-[var(--topbar-bg)]"
+            className="absolute right-[7px] top-[7px] h-2 w-2 rounded-full bg-[var(--coral)] ring-2 ring-[var(--bg)]"
             aria-label={`${attention} item${attention === 1 ? "" : "s"} need your attention`}
-          >
-            {attention > 9 ? "9+" : attention}
-          </span>
+          />
         )}
       </IconBtn>
 
       <div className="relative" ref={menuRef}>
         <button
           onClick={toggleMenu}
-          className="grid h-[36px] w-[36px] flex-none place-items-center rounded-full bg-text text-[12.5px] font-bold text-surface ring-1 ring-line transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--topbar-bg)]"
+          className="flex h-11 items-center gap-1.5 rounded-full pl-0.5 pr-1.5 text-text-2 transition hover:bg-surface-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)]"
           aria-label="Account menu"
           aria-expanded={menuOpen}
           aria-haspopup="menu"
         >
-          {getInitials(displayName, email)}
+          <span className="grid h-10 w-10 place-items-center rounded-full bg-surface-3 text-[13px] font-bold text-text">
+            {getInitials(displayName, email)}
+          </span>
+          <Icon name="chevD" size={16} className="hidden sm:block" />
         </button>
         {menuOpen && (
           <div
-            className="absolute right-0 top-[48px] z-[60] w-[240px] rounded-[14px] border border-line bg-surface p-1.5 shadow-[var(--shadow-lg)]"
+            className="absolute right-0 top-[52px] z-[60] w-[248px] rounded-[18px] border border-line bg-surface p-1.5 shadow-[var(--shadow-lg)]"
             role="menu"
           >
             <div className="px-3 pb-3 pt-2.5">
               <div className="flex items-center gap-2.5">
-                <div className="grid h-8 w-8 place-items-center rounded-full bg-text text-[12px] font-bold text-surface">
+                <div className="grid h-9 w-9 place-items-center rounded-full bg-surface-3 text-[12px] font-bold text-text">
                   {getInitials(displayName, email)}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <b className="block truncate text-[13.5px] font-semibold tracking-tight">{displayName || "Your account"}</b>
-                  <span className="block truncate text-[11.5px] text-text-3">{email}</span>
+                  <b className="block truncate text-[14px] font-semibold tracking-tight">{displayName || "Your account"}</b>
+                  <span className="block truncate text-[12px] text-text-3">{email}</span>
                 </div>
               </div>
               <div className="mt-2.5">
-                <span className="inline-flex items-center gap-1.5 rounded-[8px] bg-surface-2 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-text-2 ring-1 ring-line">
-                  <span className="h-1.5 w-1.5 rounded-full bg-green" aria-hidden="true" />
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--brand-soft)] px-2.5 py-1 text-[11.5px] font-semibold text-[var(--brand-ink)]">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--green-dot)]" aria-hidden="true" />
                   {planName} plan
                 </span>
               </div>
@@ -277,13 +326,13 @@ export function Topbar() {
             />
             <MenuBtn onClick={() => goTo("/app/settings", router, closeMenu)} icon="cog" label="Brand settings" />
             <MenuBtn onClick={() => goTo("/app/pricing", router, closeMenu)} icon="card" label="Plans & billing" />
-            <MenuBtn onClick={() => goTo("/app/connections", router, closeMenu)} icon="globe" label="Connections" />
+            <MenuBtn onClick={() => goTo("/app/connections", router, closeMenu)} icon="share" label="Channels" />
             <div className="my-1 h-px bg-line" />
             <form action={logoutAction}>
               <button
                 type="submit"
                 role="menuitem"
-                className="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-left text-[13px] font-medium text-red transition hover:bg-red-soft focus-visible:outline-none focus-visible:bg-red-soft"
+                className="flex w-full items-center gap-2.5 rounded-[12px] px-3 py-2.5 text-left text-[13.5px] font-medium text-red transition hover:bg-red-soft focus-visible:outline-none focus-visible:bg-red-soft"
               >
                 <Icon name="logout" size={16} />
                 Sign out
@@ -306,7 +355,7 @@ function MenuBtn({ onClick, icon, label }: { onClick: () => void; icon: string; 
     <button
       onClick={onClick}
       role="menuitem"
-      className="flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-left text-[13px] font-medium transition hover:bg-surface-2 focus-visible:outline-none focus-visible:bg-surface-2"
+      className="flex w-full items-center gap-2.5 rounded-[12px] px-3 py-2.5 text-left text-[13.5px] font-medium transition hover:bg-surface-3 focus-visible:outline-none focus-visible:bg-surface-3"
     >
       <Icon name={icon} size={16} className="text-text-3" />
       {label}
