@@ -619,7 +619,10 @@ body::before {
    redesign while public, auth and onboarding surfaces keep their
    current tokens until their own batches ship.
    ────────────────────────────────────────────────────────────── */
-.voom-shell {
+/* `.voom-public` (homepage, log in, sign up, setup) shares the same tokens
+   but stays light: the Figma has no dark design for these screens. */
+.voom-shell,
+.voom-public {
   --font-public-sans: var(--font-dm-sans);
   --font-bricolage: var(--font-dm-sans);
   font-family: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
@@ -735,16 +738,39 @@ body::before {
 
 /* The redesign workspace is calm and flat: no page-wide atmosphere layer. */
 body:has(.voom-shell)::before { display: none; }
+body:has(.voom-public)::before { display: none; }
+body:has(.voom-public) { background: #f6f6f7; color: #1a1f30; }
+.voom-public { color: var(--text); background: var(--bg); color-scheme: light; }
+.voom-brand-text {
+  background: linear-gradient(90deg, #a24cf6 0%, #d652d8 55%, #ec5aa9 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.voom-auth-panel {
+  background:
+    radial-gradient(55% 45% at 22% 38%, rgba(96, 48, 190, 0.42) 0%, transparent 70%),
+    radial-gradient(50% 40% at 80% 18%, rgba(60, 36, 140, 0.30) 0%, transparent 70%),
+    linear-gradient(165deg, #150f33 0%, #0f0b26 50%, #0a0819 100%);
+}
+.voom-setup-wash {
+  background:
+    radial-gradient(60% 70% at 0% 100%, rgba(196, 172, 255, 0.45) 0%, transparent 60%),
+    radial-gradient(50% 60% at 100% 0%, rgba(240, 198, 245, 0.45) 0%, transparent 60%),
+    linear-gradient(135deg, #f5f3ff 0%, #f8f6fd 50%, #fbf3fb 100%);
+}
 
 .voom-create-btn { background: var(--create); }
 .voom-hero-card { background: var(--hero); }
-.voom-shell .voom-card {
+.voom-shell .voom-card,
+.voom-public .voom-card {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 22px;
   box-shadow: var(--shadow-sm);
 }
-.voom-shell .voom-tile {
+.voom-shell .voom-tile,
+.voom-public .voom-tile {
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 14px;

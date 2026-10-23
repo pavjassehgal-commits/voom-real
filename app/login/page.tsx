@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
-import Logo from "../components/Logo";
+import { AuthFrame } from "@/components/voom/auth/AuthFrame";
 import LoginForm from "./LoginForm";
 
 const SAFE_ERRORS: Record<string, string> = {
@@ -23,11 +23,8 @@ export default async function LoginPage({
   const initialError = error ? SAFE_ERRORS[error] : undefined;
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center px-6 py-12">
-      <div className="mb-8">
-        <Logo />
-      </div>
+    <AuthFrame title="Welcome back" subtitle="Log in to your Voom account">
       <LoginForm initialError={initialError} />
-    </div>
+    </AuthFrame>
   );
 }
