@@ -1,369 +1,441 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { Icon } from "@/components/voom/icons";
-import { MultipleBadge, PerformanceSignals } from "@/components/voom/performance/PerformanceIntelligence";
+import { BTN, ChannelGlyph, PageHeader } from "@/components/voom/redesign/ui";
 import { formatMultiple, formatNumber, type PerformanceGroupView, type PerformanceItemView, type PerformanceReport } from "@/lib/performance/insights";
 import { PERFORMANCE_METRIC_LABELS, type PerformanceMetric } from "@/lib/performance/types";
+import { cx } from "@/lib/voom/cx";
 import { formatLocalDate, formatLocalDateTime } from "@/lib/voom/timezone";
 import type { YouTubePerformanceVideo } from "@/lib/youtube/performance-view";
-import {
-  ComparisonBar,
-  Fact,
-  MetaChip,
-  MiniBars,
-  Panel,
-  PanelHead,
-  QuietState,
-  SectionLabel,
-  WorkspaceFrame,
-  WorkspaceHeader,
-} from "@/components/voom/workspace/ui";
 
-/** The whole page as one pure render over the two authoritative reads. */
+/**
+ * Performance — redesign Batch 4C (Figma "See what's working.", drawn on the
+ * PDF page labelled "36 — Campaigns · All campaigns", Keep).
+ *
+ * The whole page is one pure render over the two authoritative reads: the
+ * Instagram report (stored Meta snapshots) and YouTube's stored Data API rows.
+ * Every number was returned by a provider for content Voom really published.
+ * Totals add only values a provider returned; a metric no item reported shows
+ * a dash and "Not reported", never a zero. The reference's channel / period /
+ * format filters, period comparison line, date arrows and Export report are
+ * not shown — Voom stores one fixed window and has no export. Facebook, X and
+ * LinkedIn rows are not shown: Voom does not publish there.
+ */
 export function PerformanceView({ report, youTube }: {
   report: PerformanceReport;
   youTube: YouTubePerformanceVideo[] | null;
 }) {
+  const items = [...report.items].sort((a, b) => Date.parse(a.publishedAt) - Date.parse(b.publishedAt));
+  const sum = (metric: PerformanceMetric) => total(items.map((item) => item.metrics[metric]));
+  const engagement = total(items.map((item) => item.interactions ?? undefined));
+  const youTubeWithNumbers = (youTube ?? []).filter((video) => Object.keys(video.metrics).length > 0);
+
   return (
-    <WorkspaceFrame>
-      <WorkspaceHeader
-        eyebrow="Performance"
-        title="Is my marketing working — and what changed?"
-        question={report.headline ?? (report.measuredItems > 0
-          ? `${report.publishedItems} published item${report.publishedItems === 1 ? "" : "s"} in the last ${report.windowDays} days, ${report.measuredItems} with real provider numbers.`
-          : "Nothing measured yet — this page fills in only once Voom has really published content and a provider returned numbers for it.")}
-        description="Measured results only. Voom never estimates reach, never fills a missing number with zero, and never turns a small sample into a trend."
-        meta={<>
-          <MetaChip accent><Icon name="ig" size={12} /> Instagram</MetaChip>
-          <MetaChip><Icon name="trend" size={12} /> Last {report.windowDays} days</MetaChip>
-          <MetaChip>{report.measuredItems} measured · {report.publishedItems} published</MetaChip>
-          {report.basis && <MetaChip>Compared on {report.basis.label}</MetaChip>}
-          {report.lastCollectedAt && <MetaChip>Metrics collected {formatLocalDateTime(report.lastCollectedAt)}</MetaChip>}
-        </>}
-        actions={<>
-          <Link href="/app/instagram" className="inline-flex h-[34px] items-center gap-1.5 rounded-[10px] border border-line px-3.5 text-[13px] font-semibold text-text-2 transition hover:border-line-2 hover:text-text">
-            <Icon name="ig" size={14} /> Instagram
-          </Link>
-          <Link href="/app/youtube" className="inline-flex h-[34px] items-center gap-1.5 rounded-[10px] border border-line px-3.5 text-[13px] font-semibold text-text-2 transition hover:border-line-2 hover:text-text">
-            <Icon name="play" size={14} /> YouTube
-          </Link>
-        </>}
+    <div className="min-w-0">
+      <PageHeader
+        title="See what’s working."
+        subtitle={<>Is my marketing working — and what changed? Reach, engagement and audience growth across your published content.</>}
+        actions={
+          <div className="voom-card flex items-center gap-3 px-4 py-3">
+            <Icon name="cal" size={18} className="text-text-2" />
+            <span>
+              <span className="block text-[14px] font-semibold text-text">Last {report.windowDays} days</span>
+              <span className="block text-[12.5px] text-text-2">{report.lastCollectedAt ? `Metrics collected ${formatLocalDateTime(report.lastCollectedAt)}` : "No metrics collected yet"}</span>
+            </span>
+          </div>
+        }
       />
 
-      {report.measuredItems === 0
-        ? <EmptyPerformanceState report={report} />
-        : <>
-          <ExecutiveRead report={report} />
-          {report.best && <BestContent item={report.best} basisLabel={report.basis?.label ?? null} />}
-          <WorkingContent report={report} />
-          <RecentContent report={report} />
+      <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard icon="heart" label="Engagement" value={engagement} series={items.map((item) => item.interactions)}
+          note={report.basis?.key === "engagement" && report.trend ? trendNote(report.trend.multiple, report.trend.recentDays) : "Likes, comments, saves, shares, replies"} />
+        <MetricCard icon="eye" label="Reach" value={sum("reach")} series={items.map((item) => item.metrics.reach ?? null)}
+          note={report.basis?.key === "reach" && report.trend ? trendNote(report.trend.multiple, report.trend.recentDays) : "Accounts reached, as Meta reports it"} />
+        <MetricCard icon="contacts" label="New followers" value={sum("follows")} series={items.map((item) => item.metrics.follows ?? null)}
+          note="Follows Meta attributed to a post" />
+        <MetricCard icon="file" label="Posts measured" value={report.measuredItems} series={null}
+          note={`${report.publishedItems} published · ${report.publishedWithoutMetrics} awaiting metrics`} />
+      </div>
+
+      {report.measuredItems === 0 ? <EmptyPerformanceState report={report} /> : (
+        <div className="mb-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5 xl:grid-cols-[minmax(0,1.9fr)_minmax(0,1fr)]">
+          <OverTime report={report} items={items} />
           <MaraInsight report={report} />
-        </>}
+        </div>
+      )}
 
-      <PlatformBreakdown youTube={youTube} />
+      <div className="mb-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
+        <ChannelTable report={report} engagement={engagement} reach={sum("reach")} follows={sum("follows")} youTube={youTube} youTubeWithNumbers={youTubeWithNumbers} />
+        <BestContent report={report} />
+      </div>
 
-      <Panel className="relative z-10 mt-3.5">
-        <PanelHead
-          icon="shield"
-          title="How these numbers are produced"
-          hint="Read-only collection — it never posts, never edits a caption or a visual, and never starts a generation."
-        />
-        <p className="mt-3 text-[13px] leading-relaxed text-text-2">
-          Voom reads metrics from Meta only for content it published for you and Meta confirmed with a real media id.
-          Each reading is stored as a snapshot, so a metric that Meta does not expose for your account or media type is
-          left out entirely rather than filled in.
+      {report.measuredItems > 0 && <>
+        <WorkingContent report={report} />
+        <RecentContent report={report} />
+      </>}
+
+      <section className="voom-card p-5" aria-labelledby="perf-source">
+        <CardTitle icon="shield" id="perf-source" title="How these numbers are produced" />
+        <p className="mt-3 text-[13.5px] leading-relaxed text-text-2">
+          Read-only collection — it never posts, never edits a caption or a visual, and never starts a generation. Voom reads
+          metrics from Meta only for content it published for you and Meta confirmed with a real media id. Each reading is
+          stored as a snapshot, so a metric that Meta does not expose for your account or media type is left out entirely
+          rather than filled in.
         </p>
-        {report.publishedWithoutMetrics > 0 && <p className="mt-2 text-[12px] leading-relaxed text-text-3">
+        {report.publishedWithoutMetrics > 0 && <p className="mt-2 text-[12.5px] leading-relaxed text-text-3">
           {report.publishedWithoutMetrics} published item{report.publishedWithoutMetrics === 1 ? "" : "s"} in this window
           {report.publishedWithoutMetrics === 1 ? " has" : " have"} no metrics yet — Meta either has not exposed them for that media type or is
           still returning them. Voom keeps checking and will compare them as soon as real numbers arrive.
         </p>}
-      </Panel>
-    </WorkspaceFrame>
+      </section>
+    </div>
   );
 }
 
-/* ──────────────────────────────────────────────────────────────
-   The executive read: one headline, one real trend, one real series
-   ────────────────────────────────────────────────────────────── */
+const COMPACT = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+/** Headline figures read like the reference ("24.1K"); exact values stay in the item rows. */
+function compact(value: number) {
+  return COMPACT.format(value);
+}
 
-function ExecutiveRead({ report }: { report: PerformanceReport }) {
-  const series = [...report.items]
-    .filter((item) => item.basisValue !== null)
-    .sort((a, b) => Date.parse(a.publishedAt) - Date.parse(b.publishedAt))
-    .map((item) => ({
-      key: item.instagramMediaId,
-      value: item.basisValue,
-      label: `${item.title} · ${formatLocalDate(item.publishedAt)}`,
-      accent: "var(--iridescent)",
-    }));
+/** Sum of the values a provider actually returned; null when none did. */
+function total(values: (number | null | undefined)[]): number | null {
+  const present = values.filter((value): value is number => typeof value === "number");
+  return present.length ? present.reduce((sum, value) => sum + value, 0) : null;
+}
 
+function trendNote(multiple: number, days: number) {
+  const up = multiple >= 1;
+  return <span className={up ? "text-[var(--green)]" : "text-[var(--amber)]"}>
+    <Icon name="arrowUp" size={11} className={cx("mr-0.5 inline align-[-1px]", !up && "rotate-180")} />
+    {up ? `${formatMultiple(multiple)} higher` : `${formatMultiple(1 / multiple)} lower`} <span className="font-normal text-text-3">last {days} days vs the week before</span>
+  </span>;
+}
+
+function MetricCard({ icon, label, value, series, note }: { icon: string; label: string; value: number | null; series: (number | null)[] | null; note: ReactNode }) {
+  const points = (series ?? []).filter((point): point is number => typeof point === "number");
   return (
-    <Panel className="relative z-10 mb-3.5">
-      <PanelHead
-        icon="trend"
-        title={report.headline ? "What changed" : "The real numbers so far"}
-        hint={report.headline
-          ? undefined
-          : `Voom needs at least 3 measured items before it will call anything a trend. ${report.measuredItems} measured so far.`}
-        action={report.basis ? <MetaChip>Basis · {report.basis.label}</MetaChip> : undefined}
-      />
-      {report.headline && <p className="mt-3 max-w-3xl text-[15px] font-semibold leading-relaxed tracking-[-0.01em] text-text">{report.headline}</p>}
-
-      <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
-        <div className="min-w-0">
-          {report.trend ? <ComparisonBar
-            recent={report.trend.recentAverage}
-            previous={report.trend.previousAverage}
-            recentLabel={`Last ${report.trend.recentDays} days`}
-            previousLabel="The week before"
-            accent="var(--brand)"
-          /> : <p className="rounded-2xl bg-surface-2 px-3.5 py-3 text-[12.5px] leading-relaxed text-text-3">
-            No week-over-week comparison yet. {report.emptyReason === "not_enough_history"
-              ? "Your measured content is still too recent for Voom to split it into two comparable windows."
-              : report.emptyReason === "no_comparable_metrics"
-                ? "Your published content does not share one comparable metric yet, so no relative comparison is shown."
-                : "Voom will compare the last 7 days with the week before as soon as both windows hold real numbers."}
-          </p>}
-          {report.trend && <p className="mt-2 text-[11.5px] leading-relaxed text-text-3">
-            {report.trend.recentSample} item{report.trend.recentSample === 1 ? "" : "s"} vs {report.trend.previousSample} the week before ·
-            {" "}{report.trend.multiple >= 1 ? `${formatMultiple(report.trend.multiple)} higher` : `${formatMultiple(1 / report.trend.multiple)} lower`}.
-          </p>}
-          <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-line pt-3.5 sm:grid-cols-3">
-            <Fact label="Measured items">{report.measuredItems}</Fact>
-            <Fact label="Baseline sample">{report.baselineSample ? String(report.baselineSample) : "—"}</Fact>
-            <Fact label="Confidence">{report.confidence === "moderate" ? "Moderate" : report.confidence === "low" ? "Low" : "None"}</Fact>
-          </dl>
-        </div>
-
-        <div className="min-w-0">
-          <SectionLabel>{report.basis ? `${report.basis.label} per published item` : "Measured items"}</SectionLabel>
-          {series.length > 1
-            ? <>
-              <MiniBars className="mt-2.5" points={series} height={88} />
-              <p className="mt-2 text-[11.5px] leading-relaxed text-text-3">
-                One bar per published item Voom measured, oldest to newest. A hairline gap is an item Meta returned no
-                value for — never a zero.
-              </p>
-            </>
-            : <p className="mt-2 rounded-2xl bg-surface-2 px-3.5 py-3 text-[12.5px] leading-relaxed text-text-3">
-              Not enough measured items share one comparable metric to draw a series yet.
-            </p>}
-          <PerformanceSignals report={report} />
+    <div className="voom-card min-w-0 p-5">
+      <div className="flex items-start gap-3.5">
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[13px] bg-[var(--brand-soft)] text-[var(--brand-ink)]"><Icon name={icon} size={19} /></span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[14px] font-medium text-text">{label}</div>
+          <div className="mt-1 flex items-end justify-between gap-2">
+            <span className="text-[28px] font-bold leading-none tracking-[-0.03em] text-text">{value === null ? "—" : compact(value)}</span>
+            {points.length > 1 && <Sparkline points={points} />}
+          </div>
+          <div className="mt-2 text-[12px] font-semibold text-text-2">{value === null ? <span className="font-normal text-text-3">Not reported for this window</span> : note}</div>
         </div>
       </div>
-    </Panel>
+    </div>
   );
 }
 
-function EmptyPerformanceState({ report }: { report: PerformanceReport }) {
-  if (report.emptyReason === "no_metrics_yet") {
-    return <Panel className="relative z-10 mb-3.5">
-      <QuietState
-        icon="clock"
-        title="Published, but no metrics yet"
-        action={<Link href="/app/calendar" className="inline-flex h-[34px] items-center rounded-[10px] border border-line px-3.5 text-[13px] font-semibold hover:border-line-2">Open Content Calendar</Link>}
-      >
-        <p>Voom has published {report.publishedItems} item{report.publishedItems === 1 ? "" : "s"} in the last {report.windowDays} days. Meta has not returned performance metrics for them yet — it can take a while for a new post, and Stories stop reporting after 24 hours.</p>
-        <p className="mt-1.5 text-text-3">Voom checks on a schedule and will show real numbers the moment Meta returns them.</p>
-      </QuietState>
-    </Panel>;
-  }
-  return <Panel className="relative z-10 mb-3.5">
-    <QuietState
-      icon="trend"
-      title="No published content to measure yet"
-      action={<Link href="/app/plan" className="inline-flex h-[34px] items-center rounded-[10px] border border-line px-3.5 text-[13px] font-semibold hover:border-line-2">Open Marketing Plan</Link>}
-    >
-      <p>Voom measures only content it has actually published and Meta has confirmed with a real media id. Approve and schedule content from your rolling plan and its real results will appear here.</p>
-    </QuietState>
-  </Panel>;
+function Sparkline({ points }: { points: number[] }) {
+  const width = 84;
+  const height = 30;
+  const max = Math.max(...points, 1);
+  const path = points.map((point, index) => `${index === 0 ? "M" : "L"}${((index / (points.length - 1)) * width).toFixed(1)},${(height - 2 - (point / max) * (height - 6)).toFixed(1)}`).join(" ");
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} className="shrink-0" aria-hidden="true">
+      <path d={`${path} L${width},${height} L0,${height} Z`} fill="var(--brand-soft)" />
+      <path d={path} fill="none" stroke="var(--brand)" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function CardTitle({ icon, id, title, hint, action }: { icon: string; id: string; title: string; hint?: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+      <div className="flex min-w-0 items-start gap-3">
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px] bg-[var(--brand-soft)] text-[var(--brand-ink)]"><Icon name={icon} size={16} /></span>
+        <div className="min-w-0">
+          <h2 id={id} className="text-[16px] font-semibold tracking-[-0.01em] text-text">{title}</h2>
+          {hint && <p className="mt-0.5 text-[13px] text-text-2">{hint}</p>}
+        </div>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+/** One relative signal, e.g. "1.8× your average". Never a score. */
+function Multiple({ multiple }: { multiple: number | null }) {
+  const base = "inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-[12px] font-semibold";
+  if (multiple === null) return <span className={cx(base, "bg-surface-3 text-text-2")}>Not enough data to compare</span>;
+  if (multiple >= 1.05) return <span className={cx(base, "bg-[var(--green-soft)] text-[var(--green)]")}>{formatMultiple(multiple)} your average</span>;
+  if (multiple <= 0.95) return <span className={cx(base, "bg-[var(--amber-soft)] text-[var(--amber)]")}>{formatMultiple(multiple)} your average</span>;
+  return <span className={cx(base, "bg-surface-3 text-text-2")}>Level with your average</span>;
 }
 
 /**
- * The MARA insight section: the same measured statements the planner receives,
- * shown with the sample they were measured from. Every sentence here is
- * produced from stored snapshots (see lib/performance/insights.ts) — when the
- * account does not have enough measured content, there is no statement and no
- * section, rather than an optimistic placeholder.
+ * One point per measured item, by publish date, on the account's comparison
+ * basis. Items without a value on that basis are skipped, never drawn as 0.
  */
-function MaraInsight({ report }: { report: PerformanceReport }) {
-  if (!report.headline && !report.signals.length) return null;
-  return <Panel className="relative z-10 mb-3.5">
-    <PanelHead
-      icon="spark"
-      title="Performance intelligence"
-      action={<>
-        <MetaChip>{report.confidence === "moderate" ? "Moderate confidence" : "Low confidence"}</MetaChip>
-        <MetaChip>{report.measuredItems} measured item{report.measuredItems === 1 ? "" : "s"}</MetaChip>
-      </>}
-    />
-    {report.headline && <p className="mt-3 text-[13.5px] leading-relaxed text-text-2">{report.headline}</p>}
-    <PerformanceSignals report={report} />
-    <p className="mt-3 text-[11.5px] leading-relaxed text-text-3">
-      MARA reads exactly these measured signals — with the sample size and confidence — when it plans your next 7 days.
-      They are advisory evidence, never a rule: MARA keeps your brand, your goal and a varied mix of formats and topics in front.
-    </p>
-  </Panel>;
+function OverTime({ report, items }: { report: PerformanceReport; items: PerformanceItemView[] }) {
+  const points = items.filter((item) => item.basisValue !== null).map((item) => ({ item, value: item.basisValue as number }));
+  const width = 720;
+  const height = 220;
+  const max = Math.max(1, ...points.map((point) => point.value));
+  const xy = points.map((point, index) => ({
+    ...point,
+    x: points.length === 1 ? width / 2 : (index / (points.length - 1)) * width,
+    y: height - 16 - (point.value / max) * (height - 40),
+  }));
+  const line = xy.map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
+  const last = xy[xy.length - 1];
+  return (
+    <section className="voom-card min-w-0 p-5 sm:p-6" aria-labelledby="perf-over-time">
+      <CardTitle
+        icon="trend"
+        id="perf-over-time"
+        title="Performance over time"
+        hint={report.basis ? `${capitalise(report.basis.label)}, per published Instagram item, by publish date.` : "Measured items, by publish date."}
+        action={report.basis && <span className="rounded-full bg-[var(--brand)] px-3 py-1 text-[12.5px] font-semibold text-white">{report.basis.key === "engagement" ? "Engagement" : PERFORMANCE_METRIC_LABELS[report.basis.key]}</span>}
+      />
+      {xy.length > 1 ? (
+        <figure className="mt-5">
+          <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="h-[220px] w-full overflow-visible" role="img"
+            aria-label={`Per item: ${points.map((point) => `${point.item.title} ${point.value}`).join(", ")}`}>
+            <defs>
+              <linearGradient id="perf-fill" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0" stopColor="#8b6cf5" stopOpacity="0.25" />
+                <stop offset="1" stopColor="#8b6cf5" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            {[0.25, 0.5, 0.75, 1].map((step) => <line key={step} x1="0" x2={width} y1={height - 16 - step * (height - 40)} y2={height - 16 - step * (height - 40)} stroke="var(--line)" strokeDasharray="3 4" vectorEffect="non-scaling-stroke" />)}
+            <path d={`${line} L${last.x},${height} L${xy[0].x},${height} Z`} fill="url(#perf-fill)" />
+            <path d={line} fill="none" stroke="var(--brand)" strokeWidth="2.5" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+            {xy.map((point) => <circle key={point.item.instagramMediaId} cx={point.x} cy={point.y} r="3.5" fill="#fff" stroke="var(--brand)" strokeWidth="2" vectorEffect="non-scaling-stroke" />)}
+          </svg>
+          <figcaption className="mt-2 flex justify-between gap-3 text-[12px] text-text-3">
+            <span>{formatLocalDate(points[0].item.publishedAt)}</span>
+            <span>{points.length} measured items · max {formatNumber(max)}</span>
+            <span>{formatLocalDate(points[points.length - 1].item.publishedAt)}</span>
+          </figcaption>
+        </figure>
+      ) : (
+        <p className="mt-5 rounded-[14px] bg-surface-2 px-4 py-3 text-[13px] leading-relaxed text-text-2">
+          Not enough measured items share one comparable metric to draw a line yet. {report.measuredItems} measured so far.
+        </p>
+      )}
+      <p className="mt-3 text-[12px] leading-relaxed text-text-3">
+        {report.trend
+          ? `Last ${report.trend.recentDays} days: ${report.trend.recentSample} item${report.trend.recentSample === 1 ? "" : "s"} vs ${report.trend.previousSample} the week before.`
+          : "No week-over-week comparison yet — Voom needs real numbers in both windows before it calls anything a trend."}
+        {" "}A point Meta returned no value for is left out — never drawn as zero.
+      </p>
+    </section>
+  );
 }
 
-function BestContent({ item, basisLabel }: { item: PerformanceItemView; basisLabel: string | null }) {
-  return <Panel className="relative z-10 mb-3.5">
-    <PanelHead
-      icon="fire"
-      title="Best-performing recent content"
-      action={<MultipleBadge multiple={item.multiple} />}
-    />
-    <p className="mt-3 text-[13.5px] font-semibold tracking-[-0.01em] text-text">{item.title}</p>
-    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-      <MetaChip>{item.contentTypeLabel}</MetaChip>
-      <MetaChip>Published {formatLocalDate(item.publishedAt)}</MetaChip>
-      {item.topic && <MetaChip>{item.topic}</MetaChip>}
-      <MetaChip>{item.purposeLabel}</MetaChip>
-    </div>
-    <MetricsRow item={item} />
-    {basisLabel && <p className="mt-2 text-[11.5px] text-text-3">Compared on {basisLabel} against your own recent published content.</p>}
-  </Panel>;
+function capitalise(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+/**
+ * The MARA insight panel: the same measured statements the planner receives,
+ * with the sample they come from. When there is no provable statement, it says
+ * so rather than showing an optimistic placeholder.
+ */
+function MaraInsight({ report }: { report: PerformanceReport }) {
+  const has = Boolean(report.headline || report.signals.length);
+  return (
+    <section className="voom-card flex min-w-0 flex-col p-5 sm:p-6" aria-labelledby="perf-insight">
+      <div className="flex items-center gap-3">
+        <span className="voom-create-btn grid h-10 w-10 shrink-0 place-items-center rounded-[12px] text-white"><Icon name="sparkles" size={18} /></span>
+        <div className="min-w-0">
+          <h2 id="perf-insight" className="text-[16px] font-semibold text-text">Performance intelligence</h2>
+          <p className="text-[12.5px] text-text-2">{report.confidence === "moderate" ? "Moderate confidence" : report.confidence === "low" ? "Low confidence" : "Not enough data yet"} · {report.measuredItems} measured item{report.measuredItems === 1 ? "" : "s"}</p>
+        </div>
+      </div>
+      <div className="mt-4 rounded-[16px] bg-[var(--brand-soft-2)] p-4">
+        {has ? <>
+          {report.headline && <p className="text-[14.5px] font-semibold leading-snug text-[var(--brand-ink)]">{report.headline}</p>}
+          {report.signals.length > 0 && <ul className="mt-2.5 space-y-2">
+            {report.signals.map((signal) => <li key={signal} className="flex gap-2 text-[13px] leading-relaxed text-text-2"><span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--brand)]" />{signal}</li>)}
+          </ul>}
+        </> : <p className="text-[13px] leading-relaxed text-text-2">MARA has no measured statement to make yet. It needs at least 3 measured items that share a comparable metric.</p>}
+      </div>
+      <p className="mt-3 text-[12px] leading-relaxed text-text-3">
+        MARA reads exactly these measured signals — with the sample size and confidence — when it plans your next 7 days.
+        They are advisory evidence, never a rule.
+      </p>
+      <Link href="/app/plan" className={cx(BTN.outline, "mt-auto w-full")} style={{ marginTop: "1rem" }}>Open Marketing Plan <Icon name="arrow" size={14} /></Link>
+    </section>
+  );
+}
+
+function ChannelTable({ report, engagement, reach, follows, youTube, youTubeWithNumbers }: {
+  report: PerformanceReport;
+  engagement: number | null;
+  reach: number | null;
+  follows: number | null;
+  youTube: YouTubePerformanceVideo[] | null;
+  youTubeWithNumbers: YouTubePerformanceVideo[];
+}) {
+  const ytViews = total(youTubeWithNumbers.map((video) => video.metrics.views));
+  const ytEngagement = total(youTubeWithNumbers.flatMap((video) => [video.metrics.likes, video.metrics.comments]));
+  const cell = (value: number | null) => value === null ? <span className="text-text-3">—</span> : compact(value);
+  return (
+    <section className="voom-card min-w-0 p-5 sm:p-6" aria-labelledby="perf-channels">
+      <CardTitle icon="share" id="perf-channels" title="Channel performance" hint={`How each channel did over the last ${report.windowDays} days. A dash means the provider returned no number.`} />
+      <div className="mt-4">
+        <table className="w-full table-fixed text-left text-[13px] sm:text-[13.5px]">
+          <thead>
+            <tr className="border-b border-line text-[12.5px] text-text-2">
+              <th className="w-[34%] py-2.5 pr-2 font-semibold sm:w-auto">Channel</th>
+              <th className="px-2 py-2.5 text-right font-semibold sm:px-3">Posts</th>
+              <th className="px-2 py-2.5 text-right font-semibold sm:px-3">Reach</th>
+              <th className="hidden px-3 py-2.5 text-right font-semibold sm:table-cell">Views</th>
+              <th className="px-2 py-2.5 text-right font-semibold sm:px-3">Engagement</th>
+              <th className="hidden py-2.5 pl-3 text-right font-semibold sm:table-cell">New followers</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            <tr>
+              <td className="py-3 pr-2"><span className="flex min-w-0 items-center gap-2 truncate font-semibold text-text"><ChannelGlyph channel="instagram" size={22} />Instagram</span></td>
+              <td className="px-2 py-3 text-right sm:px-3 tabular-nums">{report.measuredItems}</td>
+              <td className="px-2 py-3 text-right sm:px-3 tabular-nums">{cell(reach)}</td>
+              <td className="hidden px-3 py-3 text-right tabular-nums sm:table-cell">{cell(total(report.items.map((item) => item.metrics.views)))}</td>
+              <td className="px-2 py-3 text-right sm:px-3 tabular-nums">{cell(engagement)}</td>
+              <td className="hidden py-3 pl-3 text-right tabular-nums sm:table-cell">{cell(follows)}</td>
+            </tr>
+            <tr>
+              <td className="py-3 pr-2"><span className="flex min-w-0 items-center gap-2 truncate font-semibold text-text"><ChannelGlyph channel="youtube" size={22} />YouTube</span></td>
+              {youTubeWithNumbers.length ? <>
+                <td className="px-2 py-3 text-right sm:px-3 tabular-nums">{youTubeWithNumbers.length}</td>
+                <td className="px-2 py-3 text-right sm:px-3"><span className="text-text-3">—</span></td>
+                <td className="hidden px-3 py-3 text-right tabular-nums sm:table-cell">{cell(ytViews)}</td>
+                <td className="px-2 py-3 text-right sm:px-3 tabular-nums">{cell(ytEngagement)}</td>
+                <td className="hidden py-3 pl-3 text-right sm:table-cell"><span className="text-text-3">—</span></td>
+              </> : <td colSpan={5} className="py-3 pl-3 text-right text-[12.5px] text-text-3">
+                {youTube === null ? "YouTube performance could not be read right now. Nothing is estimated in its place." : "No published YouTube video has returned statistics yet."}
+              </td>}
+            </tr>
+            <tr>
+              <td className="py-3 pr-2"><span className="flex min-w-0 items-center gap-2 truncate font-semibold text-text"><ChannelGlyph channel="tiktok" size={22} />TikTok</span></td>
+              <td colSpan={5} className="py-3 pl-3 text-right text-[12.5px] text-text-3">Unavailable — <Link href="/app/tiktok" className="font-semibold text-[var(--brand-ink)] hover:underline">open TikTok</Link></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <ul className="mt-4 space-y-1.5 text-[12px] leading-relaxed text-text-3">
+        <li>Instagram: Meta Insights, read per published media id.</li>
+        <li>YouTube: views, likes and comments per published video, from the official YouTube Data API. <Link href="/app/youtube" className="font-semibold text-[var(--brand-ink)] hover:underline">Open YouTube</Link></li>
+        <li>TikTok performance data is unavailable through Voom&apos;s connection — and none is invented here. Voom asks TikTok only for publishing access, so check TikTok&apos;s own analytics for views and engagement.</li>
+      </ul>
+    </section>
+  );
+}
+
+function BestContent({ report }: { report: PerformanceReport }) {
+  const ranked = [...report.items].filter((item) => item.basisValue !== null).sort((a, b) => (b.basisValue ?? 0) - (a.basisValue ?? 0)).slice(0, 4);
+  return (
+    <section className="voom-card min-w-0 p-5 sm:p-6" aria-labelledby="perf-best">
+      <CardTitle icon="fire" id="perf-best" title="Best-performing recent content" hint={report.basis ? `Ranked on ${report.basis.label}.` : "Ranked once items share a comparable metric."}
+        action={<Link href="/app/content" className="inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--brand-ink)] hover:underline">All content <Icon name="arrow" size={13} /></Link>} />
+      {ranked.length ? (
+        <ul className="mt-4 flex flex-col gap-2.5">
+          {ranked.map((item) => (
+            <li key={item.instagramMediaId} className="flex min-w-0 items-center gap-3 rounded-[14px] border border-line px-3.5 py-3">
+              <ChannelGlyph channel="instagram" size={24} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[14px] font-semibold text-text">{item.title}</span>
+                <span className="block text-[12px] text-text-2">{item.contentTypeLabel} · {formatLocalDate(item.publishedAt)}</span>
+              </span>
+              <span className="shrink-0 text-right">
+                <span className="block text-[16px] font-bold tabular-nums text-text">{formatNumber(item.basisValue as number)}</span>
+                <span className="block text-[11.5px] text-text-3">{report.basis?.key === "engagement" ? "engagements" : report.basis ? PERFORMANCE_METRIC_LABELS[report.basis.key].toLowerCase() : ""}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="mt-4 text-[13.5px] leading-relaxed text-text-2">No measured content to rank in this window yet.</p>}
+      {report.best && <p className="mt-3 flex flex-wrap items-center gap-2 text-[12px] text-text-3">Top item: <Multiple multiple={report.best.multiple} /></p>}
+    </section>
+  );
 }
 
 function WorkingContent({ report }: { report: PerformanceReport }) {
-  const groups = [
+  const sections = [
     { title: "By content type", groups: report.byContentType },
     { title: "By topic", groups: report.byTopic },
     { title: "By purpose", groups: report.byPurpose },
   ].filter((section) => section.groups.some((group) => group.multiple !== null));
-  if (!groups.length) return null;
-  return <Panel className="relative z-10 mb-3.5">
-    <PanelHead icon="target" title="What is working" hint="Each line compares that group of your own published content with the rest of it." />
-    <div className="mt-4 space-y-4">
-      {groups.map((section) => <div key={section.title} className="min-w-0">
-        <SectionLabel>{section.title}</SectionLabel>
-        <div className="mt-2 space-y-2">
-          {section.groups.filter((group) => group.multiple !== null).map((group) => <GroupRow key={`${section.title}:${group.key}`} group={group} />)}
-        </div>
-      </div>)}
-    </div>
-    <p className="mt-3 text-[11.5px] leading-relaxed text-text-3">
-      Groups with fewer than 2 measured items are left out, and a comparison is only shown when the average it is
-      measured against is large enough to mean something.
-    </p>
-  </Panel>;
+  if (!sections.length) return null;
+  return (
+    <section className="voom-card mb-5 p-5 sm:p-6" aria-labelledby="perf-working">
+      <CardTitle icon="target" id="perf-working" title="What is working" hint="Each line compares that group of your own published content with the rest of it." />
+      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        {sections.map((section) => (
+          <div key={section.title} className="min-w-0">
+            <h3 className="text-[12px] font-semibold uppercase tracking-[0.1em] text-text-3">{section.title}</h3>
+            <div className="mt-2 space-y-2">
+              {section.groups.filter((group) => group.multiple !== null).map((group) => <GroupRow key={`${section.title}:${group.key}`} group={group} />)}
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-[12px] leading-relaxed text-text-3">Groups with fewer than 2 measured items are left out, and a comparison is only shown when the average it is measured against is large enough to mean something.</p>
+    </section>
+  );
 }
 
 function GroupRow({ group }: { group: PerformanceGroupView }) {
-  return <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-2xl border border-line bg-[var(--surface)]/70 px-3.5 py-2.5">
-    <b className="min-w-0 truncate text-[13px] font-semibold">{group.label}</b>
-    <MetaChip>{group.sampleSize} item{group.sampleSize === 1 ? "" : "s"}</MetaChip>
-    <span className="text-[12px] text-text-3">avg {formatNumber(group.average)}</span>
-    <span className="ml-auto"><MultipleBadge multiple={group.multiple} /></span>
-  </div>;
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-[12px] border border-line px-3 py-2.5">
+      <b className="min-w-0 truncate text-[13.5px] font-semibold text-text">{group.label}</b>
+      <span className="text-[12px] text-text-3">{group.sampleSize} item{group.sampleSize === 1 ? "" : "s"} · avg {formatNumber(group.average)}</span>
+      <span className="ml-auto"><Multiple multiple={group.multiple} /></span>
+    </div>
+  );
 }
 
 function RecentContent({ report }: { report: PerformanceReport }) {
   const items = report.items.slice(0, 10);
-  return <Panel className="relative z-10 mb-3.5">
-    <PanelHead
-      icon="ig"
-      title="Recent published content"
-      action={<MetaChip>{report.items.length} measured</MetaChip>}
-    />
-    {items.length
-      ? <div className="mt-3.5 space-y-2">{items.map((item) => <div key={item.instagramMediaId} className="min-w-0 rounded-2xl border border-line bg-[var(--surface)]/70 px-3.5 py-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <MetaChip>{item.contentTypeLabel}</MetaChip>
-          <b className="min-w-0 flex-1 truncate text-[13.5px]">{item.title}</b>
-          <MultipleBadge multiple={item.multiple} />
-        </div>
-        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-text-3">
-          <span>Published {formatLocalDate(item.publishedAt)}</span>
-          {item.topic && <span>· {item.topic}</span>}
-          <span>· {item.purposeLabel}</span>
-          {item.engagementRate !== null && <span>· {formatRate(item.engagementRate)} engagement rate on reach</span>}
-        </div>
-        <MetricsRow item={item} />
-      </div>)}</div>
-      : <p className="mt-3 text-[13px] text-text-3">No measured content in this window.</p>}
-  </Panel>;
+  return (
+    <section className="voom-card mb-5 p-5 sm:p-6" aria-labelledby="perf-recent">
+      <CardTitle icon="ig" id="perf-recent" title="Recent published content" action={<span className="rounded-full bg-surface-3 px-2.5 py-0.5 text-[12px] font-semibold text-text-2">{report.items.length} measured</span>} />
+      <ul className="mt-4 divide-y divide-line">
+        {items.map((item) => (
+          <li key={item.instagramMediaId} className="min-w-0 py-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <b className="min-w-0 flex-1 truncate text-[14px] font-semibold text-text">{item.title}</b>
+              <Multiple multiple={item.multiple} />
+            </div>
+            <div className="mt-0.5 text-[12px] text-text-3">
+              {item.contentTypeLabel} · Published {formatLocalDate(item.publishedAt)}{item.topic ? ` · ${item.topic}` : ""} · {item.purposeLabel}
+              {item.engagementRate !== null && ` · ${formatRate(item.engagementRate)} engagement rate on reach`}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {item.availableMetrics.map((metric) => <span key={metric} className="rounded-[8px] bg-surface-2 px-2.5 py-1 text-[12px] text-text-2">
+                {PERFORMANCE_METRIC_LABELS[metric]} <b className="tabular-nums text-text">{formatNumber(item.metrics[metric] ?? 0)}</b>
+              </span>)}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
-function MetricsRow({ item }: { item: PerformanceItemView }) {
-  // Only metrics Meta really returned. An absent metric is absent, not 0.
-  return <div className="mt-2 flex flex-wrap gap-1.5">
-    {item.availableMetrics.map((metric: PerformanceMetric) => <span key={metric} className="rounded-lg bg-surface-2 px-2.5 py-1 text-[11.5px] text-text-2">
-      {PERFORMANCE_METRIC_LABELS[metric]} <b className="tabular-nums text-text">{formatNumber(item.metrics[metric] ?? 0)}</b>
-    </span>)}
-  </div>;
-}
-
-/**
- * Platform breakdown. Instagram is measured above; YouTube shows the real
- * Data API numbers for the videos Voom published; TikTok is honestly
- * unavailable — Voom asks TikTok for no analytics scope, so the panel says so
- * instead of printing zeros.
- */
-function PlatformBreakdown({ youTube }: { youTube: YouTubePerformanceVideo[] | null }) {
-  const youTubeWithNumbers = (youTube ?? []).filter((video) => Object.keys(video.metrics).length > 0);
-  const youTubeSeries = [...youTubeWithNumbers]
-    .sort((a, b) => Date.parse(a.publishedAt ?? a.collectedAt ?? "") - Date.parse(b.publishedAt ?? b.collectedAt ?? ""))
-    .map((video) => ({
-      key: video.videoId,
-      value: typeof video.metrics.views === "number" ? video.metrics.views : null,
-      label: `${video.videoId} · ${video.contentType === "short" ? "Short" : "Video"}`,
-      accent: "var(--iridescent)",
-    }));
-
-  return <Panel className="relative z-10 mt-3.5">
-    <PanelHead
-      icon="globe"
-      title="Where the numbers come from"
-      hint="One panel per platform. A platform without a real read says so — it is never shown as zeros."
-    />
-    <div className="mt-4 grid min-w-0 gap-3 lg:grid-cols-3">
-      <div className="min-w-0 rounded-2xl border border-line bg-[var(--surface)]/70 p-3.5">
-        <div className="flex items-center gap-2">
-          <span aria-hidden="true" className="h-2 w-2 rounded-full" style={{ background: "var(--ch-instagram)" }} />
-          <b className="text-[13px] font-semibold">Instagram</b>
-          <MetaChip>Measured</MetaChip>
-        </div>
-        <p className="mt-1.5 text-[11.5px] leading-relaxed text-text-3">Meta Insights, read per published media id. This is the only platform with a full performance read today.</p>
-      </div>
-
-      <div className="min-w-0 rounded-2xl border border-line bg-[var(--surface)]/70 p-3.5">
-        <div className="flex items-center gap-2">
-          <span aria-hidden="true" className="h-2 w-2 rounded-full" style={{ background: "var(--ch-youtube)" }} />
-          <b className="text-[13px] font-semibold">YouTube</b>
-          <MetaChip>{youTubeWithNumbers.length > 0 ? "Data API" : youTube ? "No numbers yet" : "Unavailable"}</MetaChip>
-        </div>
-        {youTubeSeries.length > 0
-          ? <>
-            <MiniBars className="mt-3" points={youTubeSeries} height={56} />
-            <p className="mt-2 text-[11.5px] leading-relaxed text-text-3">
-              Views per published video, from the official YouTube Data API. A dash means YouTube did not return that number — never a zero in disguise.
-            </p>
-          </>
-          : <p className="mt-1.5 text-[11.5px] leading-relaxed text-text-3">
-            {youTube === null
-              ? "YouTube performance could not be read right now. Nothing is estimated in its place."
-              : "No published YouTube video has returned statistics yet. Voom collects them read-only once YouTube confirms processing."}
-            </p>}
-        <Link href="/app/youtube" className="mt-2.5 inline-flex items-center gap-1 text-[12px] font-semibold text-brand hover:underline">
-          Open YouTube <Icon name="arrow" size={12} />
-        </Link>
-      </div>
-
-      <div className="min-w-0 rounded-2xl border border-line bg-[var(--surface)]/70 p-3.5">
-        <div className="flex items-center gap-2">
-          <span aria-hidden="true" className="h-2 w-2 rounded-full" style={{ background: "var(--ch-tiktok)" }} />
-          <b className="text-[13px] font-semibold">TikTok</b>
-          <MetaChip>Unavailable</MetaChip>
-        </div>
-        <p className="mt-1.5 text-[11.5px] leading-relaxed text-text-3">
-          TikTok performance data is unavailable through Voom&apos;s connection — and none is invented here. Voom requests
-          only the scopes it needs to publish (basic identity + posting) and asks TikTok for no analytics access.
+function EmptyPerformanceState({ report }: { report: PerformanceReport }) {
+  const waiting = report.emptyReason === "no_metrics_yet";
+  return (
+    <section className="voom-card mb-5 flex flex-col items-start gap-3 p-6 sm:flex-row sm:items-center" aria-label="No measured results yet">
+      <span className="grid h-12 w-12 shrink-0 place-items-center rounded-[14px] bg-[var(--brand-soft)] text-[var(--brand-ink)]"><Icon name={waiting ? "clock" : "trend"} size={20} /></span>
+      <div className="min-w-0 flex-1">
+        <h2 className="text-[16px] font-semibold text-text">{waiting ? "Published, but no metrics yet" : "No published content to measure yet"}</h2>
+        <p className="mt-1 text-[13.5px] leading-relaxed text-text-2">
+          {waiting
+            ? `Voom has published ${report.publishedItems} item${report.publishedItems === 1 ? "" : "s"} in the last ${report.windowDays} days. Meta has not returned performance metrics for them yet — Voom checks on a schedule and shows real numbers the moment they arrive.`
+            : "Voom measures only content it has actually published and Meta has confirmed with a real media id. Approve and schedule content from your plan and its real results will appear here."}
         </p>
-        <p className="mt-2 text-[11.5px] leading-relaxed text-text-3">Check TikTok&apos;s own analytics for views and engagement.</p>
       </div>
-    </div>
-  </Panel>;
+      <Link href={waiting ? "/app/calendar" : "/app/plan"} className={BTN.outline}>{waiting ? "Open calendar" : "Open Marketing Plan"}</Link>
+    </section>
+  );
 }
 
 function formatRate(rate: number): string {
