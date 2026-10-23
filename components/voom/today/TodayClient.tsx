@@ -68,21 +68,21 @@ export function QuickCreate() {
           key={entry.kind}
           type="button"
           onClick={() => open(<CreateContentModal startStep={entry.kind} />)}
-          className="flex items-center gap-3.5 rounded-[14px] px-2 py-2.5 text-left transition hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)]"
+          className="flex items-center gap-3 rounded-[12px] px-1.5 py-2 text-left transition hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)]"
         >
-          <span className={cx("grid h-10 w-10 shrink-0 place-items-center rounded-[11px]", entry.tone)}>
-            <Icon name={entry.icon} size={18} />
+          <span className={cx("grid h-9 w-9 shrink-0 place-items-center rounded-[10px]", entry.tone)}>
+            <Icon name={entry.icon} size={17} />
           </span>
           <span className="min-w-0">
-            <span className="block text-[14.5px] font-semibold leading-tight text-text">{entry.label}</span>
-            <span className="block text-[12.5px] text-text-3">{entry.hint}</span>
+            <span className="block text-[14px] font-semibold leading-tight text-text">{entry.label}</span>
+            <span className="block text-[12px] text-text-3">{entry.hint}</span>
           </span>
         </button>
       ))}
       <button
         type="button"
         onClick={() => open(<CreateContentModal />)}
-        className="mt-2 flex h-11 items-center gap-2.5 rounded-[14px] border border-[var(--brand-line)] bg-[var(--brand-soft-2)] px-3.5 text-[14px] font-semibold text-[var(--brand-ink)] transition hover:bg-[var(--brand-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)]"
+        className="mt-2 flex h-10 items-center gap-2.5 rounded-[12px] border border-[var(--brand-line)] bg-[var(--brand-soft-2)] px-3 text-[13.5px] font-semibold text-[var(--brand-ink)] transition hover:bg-[var(--brand-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)]"
       >
         <span className="voom-create-btn grid h-6 w-6 place-items-center rounded-full text-white">
           <Icon name="sparkle" size={12} />

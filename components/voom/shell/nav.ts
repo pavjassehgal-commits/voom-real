@@ -27,7 +27,7 @@ export const NAV: NavGroup[] = [
   {
     g: "Workspace",
     items: [
-      { id: "today", n: "Today", i: "home" },
+      { id: "today", n: "Today", i: "house" },
       { id: "studio", n: "Create", i: "pencil" },
       { id: "calendar", n: "Calendar", i: "cal" },
       { id: "content", n: "Content", i: "file" },
@@ -37,7 +37,7 @@ export const NAV: NavGroup[] = [
   {
     g: "Automation",
     items: [
-      { id: "mara", n: "MARA", i: "sparkle" },
+      { id: "mara", n: "MARA", i: "sparkles" },
       { id: "plan", n: "Marketing Plan", i: "map" },
       { id: "approvals", n: "Approvals", i: "checkCircle" },
       { id: "automations", n: "Automations", i: "bolt" },
@@ -48,13 +48,13 @@ export const NAV: NavGroup[] = [
     items: [
       { id: "connections", n: "Channels", i: "share" },
       { id: "campaigns", n: "Campaigns", i: "folder" },
-      { id: "contacts", n: "Contacts", i: "user" },
+      { id: "contacts", n: "Contacts", i: "contacts" },
     ],
   },
   {
     g: "System",
     items: [
-      { id: "settings", n: "Settings", i: "cog" },
+      { id: "settings", n: "Settings", i: "settings" },
     ],
   },
 ];

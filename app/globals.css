@@ -624,7 +624,7 @@ body::before {
   --font-bricolage: var(--font-dm-sans);
   font-family: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
 
-  --bg: #f7f7f8;
+  --bg: #f6f6f7;
   --bg-soft: #f2f2f5;
   --surface: #fdfcfd;
   --surface-2: #f7f7fa;
@@ -646,7 +646,7 @@ body::before {
   --brand-soft-2: #f8f7ff;
   --brand-tile: #e6e2ff;
   --brand-line: #d6d0ff;
-  --create: linear-gradient(95deg, #8f5cfb 0%, #b45ff6 55%, #d062f1 100%);
+  --create: linear-gradient(95deg, #8645fa 0%, #a944f3 50%, #cc40ea 100%);
   --hero: radial-gradient(120% 140% at 85% 0%, #7b3fb0 0%, transparent 55%),
           linear-gradient(150deg, #4a35a0 0%, #3a2a7a 45%, #241c3a 100%);
 
@@ -677,13 +677,13 @@ body::before {
   --sidebar-line: #ebe9f1;
   --sidebar-line-2: #dddbe6;
   --sidebar-text: #1a1f30;
-  --sidebar-text-2: #262b3c;
+  --sidebar-text-2: #1d2233;
   --sidebar-text-3: #5f677a;
   --sidebar-text-active: #1a1f30;
   --sidebar-green-dot: #35ac8f;
 
-  --topbar-bg: rgba(247, 247, 248, 0.86);
-  --topbar-line: #ebe9f1;
+  --topbar-bg: rgba(250, 250, 250, 0.9);
+  --topbar-line: #e8e9ef;
 }
 
 :root[data-theme="dark"] .voom-shell {
