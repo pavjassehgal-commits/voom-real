@@ -72,6 +72,11 @@ const PATHS: Record<string, string> = {
   comment: '<path d="M21 11.5a8.5 8.5 0 01-12.3 7.6L3 21l1.9-5.4A8.5 8.5 0 1121 11.5z"/>',
   upload: '<path d="M12 15V4M7.5 8.5L12 4l4.5 4.5M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/>',
   arrowUp: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+  // Shell navigation set (Figma "15 — Today"): outline glyphs drawn at 1.75 stroke.
+  house: '<path d="M15 21v-7a1 1 0 00-1-1h-4a1 1 0 00-1 1v7"/><path d="M3 10a2 2 0 01.7-1.5l7-6a2 2 0 012.6 0l7 6A2 2 0 0121 10v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+  sparkles: '<path d="M10 3.5l1.7 4.8 4.8 1.7-4.8 1.7L10 16.5l-1.7-4.8L3.5 10l4.8-1.7z"/><path d="M18.5 15v5M16 17.5h5"/>',
+  contacts: '<path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 00-3-3.9M16 3.1a4 4 0 010 7.8"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8"/>',
   sun2: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/>',
 };
 
@@ -81,10 +86,12 @@ export function Icon({
   name,
   className,
   size = 16,
+  strokeWidth = 2,
 }: {
   name: IconName | string;
   className?: string;
   size?: number;
+  strokeWidth?: number;
 }) {
   const d = PATHS[name] ?? "";
   return (
@@ -92,7 +99,7 @@ export function Icon({
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="2"
+      strokeWidth={strokeWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
       width={size}

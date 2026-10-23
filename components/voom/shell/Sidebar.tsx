@@ -54,7 +54,7 @@ export function Sidebar() {
       >
         <div className="flex h-full min-h-0 flex-col rounded-[24px] border border-[var(--sidebar-line)] bg-[var(--sidebar-bg)] text-[var(--sidebar-text)] shadow-[var(--shadow-sm)]">
           {/* Brand */}
-          <div className="flex shrink-0 items-center justify-between gap-2 px-6 pb-4 pt-7">
+          <div className="flex shrink-0 items-center justify-between gap-2 px-6 pb-[26px] pt-[29px]">
             <Link href="/app/today" className="rounded-[10px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)]" aria-label="Voom — Today">
               <VoomLogo />
             </Link>
@@ -69,7 +69,7 @@ export function Sidebar() {
 
           {/* Navigation */}
           <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
-            <nav className="flex flex-col gap-5" aria-label="Main">
+            <nav className="flex flex-col gap-4" aria-label="Main">
               {NAV.map((group) => (
                 <div key={group.g}>
                   <div className="mb-1.5 px-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--sidebar-text-3)]">
@@ -97,11 +97,11 @@ export function Sidebar() {
                             className={cx(
                               "grid h-[30px] w-[30px] place-items-center rounded-[9px] transition-colors",
                               isActive
-                                ? "border border-[var(--brand-line)] bg-[var(--brand-tile)] text-[var(--sidebar-text-active)]"
+                                ? "border border-[#cfc4ff] bg-[#e3dcff] text-[var(--sidebar-text-active)]"
                                 : "text-[var(--sidebar-text-2)]",
                             )}
                           >
-                            <Icon name={item.i} size={18} />
+                            <Icon name={item.i} size={18} strokeWidth={1.75} />
                           </span>
                           <span className="min-w-0 flex-1 truncate tracking-[-0.01em]">{item.n}</span>
                           {isActive && !badge && (
@@ -126,25 +126,25 @@ export function Sidebar() {
 
           {/* Workspace context */}
           <div className="shrink-0 space-y-2.5 p-3">
-            <div className="rounded-[16px] border border-[var(--sidebar-line)] bg-[var(--sidebar-bg-2)] p-3">
+            <div className="rounded-[16px] border border-[var(--sidebar-line)] bg-[#f6f7fb] px-3 pb-3 pt-3">
               <div className="flex items-center gap-2.5">
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[linear-gradient(135deg,#8f5cfb,#d062f1)] text-[13px] font-bold text-white">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[linear-gradient(135deg,#7c3aed,#d946ef)] text-[13px] font-bold text-white">
                   {initial}
                 </span>
                 <div className="min-w-0">
-                  <div className="truncate text-[13.5px] font-semibold tracking-[-0.01em] text-[var(--sidebar-text)]">
+                  <div className="truncate text-[13.5px] font-bold leading-[1.25] tracking-[-0.01em] text-[var(--sidebar-text)]">
                     {`${workspaceName}${workspaceName === "Your" ? "" : "’s"} workspace`}
                   </div>
                   {/*
                     Billing plan display — deliberately separate from the
                     automation state below.
                   */}
-                  <div className="truncate text-[12px] text-[var(--sidebar-text-3)]">{`${planLabel} plan`}</div>
+                  <div className="truncate text-[12.5px] leading-[1.25] text-[var(--sidebar-text-3)]">{`${planLabel} plan`}</div>
                 </div>
               </div>
               {channels && (
-                <div className="mt-3">
-                  <div className="h-1.5 overflow-hidden rounded-full bg-[var(--sidebar-bg-3)]" role="progressbar" aria-valuemin={0} aria-valuemax={channels.total} aria-valuenow={channels.connected} aria-label="Channels connected">
+                <div className="mt-2.5">
+                  <div className="h-1 overflow-hidden rounded-full bg-[var(--sidebar-bg-3)]" role="progressbar" aria-valuemin={0} aria-valuemax={channels.total} aria-valuenow={channels.connected} aria-label="Channels connected">
                     <div className="h-full rounded-full bg-[linear-gradient(90deg,#8f5cfb,#d062f1)]" style={{ width: `${(channels.connected / channels.total) * 100}%` }} />
                   </div>
                   <div className="mt-1.5 text-[11.5px] text-[var(--sidebar-text-3)]">{`${channels.connected}/${channels.total} channels connected`}</div>
@@ -161,9 +161,9 @@ export function Sidebar() {
             <button
               type="button"
               onClick={() => goTo("pricing")}
-              className="flex h-[42px] w-full items-center justify-center gap-2 rounded-[14px] border border-[var(--sidebar-line)] bg-[var(--sidebar-bg-3)] text-[13.5px] font-medium text-[var(--sidebar-text)] transition hover:bg-[var(--sidebar-bg-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)]"
+              className="flex h-11 w-full items-center justify-center gap-2.5 rounded-[14px] bg-[#e4e6ec] text-[14px] font-medium text-[var(--sidebar-text)] transition hover:bg-[#dcdee6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)]"
             >
-              <Icon name="card" size={16} /> Plans & billing
+              <Icon name="card" size={18} strokeWidth={1.75} /> Plans & billing
             </button>
           </div>
         </div>

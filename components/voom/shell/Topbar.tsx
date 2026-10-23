@@ -156,7 +156,7 @@ function AppSearch() {
   }
 
   return (
-    <div className="relative hidden max-w-[480px] flex-1 md:block" ref={wrapRef}>
+    <div className="relative hidden w-[476px] min-w-0 shrink md:block" ref={wrapRef}>
       <Icon name="search" size={17} className="pointer-events-none absolute left-4 top-[13px] text-text-3" />
       <input
         ref={inputRef}
@@ -230,7 +230,7 @@ export function Topbar() {
   }
 
   return (
-    <header className="sticky top-0 z-30 flex h-[76px] items-center gap-2 border-b border-[var(--topbar-line)] bg-[var(--topbar-bg)] px-4 backdrop-blur-[16px] supports-[backdrop-filter]:bg-[var(--topbar-bg)] sm:gap-3 sm:px-6 lg:px-8">
+    <header className="sticky top-0 z-30 flex h-[72px] items-center gap-2 border-b border-[var(--topbar-line)] bg-[var(--topbar-bg)] px-4 backdrop-blur-[16px] supports-[backdrop-filter]:bg-[var(--topbar-bg)] sm:gap-3 sm:px-6 lg:px-8">
       {/* Mobile: menu + wordmark */}
       <IconBtn
         className="md:hidden !h-10 !w-10 rounded-[12px] border border-line bg-surface"
@@ -250,7 +250,7 @@ export function Topbar() {
 
       <button
         onClick={() => open(<CreateContentModal />)}
-        className="voom-create-btn hidden h-[44px] items-center gap-2 rounded-full px-5 text-[14.5px] font-semibold text-white shadow-[0_8px_20px_-10px_rgba(140,82,240,.85)] transition hover:brightness-[1.04] hover:shadow-[0_10px_24px_-10px_rgba(140,82,240,.95)] active:scale-[0.98] md:inline-flex"
+        className="voom-create-btn hidden h-[44px] items-center gap-2 rounded-full px-[18px] text-[14.5px] font-semibold text-white shadow-[0_4px_12px_-6px_rgba(134,69,250,.6)] transition hover:brightness-[1.04] hover:shadow-[0_6px_16px_-8px_rgba(134,69,250,.75)] active:scale-[0.98] md:inline-flex"
       >
         <Icon name="plus" size={16} />
         Create
