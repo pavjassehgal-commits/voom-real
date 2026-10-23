@@ -131,27 +131,57 @@ test("Today server rendering never calls a helper across a client-module boundar
   assert.doesNotMatch(serverSafeCx, /["']use client["']/);
 });
 
-test("mobile priority is coverage, Needs You, Next Up, week, performance, then MARA", async () => {
+test("mobile priority is notices, Next Up, week, engagement, performance, then MARA", async () => {
   const dashboard = await readFile(new URL("../components/voom/today/TodayDashboard.tsx", import.meta.url), "utf8");
-  const order = ["view.coverage.title", "<AttentionCard", "<NextUpCard", "<CoverageCard", "<PerformanceCard", "<MaraInsightCard"];
+  // Notices (coverage + Needs You) render above the card grid.
+  assert.ok(dashboard.indexOf("<Notices view={view} />") < dashboard.indexOf("<NextUpCard"), "coverage/attention notices come first");
+  // Inside the grid the reference's desktop columns are kept in source order;
+  // the single-column (mobile) priority is set explicitly with `order-*`.
+  const orderOf = (component) => {
+    const match = dashboard.match(new RegExp(`order-(\\d)[^"]*"><${component}`));
+    assert.ok(match, `${component} has an explicit mobile order`);
+    return Number(match[1]);
+  };
+  const order = ["NextUpCard", "WeekCard", "EngagementCard", "PerformanceCard", "MaraCard", "ChannelsCard", "RecentCard"];
   for (let index = 1; index < order.length; index += 1) {
-    assert.ok(dashboard.indexOf(order[index - 1]) < dashboard.indexOf(order[index]), `${order[index - 1]} must precede ${order[index]}`);
+    assert.ok(orderOf(order[index - 1]) < orderOf(order[index]), `${order[index - 1]} must precede ${order[index]} on mobile`);
   }
 });
 
 test("Today V2 has zero horizontal overflow at all required mobile widths", async (t) => {
   const component = await importApp("components/voom/today/TodayDashboard.tsx");
-  const workflow = item();
+  const { buildTodayMetrics } = await import("../lib/voom/today-metrics.ts");
+  const workflow = item({ caption: "A long caption that wraps across several lines to prove the Next Up card stays inside narrow mobile widths #launch #voom" });
+  const now = new Date("2026-09-24T12:00:00Z");
   const props = {
-    firstName: "Alexandria", greeting: "Good morning", automationMode: "manual",
+    firstName: "Alexandria", greeting: "Good morning", dateLabel: "Thursday, 24 Sept 2026", weekNumber: 39,
     view: buildTodayView(
-      { today: "2026-09-24", planValidUntil: "2026-09-30", items: [workflow] },
-      summary({ next: workflow }),
-      { gaps: [], needs: [] },
+      { today: "2026-09-24", planValidUntil: "2026-09-30", items: [workflow, item({ draftId: "draft-2", concept: "Second item with a much longer concept title", channelLabel: "TikTok" })] },
+      summary({ next: workflow, needsApproval: [item({ status: "needs_approval" })] }),
+      { gaps: [{ date: "2026-09-27" }], needs: [] },
     ),
     performance: { headline: null, measuredItems: 0, trend: null },
+    metrics: buildTodayMetrics([
+      { draftId: "draft-1", publishedAt: "2026-09-23T10:00:00Z", interactions: 18400, metrics: { reach: 24100, views: 31000 } },
+      { draftId: null, publishedAt: "2026-09-15T10:00:00Z", interactions: 14300, metrics: { reach: 19000 } },
+    ], now, "Asia/Dubai"),
+    ideas: [{ draftId: "draft-9", concept: "Customer story carousel with a long working title", contentType: "post", channel: "instagram" }],
+    ideaCount: 1,
+    channels: [
+      { id: "instagram", name: "Instagram", href: "/app/instagram", state: "connected" },
+      { id: "tiktok", name: "TikTok", href: "/app/tiktok", state: "not_connected" },
+      { id: "youtube", name: "YouTube", href: "/app/youtube", state: "unavailable" },
+      { id: "email", name: "Email", href: "/app/connections", state: "ready" },
+    ],
+    automationMode: "manual",
+    recent: [{ draftId: "draft-1", concept: "A real scheduled Reel with a long name", channel: "instagram", channelLabel: "Instagram", contentTypeLabel: "Reel", when: "Today, 6:30 PM", status: "published", statusLabel: "Published", mediaPreviewUrl: null, stats: { likes: 2400, comments: 120, shares: 24 } }],
   };
-  const html = await documentFrom(renderToStaticMarkup(h("div", { className: "min-h-screen bg-bg p-3 text-text" }, h(component.TodayDashboard, props))));
+  // Quick create opens the real Create modal, so Today renders inside the real
+  // app providers exactly as it does under the shell.
+  const { Providers } = await importApp("app/app/Providers.tsx");
+  const { businessRecord } = await importApp("tests/helpers/shell-surface.tsx");
+  const html = await documentFrom(renderToStaticMarkup(h(Providers, { initialDisplayName: "Alexandria", initialEmail: "alex@example.com", initialBusiness: businessRecord() },
+    h("div", { className: "voom-shell min-h-screen bg-bg p-3 text-text" }, h(component.TodayDashboard, props)))));
   let results;
   try {
     results = await measureRenderedPages([320, 354, 390, 430].map((width) => ({ name: `${width}px`, width, height: 920, html })));
@@ -165,4 +195,30 @@ test("Today V2 has zero horizontal overflow at all required mobile widths", asyn
     const contentOverflow = result.overflowing.filter((entry) => !/today-(spectrum|aurora|insight-glow)/.test(entry.className));
     assert.deepEqual(contentOverflow, [], `${result.name} content overflowed: ${JSON.stringify(contentOverflow)}`);
   }
+});
+
+test("Today engagement figures are sums of real measurements, never estimates", async () => {
+  const { buildTodayMetrics, compactNumber } = await import("../lib/voom/today-metrics.ts");
+  const now = new Date("2026-09-24T12:00:00Z");
+  const metrics = buildTodayMetrics([
+    { draftId: "a", publishedAt: "2026-09-23T10:00:00Z", interactions: 1000, metrics: { reach: 4000 } },
+    { draftId: "b", publishedAt: "2026-09-21T10:00:00Z", interactions: 500, metrics: {} },
+    { draftId: "c", publishedAt: "2026-09-20T10:00:00Z", interactions: null, metrics: { reach: 100 } },
+    { draftId: "d", publishedAt: "2026-09-14T10:00:00Z", interactions: 1200, metrics: { reach: 9000 } },
+    { draftId: "e", publishedAt: "2026-09-01T10:00:00Z", interactions: 9999, metrics: {} },
+  ], now, "Asia/Dubai");
+  assert.equal(metrics.engagement, 1500, "only posts published in the last 7 days, unmeasured posts excluded");
+  assert.equal(metrics.reach, 4100);
+  assert.equal(metrics.views, null, "a metric nobody measured is null, not zero");
+  assert.equal(metrics.measuredPosts, 2);
+  assert.equal(metrics.engagementChangePct, 25, "same definition vs the previous 7 days");
+  assert.equal(metrics.daily.length, 7);
+  assert.equal(metrics.daily.reduce((sum, day) => sum + day.value, 0), 1500);
+
+  const empty = buildTodayMetrics([], now, "Asia/Dubai");
+  assert.equal(empty.engagement, null);
+  assert.equal(empty.engagementChangePct, null, "no comparison without measured posts in both periods");
+  assert.equal(compactNumber(18400), "18.4K");
+  assert.equal(compactNumber(24000), "24K");
+  assert.equal(compactNumber(950), "950");
 });

@@ -44,6 +44,7 @@ const NAV_PATHS: Record<string, string> = {
   create: "/app/studio",
   studio: "/app/studio",
   calendar: "/app/calendar",
+  content: "/app/content",
   campaigns: "/app/campaigns",
   ads: "/app/ads",
   automations: "/app/automations",

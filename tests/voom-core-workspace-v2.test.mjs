@@ -121,7 +121,9 @@ test("the five redesigned surfaces share one vocabulary instead of five design s
     let usesPresentation = false;
     for (const file of files) {
       const source = withoutComments(await readRepoFile(file));
-      if (/@\/components\/voom\/workspace\/ui/.test(source)) usesPrimitives = true;
+      // The redesign's shared module (components/voom/redesign/ui) builds on the
+      // same presentation vocabulary, so either shared layer satisfies this.
+      if (/@\/components\/voom\/(workspace|redesign)\/ui/.test(source)) usesPrimitives = true;
       if (/@\/lib\/voom\/workflow\/presentation/.test(source)) usesPresentation = true;
       // One tone mapping, one channel identity: the old per-page colour maps are
       // gone, so a status can no longer be amber on one screen and red on another.
@@ -263,7 +265,9 @@ test("each surface really renders its loaded content at every width", async (t) 
   }
 });
 
-test("light mode keeps the refracted Voom workspace rather than flattening to white SaaS", async (t) => {
+test("light mode renders the redesign's light card surfaces (Batch 2)", async (t) => {
+  // The approved redesign (Figma "33 — Marketing Plan · Week view") replaces
+  // the frosted-glass panels and atmosphere layers with flat light cards.
   const [result] = (await measured([
     {
       name: "light tokens",
@@ -273,16 +277,13 @@ test("light mode keeps the refracted Voom workspace rather than flattening to wh
       onDocumentStart: startFor("plan"),
       evaluate: `(() => {
         const root = getComputedStyle(document.documentElement);
-        const panel = document.querySelector(".ws-panel");
-        const spectrum = document.querySelector(".ws-spectrum");
+        const card = document.querySelector(".voom-card");
         return {
           theme: document.documentElement.getAttribute("data-theme"),
           background: getComputedStyle(document.body).backgroundColor,
           iridescent: root.getPropertyValue("--iridescent").trim().slice(0, 40),
-          panelBackground: panel ? getComputedStyle(panel).backgroundColor : null,
-          panelIsTranslucent: panel ? getComputedStyle(panel).backgroundColor.includes("rgba") : false,
-          atmosphere: Boolean(spectrum),
-          spectrumFilter: spectrum ? getComputedStyle(spectrum).backgroundImage.slice(0, 60) : null,
+          hasCard: Boolean(card),
+          atmosphere: Boolean(document.querySelector(".ws-spectrum, .ws-aurora, .ws-orbit")),
           bodyText: document.body.innerText.slice(0, 200),
         };
       })()`,
@@ -292,10 +293,9 @@ test("light mode keeps the refracted Voom workspace rather than flattening to wh
 
   assert.equal(result.evaluate.theme, "light", "the default workspace is the light one");
   assert.equal(result.evaluate.background, "rgb(247, 248, 251)");
-  assert.match(result.evaluate.iridescent, /linear-gradient/, "the refracted spectrum token is still defined");
-  assert.equal(result.evaluate.atmosphere, true, "the atmospheric light volume is present in light mode too");
-  assert.match(result.evaluate.spectrumFilter ?? "", /gradient/, "the spectrum band keeps real colour in light mode");
-  assert.equal(result.evaluate.panelIsTranslucent, true, "workspace panels are frosted glass, not flat white");
+  assert.match(result.evaluate.iridescent, /linear-gradient/, "the brand spectrum token is still defined");
+  assert.equal(result.evaluate.hasCard, true, "the plan renders the redesign's card surfaces");
+  assert.equal(result.evaluate.atmosphere, false, "the flat redesign adds no decorative atmosphere layers");
 });
 
 test("the mobile shell survives the redesign: navigation stays and content is not clipped", async (t) => {

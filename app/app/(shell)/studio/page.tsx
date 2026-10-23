@@ -1,27 +1,16 @@
 "use client";
 
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useModal } from "@/lib/voom/modal";
-import { useVoomActions } from "@/lib/voom/store";
 import { Icon } from "@/components/voom/icons";
-import { CreateContentModal } from "@/components/voom/modals/CreateContentModal";
 import { PostEditorModal } from "@/components/voom/modals/PostEditorModal";
 import { SocialEditorModal } from "@/components/voom/modals/SocialEditorModal";
-import { Btn, Chip, Tag } from "@/components/voom/ui/primitives";
+import { BTN, ChannelGlyph, CreateStepper, PageHeader, StatusChip } from "@/components/voom/redesign/ui";
 import { isSocialVideoDraftKind, type SocialVideoDraftKind } from "@/lib/post/core";
-import {
-  ChannelPill,
-  Disclosure,
-  MetaChip,
-  Panel,
-  PanelHead,
-  ProgressDots,
-  QuietState,
-  SectionLabel,
-  WorkspaceFrame,
-  WorkspaceHeader,
-} from "@/components/voom/workspace/ui";
-import { channelClasses, channelIdentity } from "@/lib/voom/workflow/presentation";
+import { channelIdentity } from "@/lib/voom/workflow/presentation";
+import { cx } from "@/lib/voom/cx";
 
 type StudioKind = "instagram_post" | "reel" | "story" | SocialVideoDraftKind;
 
@@ -30,8 +19,6 @@ interface StudioPost {
   kind: StudioKind;
   typeLabel: string;
   concept: string;
-  format: string;
-  originLabel: string;
   internalState: "draft" | "approved" | "scheduled_internal" | "ready_to_publish";
   internalStateLabel: string;
   scheduledAt: string | null;
@@ -40,70 +27,60 @@ interface StudioPost {
   updatedAt: string;
 }
 
-/** The same internal-state vocabulary the studio read model already returns. */
-const STATE_TONE: Record<StudioPost["internalState"], string> = {
-  draft: "t-amber",
-  approved: "t-blue",
-  scheduled_internal: "t-green",
-  ready_to_publish: "t-green",
+interface PlanItem { draftId: string; concept: string; status: string; channel: string }
+
+/** Every format Voom really publishes, on the channel that publishes it. */
+const FORMATS: { kind: StudioKind; label: string; detail: string; icon: string; channel: "instagram" | "tiktok" | "youtube" }[] = [
+  { kind: "instagram_post", label: "Instagram Post", detail: "A single image or text update for the feed.", icon: "img", channel: "instagram" },
+  { kind: "reel", label: "Instagram Reel", detail: "Short vertical video, up to 90 seconds.", icon: "reel", channel: "instagram" },
+  { kind: "story", label: "Instagram Story", detail: "A quick update that disappears after 24 hours.", icon: "story", channel: "instagram" },
+  { kind: "tiktok_video", label: "TikTok Video", detail: "Vertical video with a hook and a one-line caption.", icon: "video", channel: "tiktok" },
+  { kind: "youtube_short", label: "YouTube Short", detail: "Short vertical video with a search-friendly title.", icon: "reel", channel: "youtube" },
+  { kind: "youtube_video", label: "YouTube Video", detail: "Long-form horizontal video with a title and description.", icon: "video", channel: "youtube" },
+];
+
+const DEFAULT_TITLES: Record<StudioKind, string> = {
+  instagram_post: "New Instagram Post",
+  reel: "New Reel",
+  story: "New Instagram Story",
+  tiktok_video: "New TikTok Video",
+  youtube_short: "New YouTube Short",
+  youtube_video: "New YouTube Video",
 };
 
-const STATE_ORDER: StudioPost["internalState"][] = ["draft", "approved", "scheduled_internal", "ready_to_publish"];
+const PLAN_OPEN_STATES = new Set(["needs_approval", "ready_for_review", "waiting_for_media", "generating", "draft"]);
 
 /**
- * The internal stages Voom tracks for one piece of work. The labels shown are
- * the read model's own labels — the Studio never invents a fifth stage, and
- * "Ready to publish" is explicitly an INTERNAL readiness, not a publication.
+ * Create · Compose (Figma "21 — Create · Empty state", Keep).
+ * Step 1 of Compose → Preview → Schedule. Choosing a format and continuing
+ * creates a real draft through the existing `/api/posts` create route, then
+ * the flow continues on that draft. Existing drafts reopen in the existing
+ * Post / Social editors. Nothing is published from this screen.
  */
-const STAGE_COPY: Record<StudioPost["internalState"], { label: string; hint: string }> = {
-  draft: { label: "Draft", hint: "Being written. Nothing is scheduled and nothing leaves Voom." },
-  approved: { label: "Approved", hint: "You approved it. It needs a schedule and a stored visual." },
-  scheduled_internal: { label: "Scheduled internally", hint: "Approved with a time, still missing its visual." },
-  ready_to_publish: { label: "Ready to publish", hint: "Approved, scheduled and holding a real stored visual." },
-};
-
-/** Which channel identity a Studio draft belongs to. */
-const KIND_CHANNEL: Record<StudioKind, "instagram" | "tiktok" | "youtube"> = {
-  instagram_post: "instagram",
-  reel: "instagram",
-  story: "instagram",
-  tiktok_video: "tiktok",
-  youtube_short: "youtube",
-  youtube_video: "youtube",
-};
-
-interface FormatChoice { kind: StudioKind; channel: "instagram" | "tiktok" | "youtube"; label: string; detail: string }
-
-const FORMATS: FormatChoice[] = [
-  { kind: "instagram_post", channel: "instagram", label: "Instagram Post", detail: "1:1 or 4:5 feed post with caption, CTA and hashtags." },
-  { kind: "reel", channel: "instagram", label: "Reel", detail: "9:16 video — film it yourself, import one, or Create with MARA." },
-  { kind: "story", channel: "instagram", label: "Instagram Story", detail: "9:16 full-screen visual. Stories carry no caption." },
-  { kind: "tiktok_video", channel: "tiktok", label: "TikTok Video", detail: "Vertical video: hook, beats and a one-line caption." },
-  { kind: "youtube_short", channel: "youtube", label: "YouTube Short", detail: "Short vertical video with a search-friendly title." },
-  { kind: "youtube_video", channel: "youtube", label: "YouTube Video", detail: "Longer form: title, full description and outline." },
-];
-
-const CHANNEL_STARTS: { channel: "instagram" | "tiktok" | "youtube"; note: string }[] = [
-  { channel: "instagram", note: "Posts, Reels and Stories. Real publishing through your connected account." },
-  { channel: "tiktok", note: "TikTok-native videos. Published only after TikTok's own post status confirms." },
-  { channel: "youtube", note: "Shorts and full videos. Published only after YouTube confirms processing." },
-];
-
 export default function StudioPage() {
+  const router = useRouter();
   const { open } = useModal();
-  const { goTo } = useVoomActions();
   const [posts, setPosts] = useState<StudioPost[]>([]);
-  const [error, setError] = useState("");
+  const [plan, setPlan] = useState<PlanItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [channelFilter, setChannelFilter] = useState<"all" | "instagram" | "tiktok" | "youtube">("all");
-  const [stateFilter, setStateFilter] = useState<"all" | StudioPost["internalState"]>("all");
+  const [error, setError] = useState("");
+  const [kind, setKind] = useState<StudioKind | null>(null);
+  const [idea, setIdea] = useState("");
+  const [busy, setBusy] = useState<"mara" | "continue" | "save" | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch("/api/posts", { cache: "no-store" });
-      const body = await response.json() as { posts?: StudioPost[]; error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Your content couldn't load.");
+      const [postsResponse, workflowResponse] = await Promise.all([
+        fetch("/api/posts", { cache: "no-store" }),
+        fetch("/api/voom/workflow", { cache: "no-store" }).catch(() => null),
+      ]);
+      const body = await postsResponse.json() as { posts?: StudioPost[]; error?: string };
+      if (!postsResponse.ok) throw new Error(body.error ?? "Your content couldn't load.");
       setPosts(body.posts ?? []);
+      if (workflowResponse?.ok) {
+        const workflow = await workflowResponse.json() as { snapshot?: { items?: PlanItem[] } };
+        setPlan((workflow.snapshot?.items ?? []).filter((item) => PLAN_OPEN_STATES.has(item.status)).slice(0, 3));
+      }
       setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Your content couldn't load.");
@@ -120,263 +97,179 @@ export default function StudioPage() {
     return () => window.removeEventListener("voom:data-changed", refresh);
   }, [load]);
 
-  const counts = useMemo(() => posts.reduce(
-    (acc, post) => ({ ...acc, [post.internalState]: (acc[post.internalState] ?? 0) + 1 }),
-    {} as Record<string, number>,
-  ), [posts]);
+  const recent = useMemo(() => [...posts].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0, 3), [posts]);
+  const chosen = FORMATS.find((entry) => entry.kind === kind) ?? null;
 
-  const visible = useMemo(
-    () => posts.filter((post) =>
-      (channelFilter === "all" || KIND_CHANNEL[post.kind] === channelFilter)
-      && (stateFilter === "all" || post.internalState === stateFilter)),
-    [posts, channelFilter, stateFilter],
-  );
+  /** Creates the draft through the existing create route, then continues the flow on it. */
+  async function start(mode: "mara" | "continue" | "save") {
+    if (!kind) return;
+    setBusy(mode);
+    setError("");
+    try {
+      const response = await fetch("/api/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, origin: mode === "mara" ? "mara" : "own_asset", concept: idea.trim().slice(0, 160) || DEFAULT_TITLES[kind] }),
+      });
+      const body = await response.json() as { id?: string; error?: string };
+      if (!response.ok || !body.id) throw new Error(body.error ?? "Voom couldn't start that draft.");
+      window.dispatchEvent(new Event("voom:data-changed"));
+      if (mode === "save") {
+        router.push(`/app/content/${body.id}`);
+      } else {
+        router.push(`/app/studio/${body.id}`);
+        // Compose happens in the existing editor for this format.
+        open(isSocialVideoDraftKind(kind)
+          ? <SocialEditorModal draftId={body.id} onChanged={() => router.refresh()} />
+          : <PostEditorModal postId={body.id} onChanged={() => router.refresh()} />);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Voom couldn't start that draft.");
+      setBusy(null);
+    }
+  }
 
-  const openDraft = useCallback((post: StudioPost) => {
-    open(isSocialVideoDraftKind(post.kind)
-      ? <SocialEditorModal draftId={post.id} onChanged={() => void load()} />
-      : <PostEditorModal postId={post.id} onChanged={() => void load()} />);
-  }, [open, load]);
-
-  const create = () => open(<CreateContentModal onChanged={() => void load()} />);
+  const checks = [
+    { label: "Format", done: Boolean(kind) },
+    { label: "Media", done: false },
+    { label: "Channel", done: Boolean(kind) },
+    { label: "Caption", done: false },
+  ];
 
   return (
-    <WorkspaceFrame>
-      <WorkspaceHeader
-        eyebrow="Create · Studio"
-        title="Create content"
-        question="What am I creating, and how close is each piece to ready?"
-        description="One Studio for every platform Voom actually publishes to. Drafts, approvals and internal schedules live here; publishing happens later through each channel's own queue."
-        meta={<>
-          {STATE_ORDER.map((state) => (
-            <MetaChip key={state}>{STAGE_COPY[state].label} <b className="ml-1 text-text">{counts[state] ?? 0}</b></MetaChip>
-          ))}
-        </>}
-        actions={<>
-          <Btn variant="ghost" size="sm" onClick={() => goTo("calendar")}>
-            <Icon name="cal" size={14} /> Content Calendar
-          </Btn>
-          <Btn variant="brand" size="sm" onClick={create}>
-            <Icon name="plus" size={14} /> Create content
-          </Btn>
-        </>}
-      />
+    <div className="min-w-0 pb-24">
+      <PageHeader title="What do you want to create?" subtitle="Pick a format to start. You can change it later." actions={<CreateStepper step={1} />} />
 
-      {error ? <div role="alert" className="relative z-10 mb-3.5 rounded-2xl border border-red/35 bg-red/10 px-4 py-3 text-[13px] text-red">{error}</div> : null}
+      {error && <div role="alert" className="mb-4 rounded-[16px] border border-[var(--red)]/30 bg-[var(--red-soft)] px-4 py-3 text-[14px] text-[var(--red)]">{error}</div>}
 
-      {/* ── How close is it to ready ─────────────────────────────────────── */}
-      <Panel className="relative z-10 mb-3.5">
-        <PanelHead
-          icon="trend"
-          title="How close is it to ready"
-          hint="These are Voom's internal stages. Provider confirmation is a separate, later step — the Studio never marks anything published."
-        />
-        {/* Two stages per row on a phone: the four readiness stages stay
-            scannable instead of costing a full screen each. */}
-        <ol className="mt-4 grid min-w-0 grid-cols-2 gap-2 lg:grid-cols-4">
-          {STATE_ORDER.map((state, index) => (
-            <li key={state} className="min-w-0 rounded-2xl border border-line bg-[var(--surface)]/70 p-3.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">Stage {index + 1}</span>
-                <b className="font-display text-[19px] font-semibold tracking-[-0.02em]">{counts[state] ?? 0}</b>
-              </div>
-              <p className="mt-1.5 text-[13px] font-semibold text-text">{STAGE_COPY[state].label}</p>
-              <p className="mt-1 text-[11.5px] leading-relaxed text-text-3">{STAGE_COPY[state].hint}</p>
-            </li>
-          ))}
-        </ol>
-      </Panel>
-
-      {/* ── Start something new ──────────────────────────────────────────── */}
-      <Panel className="relative z-10 mb-3.5">
-        <PanelHead
-          icon="plus"
-          title="Start something new"
-          hint="Pick the platform, then the native format. Voom keeps the draft internal until you approve it."
-        />
-        <div className="mt-4 grid min-w-0 gap-3 lg:grid-cols-3">
-          {CHANNEL_STARTS.map((entry) => (
-            <div key={entry.channel} className="min-w-0 rounded-2xl border border-line bg-[var(--surface)]/70 p-3.5">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className={`h-2 w-2 flex-none rounded-full ${channelClasses(entry.channel).dot}`} aria-hidden="true" />
-                <b className="text-[14px] font-semibold">{channelIdentity(entry.channel).label}</b>
-              </div>
-              <p className="mt-1 text-[11.5px] leading-relaxed text-text-3">{entry.note}</p>
-              <div className="mt-3 min-w-0 space-y-1.5">
-                {FORMATS.filter((format) => format.channel === entry.channel).map((format) => (
-                  <button
-                    key={format.kind}
-                    type="button"
-                    onClick={() => open(<CreateContentModal onChanged={() => void load()} startWith={format.channel} />)}
-                    className="ws-row flex w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-line bg-surface px-3 py-2 text-left transition hover:border-brand"
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate text-[12.5px] font-semibold text-text">{format.label}</span>
-                      <span className="mt-0.5 block text-[11px] leading-snug text-text-3">{format.detail}</span>
-                    </span>
-                    <Icon name="arrow" size={13} className="flex-none text-text-3" />
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5 xl:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
+        <div className="flex min-w-0 flex-col gap-5">
+          <section className="voom-card p-5 sm:p-6" aria-labelledby="create-format">
+            <h2 id="create-format" className="text-[17px] font-semibold text-text">Choose a format</h2>
+            <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3" role="radiogroup" aria-label="Format">
+              {FORMATS.map((entry) => {
+                const selected = kind === entry.kind;
+                return (
+                  <button key={entry.kind} type="button" role="radio" aria-checked={selected} onClick={() => setKind(entry.kind)}
+                    className={cx("flex min-h-[176px] min-w-0 flex-col rounded-[16px] border p-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)]",
+                      selected ? "border-[var(--brand)] bg-[var(--brand-soft-2)] shadow-[0_0_0_3px_var(--brand-soft)]" : "border-line bg-[linear-gradient(180deg,var(--surface),var(--brand-soft-2))] hover:border-[var(--brand-line)]")}>
+                    <span className="grid h-9 w-9 place-items-center rounded-[10px] bg-surface text-text-2 ring-1 ring-line"><Icon name={entry.icon} size={17} /></span>
+                    <span className="mt-4 text-[15px] font-semibold text-text">{entry.label}</span>
+                    <span className="mt-1.5 flex-1 text-[13px] leading-relaxed text-text-2">{entry.detail}</span>
+                    <span className="mt-3 flex items-center gap-1.5 text-[12px] text-text-2"><ChannelGlyph channel={entry.channel} size={16} />{channelIdentity(entry.channel).label}</span>
                   </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="voom-card p-5 sm:p-6" aria-labelledby="create-mara">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="voom-create-btn grid h-8 w-8 place-items-center rounded-[10px] text-white"><Icon name="sparkle" size={14} /></span>
+              <h2 id="create-mara" className="text-[17px] font-semibold text-text">Or start with MARA</h2>
+              <p className="text-[13.5px] text-text-2">Describe the idea — it becomes the draft’s working title, and MARA creates the visual when you ask it to.</p>
+            </div>
+            <div className="mt-4 flex min-w-0 flex-col gap-3 sm:flex-row">
+              <label className="min-w-0 flex-1">
+                <span className="sr-only">Describe the idea</span>
+                <input value={idea} onChange={(event) => setIdea(event.target.value)} maxLength={160} placeholder="e.g. A Reel showing our 3-step evening skincare routine" className={cx(BTN.field, "w-full")} />
+              </label>
+              <button type="button" className={BTN.primary} disabled={!kind || !idea.trim() || busy !== null} onClick={() => void start("mara")}>
+                {busy === "mara" ? "Starting…" : "Draft with MARA"}
+              </button>
+            </div>
+            {!kind && <p className="mt-2 text-[12.5px] text-text-3">Choose a format first so MARA drafts the right kind of post.</p>}
+            {plan.length > 0 && (
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <span className="text-[13.5px] text-text-2">From this week’s plan:</span>
+                {plan.map((item) => (
+                  <Link key={item.draftId} href={`/app/studio/${item.draftId}`} className="max-w-full truncate rounded-full border border-[var(--brand-line)] bg-[var(--brand-soft-2)] px-3.5 py-1.5 text-[13.5px] font-semibold text-[var(--brand-ink)] hover:bg-[var(--brand-soft)]">{item.concept}</Link>
                 ))}
               </div>
+            )}
+          </section>
+
+          <section className="voom-card p-5 sm:p-6" aria-labelledby="create-continue">
+            <div className="flex items-center justify-between gap-3">
+              <h2 id="create-continue" className="text-[17px] font-semibold text-text">Continue where you left off</h2>
+              <Link href="/app/content?tab=drafts" className="text-[13.5px] font-medium text-[var(--brand-ink)] hover:opacity-80">All drafts</Link>
             </div>
-          ))}
-        </div>
-
-        <div className="mt-3 flex min-w-0 flex-col gap-2 rounded-2xl border border-line bg-surface-2 p-3.5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <span className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-text">
-              <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--ch-email)" }} />
-              Email
-            </span>
-            <p className="mt-1 text-[11.5px] leading-relaxed text-text-3">
-              Email is not created in the Studio. Voom drafts and sends email in Campaigns and Email Flows, on its own cadence — it never fills a social slot.
-            </p>
-          </div>
-          <div className="flex flex-none flex-wrap gap-2">
-            <Btn variant="outline" size="sm" onClick={() => goTo("campaigns")}>Campaigns</Btn>
-            <Btn variant="ghost" size="sm" onClick={() => goTo("automations")}>Email Flows</Btn>
-          </div>
-        </div>
-
-        <div className="mt-3 min-w-0 rounded-2xl border border-line bg-surface-2 p-3.5">
-          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-            <div className="min-w-0">
-              <span className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-text">
-                <Icon name="film" size={13} className="text-text-2" /> MARA Reel workflow
-              </span>
-              <p className="mt-1 text-[11.5px] leading-relaxed text-text-3">
-                Concept, script, asset pack and the playable preview stay under Approvals — film it yourself, use an existing asset, or Create with MARA.
-              </p>
-            </div>
-            <Btn variant="outline" size="sm" onClick={() => goTo("approvals")}>Open Approvals</Btn>
-          </div>
-        </div>
-      </Panel>
-
-      {/* ── Everything you are creating ──────────────────────────────────── */}
-      <Panel className="relative z-10">
-        <PanelHead
-          icon="film"
-          title="Everything you're creating"
-          hint={posts.length ? `${posts.length} draft${posts.length === 1 ? "" : "s"} in the Studio — open one to edit, upload media or schedule it.` : undefined}
-          action={posts.length > 0 ? (
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              <Chip active={channelFilter === "all"} onClick={() => setChannelFilter("all")}>All channels</Chip>
-              {(["instagram", "tiktok", "youtube"] as const).map((channel) => (
-                <Chip key={channel} active={channelFilter === channel} onClick={() => setChannelFilter(channel)}>
-                  {channelIdentity(channel).label}
-                </Chip>
-              ))}
-            </div>
-          ) : undefined}
-        />
-
-        {posts.length > 0 && (
-          <div className="mt-3 flex min-w-0 flex-wrap items-center gap-1.5">
-            <Chip active={stateFilter === "all"} onClick={() => setStateFilter("all")}>Any stage</Chip>
-            {STATE_ORDER.map((state) => (
-              <Chip key={state} active={stateFilter === state} onClick={() => setStateFilter(state)}>
-                {STAGE_COPY[state].label}
-              </Chip>
-            ))}
-          </div>
-        )}
-
-        {loading ? <p className="py-8 text-center text-[13px] text-text-3">Loading your content…</p> : null}
-
-        {!loading && !posts.length ? (
-          <QuietState icon="spark" title="Nothing here yet">
-            <p>Choose <b>Create content</b> and pick a platform — Instagram, TikTok or YouTube. The draft stays inside Voom until you approve it.</p>
-            <div className="mt-4"><Btn variant="brand" onClick={create}><Icon name="plus" size={14} /> Create content</Btn></div>
-          </QuietState>
-        ) : null}
-
-        {!loading && posts.length > 0 && visible.length === 0 ? (
-          <QuietState icon="filter" title="Nothing matches these filters">
-            <p>No draft in this channel and stage combination. Clear a filter to see the rest of your work.</p>
-            <div className="mt-4"><Btn variant="outline" size="sm" onClick={() => { setChannelFilter("all"); setStateFilter("all"); }}>Clear filters</Btn></div>
-          </QuietState>
-        ) : null}
-
-        {visible.length > 0 && (
-          <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {visible.map((post) => (
-              <article key={post.id} className="ws-row group min-w-0 overflow-hidden rounded-2xl border border-line bg-[var(--surface)]/70">
-                <button type="button" onClick={() => openDraft(post)} className="block w-full min-w-0 text-left">
-                  <div className="relative grid h-[104px] place-items-center bg-surface-2">
-                    {post.visual?.previewUrl && !post.visual.mimeType.startsWith("video/") ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={post.visual.previewUrl} alt={post.visual.displayName} className="h-full w-full object-cover" />
-                    ) : (
-                      <span className="flex flex-col items-center gap-1.5 text-[11.5px] text-text-3">
-                        <Icon name={post.visualReady ? "play" : "img"} size={18} />
-                        {post.visualReady ? "Video stored privately" : "No visual yet"}
+            {loading ? <p className="mt-4 text-[14px] text-text-3">Loading your recent work…</p> : recent.length ? (
+              <ul className="mt-3 divide-y divide-line">
+                {recent.map((post) => (
+                  <li key={post.id} className="flex min-w-0 items-center gap-3 py-3">
+                    <Link href={`/app/studio/${post.id}`} className="flex min-w-0 flex-1 items-center gap-3">
+                      <span className="relative grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-[10px] bg-[var(--brand-soft)] text-[var(--brand-ink)]">
+                        {post.visual?.previewUrl && !post.visual.mimeType.startsWith("video")
+                          // eslint-disable-next-line @next/next/no-img-element -- short-lived signed preview URL
+                          ? <img src={post.visual.previewUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+                          : <Icon name={isSocialVideoDraftKind(post.kind) || post.kind === "reel" ? "video" : "img"} size={16} />}
                       </span>
-                    )}
-                    <span className="absolute left-2 top-2"><ChannelPill channel={KIND_CHANNEL[post.kind]} format={undefined} dense /></span>
-                  </div>
-                  <div className="min-w-0 p-3.5">
-                    <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-                      <Tag tone="t-brand">{post.typeLabel}</Tag>
-                      <Tag tone={STATE_TONE[post.internalState]}>{post.internalStateLabel}</Tag>
-                      <Tag tone="t-grey">{post.format}</Tag>
-                    </div>
-                    <b className="block truncate text-[14px]">{post.concept || "Untitled"}</b>
-                    <span className="mt-1 block truncate text-[11.5px] text-text-3">
-                      {post.originLabel}
-                      {post.scheduledAt ? ` · ${formatStudioSchedule(post.scheduledAt)}` : ""}
-                    </span>
-                    <ProgressDots className="mt-2.5" steps={readinessOf(post)} />
-                  </div>
-                </button>
-
-                <div className="border-t border-line px-3.5 py-2">
-                  <Disclosure summary="What this stage means">
-                    <div className="space-y-1.5 text-[11.5px] leading-relaxed text-text-2">
-                      <p>{STAGE_COPY[post.internalState].hint}</p>
-                      <p className="text-text-3">
-                        {post.visualReady
-                          ? `Visual stored privately in Voom${post.visual?.displayName ? `: ${post.visual.displayName}` : ""}.`
-                          : "No stored visual yet — Voom will not queue anything without one."}
-                      </p>
-                      <p className="text-text-3">
-                        Approved and scheduled work appears on the Content Calendar and publishes only after the provider
-                        itself confirms it. Uploading or editing here never spends a generation credit.
-                      </p>
-                    </div>
-                  </Disclosure>
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-
-        <div className="mt-4 min-w-0 rounded-2xl bg-surface-2 px-3.5 py-3">
-          <SectionLabel>The publishing truth</SectionLabel>
-          <p className="mt-1.5 text-[11.5px] leading-relaxed text-text-3">
-            Approved items with a schedule and a stored visual publish to your connected accounts at their scheduled time.
-            Voom marks something “Published” only after the provider itself confirms it: Instagram&apos;s media id,
-            TikTok&apos;s own PUBLISH_COMPLETE post status, or YouTube&apos;s processed video. The Studio never generates
-            media on its own and never spends a credit without your explicit action.
-          </p>
+                      <span className="min-w-0">
+                        <span className="block truncate text-[14.5px] font-semibold text-text">{post.concept || "Untitled"}</span>
+                        <span className="block truncate text-[13px] text-text-2">{post.typeLabel} · Edited {relative(post.updatedAt)}</span>
+                      </span>
+                    </Link>
+                    <StatusChip status={post.internalState === "draft" ? "draft" : "scheduled"} label={post.internalStateLabel} small />
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="mt-3 text-[14px] text-text-2">No drafts yet — choose a format above to start your first one.</p>}
+          </section>
         </div>
-      </Panel>
-    </WorkspaceFrame>
+
+        <aside className="flex min-w-0 flex-col gap-5">
+          <section className="voom-card p-5 sm:p-6" aria-labelledby="create-preview">
+            <h2 id="create-preview" className="text-[17px] font-semibold text-text">Preview</h2>
+            <div className="mt-4 grid place-items-center rounded-[16px] bg-surface-2 px-6 py-8 text-center">
+              <span className={cx("grid place-items-center rounded-[12px] border border-dashed border-line-2 text-text-3", chosen?.kind === "youtube_video" ? "h-[72px] w-[128px]" : chosen?.kind === "instagram_post" ? "h-[96px] w-[96px]" : "h-[150px] w-[96px]")}>
+                <Icon name="eye" size={20} />
+              </span>
+              <p className="mt-4 text-[15px] font-semibold text-text">{chosen ? `${chosen.label} selected` : "Nothing to preview yet"}</p>
+              <p className="mt-1 max-w-xs text-[13px] leading-relaxed text-text-2">{chosen ? "Continue to add the caption and media, then preview exactly what will publish." : "Choose a format and add media to see how it will look on its channel."}</p>
+            </div>
+          </section>
+
+          <section className="voom-card p-5 sm:p-6" aria-labelledby="create-ready">
+            <div className="flex items-center justify-between">
+              <h2 id="create-ready" className="text-[15px] font-semibold text-text">Ready to schedule</h2>
+              <span className="text-[13px] text-text-2">{checks.filter((check) => check.done).length} of {checks.length}</span>
+            </div>
+            <ul className="mt-3 space-y-2.5">
+              {checks.map((check) => (
+                <li key={check.label} className="flex items-center gap-3 text-[14px]">
+                  <span className={cx("grid h-5 w-5 place-items-center rounded-full", check.done ? "bg-[var(--green-soft)] text-[var(--green)]" : "border border-dashed border-line-2")}>{check.done && <Icon name="check" size={11} />}</span>
+                  <span className={check.done ? "font-semibold text-text" : "text-text-2"}>{check.label}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-4 border-t border-line pt-3 text-[12.5px] leading-relaxed text-text-3">
+              Publishing truth: nothing leaves Voom until you schedule and approve a post, and it shows Published only after the platform confirms it.
+            </p>
+          </section>
+        </aside>
+      </div>
+
+      <div className="fixed inset-x-0 bottom-[68px] z-20 border-t border-line bg-[var(--topbar-bg)] backdrop-blur-[16px] md:bottom-0 md:left-[264px]">
+        <div className="mx-auto flex max-w-[1280px] items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-10">
+          <p className="hidden truncate text-[14px] text-text-2 sm:block">{chosen ? `${chosen.label} — ${chosen.detail}` : "Choose a format to begin"}</p>
+          <div className="flex flex-1 justify-end gap-2.5 sm:flex-none">
+            <button type="button" className={cx(BTN.quiet, "rounded-full")} disabled={!kind || busy !== null} onClick={() => void start("save")}>{busy === "save" ? "Saving…" : "Save draft"}</button>
+            <button type="button" className={BTN.primary} disabled={!kind || busy !== null} onClick={() => void start("continue")}>
+              {busy === "continue" ? "Starting…" : "Continue"} <Icon name="arrow" size={15} />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
-/** The Studio's own readiness read-out, from its own real fields. */
-function readinessOf(post: StudioPost): { label: string; done: boolean }[] {
-  return [
-    { label: "Visual", done: post.visualReady },
-    { label: "Approved", done: post.internalState !== "draft" },
-    { label: "Scheduled", done: post.internalState === "scheduled_internal" || post.internalState === "ready_to_publish" },
-  ];
-}
-
-/** Local, human-readable schedule line for a Studio draft (account timezone). */
-function formatStudioSchedule(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString("en-GB", { timeZone: "Asia/Dubai", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+function relative(iso: string) {
+  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
+  if (!Number.isFinite(minutes)) return "recently";
+  if (minutes < 60) return `${Math.max(1, minutes)} min ago`;
+  if (minutes < 1440) return `${Math.round(minutes / 60)}h ago`;
+  const days = Math.round(minutes / 1440);
+  return days === 1 ? "yesterday" : `${days} days ago`;
 }

@@ -170,5 +170,5 @@ test("desktop still renders the page head on one row", async (t) => {
   // desktop arrangement, unchanged by the responsive fix.
   assert.ok(result.evaluate.controlLeft > result.evaluate.titleRight, "desktop keeps the actions to the right of the title");
   assert.ok(Math.abs(result.evaluate.controlTop - result.evaluate.titleTop) < 40, "desktop keeps the actions on the title's row");
-  assert.equal(result.evaluate.sidebarWidth, 268, "the approved sidebar proportion is unchanged");
+  assert.equal(result.evaluate.sidebarWidth, 264, "the approved sidebar proportion (redesign Batch 1) is unchanged");
 });

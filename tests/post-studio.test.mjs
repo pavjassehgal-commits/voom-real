@@ -612,7 +612,8 @@ test("the Create content entry point is reachable from navigation and the calend
   const store = await read("lib/voom/store.tsx");
   assert.match(store, /studio: "\/app\/studio"/);
   const page = await read("app/app/(shell)/studio/page.tsx");
-  assert.match(page, /title="Create content"/);
+  // Redesign Batch 2 (Figma "21 — Create · Empty state"): the Create page title.
+  assert.match(page, /title="What do you want to create\?"/);
   assert.match(page, /Instagram Post/);
   assert.match(page, /Reel/);
   assert.match(page, /fetch\("\/api\/posts"/);

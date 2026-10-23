@@ -25,7 +25,7 @@ type Kind = "instagram_post" | "reel" | "story" | "tiktok_video" | "youtube_shor
  * appears only after the provider's own confirmation — the flow says so
  * plainly and never claims a publication.
  */
-export function CreateContentModal({ onChanged, startWith }: {
+export function CreateContentModal({ onChanged, startWith, startStep }: {
   onChanged?: () => void;
   /**
    * Optional entry point: when the caller already knows the platform (for
@@ -34,10 +34,16 @@ export function CreateContentModal({ onChanged, startWith }: {
    * the flow is unchanged and starts on the platform step.
    */
   startWith?: Platform;
+  /**
+   * Optional entry point for a known format (Today's Quick create: Post,
+   * Reel, Story, Video). Opens that format's own step on its platform; the
+   * rest of the flow — and every create path — is unchanged.
+   */
+  startStep?: Kind;
 }) {
   const { open, close } = useModal();
-  const [platform, setPlatform] = useState<Platform>(startWith ?? "instagram");
-  const [step, setStep] = useState<Step>(startWith ? "choose" : "platform");
+  const [platform, setPlatform] = useState<Platform>(startStep ? platformForKind(startStep) : startWith ?? "instagram");
+  const [step, setStep] = useState<Step>(startStep ?? (startWith ? "choose" : "platform"));
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -313,3 +319,11 @@ function Choice({ icon, title, body, onClick, busy, href }: {
     </button>
   );
 }
+
+function platformForKind(kind: Kind): Platform {
+  if (kind === "tiktok_video") return "tiktok";
+  if (kind === "youtube_short" || kind === "youtube_video") return "youtube";
+  return "instagram";
+}
+
+export type CreateContentKind = Kind;
