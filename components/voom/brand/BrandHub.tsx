@@ -1,0 +1,428 @@
+"use client";
+
+/**
+ * Brand Hub (Brand Kit v2, slice 2).
+ *
+ * One scrolling page: every section reads as plain paragraphs, Edit turns it
+ * into fields in place, Save appends a kit version through the carry-forward
+ * rule (only that section's fields change). `mode="onboarding"` is the same
+ * component as the last wizard screen (slice 3): it hides History and the
+ * operating section and offers "Looks right" instead.
+ */
+import { useEffect, useMemo, useState } from "react";
+import { Icon } from "@/components/voom/icons";
+import { AutomationMode } from "@/components/voom/operating/AutomationMode";
+import { Btn, Card, Chip, Field, Input, Tag, Textarea } from "@/components/voom/ui/primitives";
+import { saveBrandSection } from "@/lib/brand/actions";
+import {
+  answerKeyLabel, AVOID_RULES, BRAND_SECTIONS, brandSectionMeta,
+  type BrandKitVersionView, type BrandSectionId, type BrandSectionValues,
+} from "@/lib/brand/sections";
+import type { PlanId } from "@/lib/billing/plans";
+import { AUTOMATION_MODE_EVENT, AUTOMATION_MODE_LABELS, type AutomationModeValue } from "@/lib/voom/automation";
+import { OB_TONE, Q_CHANNELS, Q_CUSTOMER, Q_FREQ, Q_GOAL, Q_INDUSTRY } from "@/lib/voom/onboardingData";
+
+export interface BrandHubProps {
+  mode: "hub" | "onboarding";
+  initialValues: BrandSectionValues;
+  history: BrandKitVersionView[];
+  plan: PlanId;
+  automation: AutomationModeValue;
+  /** Onboarding mode only: "Looks right". */
+  onDone?: () => void;
+}
+
+const SOURCE_LABELS: Record<string, string> = {
+  onboarding: "Onboarding",
+  brand_hub: "Brand page",
+  extraction: "MARA's reading",
+};
+
+function formatDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/**
+ * A list typed as free text (one per line, or comma-separated). The box keeps
+ * exactly what the user types, including a trailing comma or newline, and the
+ * parsed list is only emitted alongside; re-deriving the text from the list on
+ * every keystroke would swallow separators as they are typed.
+ */
+function ListText({ items, separator, rows, disabled, onChange }: { items: string[]; separator: "line" | "comma"; rows?: number; disabled?: boolean; onChange: (next: string[]) => void }) {
+  const [text, setText] = useState(items.join(separator === "line" ? "\n" : ", "));
+  const parse = (value: string) => (separator === "line" ? value.split("\n") : value.split(",")).map((part) => part.trim()).filter(Boolean);
+  const handle = (value: string) => {
+    setText(value);
+    onChange(parse(value));
+  };
+  return separator === "line"
+    ? <Textarea rows={rows ?? 4} value={text} disabled={disabled} onChange={(e) => handle(e.target.value)} />
+    : <Input value={text} disabled={disabled} onChange={(e) => handle(e.target.value)} />;
+}
+
+function Para({ children, empty }: { children?: string | string[]; empty: string }) {
+  const value = Array.isArray(children) ? children.join(", ") : children;
+  return value ? <p className="whitespace-pre-line text-[14px] leading-relaxed text-text">{value}</p> : <p className="text-[13.5px] text-text-3">{empty}</p>;
+}
+
+function ChipList({ items, empty }: { items: string[]; empty: string }) {
+  if (!items.length) return <p className="text-[13.5px] text-text-3">{empty}</p>;
+  return <div className="flex flex-wrap gap-1.5">{items.map((item) => <Tag key={item} tone="t-brand">{item}</Tag>)}</div>;
+}
+
+function Toggle({ options, selected, onChange, disabled }: { options: readonly string[]; selected: string[]; onChange: (next: string[]) => void; disabled?: boolean }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((option) => {
+        const active = selected.includes(option);
+        return (
+          <Chip key={option} active={active} disabled={disabled} onClick={() => onChange(active ? selected.filter((x) => x !== option) : [...selected, option])}>
+            {option}
+          </Chip>
+        );
+      })}
+    </div>
+  );
+}
+
+function Pick({ options, value, onChange, disabled }: { options: readonly string[]; value: string; onChange: (next: string) => void; disabled?: boolean }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((option) => (
+        <Chip key={option} active={value === option} disabled={disabled} onClick={() => onChange(value === option ? "" : option)}>
+          {option}
+        </Chip>
+      ))}
+    </div>
+  );
+}
+
+export function BrandHub({ mode, initialValues, history, plan, automation, onDone }: BrandHubProps) {
+  const [values, setValues] = useState<BrandSectionValues>(initialValues);
+  const [editing, setEditing] = useState<BrandSectionId | null>(null);
+  const [draft, setDraft] = useState<BrandSectionValues[BrandSectionId] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [versions, setVersions] = useState<BrandKitVersionView[]>(history);
+  const [openVersion, setOpenVersion] = useState<number | null>(null);
+
+  const sections = useMemo(() => BRAND_SECTIONS.filter((section) => mode === "hub" || !section.hubOnly), [mode]);
+
+  // A mode change on the automation cards (which save themselves) also
+  // becomes a kit version, so it shows in History like every other edit.
+  useEffect(() => {
+    if (mode !== "hub" || typeof window === "undefined") return;
+    const handler = (event: Event) => {
+      const next = (event as CustomEvent<{ mode?: AutomationModeValue }>).detail?.mode;
+      if (!next) return;
+      void saveBrandSection("operate", { ...values.operate, automation: next }).then((result) => {
+        if (!result.ok) return;
+        setValues((prev) => ({ ...prev, operate: { ...prev.operate, automation: next } }));
+        setVersions((prev) => [{
+          version: result.version, answers: { automation: next }, brief: "", source: "brand_hub",
+          changeSummary: "What MARA may do updated", changedKeys: ["automation"], createdAt: new Date().toISOString(),
+        }, ...prev]);
+      });
+    };
+    window.addEventListener(AUTOMATION_MODE_EVENT, handler);
+    return () => window.removeEventListener(AUTOMATION_MODE_EVENT, handler);
+  }, [mode, values.operate]);
+
+  function startEdit(id: BrandSectionId) {
+    setEditing(id);
+    setDraft(structuredClone(values[id]));
+    setError("");
+    setNotice("");
+  }
+
+  function cancelEdit() {
+    setEditing(null);
+    setDraft(null);
+    setError("");
+  }
+
+  async function save() {
+    if (!editing || !draft) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await saveBrandSection(editing, draft);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      const saved = result.values;
+      setValues((prev) => ({ ...prev, [editing]: saved }));
+      setVersions((prev) => [{
+        version: result.version,
+        answers: editing === "brief" ? {} : answersFor(editing, saved),
+        brief: editing === "brief" ? (saved as BrandSectionValues["brief"]).brief : prev[0]?.brief ?? "",
+        source: "brand_hub",
+        changeSummary: `${brandSectionMeta(editing).title} updated`,
+        changedKeys: result.changedKeys,
+        createdAt: new Date().toISOString(),
+      }, ...prev]);
+      setNotice(`${brandSectionMeta(editing).title} saved. MARA uses it from the next generation.`);
+      setEditing(null);
+      setDraft(null);
+    } catch {
+      setError("Voom couldn't save that. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="mb-4 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">
+        <b className="text-text">Edits apply from the next generation.</b> Posts and plans MARA already wrote are not rewritten.
+      </div>
+      {error ? <div role="alert" className="mb-3.5 rounded-xl border border-red-900/40 bg-red-950/30 px-3.5 py-2.5 text-sm text-red-300">{error}</div> : null}
+      {notice ? <div role="status" className="mb-3.5 rounded-xl border border-emerald-900/40 bg-emerald-950/30 px-3.5 py-2.5 text-sm text-emerald-300">{notice}</div> : null}
+
+      {sections.map((section) => {
+        const isEditing = editing === section.id;
+        return (
+          <section key={section.id} data-brand-section={section.id}>
+          <Card className="mb-3.5 p-4">
+            <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h2 className="font-display text-lg font-semibold">{section.title}</h2>
+                <p className="text-[12.5px] text-text-3">{section.intro}</p>
+              </div>
+              {isEditing ? (
+                <div className="flex gap-2">
+                  <Btn variant="primary" size="sm" disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save"}</Btn>
+                  <Btn variant="ghost" size="sm" disabled={busy} onClick={cancelEdit}>Cancel</Btn>
+                </div>
+              ) : (
+                <Btn variant="outline" size="sm" disabled={busy || editing !== null} onClick={() => startEdit(section.id)}>
+                  <Icon name="edit" size={13} /> Edit
+                </Btn>
+              )}
+            </div>
+            {isEditing && draft ? (
+              <SectionEditor id={section.id} draft={draft} onChange={setDraft} disabled={busy} />
+            ) : (
+              <SectionView id={section.id} values={values} plan={plan} automation={automation} mode={mode} />
+            )}
+          </Card>
+          </section>
+        );
+      })}
+
+      {mode === "onboarding" ? (
+        <div className="mt-2 flex justify-end">
+          <Btn variant="primary" disabled={busy || editing !== null} onClick={onDone}>Looks right</Btn>
+        </div>
+      ) : (
+        <Card className="mb-3.5 p-4">
+          <h2 className="font-display text-lg font-semibold">History</h2>
+          <p className="mb-3 text-[12.5px] text-text-3">Every save keeps the version before it. Open one to see what changed.</p>
+          {versions.length === 0 ? (
+            <p className="text-[13.5px] text-text-3">No versions yet. Your first edit here, or your next Settings save, creates version 1.</p>
+          ) : (
+            <ul className="divide-y divide-line">
+              {versions.map((entry, index) => {
+                const previous = versions[index + 1] ?? null;
+                const open = openVersion === entry.version;
+                const changed = entry.changedKeys.length ? entry.changedKeys.map(answerKeyLabel).join(", ") : "No field changed";
+                return (
+                  <li key={entry.version} className="py-2.5">
+                    <button type="button" className="flex w-full flex-wrap items-center gap-2 text-left" onClick={() => setOpenVersion(open ? null : entry.version)} aria-expanded={open}>
+                      <Tag tone="t-grey">v{entry.version}</Tag>
+                      <span className="text-[13.5px] font-semibold">{changed}</span>
+                      <span className="text-[12.5px] text-text-3">{formatDate(entry.createdAt)} · {SOURCE_LABELS[entry.source] ?? entry.source}</span>
+                      <Icon name={open ? "up" : "down"} size={12} className="ml-auto" />
+                    </button>
+                    {open ? (
+                      <div className="mt-2 space-y-2 rounded-xl bg-surface-2 p-3 text-[12.5px]">
+                        {entry.changedKeys.length === 0 ? <p className="text-text-3">{entry.changeSummary || "Saved without changes."}</p> : null}
+                        {entry.changedKeys.map((key) => (
+                          <div key={key}>
+                            <div className="font-semibold text-text-2">{answerKeyLabel(key)}</div>
+                            <div className="text-text-3">Before: <span className="text-text">{describeValue(key === "brief" ? previous?.brief : previous?.answers[key])}</span></div>
+                            <div className="text-text-3">After: <span className="text-text">{describeValue(key === "brief" ? entry.brief : entry.answers[key])}</span></div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function describeValue(value: unknown): string {
+  if (value === undefined || value === null || value === "") return "nothing";
+  if (Array.isArray(value)) return value.length ? value.map(String).join(", ") : "nothing";
+  if (typeof value === "object") {
+    const parts = Object.entries(value as Record<string, unknown>).map(([k, v]) => `${answerKeyLabel(k)}: ${describeValue(v)}`);
+    return parts.length ? parts.join(" · ") : "nothing";
+  }
+  return String(value);
+}
+
+/** The kit answers a section's saved values become (mirrors validateBrandSection, for the optimistic history line). */
+function answersFor(id: BrandSectionId, saved: BrandSectionValues[BrandSectionId]): Record<string, unknown> {
+  switch (id) {
+    case "basics": return { ...(saved as BrandSectionValues["basics"]) };
+    case "offerings": return { offerings: (saved as BrandSectionValues["offerings"]).offerings };
+    case "audience": return { ...(saved as BrandSectionValues["audience"]) };
+    case "voice": {
+      const v = saved as BrandSectionValues["voice"];
+      return { personality: v.personality, voice_samples: { liked: v.liked, disliked: v.disliked } };
+    }
+    case "avoid": {
+      const v = saved as BrandSectionValues["avoid"];
+      return { avoid: { rules: v.rules, words: v.words }, notes: v.notes };
+    }
+    case "facts": return { facts_confirmed: (saved as BrandSectionValues["facts"]).facts };
+    case "operate": return { ...(saved as BrandSectionValues["operate"]) };
+    default: return {};
+  }
+}
+
+function SectionView({ id, values, plan, automation, mode }: { id: BrandSectionId; values: BrandSectionValues; plan: PlanId; automation: AutomationModeValue; mode: "hub" | "onboarding" }) {
+  switch (id) {
+    case "basics":
+      return (
+        <div className="space-y-2">
+          <p className="text-[14px]"><b>{values.basics.name || "No name yet"}</b>{values.basics.category ? <span className="text-text-3"> · {values.basics.category}</span> : null}</p>
+          <Para empty="No description yet. MARA writes generic copy until you add one.">{values.basics.description}</Para>
+        </div>
+      );
+    case "brief":
+      return <Para empty="No brief yet. Until you write one, MARA works from your description.">{values.brief.brief}</Para>;
+    case "offerings":
+      return <ChipList items={values.offerings.offerings} empty="Nothing listed yet. MARA infers what you sell from your description." />;
+    case "audience":
+      return (
+        <div className="space-y-2">
+          <ChipList items={values.audience.audience} empty="No audience chosen. Captions stay broad." />
+          <p className="text-[13.5px] text-text-2">Main goal: <b className="text-text">{values.audience.goal || "not set"}</b></p>
+        </div>
+      );
+    case "voice":
+      return (
+        <div className="space-y-3">
+          <ChipList items={values.voice.personality} empty="No personality chosen. MARA uses a neutral tone." />
+          <div>
+            <div className="mb-1 text-[12px] font-semibold text-text-2">Sounds like us</div>
+            {values.voice.liked.length ? values.voice.liked.map((s) => <p key={s} className="mb-1 rounded-lg bg-surface-2 px-3 py-2 text-[13px]">{s}</p>) : <p className="text-[13px] text-text-3">No samples yet.</p>}
+          </div>
+          <div>
+            <div className="mb-1 text-[12px] font-semibold text-text-2">Not us</div>
+            {values.voice.disliked.length ? values.voice.disliked.map((s) => <p key={s} className="mb-1 rounded-lg bg-surface-2 px-3 py-2 text-[13px] line-through decoration-text-3">{s}</p>) : <p className="text-[13px] text-text-3">No samples yet.</p>}
+          </div>
+        </div>
+      );
+    case "avoid":
+      return (
+        <div className="space-y-2">
+          <ChipList items={values.avoid.rules} empty="No rules yet." />
+          <p className="text-[13.5px] text-text-2">Banned words: <b className="text-text">{values.avoid.words.length ? values.avoid.words.join(", ") : "none"}</b></p>
+          <Para empty="Nothing specific noted.">{values.avoid.notes}</Para>
+        </div>
+      );
+    case "facts":
+      return values.facts.facts.length
+        ? <ul className="list-disc space-y-1 pl-5 text-[14px]">{values.facts.facts.map((fact) => <li key={fact}>{fact}</li>)}</ul>
+        : <p className="text-[13.5px] text-text-3">No confirmed facts. MARA states no years, awards or numbers until you add some.</p>;
+    case "operate":
+      return (
+        <div className="space-y-3">
+          <p className="text-[13.5px] text-text-2">Posting pace: <b className="text-text">{values.operate.pace || "not set (MARA assumes 2–3 times a week)"}</b></p>
+          <p className="text-[13.5px] text-text-2">Channels: <b className="text-text">{values.operate.channels.length ? values.operate.channels.join(", ") : "none selected"}</b></p>
+          <div>
+            <div className="mb-1.5 text-[12px] font-semibold text-text-2">Automation level · {AUTOMATION_MODE_LABELS[automation]}</div>
+            {mode === "hub" ? <AutomationMode initial={automation} plan={plan} compact showPlanSummary={false} /> : null}
+          </div>
+        </div>
+      );
+    default:
+      return null;
+  }
+}
+
+function SectionEditor({ id, draft, onChange, disabled }: { id: BrandSectionId; draft: BrandSectionValues[BrandSectionId]; onChange: (next: BrandSectionValues[BrandSectionId]) => void; disabled: boolean }) {
+  switch (id) {
+    case "basics": {
+      const d = draft as BrandSectionValues["basics"];
+      return (
+        <div>
+          <Field label="Business name"><Input value={d.name} disabled={disabled} onChange={(e) => onChange({ ...d, name: e.target.value })} /></Field>
+          <Field label="Describe your brand" hint="What you do, who you serve and what makes you different."><Textarea rows={4} value={d.description} disabled={disabled} onChange={(e) => onChange({ ...d, description: e.target.value })} /></Field>
+          <Field label="Kind of business">
+            <select className="h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px]" value={d.category} disabled={disabled} onChange={(e) => onChange({ ...d, category: e.target.value })}>
+              <option value="">Not set</option>
+              {Q_INDUSTRY.map(([, name]) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </Field>
+        </div>
+      );
+    }
+    case "brief": {
+      const d = draft as BrandSectionValues["brief"];
+      return <Field label="Brand Brief" hint="A few short paragraphs: what you are, what you offer, who it's for, how you sound. Clear it to go back to your description."><Textarea rows={8} value={d.brief} disabled={disabled} onChange={(e) => onChange({ brief: e.target.value })} /></Field>;
+    }
+    case "offerings": {
+      const d = draft as BrandSectionValues["offerings"];
+      return <Field label="What we offer" hint="One per line, up to 20."><ListText items={d.offerings} separator="line" rows={5} disabled={disabled} onChange={(offerings) => onChange({ offerings })} /></Field>;
+    }
+    case "audience": {
+      const d = draft as BrandSectionValues["audience"];
+      return (
+        <div className="space-y-3">
+          <div><div className="mb-1.5 text-[12.5px] font-semibold text-text-2">Audience</div><Toggle options={Q_CUSTOMER} selected={d.audience} disabled={disabled} onChange={(audience) => onChange({ ...d, audience })} /></div>
+          <div><div className="mb-1.5 text-[12.5px] font-semibold text-text-2">Main goal</div><Pick options={Q_GOAL.map(([, name]) => name)} value={d.goal} disabled={disabled} onChange={(goal) => onChange({ ...d, goal })} /></div>
+        </div>
+      );
+    }
+    case "voice": {
+      const d = draft as BrandSectionValues["voice"];
+      return (
+        <div className="space-y-3">
+          <div><div className="mb-1.5 text-[12.5px] font-semibold text-text-2">Personality</div><Toggle options={OB_TONE} selected={d.personality} disabled={disabled} onChange={(personality) => onChange({ ...d, personality })} /></div>
+          <Field label="Sounds like us" hint="Captions you'd be happy to post, one per line, up to 5."><ListText items={d.liked} separator="line" rows={3} disabled={disabled} onChange={(liked) => onChange({ ...d, liked })} /></Field>
+          <Field label="Not us" hint="Captions you'd never post, one per line, up to 5."><ListText items={d.disliked} separator="line" rows={3} disabled={disabled} onChange={(disliked) => onChange({ ...d, disliked })} /></Field>
+        </div>
+      );
+    }
+    case "avoid": {
+      const d = draft as BrandSectionValues["avoid"];
+      return (
+        <div className="space-y-3">
+          <div><div className="mb-1.5 text-[12.5px] font-semibold text-text-2">Rules</div><Toggle options={AVOID_RULES} selected={d.rules} disabled={disabled} onChange={(rules) => onChange({ ...d, rules })} /></div>
+          <Field label="Words, topics or emoji to ban" hint="Comma-separated. MARA never uses them, in any casing."><ListText items={d.words} separator="comma" disabled={disabled} onChange={(words) => onChange({ ...d, words })} /></Field>
+          <Field label="Anything specific MARA should know or do?"><Textarea rows={3} value={d.notes} disabled={disabled} onChange={(e) => onChange({ ...d, notes: e.target.value })} /></Field>
+        </div>
+      );
+    }
+    case "facts": {
+      const d = draft as BrandSectionValues["facts"];
+      return <Field label="Facts MARA may state" hint="One per line. Only what you can stand behind: 'Roasting since 2014', 'Family-run'."><ListText items={d.facts} separator="line" rows={4} disabled={disabled} onChange={(facts) => onChange({ facts })} /></Field>;
+    }
+    case "operate": {
+      const d = draft as BrandSectionValues["operate"];
+      return (
+        <div className="space-y-3">
+          <div><div className="mb-1.5 text-[12.5px] font-semibold text-text-2">Posting pace</div><Pick options={Q_FREQ} value={d.pace} disabled={disabled} onChange={(pace) => onChange({ ...d, pace })} /></div>
+          <div><div className="mb-1.5 text-[12.5px] font-semibold text-text-2">Channels</div><Toggle options={Q_CHANNELS} selected={d.channels} disabled={disabled} onChange={(channels) => onChange({ ...d, channels })} /></div>
+          <p className="text-[12px] text-text-3">The automation level is changed with the cards below; it saves on its own.</p>
+        </div>
+      );
+    }
+    default:
+      return null;
+  }
+}

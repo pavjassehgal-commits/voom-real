@@ -13,7 +13,7 @@ export interface NavGroup {
 /**
  * Voom 2.0 — Application shell navigation
  *
- * Primary: Today, Marketing Plan, Create, Calendar, Performance
+ * Primary: Today, Brand (Brand Kit v2 hub), Marketing Plan, Create, Calendar, Performance
  * Secondary: Campaigns, Contacts, Connections
  * Utility: Settings
  *
@@ -33,6 +33,7 @@ export const NAV: NavGroup[] = [
     g: "Primary",
     items: [
       { id: "today", n: "Today", i: "home" },
+      { id: "brand", n: "Brand", i: "heart" },
       { id: "plan", n: "Marketing Plan", i: "spark" },
       { id: "studio", n: "Create", i: "plus" },
       { id: "calendar", n: "Calendar", i: "cal" },
@@ -64,6 +65,7 @@ export const NAV: NavGroup[] = [
 
 export const TITLES: Record<string, string> = {
   today: "Today",
+  brand: "Brand",
   plan: "Marketing Plan",
   studio: "Create",
   create: "Create",

@@ -1,0 +1,55 @@
+"use server";
+
+/**
+ * Brand Hub save (Brand Kit v2, slice 2): ONE server action for every
+ * section. It validates only that section's values, updates the matching
+ * `businesses` columns (today's planner still reads the core fields there),
+ * then appends a kit version through the carry-forward rule. The kit is the
+ * hub's own record, so a failed kit insert IS a failed save here (unlike the
+ * best-effort dual write from onboarding and Settings).
+ */
+import { revalidatePath } from "next/cache";
+import { createClient } from "@/utils/supabase/server";
+import { getCurrentUser } from "@/lib/voom/server-data";
+import { appendBrandKitVersion } from "./versions";
+import { brandSectionMeta, validateBrandSection, answerKeyLabel, type BrandSectionId, type BrandSectionValues } from "./sections";
+
+export type SaveBrandSectionResult =
+  | { ok: true; version: number; changedKeys: string[]; values: BrandSectionValues[BrandSectionId]; changeSummary: string }
+  | { ok: false; error: string };
+
+export async function saveBrandSection(sectionId: string, raw: unknown): Promise<SaveBrandSectionResult> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Your session has expired. Please log in again." };
+
+  const validated = validateBrandSection(sectionId, raw);
+  if (!validated.ok) return validated;
+  const meta = brandSectionMeta(validated.id);
+
+  const supabase = await createClient();
+
+  if (Object.keys(validated.business).length > 0) {
+    const { error } = await supabase.from("businesses").update(validated.business).eq("owner_user_id", user.id);
+    if (error) {
+      console.error("[brand-hub] businesses update failed", error.message);
+      return { ok: false, error: "Voom couldn't save that. Please try again." };
+    }
+  }
+
+  const changeSummary = `${meta.title} updated`;
+  const version = await appendBrandKitVersion(supabase, user.id, {
+    source: "brand_hub",
+    answers: validated.answers,
+    ...(validated.brief !== undefined ? { brief: validated.brief } : {}),
+    changeSummary,
+  });
+  if (version === null) {
+    return { ok: false, error: "Voom couldn't record that change. Apply the latest Supabase migration (0059), then try again." };
+  }
+
+  // The keys this save owns are what the history line names; the exact
+  // changed set is recorded on the row by appendBrandKitVersion.
+  const changedKeys = [...meta.ownsKeys];
+  revalidatePath("/app", "layout");
+  return { ok: true, version, changedKeys, values: validated.values, changeSummary: `${changedKeys.map(answerKeyLabel).join(", ")} saved` };
+}

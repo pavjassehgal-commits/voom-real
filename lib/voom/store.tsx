@@ -41,6 +41,7 @@ const NAV_PATHS: Record<string, string> = {
   // Voom 2.0 primary aliases
   "marketing-plan": "/app/plan",
   marketing_plan: "/app/plan",
+  brand: "/app/brand",
   create: "/app/studio",
   studio: "/app/studio",
   calendar: "/app/calendar",

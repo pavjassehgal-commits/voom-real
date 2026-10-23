@@ -176,9 +176,11 @@ prop that hides History and the gallery in onboarding.
 1. **Brand kit storage and reader. BUILT 2026-10-22.** Migration 0059, `lib/brand/context.ts`,
    `lib/brand/versions.ts`, wired into Post Studio (copy, Story, suggestions) and the weekly
    plan; dual write from onboarding and Settings. Tests: `tests/brand-kit-context.test.mjs`.
-2. **Brand Hub page.** Route, nav item, read view, inline edit per section, history, "What MARA
-   may do". Tests: render with and without a kit; an edit appends a version and updates
-   businesses; history shows the change line.
+2. **Brand Hub page. BUILT 2026-10-23.** `/app/brand`, "Brand" in the Primary nav, eight
+   sections editable in place (`lib/brand/sections.ts` owns the field lists), History with
+   before/after, `saveBrandSection` action, onboarding mode ready for slice 3. Tests:
+   `tests/brand-hub.test.mjs`. Not yet: the asset gallery (slice 5), "write 3 new samples"
+   (slice 6), the "needs confirmation" badge (slice 4), replacing the Settings form (slice 3).
 3. **Onboarding pass A.** Twelve-screen skeleton, per-screen Skip, five required answers, the
    automation fix (real values, plan badges, data fix for existing label-text rows), screens 1,
    3a, 4, 5, 7, 8, 9, 10a, 10b. 2, 3b and 6 are placeholders that say so.
