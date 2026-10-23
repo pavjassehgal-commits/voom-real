@@ -1,6 +1,6 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { normalizePostFormat, normalizeSchedule, postApprovalBlockers } from "@/lib/post/core";
-import { approvePostDraft, getPostDraft, normalizeMediaBrief, savePostDraft } from "@/lib/post/server-data";
+import { approvePostDraft, deletePostDraft, getPostDraft, normalizeMediaBrief, savePostDraft } from "@/lib/post/server-data";
 import { cancelPublishItem } from "@/lib/instagram/publish-queue";
 import { checkScheduleInstant } from "@/lib/voom/schedule-guard";
 import { createAdminClient } from "@/utils/supabase/admin";
@@ -19,6 +19,27 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     return Response.json({ post }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return Response.json({ error: "That post couldn't load. Please retry." }, { status: 503 });
+  }
+}
+
+/**
+ * Deletes a post for good. Refused while Instagram is publishing it or once it
+ * is published; everything else (draft, approved, scheduled, cancelled) is
+ * removed together with its calendar entry, queue row and stored file.
+ */
+export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getCurrentUser();
+  if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
+  const { id } = await params;
+  if (!UUID_RE.test(id)) return Response.json({ error: "That post was not found." }, { status: 404 });
+  try {
+    const result = await deletePostDraft(createAdminClient(), user.id, id);
+    if (result.ok) return Response.json({ deleted: true, message: "Post deleted." });
+    if (result.reason === "not_found") return Response.json({ error: "That post was not found." }, { status: 404 });
+    if (result.reason === "publishing") return Response.json({ error: "Instagram is publishing this post right now. Wait for it to finish, then try again." }, { status: 409 });
+    return Response.json({ error: "This post was published to Instagram, so Voom keeps its record. Remove it on Instagram if needed." }, { status: 409 });
+  } catch {
+    return Response.json({ error: "Voom couldn't delete that post. Please retry." }, { status: 503 });
   }
 }
 

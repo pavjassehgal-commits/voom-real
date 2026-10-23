@@ -66,6 +66,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
   const [time, setTime] = useState("");
   const [mediaBrief, setMediaBrief] = useState("");
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [videoJob, setVideoJob] = useState<{ preparing: boolean; generation: ClientGeneration | null } | null>(null);
 
   const applyPost = useCallback((view: Post) => {
@@ -180,6 +181,25 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
       onChanged?.();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "MARA couldn't create that visual.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Permanent delete: the server refuses in-flight or published posts, so a refusal shows as an error and nothing changes. */
+  async function deletePost() {
+    setBusy("delete");
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(endpoint, { method: "DELETE" });
+      const body = (await response.json()) as { deleted?: boolean; error?: string };
+      if (!response.ok || !body.deleted) throw new Error(body.error ?? "Voom couldn't delete that post. Please retry.");
+      onChanged?.();
+      close();
+    } catch (reason) {
+      setConfirmDelete(false);
+      setError(reason instanceof Error ? reason.message : "Voom couldn't delete that post. Please retry.");
     } finally {
       setBusy(null);
     }
@@ -534,7 +554,39 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
           Close
         </Btn>
         {post ? (
+          confirmDelete ? (
+            <div className="flex w-full flex-wrap items-center justify-end gap-2.5 rounded-xl border border-red/35 bg-red/10 px-3 py-2">
+              <p className="mr-auto text-[11.5px] leading-relaxed text-text-2">
+                Delete this post for good? Its caption, schedule and stored visual are removed. This cannot be undone.
+              </p>
+              <Btn variant="danger" size="sm" disabled={busy !== null} onClick={() => void deletePost()}>
+                {busy === "delete" ? "Deleting…" : "Yes, delete it"}
+              </Btn>
+              <Btn variant="ghost" size="sm" disabled={busy !== null} onClick={() => setConfirmDelete(false)}>
+                Keep it
+              </Btn>
+            </div>
+          ) : (
           <>
+            <Btn variant="ghost" className="mr-auto text-red" disabled={busy !== null} onClick={() => setConfirmDelete(true)}>
+              <Icon name="trash" size={14} /> Delete post
+            </Btn>
+            {post.internalState !== "draft" ? (
+              <Btn
+                variant="outline"
+                disabled={busy !== null}
+                onClick={() =>
+                  void send(
+                    endpoint,
+                    { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "cancel" }) },
+                    "cancel",
+                    "Approval cancelled. Voom will not publish this.",
+                  )
+                }
+              >
+                {busy === "cancel" ? "Cancelling…" : "Cancel approval"}
+              </Btn>
+            ) : null}
             <Btn variant="outline" disabled={busy !== null} onClick={submitSave}>
               {busy === "save" ? "Saving…" : "Save Draft"}
             </Btn>
@@ -553,6 +605,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
               {busy === "approve" ? "Approving…" : "Approve"}
             </Btn>
           </>
+          )
         ) : null}
       </ModalFoot>
     </ModalShell>
