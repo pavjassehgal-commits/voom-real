@@ -10,7 +10,9 @@ import {
   POST_STATE_LABELS,
 } from "./core";
 import { persistUploadedPostAsset, PostAssetPersistError } from "./asset-persist";
-import { cancelPublishItem, enqueuePublishItem } from "@/lib/instagram/publish-queue";
+import { brandKitPromptContext, loadBrandContext } from "@/lib/brand/context";
+import type { PostBrandContext } from "./prompt";
+import { cancelPublishItem, enqueuePublishItem, getQueueItemForDraft } from "@/lib/instagram/publish-queue";
 import { isPublishableMime, publishMediaKindForMime, truncateCaption, type PublishMediaKind } from "@/lib/instagram/publishing";
 
 export const POST_ASSET_BUCKET = "mara-media";
@@ -287,6 +289,35 @@ export async function cancelPostSchedule(admin: AdminClient, ownerId: string, dr
   await cancelPublishItem(admin, ownerId, draftId).catch(() => false);
 }
 
+export type DeletePostResult =
+  | { ok: true }
+  | { ok: false; reason: "not_found" | "publishing" | "published" };
+
+/**
+ * Permanently deletes a post the user owns. Refuses while Instagram is
+ * publishing it, and always for a published one: a provider-confirmed publish
+ * is a record Voom never erases. Order matters: the calendar row must go
+ * first (its foreign key is `on delete restrict`), the queue row is cancelled
+ * (the queue function never touches in-flight or published rows), the stored
+ * file and its row are removed, and only then the draft itself. Credit-ledger
+ * and media-generation rows keep their history: their links to the draft are
+ * `on delete set null`.
+ */
+export async function deletePostDraft(admin: AdminClient, ownerId: string, draftId: string): Promise<DeletePostResult> {
+  const { data: draft } = await admin.from("mara_drafts").select("id")
+    .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
+  if (!draft) return { ok: false, reason: "not_found" };
+  const queued = await getQueueItemForDraft(admin, ownerId, draftId);
+  if (queued?.status === "publishing") return { ok: false, reason: "publishing" };
+  if (queued?.status === "published") return { ok: false, reason: "published" };
+  await cancelPostSchedule(admin, ownerId, draftId);
+  const storagePath = await deletePostAsset(admin, ownerId, draftId);
+  if (storagePath) await removePostAssetObject(admin, ownerId, storagePath);
+  const { error } = await admin.from("mara_drafts").delete().eq("owner_user_id", ownerId).eq("id", draftId);
+  if (error) throw new Error("post_delete_failed");
+  return { ok: true };
+}
+
 /** Approves a post. Approval saves state only; nothing is published. */
 export async function approvePostDraft(admin: AdminClient, ownerId: string, draftId: string): Promise<PostView | null> {
   const { data, error } = await admin.from("mara_drafts").update({ status: "approved" })
@@ -549,23 +580,23 @@ export async function deletePostAsset(admin: AdminClient, ownerId: string, draft
   return typeof existing.storage_path === "string" ? existing.storage_path : null;
 }
 
-/** Reads the brand context Post Studio prompts with. */
-export async function loadPostBrandContext(admin: AdminClient, ownerId: string) {
-  const [{ data: profile }, { data: business }] = await Promise.all([
-    admin.from("profiles").select("display_name").eq("user_id", ownerId).maybeSingle(),
-    admin.from("businesses")
-      .select("brand_name,brand_description,industry,target_customer,main_goal,brand_personality,content_frequency")
-      .eq("owner_user_id", ownerId).maybeSingle(),
-  ]);
-  if (!business) return null;
+/**
+ * Reads the brand context Post Studio prompts with: the core `businesses`
+ * fields plus the Brand Kit extras (`lib/brand/context.ts`, migration 0059).
+ * Array fields are joined with ", " exactly as before.
+ */
+export async function loadPostBrandContext(admin: AdminClient, ownerId: string): Promise<PostBrandContext | null> {
+  const context = await loadBrandContext(admin, ownerId);
+  if (!context) return null;
   return {
-    brandName: String(business.brand_name ?? profile?.display_name ?? "Your business"),
-    brandDescription: String(business.brand_description ?? ""),
-    industry: String(business.industry ?? ""),
-    targetCustomer: String(business.target_customer ?? ""),
-    mainGoal: String(business.main_goal ?? ""),
-    brandPersonality: String(business.brand_personality ?? ""),
-    contentFrequency: String(business.content_frequency ?? ""),
+    brandName: context.brandName,
+    brandDescription: context.brandDescription,
+    industry: context.industry,
+    targetCustomer: context.targetCustomer.join(","),
+    mainGoal: context.mainGoal,
+    brandPersonality: context.brandPersonality.join(","),
+    contentFrequency: context.contentFrequency,
+    brandKit: brandKitPromptContext(context.kit),
   };
 }
 

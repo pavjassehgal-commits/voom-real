@@ -1,6 +1,6 @@
 # Voom architecture (plain language)
 
-Last verified against the code: 2026-10-20. If the code and this file disagree, the code wins:
+Last verified against the code: 2026-10-22. If the code and this file disagree, the code wins:
 update this file in the same change.
 
 ## The big picture
@@ -27,7 +27,7 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 | Database + auth + storage | Supabase. Packages `@supabase/ssr`, `@supabase/supabase-js` |
 | Validation | zod |
 | Images | sharp (inspect/resize), image overlays |
-| Tests | Node's built-in test runner: `npm test` runs `tests/*.test.mjs` (104 files, 1,669 tests; 4 are deliberately skipped in `voom-plans-credits-v1` with notes pointing to their replacements). Some use PGlite (an in-memory Postgres) to test SQL; 25 layout tests render pages in a real headless Chrome (found at `/Applications/Google Chrome.app`, or `VOOM_CHROMIUM_PATH`). Baseline counts live in `docs/baseline.md`. |
+| Tests | Node's built-in test runner: `npm test` runs `tests/*.test.mjs` (108 files, 1,691 tests; 4 are deliberately skipped in `voom-plans-credits-v1` with notes pointing to their replacements). Some use PGlite (an in-memory Postgres) to test SQL; 25 layout tests render pages in a real headless Chrome (found at `/Applications/Google Chrome.app`, or `VOOM_CHROMIUM_PATH`). Baseline counts live in `docs/baseline.md`. |
 | Hosting | Vercel (`vercel.json` has 2 daily crons) |
 
 ## Folder map
@@ -40,11 +40,11 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 | `lib/` | All business logic (see below) |
 | `utils/supabase/` | How code talks to Supabase: `server.ts` (as the logged-in user), `admin.ts` (server master key, bypasses database rules: server only), `client.ts` (browser), `proxy.ts` (refreshes login cookie) |
 | `proxy.ts` (root) | Runs on every request to keep the login session fresh |
-| `supabase/migrations/` | Database changes, numbered `0001`–`0058`, applied in order. **Note:** 0052–0054 are missing from this copy (see DECISIONS) |
+| `supabase/migrations/` | Database changes, numbered `0001`–`0059`, applied in order. **Note:** 0052–0054 are missing from this copy (see DECISIONS) |
 | `supabase/ops/schedule-workers.sql` | Sets up the 9 background job timers |
 | `supabase/proposed/` | Mostly rollback scripts (how to undo migrations 0055–0058) plus copies of 0055–0057 that are identical to the applied ones, and two older trend-intelligence drafts that never became numbered migrations. Nothing here is waiting to be applied. |
 | `tests/` | Automated tests, one file per feature |
-| `docs/` | Deploy runbook, audits, trend-intelligence plans, `baseline.md` (test/type/lint counts) |
+| `docs/` | Deploy runbook, audits, trend-intelligence plans, `baseline.md` (test/type/lint counts), `brand-kit-v2-design.md` (the onboarding + Brand Hub redesign and its build order) |
 | `handover/` | For whoever sets up production: `production-setup.md` (every outside-the-code setting, why and how), `changes-log.md` (code changes that need a Supabase/Vercel/provider step) |
 | `reference/Voomprot2.html` | Original design prototype. Look-and-feel reference only, not architecture |
 
@@ -53,6 +53,7 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 |---|---|
 | `lib/voom/` | Core app: types, client state store (`store.tsx`), onboarding questions (`onboardingData.ts`), saving onboarding/settings (`mutations.ts`), "who is logged in" (`server-data.ts` → `getCurrentUser`), timezone, cadence, schedule guards |
 | `lib/voom/workflow/` | The rolling 7-day marketing plan: builds slots, assigns channels, asks MARA to fill them, moves items through plan → draft → approval → schedule |
+| `lib/brand/` | Brand Kit v2 (migration 0059): `context.ts` is the ONE reader generation uses (`loadBrandContext()` = core fields from `businesses` + the newest `brand_kits` row's brief, offerings, avoid rules, banned words, facts, notes, voice samples; fails open to "no kit"); `versions.ts` appends a kit version on every onboarding/Settings save |
 | `lib/ai/` | Connection to the AI text model (any OpenAI-compatible API; default Groq) |
 | `lib/mara/` | MARA's brain: chat prompt, tools, Reel production, video generation and polling, paid-media spending rules, Autopilot safety |
 | `lib/media/` | Image/video generation providers, checking uploaded files, overlays |
@@ -98,16 +99,21 @@ Missing today: 2FA.
 **Onboarding.** `components/voom/onboarding/OnboardingWizard.tsx` (8 steps, questions in
 `lib/voom/onboardingData.ts`; `AnalyzingScreen.tsx` is the "we're setting things up" screen shown
 at the end) → `saveOnboarding` in `lib/voom/mutations.ts` → writes `profiles`
-and `businesses` (website goes only to the email brand table).
+and `businesses` (website goes only to the email brand table) and appends `brand_kits`
+version 1 (best-effort; the Settings brand save appends the next version the same way). The
+wizard is being redesigned: `docs/brand-kit-v2-design.md`.
 
 **Plan → content → approval → publish.**
 1. Daily cron `/api/cron/weekly-plans` or the "Build plan" button (`/api/plan`) runs `lib/voom/workflow/service.ts`.
 2. It creates slots for the next 7 days from posting frequency and chosen channels, and MARA writes drafts.
-3. User edits/approves in Studio or Approvals (`/api/posts/*`). Approval state is locked server-side.
+3. User edits/approves in Studio or Approvals (`/api/posts/*`). Approval state is locked server-side. The editor can also cancel an approval (stops auto-publishing, removes the calendar entry) or delete a post for good (`DELETE /api/posts/[id]` → `deletePostDraft`: calendar entry, queue row, stored file, then the draft; refused while Instagram is publishing it and always once published).
 4. Approved + scheduled + has a visual → goes into the platform's publish queue table.
 5. Worker crons (`/api/cron/instagram-publish` etc., every 5 min) publish and record only provider-confirmed results.
 
-**AI generation.** Copy: `lib/ai` with strict JSON output validated by zod. Images:
+**AI generation.** Copy: `lib/ai` with strict JSON output validated by zod. Post Studio (copy,
+Story, import suggestions) and the weekly plan read the brand through `lib/brand/context.ts`;
+when the account has a Brand Kit with content, the prompt payload gains a `brandKit` block and
+the system prompt a BRAND KIT rules section, otherwise both are exactly as before. Images:
 `lib/media/provider.ts` (text prompt only today). Videos: `lib/mara/video-*` with a polling worker
 every 2 min. Credits are reserved first by `lib/billing/entitlement-guard.ts`.
 
@@ -115,7 +121,7 @@ every 2 min. Credits are reserved first by `lib/billing/entitlement-guard.ts`.
 `lib/performance/*` → shown on Performance and passed as hints to the next plan (Instagram only).
 
 ## Database (main tables)
-- Account: `profiles`, `businesses` (brand answers + plan + settings, one row per user)
+- Account: `profiles`, `businesses` (brand answers + plan + settings, one row per user), `brand_kits` (Brand Kit versions: append-only, one row per save; users can read and add their own, never edit or delete)
 - Plan and content: `marketing_plans`, `content_calendar_items`, `mara_drafts`, `post_draft_assets`, `reel_draft_assets`, `mara_media_generations`
 - MARA chat: `mara_conversations`, `mara_messages`, `mara_pending_actions`, `mara_tool_runs`
 - Per platform: `*_connections`, `*_connection_secrets` (encrypted tokens), `*_oauth_states`, `*_publish_queue`, `*_performance_snapshots` (instagram, tiktok, youtube)
@@ -137,5 +143,6 @@ All keys go in `.env.local` (copy from `.env.example`). Never commit real values
 `NEXT_PUBLIC_` is visible in the browser; everything else is server-only.
 
 ## Not built yet
-2FA · LinkedIn · Stripe billing · brand asset uploads / website
-reading in onboarding · reference images in image generation.
+2FA · LinkedIn · Stripe billing · the Brand Hub page and the new onboarding screens, brand asset
+uploads and website reading (`docs/brand-kit-v2-design.md`, slices 2–8) · reference images in
+image generation.

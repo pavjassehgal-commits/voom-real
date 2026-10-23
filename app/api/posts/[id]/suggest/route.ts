@@ -1,6 +1,7 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { AiError, createAiProvider } from "@/lib/ai";
 import { postAssetKindForMime } from "@/lib/post/core";
+import { withBrandKitRules } from "@/lib/brand/context";
 import { buildExistingContentPayload, EXISTING_CONTENT_DISCLOSURE, POST_SUGGESTION_SYSTEM_PROMPT, postSuggestionJsonSchema, postSuggestionSchema } from "@/lib/post/prompt";
 import { getPostDraft, loadPostBrandContext, loadPostPlanContext } from "@/lib/post/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
@@ -44,7 +45,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   try {
     const suggestion = await createAiProvider().structured({
       messages: [
-        { role: "system", content: POST_SUGGESTION_SYSTEM_PROMPT },
+        { role: "system", content: withBrandKitRules(POST_SUGGESTION_SYSTEM_PROMPT, brand.brandKit) },
         {
           role: "user",
           content: JSON.stringify(buildExistingContentPayload({

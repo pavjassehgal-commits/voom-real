@@ -9,6 +9,9 @@
  *  - Generated visuals are described as generated from a text prompt.
  */
 import { z } from "zod";
+// Type-only on purpose: this module stays dependency-free at runtime so the
+// Node test suite can import it directly.
+import type { BrandKitPromptContext } from "@/lib/brand/context";
 
 /** The copy MARA returns for "Create with MARA" on an Instagram Post. */
 export const postDraftSchema = z.object({
@@ -155,6 +158,8 @@ export interface PostBrandContext {
   mainGoal: string;
   brandPersonality: string;
   contentFrequency: string;
+  /** Brand Kit prompt block (migration 0059), already built by the loader. Absent/null = no `brandKit` key in the payload. */
+  brandKit?: BrandKitPromptContext | null;
 }
 
 export const STORY_VISUAL_SYSTEM_PROMPT = `You are MARA, Voom's practical AI marketing manager, creating ONE Instagram Story image for the authenticated user's own business.
@@ -184,7 +189,7 @@ export function buildPostContextPayload(input: {
   kind: "instagram_post" | "reel" | "story";
   brief?: string;
 }) {
-  return {
+  const payload = {
     business: {
       name: input.brand.brandName.slice(0, 160),
       description: input.brand.brandDescription.slice(0, 800),
@@ -206,6 +211,9 @@ export function buildPostContextPayload(input: {
     contentType: input.kind === "reel" ? "reel" : input.kind === "story" ? "instagram_story" : "instagram_feed_post",
     userBrief: (input.brief ?? "").slice(0, 800),
   };
+  // The key exists only when the account has a Brand Kit with content, so
+  // payloads for every other account are unchanged.
+  return input.brand.brandKit ? { ...payload, brandKit: input.brand.brandKit } : payload;
 }
 
 /**
@@ -221,7 +229,7 @@ export function buildExistingContentPayload(input: {
   plan: PostPlanContext | null;
   nowIso: string;
 }) {
-  return {
+  const payload = {
     importedFile: {
       name: input.displayName.slice(0, 180),
       type: input.assetKind === "video" ? "video" : "image",
@@ -243,6 +251,7 @@ export function buildExistingContentPayload(input: {
       ? { businessGoal: input.plan.businessGoal.slice(0, 500), weeklyStrategy: input.plan.weeklyStrategy.slice(0, 1500), recentTopics: input.plan.topics.slice(0, 12) }
       : null,
   };
+  return input.brand.brandKit ? { ...payload, brandKit: input.brand.brandKit } : payload;
 }
 
 /**

@@ -3,6 +3,7 @@ import { createAiProvider, AiError } from "@/lib/ai";
 import { createMediaProvider, getMediaConfig, MediaError } from "@/lib/media";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { composePostCaption } from "@/lib/post/core";
+import { withBrandKitRules } from "@/lib/brand/context";
 import { buildPostContextPayload, POST_COPY_SYSTEM_PROMPT, postDraftJsonSchema, postDraftSchema, STORY_VISUAL_SYSTEM_PROMPT, storyVisualJsonSchema, storyVisualSchema } from "@/lib/post/prompt";
 import { getPostDraft, loadPostBrandContext, loadPostPlanContext, normalizeMediaBrief, putPostAsset, removePostAssetObject, syncPostToCalendar } from "@/lib/post/server-data";
 import { startPostStudioVideo } from "@/lib/mara/video-service";
@@ -131,6 +132,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const [brand, planContext] = await Promise.all([loadPostBrandContext(admin, user.id), loadPostPlanContext(admin, user.id)]);
   if (!brand) return Response.json({ error: "Complete your brand profile before creating posts with MARA." }, { status: 409 });
 
+  // Brand Kit rules join the system prompt only when the account has a kit
+  // with content (migration 0059); otherwise the prompts are unchanged.
+  const brandKit = brand.brandKit ?? null;
+
   const format = post.kind === "story" ? "9:16" : post.format;
   const generationId = randomUUID();
 
@@ -175,7 +180,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     try {
       storyPlan = await createAiProvider().structured({
         messages: [
-          { role: "system", content: STORY_VISUAL_SYSTEM_PROMPT },
+          { role: "system", content: withBrandKitRules(STORY_VISUAL_SYSTEM_PROMPT, brandKit) },
           { role: "user", content: JSON.stringify(buildPostContextPayload({ brand, plan: planContext, format: "9:16", kind: "story", brief: effectiveBrief })) },
         ],
         temperature: 0.6,
@@ -201,7 +206,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     try {
       copy = await createAiProvider().structured({
         messages: [
-          { role: "system", content: POST_COPY_SYSTEM_PROMPT },
+          { role: "system", content: withBrandKitRules(POST_COPY_SYSTEM_PROMPT, brandKit) },
           { role: "user", content: JSON.stringify(buildPostContextPayload({ brand, plan: planContext, format: post.format, kind: "instagram_post", brief: effectiveBrief })) },
         ],
         temperature: 0.6,

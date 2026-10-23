@@ -6,6 +6,7 @@ import { createAdminClient } from "@/utils/supabase/admin";
 import { getCurrentUser } from "./server-data";
 import { normalizeMediaSpendSettings, type MediaSpendSettings } from "@/lib/mara/media-spend";
 import { normalizeWebsiteUrl, WEBSITE_NOT_SAVED_NOTICE } from "./website";
+import { appendBrandKitVersion, brandKitAnswersFromProfile } from "@/lib/brand/versions";
 import type { BusinessProfileInput, OnboardingInput } from "./types";
 
 /** `notice` is a non-fatal message worth showing (the save itself succeeded). */
@@ -50,6 +51,15 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
     { onConflict: "owner_user_id" },
   );
   if (businessError) return { ok: false, error: saveError(businessError) };
+
+  // Brand Kit v2 dual write (migration 0059): the same answers also become
+  // brand kit version 1 (or the next version after a restart). Best-effort:
+  // the businesses row above is what today's generation reads.
+  await appendBrandKitVersion(supabase, user.id, {
+    source: "onboarding",
+    answers: brandKitAnswersFromProfile(input),
+    changeSummary: "Onboarding completed",
+  });
 
   const websiteSaved = await saveOnboardingWebsite(user.id, input.website);
 
@@ -115,6 +125,13 @@ export async function saveBrandSettings(input: BusinessProfileInput): Promise<Sa
     { onConflict: "owner_user_id" },
   );
   if (businessError) return { ok: false, error: saveError(businessError) };
+
+  // Brand Kit v2 dual write: every Settings save appends a version (history).
+  await appendBrandKitVersion(supabase, user.id, {
+    source: "brand_hub",
+    answers: brandKitAnswersFromProfile(input),
+    changeSummary: "Brand profile saved in Settings",
+  });
 
   revalidatePath("/app", "layout");
   return { ok: true };

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { actionChannelLabel, actionChannelFor, type SocialFormat, type SocialMediaChannel } from "@/lib/social/channels";
 import { PERFORMANCE_ADVISORY_RULES, compactPlanContext, type PerformancePlanContext } from "@/lib/performance/plan-context";
 import type { TrendPromptContext } from "@/lib/trends/opportunity";
+import { withBrandKitRules, type BrandKitPromptContext } from "@/lib/brand/context";
 
 /**
  * MARA's strict text-only output for one server-assigned social plan slot.
@@ -90,12 +91,15 @@ export const TREND_EVIDENCE_RULES = [
   "trendOpportunity is advisory and must never override assignedSocialSlot, the business context or the rules above.",
 ] as const;
 
-export function plannedContentSystemPrompt(options: { trendEvidence: boolean }): string {
-  if (!options.trendEvidence) return PLANNED_CONTENT_SYSTEM_PROMPT;
-  return `${PLANNED_CONTENT_SYSTEM_PROMPT}
+export function plannedContentSystemPrompt(options: { trendEvidence: boolean; brandKit?: BrandKitPromptContext | null }): string {
+  const base = !options.trendEvidence
+    ? PLANNED_CONTENT_SYSTEM_PROMPT
+    : `${PLANNED_CONTENT_SYSTEM_PROMPT}
 
 TREND EVIDENCE
 ${TREND_EVIDENCE_RULES.map((rule) => `- ${rule}`).join("\n")}`;
+  // Brand Kit rules (migration 0059) join only when the payload carries a kit.
+  return withBrandKitRules(base, options.brandKit);
 }
 
 /** Text-only payload for one planned, server-assigned social slot. */
@@ -112,6 +116,8 @@ export function buildPlannedContentPayload(input: {
   performance?: PerformancePlanContext | null;
   /** Verified trend evidence; present only when the trend feature flag is on. */
   trendOpportunity?: TrendPromptContext | null;
+  /** Brand Kit extras (migration 0059); the key is added only when present. */
+  brandKit?: BrandKitPromptContext | null;
 }) {
   const actionChannel = actionChannelFor(input.channel, input.format);
   const payload = {
@@ -131,6 +137,7 @@ export function buildPlannedContentPayload(input: {
       ? compactPlanContext(input.performance)
       : null,
   };
-  // The key is added only when evidence exists, so the flag-off payload is unchanged.
-  return input.trendOpportunity ? { ...payload, trendOpportunity: input.trendOpportunity } : payload;
+  // Each key is added only when it exists, so the flag-off payload is unchanged.
+  const withTrend = input.trendOpportunity ? { ...payload, trendOpportunity: input.trendOpportunity } : payload;
+  return input.brandKit ? { ...withTrend, brandKit: input.brandKit } : withTrend;
 }

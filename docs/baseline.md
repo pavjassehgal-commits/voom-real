@@ -42,3 +42,5 @@ Environment: Node v26.0.0, npm 11.12.1, macOS.
 | 2026-10-17 | 1673 / 0 / 4 | clean | 0 / 16 | Forgot-password flow (+5 tests). See DECISIONS 2026-10-17. |
 | 2026-10-20 | 1674 / 0 / 4 | clean | 0 / 16 | Password reset signs out everywhere and returns to login (+1 test, 2 tests extended). See DECISIONS 2026-10-20. |
 | 2026-10-20 | 1677 / 0 / 4 | clean | 0 / 16 | "Continue with Google" on login and signup (+3 tests). See DECISIONS 2026-10-20 (Google). |
+| 2026-10-22 | 1687 / 0 / 4 | clean | 0 / 16 | Brand Kit v2 slice 1: migration 0059, brand reader wired into generation (+10 tests, 10 migration-head assertions moved to 0059). See DECISIONS 2026-10-22. |
+| 2026-10-23 | 1688 / **6** / 4 | clean | 0 / 16 | Delete post + cancel approval in the editor (+7 tests, all pass). The 6 failures are `tests/trends-universal.test.mjs` only: a pre-existing date time bomb (fixture clock 2026-10-13 vs the database's real `now()` and a 10-day evidence expiry), failing from 2026-10-23 regardless of code. Open item; see DECISIONS 2026-10-23. |
