@@ -53,7 +53,7 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 |---|---|
 | `lib/voom/` | Core app: types, client state store (`store.tsx`), onboarding questions (`onboardingData.ts`), saving onboarding/settings (`mutations.ts`), "who is logged in" (`server-data.ts` → `getCurrentUser`), timezone, cadence, schedule guards |
 | `lib/voom/workflow/` | The rolling 7-day marketing plan: builds slots, assigns channels, asks MARA to fill them, moves items through plan → draft → approval → schedule |
-| `lib/brand/` | Brand Kit v2 (migration 0059): `context.ts` is the ONE reader generation uses (`loadBrandContext()` = core fields from `businesses` + the newest `brand_kits` row's brief, offerings, avoid rules, banned words, facts, notes, voice samples; fails open to "no kit"); `versions.ts` appends a kit version on every onboarding/Settings save |
+| `lib/brand/` | Brand Kit v2 (migration 0059): `context.ts` is the ONE reader generation uses (`loadBrandContext()` = core fields from `businesses` + the newest `brand_kits` row's brief, offerings, avoid rules, banned words, facts, notes, voice samples; fails open to "no kit"); `versions.ts` appends a kit version on every onboarding/Settings save, carrying the previous version forward and replacing only the fields that save owns |
 | `lib/ai/` | Connection to the AI text model (any OpenAI-compatible API; default Groq) |
 | `lib/mara/` | MARA's brain: chat prompt, tools, Reel production, video generation and polling, paid-media spending rules, Autopilot safety |
 | `lib/media/` | Image/video generation providers, checking uploaded files, overlays |

@@ -17,8 +17,9 @@ export type BrandKitSource = "onboarding" | "brand_hub" | "extraction";
 
 export interface BrandKitVersionInput {
   source: BrandKitSource;
-  /** Structured answers keyed by the Brand Kit field map. */
+  /** Only the fields this save owns; everything else carries over from the previous version. */
   answers: Record<string, unknown>;
+  /** Omit to keep the previous brief; null or "" clears it. */
   brief?: string | null;
   changeSummary?: string;
   changedKeys?: string[];
@@ -44,6 +45,39 @@ export function brandKitAnswersFromProfile(input: BusinessProfileInput): Record<
   };
 }
 
+/** A kit version's editable content, as stored. */
+export interface BrandKitContent {
+  answers: Record<string, unknown>;
+  brief: string | null;
+}
+
+/**
+ * The ONE rule for a new version, by field, never by word: every field the
+ * save owns (`input.answers` keys, plus `brief` when `input.brief` is given)
+ * REPLACES the previous value in full; every other field is carried over from
+ * the previous version untouched. So a Settings save that owns only the core
+ * fields can never erase the brief, the rules or the notes, and clearing a
+ * field the screen shows really clears it. Returns the merged content and the
+ * keys whose value actually changed (for the history line).
+ */
+export function mergeBrandKitVersion(
+  previous: BrandKitContent | null,
+  input: Pick<BrandKitVersionInput, "answers" | "brief">,
+): BrandKitContent & { changedKeys: string[] } {
+  const base = previous?.answers && typeof previous.answers === "object" && !Array.isArray(previous.answers)
+    ? previous.answers
+    : {};
+  const answers: Record<string, unknown> = { ...base, ...input.answers };
+  const changedKeys = Object.keys(input.answers).filter((key) => JSON.stringify(base[key] ?? null) !== JSON.stringify(input.answers[key] ?? null));
+  let brief = previous?.brief ?? null;
+  if (input.brief !== undefined) {
+    const next = input.brief?.trim() || null;
+    if (next !== brief) changedKeys.push("brief");
+    brief = next;
+  }
+  return { answers, brief, changedKeys };
+}
+
 /** Inserts the next version for the owner. Returns the version number, or null when it failed. */
 export async function appendBrandKitVersion(
   db: SupabaseClient,
@@ -52,19 +86,23 @@ export async function appendBrandKitVersion(
 ): Promise<number | null> {
   try {
     const { data: newest, error: readError } = await db.from(BRAND_KIT_TABLE)
-      .select("version").eq("owner_user_id", ownerId)
+      .select("version,answers,brief").eq("owner_user_id", ownerId)
       .order("version", { ascending: false }).limit(1).maybeSingle();
     if (readError) throw new Error(readError.message);
     const current = typeof newest?.version === "number" ? newest.version : 0;
     const version = current + 1;
+    const merged = mergeBrandKitVersion(
+      newest ? { answers: (newest.answers ?? {}) as Record<string, unknown>, brief: typeof newest.brief === "string" ? newest.brief : null } : null,
+      input,
+    );
     const { error } = await db.from(BRAND_KIT_TABLE).insert({
       owner_user_id: ownerId,
       version,
-      answers: input.answers,
-      brief: input.brief?.trim() || null,
+      answers: merged.answers,
+      brief: merged.brief,
       source: input.source,
       change_summary: input.changeSummary?.slice(0, 300) ?? null,
-      changed_keys: input.changedKeys ?? [],
+      changed_keys: input.changedKeys ?? merged.changedKeys,
     });
     if (error) throw new Error(error.message);
     return version;

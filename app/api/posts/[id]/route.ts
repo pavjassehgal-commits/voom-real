@@ -1,6 +1,6 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { normalizePostFormat, normalizeSchedule, postApprovalBlockers } from "@/lib/post/core";
-import { approvePostDraft, deletePostDraft, getPostDraft, normalizeMediaBrief, savePostDraft } from "@/lib/post/server-data";
+import { approvePostDraft, deletePostDraft, getPostDraft, normalizeMediaBrief, savePostDraft, setPostAssetOrigin } from "@/lib/post/server-data";
 import { cancelPublishItem } from "@/lib/instagram/publish-queue";
 import { checkScheduleInstant } from "@/lib/voom/schedule-guard";
 import { createAdminClient } from "@/utils/supabase/admin";
@@ -81,6 +81,28 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       return Response.json({ post, message: "Cancelled. Voom will not publish this to Instagram." });
     } catch {
       return Response.json({ error: "Voom couldn't cancel that post. Please retry." }, { status: 503 });
+    }
+  }
+
+  if (action === "source") {
+    // Instagram Posts only: Reels are always existing content and Stories
+    // have no copy to suggest.
+    const origin = body.origin;
+    if (origin !== "own_asset" && origin !== "existing_content") return Response.json({ error: "Choose a valid source." }, { status: 400 });
+    const existing = await getPostDraft(admin, user.id, id);
+    if (!existing) return Response.json({ error: "That post was not found." }, { status: 404 });
+    if (existing.kind !== "instagram_post") return Response.json({ error: "The source can only be changed on an Instagram Post." }, { status: 400 });
+    try {
+      const updated = await setPostAssetOrigin(admin, user.id, id, origin);
+      const post = updated ? await getPostDraft(admin, user.id, id) : existing;
+      return Response.json({
+        post,
+        message: origin === "existing_content"
+          ? (updated ? "Source set to Existing content. MARA can now suggest a caption, CTA and timing." : "Source set to Existing content. It applies to the visual you upload next.")
+          : "Source set to My own asset.",
+      });
+    } catch {
+      return Response.json({ error: "Voom couldn't change the source. Please retry." }, { status: 503 });
     }
   }
 

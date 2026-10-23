@@ -67,6 +67,8 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
   const [mediaBrief, setMediaBrief] = useState("");
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /** Instagram Posts only: where the visual comes from. Sent with the next upload; switched on the server once a visual exists. */
+  const [source, setSource] = useState<"own_asset" | "existing_content">("own_asset");
   const [videoJob, setVideoJob] = useState<{ preparing: boolean; generation: ClientGeneration | null } | null>(null);
 
   const applyPost = useCallback((view: Post) => {
@@ -77,6 +79,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
     setHashtags(view.hashtags.join(" "));
     setFormat(view.format);
     setMediaBrief(view.mediaBrief ?? "");
+    if (view.origin === "existing_content" || view.origin === "own_asset") setSource(view.origin);
     const when = view.scheduledAt ? new Date(view.scheduledAt) : null;
     setDate(when ? isoToLocalDate(view.scheduledAt!, DEFAULT_TIMEZONE) : "");
     setTime(when ? toTimeInput(view.scheduledAt!) : "");
@@ -286,6 +289,21 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
     await send(`${endpoint}/asset`, { method: "POST", body: form }, "upload", "Stored privately in Voom.");
   }
 
+  async function chooseSource(value: "own_asset" | "existing_content") {
+    setSource(value);
+    if (!post?.visual) {
+      setError("");
+      setNotice(value === "existing_content" ? "Source set to Existing content. It applies to the visual you upload next." : "Source set to My own asset.");
+      return;
+    }
+    await send(
+      endpoint,
+      { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "source", origin: value }) },
+      "source",
+      "Source updated.",
+    );
+  }
+
   async function chooseFormat(value: PostFormat) {
     setFormat(value);
     await send(
@@ -368,6 +386,23 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                     : "Private previews are short-lived signed URLs. The file path is never sent to your browser."}
               </p>
 
+              {isPost ? (
+                <div className="mt-3.5">
+                  <h3 className="mb-1.5 text-xs font-semibold text-text-2">Source</h3>
+                  <p className="mb-1.5 text-[11px] leading-relaxed text-text-3">
+                    Existing content is a photo you already shot: MARA can then suggest a caption, CTA and timing for it.
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    <Chip active={source === "own_asset"} disabled={busy !== null} onClick={() => void chooseSource("own_asset")}>
+                      My own asset
+                    </Chip>
+                    <Chip active={source === "existing_content"} disabled={busy !== null} onClick={() => void chooseSource("existing_content")}>
+                      Existing content
+                    </Chip>
+                  </div>
+                </div>
+              ) : null}
+
               <div className="mt-3.5">
                 <h3 className="mb-1.5 text-xs font-semibold text-text-2">Format</h3>
                 {isStory ? (
@@ -406,7 +441,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                   onChange={(event) => {
                     const file = event.target.files?.[0];
                     event.target.value = "";
-                    if (file) void uploadFile(file, post.origin === "existing_content" || post.kind === "reel" || post.kind === "story" ? "existing_content" : "own_asset");
+                    if (file) void uploadFile(file, post.kind === "reel" || post.kind === "story" ? "existing_content" : source);
                   }}
                 />
                 <Btn variant="outline" size="sm" block disabled={busy === "upload"} onClick={() => fileRef.current?.click()}>

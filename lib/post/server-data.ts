@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { IngestionFailure, type IngestionStage, logIngestionStage, type IngestionLogContext } from "@/lib/media/ingestion-error";
 import type { createAdminClient } from "@/utils/supabase/admin";
 import {
-  buildPostDraftAssetWrite, calendarChannelFor, calendarStatusFor, composePostCaption, decodeDraftFormat,
+  assetOriginFor, buildPostDraftAssetWrite, calendarChannelFor, calendarStatusFor, composePostCaption, decodeDraftFormat,
   encodeDraftChannel, formatForKind, internalPostState, isPostDraftKind, originForAsset, postTypeLabel,
   splitPostCaption, type PostDraftKind, type PostFormat, type PostInternalState, type PostOrigin,
   POST_STATE_LABELS,
@@ -287,6 +287,25 @@ export async function cancelPostSchedule(admin: AdminClient, ownerId: string, dr
     .eq("owner_user_id", ownerId).eq("source_draft_id", draftId).maybeSingle();
   if (existing?.id) await admin.from("content_calendar_items").delete().eq("owner_user_id", ownerId).eq("id", existing.id);
   await cancelPublishItem(admin, ownerId, draftId).catch(() => false);
+}
+
+/**
+ * Switches an Instagram Post's source between "my own asset" and "existing
+ * content" (a photo already shot), which is what unlocks MARA's caption, CTA
+ * and timing suggestions. The source lives on the stored visual's row, so with
+ * no visual yet there is nothing to write: the editor then sends the chosen
+ * source with the next upload. Returns true when a row was updated.
+ */
+export async function setPostAssetOrigin(
+  admin: AdminClient, ownerId: string, draftId: string, origin: "own_asset" | "existing_content",
+): Promise<boolean> {
+  const existing = await loadAssetRow(admin, ownerId, draftId);
+  if (!existing) return false;
+  const { error } = await admin.from(POST_ASSET_TABLE)
+    .update({ origin: assetOriginFor(origin) })
+    .eq("owner_user_id", ownerId).eq("draft_id", draftId);
+  if (error) throw new Error("post_source_update_failed");
+  return true;
 }
 
 export type DeletePostResult =

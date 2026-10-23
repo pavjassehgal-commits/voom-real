@@ -190,8 +190,8 @@ export function CreateContentModal({ onChanged, startWith }: {
               busy={busy}
             />
             <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-text-3">
-              Existing photo you already shot? Choose <b>Use my own asset</b>, then switch the source to
-              <b> Existing content</b> in the editor to get caption, CTA and timing suggestions.
+              Existing photo you already shot? Choose <b>Use my own asset</b>, then pick <b>Existing content</b> under
+              Source in the editor to get caption, CTA and timing suggestions.
             </p>
           </div>
         ) : null}

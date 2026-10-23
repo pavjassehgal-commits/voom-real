@@ -69,6 +69,10 @@ Bucket `brand-kit`: private, images only (jpeg, png, webp), 10 MB per file, path
 like `mara-media`. Website snapshots live under `answers.sources.website`, never in a table of
 their own.
 
+**Version rule (built).** A new version starts from the previous one and replaces only the
+fields the save owns (by field, never by word); every other field carries over. Clearing a field
+the screen shows really clears it. `changed_keys` records what actually changed.
+
 **Dual write (built).** `saveOnboarding` and `saveBrandSettings` keep writing the existing
 `businesses` columns and also append a kit version (source `onboarding` / `brand_hub`). The kit
 insert is best-effort: a failure is logged and never fails the user's save, because the core

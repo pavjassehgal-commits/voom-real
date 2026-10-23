@@ -307,7 +307,7 @@ function profileInput(overrides = {}) {
   };
 }
 
-function fakeUserDb({ newestVersion = null, insertError = null } = {}) {
+function fakeUserDb({ newestVersion = null, newestRow = null, insertError = null } = {}) {
   const calls = { upserts: [], kitInserts: [] };
   const chain = (result) => {
     const q = { select: () => q, eq: () => q, order: () => q, limit: () => q, maybeSingle: async () => result };
@@ -316,7 +316,7 @@ function fakeUserDb({ newestVersion = null, insertError = null } = {}) {
   globalThis.__VOOM_FAKE_SUPABASE__ = {
     from(table) {
       if (table === "brand_kits") {
-        const q = chain({ data: newestVersion ? { version: newestVersion } : null, error: null });
+        const q = chain({ data: newestRow ?? (newestVersion ? { version: newestVersion, answers: {}, brief: null } : null), error: null });
         q.insert = async (row) => { calls.kitInserts.push(row); return { error: insertError }; };
         return q;
       }
@@ -346,6 +346,51 @@ test("onboarding and Settings saves append the next brand kit version and still 
   assert.equal(later.kitInserts[0].version, 5, "a Settings save appends newest + 1");
   assert.equal(later.kitInserts[0].source, "brand_hub");
   assert.equal(later.kitInserts[0].answers.category, "Retail");
+});
+
+test("a save replaces only the fields it owns and carries every other field forward", () => {
+  const previous = {
+    answers: { name: "Bean & Co.", personality: ["Friendly", "Professional"], avoid: { rules: ["Not salesy"], words: ["cheap"] }, notes: "Always mention we are family-run." },
+    brief: "Small-batch roaster in Deira.",
+  };
+  // The personality screen saves Professional + Bold: Friendly goes, the rest stays.
+  const edit = versions.mergeBrandKitVersion(previous, { answers: { personality: ["Professional", "Bold"] } });
+  assert.deepEqual(edit.answers.personality, ["Professional", "Bold"], "the whole field is replaced, nothing is merged inside it");
+  assert.deepEqual(edit.answers.avoid, previous.answers.avoid, "fields the save did not own carry over");
+  assert.equal(edit.answers.notes, previous.answers.notes);
+  assert.equal(edit.brief, previous.brief, "the brief carries over when not given");
+  assert.deepEqual(edit.changedKeys, ["personality"]);
+
+  // Saving the same value again changes nothing and the history says so.
+  assert.deepEqual(versions.mergeBrandKitVersion(previous, { answers: { name: "Bean & Co." } }).changedKeys, []);
+
+  // Clearing a field the screen shows really clears it; clearing the brief too.
+  const cleared = versions.mergeBrandKitVersion(previous, { answers: { notes: "" }, brief: "" });
+  assert.equal(cleared.answers.notes, "");
+  assert.equal(cleared.brief, null);
+  assert.deepEqual(cleared.changedKeys, ["notes", "brief"]);
+
+  // No previous version: the save is the whole kit.
+  const first = versions.mergeBrandKitVersion(null, { answers: { name: "Bean & Co." }, brief: "Hello." });
+  assert.deepEqual(first, { answers: { name: "Bean & Co." }, brief: "Hello.", changedKeys: ["name", "brief"] });
+});
+
+test("a Settings save never wipes the brief, rules, facts or notes of the newest version", async () => {
+  const newestRow = { version: 3, brief: KIT_ROW.brief, answers: { ...KIT_ROW.answers, name: "Bean & Co.", category: "Restaurant / Café" } };
+  const calls = fakeUserDb({ newestRow });
+  assert.deepEqual(await saveBrandSettings(profileInput({ industry: "Retail" })), { ok: true });
+  const inserted = calls.kitInserts[0];
+  assert.equal(inserted.version, 4);
+  assert.equal(inserted.brief, KIT_ROW.brief, "the brief survives a Settings save");
+  assert.deepEqual(inserted.answers.avoid, KIT_ROW.answers.avoid, "the rules survive");
+  assert.deepEqual(inserted.answers.facts_confirmed, KIT_ROW.answers.facts_confirmed);
+  assert.equal(inserted.answers.notes, KIT_ROW.answers.notes);
+  assert.deepEqual(inserted.answers.voice_samples, KIT_ROW.answers.voice_samples);
+  assert.equal(inserted.answers.category, "Retail", "the field Settings owns is replaced");
+  assert.ok(inserted.changed_keys.includes("category"));
+  assert.equal(inserted.changed_keys.includes("notes"), false);
+  // MARA reads the merged row exactly as a kit with content.
+  assert.equal(brand.brandKitHasContent(brand.brandKitExtrasFromRow(inserted)), true);
 });
 
 test("a failed brand kit insert is logged and never fails the user's save", async () => {
