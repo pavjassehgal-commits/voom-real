@@ -1005,10 +1005,13 @@ body:has([data-toast-clearance]) .voom-toast-host { bottom: calc(86px + env(safe
 @keyframes voom-m-slide-next { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
 @keyframes voom-m-slide-prev { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
 
-/* ── Page entrance (client navigations only — see PageTransition) ── */
-.voom-page-enter { animation: voom-m-page-in var(--motion-enter) var(--motion-ease-out) both; }
-/* Related blocks of the page follow in a short, capped stagger. */
+/* ── Page entrance (client navigations only — see PageTransition) ──
+   The page's top-level blocks rise in a short, capped stagger. The wrapper
+   itself does not fade too (nested opacity would multiply and wash the page
+   out for longer than --motion-enter). */
 .voom-page-enter > * > * { animation: voom-m-rise var(--motion-enter) var(--motion-ease-out) both; }
+/* A page whose root has no child blocks still gets one gentle entrance. */
+.voom-page-enter > :only-child:empty { animation: voom-m-page-in var(--motion-enter) var(--motion-ease-out) both; }
 .voom-page-enter > * > :nth-child(2) { animation-delay: calc(var(--motion-stagger) * 1); }
 .voom-page-enter > * > :nth-child(3) { animation-delay: calc(var(--motion-stagger) * 2); }
 .voom-page-enter > * > :nth-child(4) { animation-delay: calc(var(--motion-stagger) * 3); }
