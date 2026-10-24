@@ -910,3 +910,65 @@ body:has([data-toast-clearance]) .voom-toast-host { bottom: calc(86px + env(safe
 }
 @keyframes voom-toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .voom-toast { animation: none; } }
+
+/* ──────────────────────────────────────────────────────────────
+   Homepage (app/page.tsx) — restrained, CSS-only entrance motion.
+   Content is visible without JavaScript; only opacity / transform /
+   scale animate (no layout shift); everything is removed under
+   prefers-reduced-motion.
+   ────────────────────────────────────────────────────────────── */
+.voom-home {
+  --home-ease: cubic-bezier(0.16, 1, 0.3, 1);   /* expo-out: fast start, long soft settle */
+  --home-ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --hero-zoom: 1.55;                            /* phones: frame the subject */
+  --hero-origin: 63% 90%;
+}
+@media (min-width: 640px) {
+  .voom-home { --hero-zoom: 1; --hero-origin: 50% 100%; }
+}
+.voom-home-wash {
+  background:
+    radial-gradient(60% 55% at 18% 8%, rgba(196, 172, 255, 0.38) 0%, transparent 70%),
+    radial-gradient(55% 50% at 86% 4%, rgba(240, 198, 245, 0.42) 0%, transparent 70%),
+    linear-gradient(180deg, #faf9ff 0%, #f6f6f7 100%);
+}
+.voom-home-hero-img { scale: var(--hero-zoom); transform-origin: var(--hero-origin); }
+
+@keyframes voom-home-drop { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
+@keyframes voom-home-rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+@keyframes voom-home-sweep {
+  from { opacity: 0; transform: translateY(18px); background-position: 100% 50%; }
+  60% { opacity: 1; }
+  to { opacity: 1; transform: none; background-position: 0% 50%; }
+}
+@keyframes voom-home-reveal { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+@keyframes voom-home-settle { from { scale: calc(var(--hero-zoom) * 1.08); } to { scale: var(--hero-zoom); } }
+
+.voom-home-header { animation: voom-home-drop 700ms var(--home-ease-soft) both; }
+.voom-home-title { animation: voom-home-rise 900ms var(--home-ease) 120ms both; }
+.voom-home-gradient {
+  background-image: linear-gradient(90deg, #8b45f6 0%, #a24cf6 22%, #d652d8 52%, #ec5aa9 78%, #a24cf6 100%);
+  background-size: 220% 100%;
+  animation: voom-home-sweep 1400ms var(--home-ease) 260ms both;
+}
+.voom-home-sub { animation: voom-home-rise 900ms var(--home-ease) 420ms both; }
+.voom-home-cta { animation: voom-home-rise 900ms var(--home-ease) 540ms both; }
+.voom-home-hero { animation: voom-home-reveal 1200ms var(--home-ease) 620ms both; }
+.voom-home-hero-img { animation: voom-home-settle 1800ms var(--home-ease) 620ms both; }
+
+/* Interaction: a quiet lift, an arrow nudge, a visible focus ring. */
+.voom-home-btn {
+  transition: transform 260ms var(--home-ease), box-shadow 260ms var(--home-ease), background-color 200ms ease, border-color 200ms ease, filter 200ms ease;
+}
+.voom-home-btn:hover { transform: translateY(-1px); }
+.voom-home-btn:active { transform: translateY(0) scale(0.985); transition-duration: 90ms; }
+.voom-home-arrow { transition: transform 260ms var(--home-ease); }
+.voom-home-btn:hover .voom-home-arrow { transform: translateX(3px); }
+.voom-home-focus:focus-visible { outline: 2px solid #8b45f6; outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .voom-home-in, .voom-home-hero-img { animation: none !important; }
+  .voom-home-btn, .voom-home-arrow { transition: none; }
+  .voom-home-btn:hover, .voom-home-btn:active, .voom-home-btn:hover .voom-home-arrow { transform: none; }
+  .voom-home-gradient { background-position: 0% 50%; }
+}
