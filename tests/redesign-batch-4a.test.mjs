@@ -61,7 +61,8 @@ test("public screens stay light and scoped; the workspace shell is untouched", a
   assert.match(css, /\.voom-shell,\n\.voom-public \{/);
   assert.match(css, /:root\[data-theme="dark"\] \.voom-shell \{/);
   assert.doesNotMatch(css, /\[data-theme="dark"\] \.voom-public/, "no dark design exists for these screens");
-  for (const art of ["voice", "mara", "brand", "audience", "business", "budget"]) {
-    assert.ok(existsSync(new URL(`../public/redesign/setup-${art}.webp`, import.meta.url)), art);
+  // Setup artwork: native-resolution crops of the reference panels (no stretched full-panel backgrounds).
+  for (const art of ["voice", "mara", "audience", "business", "budget"]) {
+    assert.ok(existsSync(new URL(`../public/redesign/setup-art-${art}.webp`, import.meta.url)), art);
   }
 });
