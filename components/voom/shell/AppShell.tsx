@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { BottomBar } from "./BottomBar";
+import { PageTransition } from "../motion/PageTransition";
 
 /**
  * Application shell — redesign Batch 1 (Figma "15 — Today · Dashboard home").
@@ -21,11 +22,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Sidebar />
       <div className="relative flex min-w-0 flex-1 flex-col bg-transparent">
         <Topbar />
-        <main
-          className="mx-auto flex w-full max-w-[1280px] flex-1 flex-col px-4 pb-[96px] pt-6 sm:px-6 sm:pb-12 sm:pt-8 lg:px-10"
-          style={{ animation: "voom-fade-in 0.32s ease" }}
-        >
-          <div className="relative z-10 w-full flex-1">{children}</div>
+        <main className="mx-auto flex w-full max-w-[1280px] flex-1 flex-col px-4 pb-[96px] pt-6 sm:px-6 sm:pb-12 sm:pt-8 lg:px-10">
+          {/* Only the page content animates, and only on in-app navigation. */}
+          <div className="relative z-10 flex w-full flex-1 flex-col">
+            <PageTransition>{children}</PageTransition>
+          </div>
         </main>
       </div>
       <BottomBar />
