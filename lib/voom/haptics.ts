@@ -7,9 +7,11 @@
  *
  * A pulse fires only when ALL of these hold:
  * - the API exists;
- * - the browser reports an active user gesture (`navigator.userActivation`),
- *   so page loads, passive notifications and background events can never
- *   vibrate, even if a caller mistakenly asks;
+ * - the browser positively reports a CURRENTLY active user gesture
+ *   (`navigator.userActivation.isActive === true`). Missing activation
+ *   metadata fails closed, so page loads, passive notifications, timers,
+ *   background events and late save results can never vibrate, even if a
+ *   caller mistakenly asks;
  * - the owner has not turned haptics off (Settings → Appearance);
  * - the owner has not asked for reduced motion (system or in-app).
  */
@@ -60,7 +62,7 @@ export function haptic(kind: HapticKind): void {
   if (typeof window === "undefined" || typeof navigator === "undefined") return;
   const nav = navigator as VibratingNavigator;
   if (typeof nav.vibrate !== "function") return;
-  if (nav.userActivation && !nav.userActivation.isActive) return;
+  if (nav.userActivation?.isActive !== true) return; // no positive evidence: fail closed
   if (!hapticsEnabled() || reducedMotionPreferred()) return;
   try {
     nav.vibrate(PATTERNS[kind]);

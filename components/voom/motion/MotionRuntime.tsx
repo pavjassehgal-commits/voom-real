@@ -16,6 +16,8 @@ export function MotionRuntime() {
   useEffect(() => {
     applyMotionPreference();
     function onClick(event: MouseEvent) {
+      // Only genuine input: script-dispatched or timer-generated clicks never vibrate.
+      if (!event.isTrusted) return;
       const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-haptic]") : null;
       if (!target || target.matches(":disabled, [aria-disabled='true']")) return;
       if (target.dataset.haptic === "light") haptic("light");
