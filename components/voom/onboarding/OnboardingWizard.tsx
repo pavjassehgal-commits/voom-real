@@ -21,6 +21,7 @@ import { Icon } from "../icons";
 import { ChannelGlyph } from "../redesign/ui";
 import { VoomLogo } from "../shell/VoomLogo";
 import { SetupComplete } from "./SetupComplete";
+import { OnboardingIcon } from "./onboardingIcons";
 
 const LAST_STEP = 7;
 
@@ -274,7 +275,7 @@ function OptionCard({ active, onClick, icon, label, hint, mark = "check", compac
         active ? "border-[#b9a8ff] bg-[#f5f2ff] shadow-[0_0_0_1px_#b9a8ff]" : "border-[var(--line)]",
       )}
     >
-      {icon && <span className={cx("grid h-10 w-10 shrink-0 place-items-center rounded-[12px] text-[19px] sm:h-11 sm:w-11 sm:text-[20px]", tint ?? "bg-[var(--surface-2)]")} aria-hidden="true">{icon}</span>}
+      {icon && <span className={cx("grid h-10 w-10 shrink-0 place-items-center rounded-[12px] sm:h-11 sm:w-11", tint ?? "bg-[var(--surface-2)]")} aria-hidden="true">{icon}</span>}
       <span className="min-w-0 flex-1 pr-6">
         <span className="block text-[14px] font-semibold leading-snug text-text">{label}</span>
         {hint && <span className="mt-0.5 block text-[12.5px] leading-snug text-text-2">{hint}</span>}
@@ -300,6 +301,9 @@ function Mark({ kind, active }: { kind: "check" | "radio" | "box"; active: boole
 const TINTS = ["bg-[#e8f3ff]", "bg-[#fff4e0]", "bg-[#ffece9]", "bg-[#e9f8ee]", "bg-[#f1ecff]", "bg-[#fff0f6]"];
 const tint = (index: number) => TINTS[index % TINTS.length];
 
+/** Permission tiles use the reference's own colours: peach, light teal, peach. */
+const PERM_TINT = ["bg-[#fff1ea]", "bg-[#e8f8fb]", "bg-[#fff1ea]"];
+
 const FIELD = "h-12 w-full rounded-[12px] border border-[var(--line)] bg-white px-4 text-[14.5px] text-text outline-none transition placeholder:text-text-3 focus:border-[var(--brand-line)] focus:ring-4 focus:ring-[var(--brand-soft)]";
 
 function StepName() {
@@ -319,15 +323,15 @@ function StepName() {
   );
 }
 
-const INSPIRATION: [string, string][] = [
-  ["🏷️", "What you sell"],
-  ["🎯", "Your unique value"],
-  ["👥", "Your target customers"],
-  ["🌱", "Your brand values"],
-  ["📖", "Your story or inspiration"],
-  ["⭐", "What makes you different"],
-  ["📍", "Online or offline presence"],
-  ["➕", "Anything else"],
+const INSPIRATION = [
+  "What you sell",
+  "Your unique value",
+  "Your target customers",
+  "Your brand values",
+  "Your story or inspiration",
+  "What makes you different",
+  "Online or offline presence",
+  "Anything else",
 ];
 
 function StepDescribe({ words }: { words: number }) {
@@ -348,9 +352,9 @@ function StepDescribe({ words }: { words: number }) {
       <p className="mt-2 text-[12.5px] text-text-3">{words} word{words === 1 ? "" : "s"} — a few sentences is plenty</p>
       <h3 className="mt-7 text-[14.5px] font-semibold text-text">Need inspiration? You can mention:</h3>
       <ul className="mt-3 flex flex-wrap gap-2">
-        {INSPIRATION.map(([emoji, label]) => (
+        {INSPIRATION.map((label, index) => (
           <li key={label} className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-white px-3.5 py-2 text-[13px] text-text">
-            <span aria-hidden="true">{emoji}</span>{label}
+            <span className={cx("grid h-7 w-7 shrink-0 place-items-center rounded-full", tint(index))} aria-hidden="true"><OnboardingIcon label={label} size={18} /></span>{label}
           </li>
         ))}
       </ul>
@@ -365,8 +369,8 @@ function StepBasics() {
     <div>
       <QBlock title="1. What kind of business is this?" help="Pick the closest match.">
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
-          {Q_INDUSTRY.map(([emoji, name], index) => (
-            <OptionCard key={name} tint={tint(index)} icon={emoji} label={name} active={onboard.industry === name} onClick={() => setOnboardField("industry", name)} />
+          {Q_INDUSTRY.map(([, name], index) => (
+            <OptionCard key={name} tint={tint(index)} icon={<OnboardingIcon label={name} />} label={name} active={onboard.industry === name} onClick={() => setOnboardField("industry", name)} />
           ))}
         </div>
       </QBlock>
@@ -383,16 +387,6 @@ function StepBasics() {
   );
 }
 
-const CUSTOMER_ICON: Record<string, string> = {
-  "Local residents nearby": "📍",
-  "Young adults (18–29)": "🔞",
-  "Families with children": "👨‍👩‍👧",
-  "Professionals (30–50)": "💼",
-  "Tourists & visitors": "✈️",
-  "Businesses (B2B)": "🏢",
-  "Luxury / high-income": "👑",
-  "Budget-conscious shoppers": "🛒",
-};
 
 function StepAudienceGoal() {
   const { onboard } = useVoomState();
@@ -402,14 +396,14 @@ function StepAudienceGoal() {
       <QBlock title="1. Who is your target customer?" help="Choose all that apply.">
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
           {Q_CUSTOMER.map((c, index) => (
-            <OptionCard key={c} tint={tint(index)} icon={CUSTOMER_ICON[c] ?? "👤"} label={c} mark="box" compact active={onboard.customer.includes(c)} onClick={() => toggleOnboardArray("customer", c)} />
+            <OptionCard key={c} tint={tint(index)} icon={<OnboardingIcon label={c} />} label={c} mark="box" compact active={onboard.customer.includes(c)} onClick={() => toggleOnboardArray("customer", c)} />
           ))}
         </div>
       </QBlock>
       <QBlock title="2. What is your main marketing goal?" help="Pick the one that matters most right now.">
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
-          {Q_GOAL.map(([emoji, name], index) => (
-            <OptionCard key={name} tint={tint(index + 2)} icon={emoji} label={name} mark="radio" compact active={onboard.goal === name} onClick={() => setOnboardField("goal", name)} />
+          {Q_GOAL.map(([, name], index) => (
+            <OptionCard key={name} tint={tint(index + 2)} icon={<OnboardingIcon label={name} />} label={name} mark="radio" compact active={onboard.goal === name} onClick={() => setOnboardField("goal", name)} />
           ))}
         </div>
       </QBlock>
@@ -417,15 +411,15 @@ function StepAudienceGoal() {
   );
 }
 
-const TONE_DETAIL: Record<string, [string, string]> = {
-  Friendly: ["😊", "Warm, approachable and friendly"],
-  Premium: ["👑", "High-end, elegant and exclusive"],
-  Playful: ["🎉", "Fun, energetic and creative"],
-  Professional: ["🧑‍💼", "Trustworthy, expert and reliable"],
-  Bold: ["⚡", "Confident, strong and impactful"],
-  Calm: ["🍃", "Simple, clear and soothing"],
-  Traditional: ["🌿", "Classic, established and familiar"],
-  Modern: ["✨", "Fresh, current and forward-looking"],
+const TONE_HINT: Record<string, string> = {
+  Friendly: "Warm, approachable and friendly",
+  Premium: "High-end, elegant and exclusive",
+  Playful: "Fun, energetic and creative",
+  Professional: "Trustworthy, expert and reliable",
+  Bold: "Confident, strong and impactful",
+  Calm: "Simple, clear and soothing",
+  Traditional: "Classic, established and familiar",
+  Modern: "Fresh, current and forward-looking",
 };
 
 const CHANNEL_KEY: Record<string, string> = { Instagram: "instagram", TikTok: "tiktok", YouTube: "youtube", Email: "email" };
@@ -438,7 +432,7 @@ function StepVoiceChannels() {
       <QBlock title="1. What is your brand personality?" help={`Choose up to three. ${onboard.tone.length} of 3 picked.`}>
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
           {OB_TONE.map((t, index) => (
-            <OptionCard key={t} tint={tint(index + 1)} icon={TONE_DETAIL[t]?.[0]} label={t} hint={TONE_DETAIL[t]?.[1]} active={onboard.tone.includes(t)} onClick={() => toggleOnboardArray("tone", t, 3)} />
+            <OptionCard key={t} tint={tint(index + 1)} icon={<OnboardingIcon label={t} />} label={t} hint={TONE_HINT[t]} active={onboard.tone.includes(t)} onClick={() => toggleOnboardArray("tone", t, 3)} />
           ))}
         </div>
       </QBlock>
@@ -485,14 +479,14 @@ function StepBudgetPace() {
       >
         <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-5">
           {Q_BUDGET.map((v) => (
-            <TileChoice key={v} icon="💰" label={v} hint={BUDGET_HINT[v]} active={onboard.budget === v} onClick={() => setOnboardField("budget", v)} />
+            <TileChoice key={v} label={v} hint={BUDGET_HINT[v]} active={onboard.budget === v} onClick={() => setOnboardField("budget", v)} />
           ))}
         </div>
       </QBlock>
       <QBlock title="2. How often do you want to post?" help="MARA will create a content plan based on this.">
         <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-4">
           {Q_FREQ.map((v) => (
-            <TileChoice key={v} icon="📅" label={v} hint={FREQ_HINT[v]} active={onboard.freq === v} onClick={() => setOnboardField("freq", v)} />
+            <TileChoice key={v} label={v} hint={FREQ_HINT[v]} active={onboard.freq === v} onClick={() => setOnboardField("freq", v)} />
           ))}
         </div>
       </QBlock>
@@ -505,7 +499,7 @@ function StepBudgetPace() {
 }
 
 /** Centred radio tile used for budget and pace (the reference's stacked layout). */
-function TileChoice({ icon, label, hint, active, onClick }: { icon: string; label: string; hint?: string; active: boolean; onClick: () => void }) {
+function TileChoice({ label, hint, active, onClick }: { label: string; hint?: string; active: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
@@ -517,7 +511,7 @@ function TileChoice({ icon, label, hint, active, onClick }: { icon: string; labe
       )}
     >
       <span className="absolute left-3 top-3"><RadioDot active={active} /></span>
-      <span className="text-[26px] leading-none" aria-hidden="true">{icon}</span>
+      <OnboardingIcon label={label} size={30} />
       <span className="mt-2.5 text-[13.5px] font-semibold leading-snug text-text sm:text-[14px]">{label}</span>
       {hint && <span className="mt-1 text-[12px] leading-snug text-text-2">{hint}</span>}
     </button>
@@ -535,14 +529,14 @@ function StepAutomation() {
     <div>
       <QBlock title="1. What level of automation do you want?" help="Choose how much MARA should take care of for you.">
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-          {Q_AUTO.map(([emoji, name, sub], index) => (
-            <OptionCard key={name} tint={tint(index + 1)} icon={emoji} label={name} hint={sub} mark="radio" active={onboard.auto === name} onClick={() => setOnboardField("auto", name)} />
+          {Q_AUTO.map(([, name, sub], index) => (
+            <OptionCard key={name} tint={tint(index + 1)} icon={<OnboardingIcon label={name} />} label={name} hint={sub} mark="radio" active={onboard.auto === name} onClick={() => setOnboardField("auto", name)} />
           ))}
         </div>
       </QBlock>
       <QBlock title="2. Must MARA ask permission before publishing?" help="Choose when MARA should ask for your approval.">
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-          {Q_PERM.map(([emoji, name, sub]) => (
+          {Q_PERM.map(([, name, sub], index) => (
             <button
               key={name}
               type="button"
@@ -554,7 +548,7 @@ function StepAutomation() {
               )}
             >
               <span className="absolute right-3 top-3"><RadioDot active={onboard.permission === name} /></span>
-              <span className="grid h-10 w-10 place-items-center rounded-[11px] bg-[var(--surface-2)] text-[20px]" aria-hidden="true">{emoji}</span>
+              <span className={cx("grid h-10 w-10 place-items-center rounded-[11px]", PERM_TINT[index] ?? tint(index))} aria-hidden="true"><OnboardingIcon label={name} /></span>
               <span className="mt-3 text-[14px] font-semibold leading-snug text-text">{name}</span>
               <span className="mt-1 text-[12.5px] leading-snug text-text-2">{sub}</span>
             </button>
