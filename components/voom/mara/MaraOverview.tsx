@@ -41,7 +41,7 @@ export function MaraOverview({ mode, planId, timeZone, plannedCount, pending, me
       actions={<div className="flex items-center gap-2"><span className="text-[13px] text-text-3">Mode</span><AutomationMode compact showPlanSummary={false} initial={mode} plan={planId} /></div>}
     />
 
-    <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="mb-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
       <StatCard icon="cal" value={plannedCount} label="Posts planned this week" tone="brand" />
       <StatCard icon="checkCircle" value={pending.length} label="Waiting on you" tone="coral" note={pending.length ? <Link href="/app/approvals" className="text-[var(--brand-ink)] hover:underline">Review approvals</Link> : undefined} />
       <StatCard icon="video" value={mediaActiveCount} label="Media in progress" tone="blue" />

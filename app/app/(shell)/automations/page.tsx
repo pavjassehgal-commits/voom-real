@@ -65,7 +65,7 @@ export default async function AutomationsPage() {
       </div>
     )}
 
-    <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="mb-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
       <StatCard icon="sparkle" value={mode === "autopilot" ? "Autopilot" : mode === "assisted" ? "Assisted" : "Manual"} label={pausedAt ? "Saved mode · paused" : "Current mode"} tone="brand" />
       <StatCard icon="checkCircle" value={waitingOnYou} label="Waiting on your approval" tone="coral" note={waitingOnYou ? <Link href="/app/approvals" className="text-[var(--brand-ink)] hover:underline">Review approvals</Link> : undefined} />
       <StatCard icon="video" value={mediaActive.length} label="Media in progress" tone="blue" />

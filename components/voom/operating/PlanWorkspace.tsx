@@ -178,7 +178,7 @@ export function PlanWorkspace({
       </div>
 
       {view === "week" && (
-        <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="mb-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
           <StatCard icon="cal" value={snapshot.items.length} label="Planned posts" tone="brand" />
           <StatCard icon="warn" value={uncoveredInHorizon.length} label="Days with no content" tone="coral" note={uncoveredInHorizon.length ? <span className="text-[var(--coral)]">Need your attention</span> : undefined} />
           <StatCard icon="checkCircle" value={waiting.length} label="Waiting on you" tone="blue" />

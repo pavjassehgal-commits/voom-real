@@ -94,11 +94,13 @@ const STAT_TONES = {
 
 export function StatCard({ icon, value, label, tone = "brand", note }: { icon: string; value: ReactNode; label: string; tone?: keyof typeof STAT_TONES; note?: ReactNode }) {
   return (
-    <div className="voom-card flex min-w-0 items-center gap-4 p-5">
-      <span className={cx("grid h-12 w-12 shrink-0 place-items-center rounded-[14px]", STAT_TONES[tone])}><Icon name={icon} size={21} /></span>
-      <div className="min-w-0">
-        <div className="text-[26px] font-bold leading-none tracking-[-0.03em] text-text">{value}</div>
-        <div className="mt-1 truncate text-[13.5px] text-text-2">{label}</div>
+    // Phones get a compact, stacked tile (two per row); from sm up it is the
+    // icon-beside-number card.
+    <div className="voom-card flex min-w-0 flex-col items-start gap-3 p-4 sm:flex-row sm:items-center sm:gap-4 sm:p-5">
+      <span className={cx("grid h-10 w-10 shrink-0 place-items-center rounded-[12px] sm:h-12 sm:w-12 sm:rounded-[14px]", STAT_TONES[tone])}><Icon name={icon} size={19} /></span>
+      <div className="min-w-0 max-w-full">
+        <div className="break-words text-[22px] font-bold leading-none tracking-[-0.03em] text-text sm:text-[26px]">{value}</div>
+        <div className="mt-1 text-[12.5px] leading-snug text-text-2 sm:truncate sm:text-[13.5px]">{label}</div>
         {note && <div className="mt-1 text-[12px] font-semibold">{note}</div>}
       </div>
     </div>
