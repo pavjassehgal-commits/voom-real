@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { useVoomActions, useVoomState } from "@/lib/voom/store";
 import { detectIndustry } from "@/lib/voom/demoData";
@@ -30,22 +32,38 @@ const LAST_STEP = 7;
  * Step 3 and Step 7), so the working order below is kept: every answer is
  * validated and saved exactly as before, and each step uses the reference's
  * layout, cards and artwork. Nothing is saved until Finish setup (or Skip).
+ *
+ * Artwork: each illustration is cropped at native resolution from the
+ * reference's own panel export (public/redesign/setup-art-*.webp, 640×530) and
+ * shown no wider than 360 CSS px, so it stays sharp; it sits under the step
+ * intro on large screens and is left out on phones, where the form comes
+ * first. The reference's channel artwork includes LinkedIn, which Voom does
+ * not support, so it is not used.
  */
 const STEPS: { label: string; art: string }[] = [
-  { label: "Name", art: "voice" },
+  { label: "Name", art: "mara" },
   { label: "Brand", art: "voice" },
   { label: "Business", art: "business" },
   { label: "Audience", art: "audience" },
-  { label: "Voice", art: "brand" },
+  { label: "Voice", art: "voice" },
   { label: "Budget", art: "budget" },
   { label: "MARA", art: "mara" },
   { label: "Channels", art: "voice" },
 ];
 
-export function OnboardingWizard() {
+export function OnboardingWizard({ completedOnServer = false }: { completedOnServer?: boolean }) {
   const { onboard, onboardStep, igConnected, onboardSaving, onboardError } = useVoomState();
   const { setOnboardField, setOnboardStep, finishOnboarding, toast, goTo } = useVoomActions();
   const [complete, setComplete] = useState<null | { skipped: boolean }>(null);
+  const router = useRouter();
+  // What the server said when this wizard FIRST mounted. A finished account
+  // opening setup directly is sent on to the app. Later re-renders — such as
+  // the one the save action's revalidation triggers once onboarding_completed
+  // turns true — must not redirect, or the completion summary never shows.
+  const [finishedBeforeMount] = useState(completedOnServer);
+  useEffect(() => {
+    if (finishedBeforeMount) router.replace("/app");
+  }, [finishedBeforeMount, router]);
 
   const st = onboardStep;
   const words = onboard.desc.trim().split(/\s+/).filter(Boolean).length;
@@ -110,14 +128,15 @@ export function OnboardingWizard() {
   }
 
   if (complete) return <SetupComplete skipped={complete.skipped} />;
+  if (finishedBeforeMount) return null;
 
   const step = STEPS[st] ?? STEPS[0];
 
   return (
     <div className="voom-public flex min-h-dvh flex-col">
       <header className="sticky top-0 z-30 border-b border-[var(--line)] bg-white/90 backdrop-blur-[12px]">
-        <div className="flex h-[76px] items-center justify-between gap-3 px-4 sm:px-6">
-          <VoomLogo size={30} />
+        <div className="flex h-[60px] items-center justify-between gap-3 px-4 sm:px-6 lg:h-[72px]">
+          <VoomLogo size={28} />
           <ol className="hidden items-start gap-3 xl:flex" aria-label="Setup progress">
             {STEPS.map((item, index) => (
               <li key={item.label} className="w-[78px] text-center" aria-current={index === st ? "step" : undefined}>
@@ -130,7 +149,7 @@ export function OnboardingWizard() {
             ))}
           </ol>
           <div className="flex items-center gap-3">
-            <span className="text-[13px] text-text-2">Step {st + 1} of {STEPS.length}</span>
+            <span className="text-[13px] text-text-2"><span className="hidden sm:inline">Step </span>{st + 1} of {STEPS.length}</span>
             <button
               type="button"
               onClick={() => finish(true)}
@@ -146,12 +165,9 @@ export function OnboardingWizard() {
         </div>
       </header>
 
-      <main
-        className="voom-setup-wash relative flex-1 bg-cover bg-[left_bottom]"
-        style={{ backgroundImage: `url(/redesign/setup-${step.art}.webp)` }}
-      >
-        <div className="mx-auto grid w-full max-w-[1240px] gap-8 px-4 py-8 sm:px-8 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)] lg:gap-14 lg:pb-12 lg:pt-12">
-          <StepIntro index={st} />
+      <main className="voom-setup-wash relative flex-1">
+        <div className="mx-auto grid w-full max-w-[1320px] gap-5 px-4 pb-8 pt-5 sm:gap-8 sm:px-6 sm:pt-6 lg:grid-cols-[minmax(240px,300px)_minmax(0,1fr)] lg:gap-12 lg:px-10 lg:pb-6 lg:pt-10 xl:gap-14">
+          <StepIntro index={st} art={step.art} />
           <div className="min-w-0 pb-4">
             {onboardError && (
               <div role="alert" className="mb-5 rounded-[12px] border border-[var(--red)]/25 bg-[var(--red-soft)] px-4 py-3 text-[13.5px] text-[var(--red)]">
@@ -206,13 +222,31 @@ const INTRO: { title: string; text: string }[] = [
   { title: "Your channels", text: "Finish setup to create your workspace, then connect each channel from its own page." },
 ];
 
-function StepIntro({ index }: { index: number }) {
+function StepIntro({ index, art }: { index: number; art: string }) {
   const intro = INTRO[index] ?? INTRO[0];
   return (
-    <div className="lg:pt-6">
-      <span className="inline-flex rounded-full bg-[#ece8ff] px-3 py-1 text-[12px] font-semibold text-[#4b38c9]">Step {index + 1}</span>
-      <h1 className="mt-4 text-[clamp(1.75rem,3.2vw,2.35rem)] font-bold leading-[1.08] tracking-[-0.04em] text-text">{intro.title}</h1>
-      <p className="mt-3 max-w-[300px] text-[14.5px] leading-[1.6] text-text-2">{intro.text}</p>
+    // On large screens this column is sticky and exactly as tall as the space
+    // between the sticky header and the sticky footer: 73px header + 40px top
+    // padding above, 24px bottom padding + 73px footer below (210px in all),
+    // so it ends ~17px above the footer and adds no scroll of its own. The artwork
+    // takes only what is left after the text, so on short screens it shrinks
+    // — down to nothing — instead of sliding under the footer.
+    <div className="min-w-0 lg:sticky lg:top-[112px] lg:flex lg:h-[calc(100dvh-210px)] lg:min-h-[220px] lg:flex-col lg:self-start">
+      <span className="inline-flex w-fit shrink-0 rounded-full bg-[#ece8ff] px-3 py-1 text-[12px] font-semibold text-[#4b38c9]">Step {index + 1}</span>
+      <h1 className="mt-3 shrink-0 text-[clamp(1.6rem,6vw,1.85rem)] font-bold leading-[1.1] tracking-[-0.035em] text-text lg:mt-4 lg:text-[clamp(1.9rem,2.6vw,2.35rem)]">{intro.title}</h1>
+      <p className="mt-2 max-w-[520px] shrink-0 text-[14px] leading-[1.6] text-text-2 lg:mt-3 lg:max-w-[300px] lg:text-[14.5px]">{intro.text}</p>
+      {/* Decorative: native 640×530 crop, never wider than 360px (≈1.8× density) nor taller than 300px. */}
+      <div className="relative mt-6 hidden min-h-0 w-full max-w-[360px] flex-1 lg:block lg:max-h-[300px]">
+        <Image
+          src={`/redesign/setup-art-${art}.webp`}
+          alt=""
+          width={640}
+          height={530}
+          unoptimized
+          priority
+          className="absolute inset-0 h-full w-full select-none object-contain object-left-top"
+        />
+      </div>
     </div>
   );
 }
@@ -236,11 +270,11 @@ function OptionCard({ active, onClick, icon, label, hint, mark = "check", compac
       aria-pressed={active}
       className={cx(
         "relative flex w-full min-w-0 items-center gap-3 rounded-[14px] border bg-white text-left transition hover:border-[var(--brand-line)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)]",
-        compact ? "px-3.5 py-3.5" : "px-4 py-4",
+        compact ? "px-3.5 py-3 sm:py-3.5" : "px-4 py-3 sm:py-4",
         active ? "border-[#b9a8ff] bg-[#f5f2ff] shadow-[0_0_0_1px_#b9a8ff]" : "border-[var(--line)]",
       )}
     >
-      {icon && <span className={cx("grid h-11 w-11 shrink-0 place-items-center rounded-[12px] text-[20px]", tint ?? "bg-[var(--surface-2)]")} aria-hidden="true">{icon}</span>}
+      {icon && <span className={cx("grid h-10 w-10 shrink-0 place-items-center rounded-[12px] text-[19px] sm:h-11 sm:w-11 sm:text-[20px]", tint ?? "bg-[var(--surface-2)]")} aria-hidden="true">{icon}</span>}
       <span className="min-w-0 flex-1 pr-6">
         <span className="block text-[14px] font-semibold leading-snug text-text">{label}</span>
         {hint && <span className="mt-0.5 block text-[12.5px] leading-snug text-text-2">{hint}</span>}
@@ -449,14 +483,14 @@ function StepBudgetPace() {
         title="1. What is your optional monthly paid-advertising budget?"
         help={<>This is separate from your Voom subscription. Choose AED 0 if you only want <span className="font-medium text-[var(--brand)]">organic marketing</span>.</>}
       >
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-5">
           {Q_BUDGET.map((v) => (
-            <TileChoice key={v} icon="🪙" label={v} hint={BUDGET_HINT[v]} active={onboard.budget === v} onClick={() => setOnboardField("budget", v)} />
+            <TileChoice key={v} icon="💰" label={v} hint={BUDGET_HINT[v]} active={onboard.budget === v} onClick={() => setOnboardField("budget", v)} />
           ))}
         </div>
       </QBlock>
       <QBlock title="2. How often do you want to post?" help="MARA will create a content plan based on this.">
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-4">
           {Q_FREQ.map((v) => (
             <TileChoice key={v} icon="📅" label={v} hint={FREQ_HINT[v]} active={onboard.freq === v} onClick={() => setOnboardField("freq", v)} />
           ))}
@@ -478,13 +512,13 @@ function TileChoice({ icon, label, hint, active, onClick }: { icon: string; labe
       onClick={onClick}
       aria-pressed={active}
       className={cx(
-        "relative flex min-w-0 flex-col items-center rounded-[14px] border bg-white px-3 pb-4 pt-5 text-center transition hover:border-[var(--brand-line)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)]",
+        "relative flex min-w-0 flex-col items-center rounded-[14px] border bg-white px-2.5 pb-3.5 pt-5 text-center transition sm:px-3 sm:pb-4 hover:border-[var(--brand-line)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)]",
         active ? "border-[#b9a8ff] bg-[#f5f2ff] shadow-[0_0_0_1px_#b9a8ff]" : "border-[var(--line)]",
       )}
     >
       <span className="absolute left-3 top-3"><RadioDot active={active} /></span>
       <span className="text-[26px] leading-none" aria-hidden="true">{icon}</span>
-      <span className="mt-2.5 text-[14px] font-semibold leading-snug text-text">{label}</span>
+      <span className="mt-2.5 text-[13.5px] font-semibold leading-snug text-text sm:text-[14px]">{label}</span>
       {hint && <span className="mt-1 text-[12px] leading-snug text-text-2">{hint}</span>}
     </button>
   );

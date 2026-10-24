@@ -45,7 +45,17 @@ test("setup keeps the real save path, validation and the completed-account redir
     code("components/voom/onboarding/OnboardingWizard.tsx"), read("app/app/onboarding/page.tsx"), code("components/voom/onboarding/SetupComplete.tsx"),
   ]);
   assert.match(page, /business\?\.onboarding_completed/);
-  assert.match(page, /redirect\("\/app"\)/, "an onboarded account never restarts setup");
+  // An onboarded account opening setup is sent on by the wizard, using what the
+  // server said when it FIRST mounted. The page itself must not redirect: the
+  // save action's /app revalidation re-renders this page, and a server redirect
+  // then would hide the completion summary.
+  assert.match(page, /<OnboardingWizard completedOnServer=\{Boolean\(business\?\.onboarding_completed\)\} \/>/);
+  assert.doesNotMatch(page, /redirect\(/, "no server redirect inside the save action's re-render");
+  assert.match(wizard, /const \[finishedBeforeMount\] = useState\(completedOnServer\)/, "the bypass is decided once, at mount");
+  assert.match(wizard, /if \(finishedBeforeMount\) router\.replace\("\/app"\)/, "an onboarded account never restarts setup");
+  assert.match(wizard, /const ok = await finishOnboarding\(skipped\);\s*if \(ok\) setComplete\(\{ skipped \}\);/, "success shows only after the save succeeds");
+  assert.ok(wizard.indexOf("if (complete) return <SetupComplete") < wizard.indexOf("if (finishedBeforeMount) return null"), "a just-finished setup shows its summary, never the bypass");
+  assert.match(complete, /href="\/app\/today"[^>]*>Go to dashboard/, "the summary leads to the dashboard");
   assert.match(wizard, /await finishOnboarding\(skipped\)/);
   for (const message of ["Tell MARA what to call you", "Pick the kind of business", "Choose your main marketing goal", "Pick at least one target customer", "Choose a publishing permission"]) {
     assert.match(wizard, new RegExp(message), `validation kept: ${message}`);
@@ -61,7 +71,18 @@ test("public screens stay light and scoped; the workspace shell is untouched", a
   assert.match(css, /\.voom-shell,\n\.voom-public \{/);
   assert.match(css, /:root\[data-theme="dark"\] \.voom-shell \{/);
   assert.doesNotMatch(css, /\[data-theme="dark"\] \.voom-public/, "no dark design exists for these screens");
-  for (const art of ["voice", "mara", "brand", "audience", "business", "budget"]) {
-    assert.ok(existsSync(new URL(`../public/redesign/setup-${art}.webp`, import.meta.url)), art);
+  // Setup artwork: native-resolution crops of the reference panels (no stretched full-panel backgrounds).
+  for (const art of ["voice", "mara", "audience", "business", "budget"]) {
+    assert.ok(existsSync(new URL(`../public/redesign/setup-art-${art}.webp`, import.meta.url)), art);
   }
+});
+
+test("setup artwork is height-bounded between the sticky header and footer", async () => {
+  const wizard = await code("components/voom/onboarding/OnboardingWizard.tsx");
+  // The intro column is exactly the space between the 73px header (+40px padding)
+  // and the 73px footer (+24px padding); the art flexes into what the text leaves.
+  assert.match(wizard, /lg:sticky lg:top-\[112px\] lg:flex lg:h-\[calc\(100dvh-210px\)\]/);
+  assert.match(wizard, /lg:pb-6 lg:pt-10/, "the bottom padding the column height accounts for");
+  assert.match(wizard, /min-h-0 w-full max-w-\[360px\] flex-1 lg:block lg:max-h-\[300px\]/, "art shrinks with the space left, capped at 360×300");
+  assert.match(wizard, /absolute inset-0 h-full w-full select-none object-contain/, "contained, never cropped or stretched");
 });

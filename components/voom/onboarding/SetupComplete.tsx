@@ -129,7 +129,7 @@ export function SetupComplete({ skipped }: { skipped: boolean }) {
               </ol>
               <div className="mt-auto grid grid-cols-2 gap-2.5 pt-6">
                 <Link href="/app/connections" className="inline-flex h-11 items-center justify-center rounded-full border border-[var(--line)] bg-white text-[14px] font-semibold text-text transition hover:bg-[var(--surface-2)]">Connect channels</Link>
-                <Link href="/app/today" className="voom-create-btn inline-flex h-11 items-center justify-center gap-2 rounded-full text-[14px] font-semibold text-white">Go to Today <Icon name="arrow" size={15} /></Link>
+                <Link href="/app/today" className="voom-create-btn inline-flex h-11 items-center justify-center gap-2 rounded-full text-[14px] font-semibold text-white">Go to dashboard <Icon name="arrow" size={15} /></Link>
               </div>
             </section>
           </div>
