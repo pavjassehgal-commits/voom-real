@@ -28,6 +28,10 @@ export interface Toast {
   id: number;
   msg: string;
   kind: "ok" | "err" | "warn" | "info";
+  /** How many times this exact message has been raised while on screen. */
+  count: number;
+  /** Changes on every repeat, so the host restarts its expiry and re-announces it. */
+  seq: number;
 }
 
 export interface ProfileRecord {

@@ -14,7 +14,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -198,7 +197,6 @@ export function VoomProvider({
   // the persisted value takes over immediately after hydration.
   const theme = useSyncExternalStore(subscribeToTheme, themeSnapshot, initialTheme);
   const router = useRouter();
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   // Keep <html data-theme> in step with the AUTHORITATIVE stored theme. The
   // pre-paint script already painted it, so this is a no-op on hydration and
@@ -234,18 +232,19 @@ export function VoomProvider({
     return () => { active = false; window.removeEventListener("voom:instagram-changed", syncInstagram); };
   }, []);
 
-  const after = useCallback((ms: number, fn: () => void) => {
-    const id = setTimeout(fn, ms);
-    timers.current.push(id);
-  }, []);
-
+  // An identical notification already on screen (or waiting) is coalesced into
+  // one with a repeat count instead of stacking a copy. Expiry is owned by
+  // ToastHost, which only starts a toast's timer once it is actually visible.
   const toast = useCallback<VoomActions["toast"]>((msg, kind = "ok") => {
     const id = ++toastId;
-    setState((s) => ({ ...s, toasts: [...s.toasts, { id, msg, kind }] }));
-    after(3000, () => {
-      setState((s) => ({ ...s, toasts: s.toasts.filter((t) => t.id !== id) }));
+    setState((s) => {
+      const existing = s.toasts.find((t) => t.msg === msg && t.kind === kind);
+      if (existing) {
+        return { ...s, toasts: s.toasts.map((t) => (t === existing ? { ...t, count: t.count + 1, seq: id } : t)) };
+      }
+      return { ...s, toasts: [...s.toasts, { id, msg, kind, count: 1, seq: id }] };
     });
-  }, [after]);
+  }, []);
 
   const dismissToast = useCallback<VoomActions["dismissToast"]>((id) => {
     setState((s) => ({ ...s, toasts: s.toasts.filter((t) => t.id !== id) }));
