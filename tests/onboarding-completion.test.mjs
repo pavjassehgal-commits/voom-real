@@ -58,7 +58,8 @@ test("the completion flow is not torn down by the save's revalidated render; onb
         return {
           before,
           after: document.getElementById("new-owner").innerText,
-          onboarded: document.getElementById("onboarded").innerHTML,
+          // Only the always-mounted (empty) notification live region may remain.
+          onboarded: [...document.getElementById("onboarded").children].filter((el) => !el.classList.contains("voom-toast-host")).map((el) => el.outerHTML).join("") + document.getElementById("onboarded").innerText.trim(),
         };
       })()`,
     }]);
