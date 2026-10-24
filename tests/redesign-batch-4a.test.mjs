@@ -53,7 +53,7 @@ test("setup keeps the real save path, validation and the completed-account redir
   assert.doesNotMatch(page, /redirect\(/, "no server redirect inside the save action's re-render");
   assert.match(wizard, /const \[finishedBeforeMount\] = useState\(completedOnServer\)/, "the bypass is decided once, at mount");
   assert.match(wizard, /if \(finishedBeforeMount\) router\.replace\("\/app"\)/, "an onboarded account never restarts setup");
-  assert.match(wizard, /const ok = await finishOnboarding\(skipped\);\s*if \(ok\) setComplete\(\{ skipped \}\);/, "success shows only after the save succeeds");
+  assert.match(wizard, /const ok = await finishOnboarding\(skipped\);\s*(?:haptic\(ok \? "success" : "error"\);\s*)?if \(ok\) setComplete\(\{ skipped \}\);/, "success shows only after the save succeeds");
   assert.ok(wizard.indexOf("if (complete) return <SetupComplete") < wizard.indexOf("if (finishedBeforeMount) return null"), "a just-finished setup shows its summary, never the bypass");
   assert.match(complete, /href="\/app\/today"[^>]*>Go to dashboard/, "the summary leads to the dashboard");
   assert.match(wizard, /await finishOnboarding\(skipped\)/);

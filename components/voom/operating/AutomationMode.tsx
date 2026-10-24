@@ -1,5 +1,6 @@
 "use client";
 
+import { haptic } from "@/lib/voom/haptics";
 import { useState } from "react";
 import { Icon } from "@/components/voom/icons";
 import { Btn, cx } from "@/components/voom/ui/primitives";
@@ -50,6 +51,7 @@ export function AutomationMode({
   async function choose(next: AutomationModeValue) {
     if (next === mode || busy) return;
     if (!isModeAllowed(next)) {
+      haptic("warning");
       setError(
         next === "autopilot"
           ? "Autopilot is available on Max plan only. Upgrade to Max to use Autopilot."
@@ -69,6 +71,7 @@ export function AutomationMode({
     else setError(body.error ?? "Voom couldn't save that mode.");
     // The server echoes the saved mode; fall back to the mode we asked for.
     if (response.ok) announceSavedMode(storedAutomationMode(body.mode) ?? next);
+    haptic(response.ok ? "success" : "error");
     setBusy(false);
   }
 
@@ -121,7 +124,7 @@ function ModeCard({ card, allowed, plan }: { card: AutomationModeCard; allowed: 
       data-mode={card.value}
       data-active={card.active ? "true" : "false"}
       aria-current={card.active ? "true" : undefined}
-      className={cx("rounded-xl border p-4", card.active ? "border-brand bg-[var(--brand-soft)]" : "border-line bg-surface-2", !allowed && "opacity-60")}
+      className={cx("rounded-xl border p-4 transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.2,0,0,1)]", card.active ? "border-brand bg-[var(--brand-soft)]" : "border-line bg-surface-2", !allowed && "opacity-60")}
     >
       <div className="flex flex-wrap items-center gap-2">
         <b>{card.label}</b>

@@ -110,6 +110,8 @@ export default function CalendarPage() {
   // The week view is anchored on one real local date; the selected day starts as that date.
   const [weekDay, setWeekDay] = useState<string | null>(null);
   const [showAllPending, setShowAllPending] = useState(false);
+  // Direction of the last month/week move, so the grid slides the way you travelled.
+  const [travel, setTravel] = useState<"next" | "prev" | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -205,12 +207,12 @@ export default function CalendarPage() {
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {mode === "month" ? <>
-            <button type="button" aria-label="Previous month" className={ROUND} onClick={() => setCursor(shift(view, -1))}><Icon name="chevL" size={16} /></button>
-            <button type="button" aria-label="Next month" className={ROUND} onClick={() => setCursor(shift(view, 1))}><Icon name="chevR" size={16} /></button>
+            <button type="button" aria-label="Previous month" data-haptic="light" className={ROUND} onClick={() => { setTravel("prev"); setCursor(shift(view, -1)); }}><Icon name="chevL" size={16} /></button>
+            <button type="button" aria-label="Next month" data-haptic="light" className={ROUND} onClick={() => { setTravel("next"); setCursor(shift(view, 1)); }}><Icon name="chevR" size={16} /></button>
             <button type="button" className={cx(BTN.quiet, "rounded-full")} onClick={() => snapshot && setCursor(monthOf(snapshot.today))}>Today</button>
           </> : <>
-            <button type="button" aria-label="Previous week" className={ROUND} onClick={() => setWeekDay(addDaysIso(week[0], -7))}><Icon name="chevL" size={16} /></button>
-            <button type="button" aria-label="Next week" className={ROUND} onClick={() => setWeekDay(addDaysIso(week[0], 7))}><Icon name="chevR" size={16} /></button>
+            <button type="button" aria-label="Previous week" data-haptic="light" className={ROUND} onClick={() => { setTravel("prev"); setWeekDay(addDaysIso(week[0], -7)); }}><Icon name="chevL" size={16} /></button>
+            <button type="button" aria-label="Next week" data-haptic="light" className={ROUND} onClick={() => { setTravel("next"); setWeekDay(addDaysIso(week[0], 7)); }}><Icon name="chevR" size={16} /></button>
             <button type="button" className={cx(BTN.quiet, "rounded-full")} onClick={() => setWeekDay(today)}>Jump to today</button>
           </>}
           <div className="inline-flex rounded-full border border-line bg-surface-2 p-1" role="group" aria-label="Calendar view">
@@ -251,7 +253,7 @@ export default function CalendarPage() {
           <div className="grid grid-cols-7 border-b border-line">
             {DOW.map((day) => <div key={day} className="px-1 py-2.5 text-center text-[11px] font-semibold uppercase tracking-[0.1em] text-text-2 sm:px-3 sm:text-left sm:text-[12px]">{day}</div>)}
           </div>
-          <div className="grid grid-cols-7">
+          <div key={`${view.year}-${view.month}`} className={cx("grid grid-cols-7", travel === "next" ? "voom-m-slide-next" : travel === "prev" ? "voom-m-slide-prev" : undefined)}>
             {cells.map((cell, index) => {
               const date = cell.date;
               const events = cell.out ? [] : byDate.get(date) ?? [];
@@ -336,6 +338,7 @@ export default function CalendarPage() {
           onCreate={() => open(<CreateContentModal onChanged={() => void load()} />)}
           onMonth={() => { setMode("month"); setCursor(monthOf(selectedDay)); }}
           empty={Boolean(snapshot) && totalVisible === 0}
+          travel={travel}
         />
       )}
 
@@ -408,7 +411,7 @@ function EmptyCalendar({ onCreate }: { onCreate: () => void }) {
  * a real item and opens the same editor as the month view. The reference's
  * "Best time" hint and List view are not shown: Voom computes neither.
  */
-function WeekView({ week, selectedDay, today, byDate, onSelect, onOpen, onCreate, onMonth, empty }: {
+function WeekView({ week, selectedDay, today, byDate, onSelect, onOpen, onCreate, onMonth, empty, travel }: {
   week: string[];
   selectedDay: string;
   today: string;
@@ -418,6 +421,7 @@ function WeekView({ week, selectedDay, today, byDate, onSelect, onOpen, onCreate
   onCreate: () => void;
   onMonth: () => void;
   empty: boolean;
+  travel: "next" | "prev" | null;
 }) {
   const weekEvents = week.flatMap((date) => (byDate.get(date) ?? []).map((event) => ({ date, event })));
   const dayEvents = byDate.get(selectedDay) ?? [];
@@ -430,7 +434,7 @@ function WeekView({ week, selectedDay, today, byDate, onSelect, onOpen, onCreate
           <h2 className="text-[22px] font-bold tracking-[-0.03em] text-text">{week.includes(today) ? "This week" : "Week of " + shortDate(week[0])}</h2>
           <p className="text-[13px] text-text-2">{shortDate(week[0])} to {shortDate(week[6])}</p>
         </div>
-        <ol className="mt-5 grid grid-cols-7 items-end gap-1 sm:gap-2.5 lg:gap-3">
+        <ol key={week[0]} className={cx("mt-5 grid grid-cols-7 items-end gap-1 sm:gap-2.5 lg:gap-3", travel === "next" ? "voom-m-slide-next" : travel === "prev" ? "voom-m-slide-prev" : undefined)}>
           {week.map((date) => {
             const events = byDate.get(date) ?? [];
             const selected = date === selectedDay;
@@ -440,6 +444,7 @@ function WeekView({ week, selectedDay, today, byDate, onSelect, onOpen, onCreate
                 <button
                   type="button"
                   onClick={() => onSelect(date)}
+                  data-haptic="light"
                   aria-pressed={selected}
                   aria-label={`${weekdayOf(date)} ${shortDate(date)}: ${events.length} item${events.length === 1 ? "" : "s"}`}
                   className={cx(

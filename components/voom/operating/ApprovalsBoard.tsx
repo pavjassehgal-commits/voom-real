@@ -1,6 +1,8 @@
 "use client";
+
 /* eslint-disable @next/next/no-img-element -- private signed URLs expire and must bypass the public image optimizer */
 
+import { haptic } from "@/lib/voom/haptics";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -58,6 +60,7 @@ export function ApprovalsBoard({ initial, drafts = {} }: { initial: ApprovalItem
     if (response.status === 409) setNotices((current) => ({ ...current, [id]: body.error ?? "This post changed. Nothing was approved — review the latest version." }));
     else if (!response.ok || !body.action) setError(body.error ?? "Voom couldn't safely update that action.");
     else setNotices((current) => { const next = { ...current }; delete next[id]; return next; });
+    haptic(response.status === 409 ? "warning" : response.ok && body.action ? "success" : "error");
     setBusy(null);
     return response.ok && Boolean(body.action);
   }

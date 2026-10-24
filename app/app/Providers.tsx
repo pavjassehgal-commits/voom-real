@@ -5,6 +5,7 @@ import { VoomProvider } from "@/lib/voom/store";
 import { ModalProvider } from "@/lib/voom/modal";
 import { ModalHost } from "@/components/voom/ui/Modal";
 import { ToastHost } from "@/components/voom/ui/ToastHost";
+import { MotionRuntime } from "@/components/voom/motion/MotionRuntime";
 import type { BusinessRecord } from "@/lib/voom/types";
 
 export function Providers({
@@ -24,6 +25,7 @@ export function Providers({
         {children}
         <ModalHost />
         <ToastHost />
+        <MotionRuntime />
       </ModalProvider>
     </VoomProvider>
   );

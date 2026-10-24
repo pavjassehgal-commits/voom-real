@@ -37,6 +37,7 @@ export function BottomBar() {
             key={id}
             href={navPath(id)}
             prefetch
+            data-haptic="light"
             aria-current={isActive ? "page" : undefined}
             className={cx(
               "relative flex flex-1 flex-col items-center justify-center gap-1 rounded-[12px] px-1 py-1 text-[10px] font-medium tracking-wide transition",
