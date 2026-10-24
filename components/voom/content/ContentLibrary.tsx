@@ -79,11 +79,12 @@ export function ContentLibrary({ items, limited, unavailable, performance, initi
         </>}
       />
 
-      <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard icon="file" value={items.length} label="Total content" tone="brand" />
-        <StatCard icon="cal" value={counts.scheduled ?? 0} label="Scheduled" tone="blue" />
-        <StatCard icon="send" value={counts.published ?? 0} label="Published" tone="green" />
-        <StatCard icon="clock" value={counts.drafts ?? 0} label="Drafts" tone="coral" />
+      <div className="mb-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+        {/* When the library couldn't be read, its counts are unknown — never a false 0. */}
+        <StatCard icon="file" value={unavailable ? "—" : items.length} label="Total content" tone="brand" />
+        <StatCard icon="cal" value={unavailable ? "—" : counts.scheduled ?? 0} label="Scheduled" tone="blue" />
+        <StatCard icon="send" value={unavailable ? "—" : counts.published ?? 0} label="Published" tone="green" />
+        <StatCard icon="clock" value={unavailable ? "—" : counts.drafts ?? 0} label="Drafts" tone="coral" />
       </div>
 
       <section className="voom-card min-w-0 overflow-hidden" aria-label="Content library">
@@ -96,7 +97,7 @@ export function ContentLibrary({ items, limited, unavailable, performance, initi
                 <button key={entry.id} type="button" role="tab" aria-selected={active} onClick={() => selectTab(entry.id)}
                   className={cx("flex shrink-0 items-center gap-2 border-b-2 px-3 py-4 text-[14.5px] transition", active ? "border-[var(--brand)] font-semibold text-[var(--brand-ink)]" : "border-transparent text-text-2 hover:text-text")}>
                   {entry.label}
-                  <span className={cx("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", active ? "bg-[var(--brand-soft)] text-[var(--brand-ink)]" : "bg-surface-3 text-text-2")}>{count}</span>
+                  <span className={cx("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", active ? "bg-[var(--brand-soft)] text-[var(--brand-ink)]" : "bg-surface-3 text-text-2")}>{unavailable ? "—" : count}</span>
                 </button>
               );
             })}
