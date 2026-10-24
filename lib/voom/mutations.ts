@@ -6,7 +6,7 @@ import { createAdminClient } from "@/utils/supabase/admin";
 import { getCurrentUser } from "./server-data";
 import { normalizeMediaSpendSettings, type MediaSpendSettings } from "@/lib/mara/media-spend";
 import { normalizeWebsiteUrl, WEBSITE_NOT_SAVED_NOTICE } from "./website";
-import { appendBrandKitVersion, brandKitAnswersFromProfile } from "@/lib/brand/versions";
+import { appendBrandKitVersion, brandKitAnswersFromOnboarding, brandKitAnswersFromProfile } from "@/lib/brand/versions";
 import type { BusinessProfileInput, OnboardingInput } from "./types";
 
 /** `notice` is a non-fatal message worth showing (the save itself succeeded). */
@@ -52,12 +52,15 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
   );
   if (businessError) return { ok: false, error: saveError(businessError) };
 
-  // Brand Kit v2 dual write (migration 0059): the same answers also become
-  // brand kit version 1 (or the next version after a restart). Best-effort:
-  // the businesses row above is what today's generation reads.
+  // Brand Kit v2 dual write (migration 0059): the answers, including the
+  // kit-only screens (rules, banned words, notes, facts, offerings, brief),
+  // become brand kit version 1 (or the next version after a restart).
+  // Best-effort: the businesses row above is what today's generation reads
+  // for the core fields.
   await appendBrandKitVersion(supabase, user.id, {
     source: "onboarding",
-    answers: brandKitAnswersFromProfile(input),
+    answers: brandKitAnswersFromOnboarding(input),
+    ...(input.kit ? { brief: input.kit.brief } : {}),
     changeSummary: "Onboarding completed",
   });
 

@@ -337,7 +337,9 @@ test("onboarding and Settings saves append the next brand kit version and still 
   assert.equal(first.kitInserts[0].owner_user_id, "owner-1");
   assert.equal(first.kitInserts[0].version, 1, "first save = version 1");
   assert.equal(first.kitInserts[0].source, "onboarding");
-  assert.deepEqual(first.kitInserts[0].answers, versions.brandKitAnswersFromProfile(profileInput()));
+  // Onboarding no longer asks for a budget or publishing permission (slice 3), so those keys are omitted.
+  assert.deepEqual(first.kitInserts[0].answers, versions.brandKitAnswersFromOnboarding(profileInput()));
+  assert.equal("budget" in first.kitInserts[0].answers, false);
   assert.equal(first.kitInserts[0].answers.name, "Bean & Co.");
   assert.deepEqual(first.kitInserts[0].answers.audience, ["Local residents nearby"]);
 

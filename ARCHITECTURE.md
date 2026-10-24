@@ -27,7 +27,7 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 | Database + auth + storage | Supabase. Packages `@supabase/ssr`, `@supabase/supabase-js` |
 | Validation | zod |
 | Images | sharp (inspect/resize), image overlays |
-| Tests | Node's built-in test runner: `npm test` runs `tests/*.test.mjs` (111 files, 1,715 tests; 4 are deliberately skipped in `voom-plans-credits-v1` with notes pointing to their replacements). Some use PGlite (an in-memory Postgres) to test SQL; 25 layout tests render pages in a real headless Chrome (found at `/Applications/Google Chrome.app`, or `VOOM_CHROMIUM_PATH`). Baseline counts live in `docs/baseline.md`. |
+| Tests | Node's built-in test runner: `npm test` runs `tests/*.test.mjs` (112 files, 1,724 tests; 4 are deliberately skipped in `voom-plans-credits-v1` with notes pointing to their replacements). Some use PGlite (an in-memory Postgres) to test SQL; 25 layout tests render pages in a real headless Chrome (found at `/Applications/Google Chrome.app`, or `VOOM_CHROMIUM_PATH`). Baseline counts live in `docs/baseline.md`. |
 | Hosting | Vercel (`vercel.json` has 2 daily crons) |
 
 ## Folder map
@@ -96,12 +96,14 @@ link goes to `/reset-password?error=link_invalid`, which offers a new one. The e
 link expiry are Supabase dashboard settings, not code: see `handover/production-setup.md`.
 Missing today: 2FA.
 
-**Onboarding.** `components/voom/onboarding/OnboardingWizard.tsx` (8 steps, questions in
-`lib/voom/onboardingData.ts`; `AnalyzingScreen.tsx` is the "we're setting things up" screen shown
-at the end) → `saveOnboarding` in `lib/voom/mutations.ts` → writes `profiles`
-and `businesses` (website goes only to the email brand table) and appends `brand_kits`
-version 1 (best-effort; the Settings brand save appends the next version the same way). The
-wizard is being redesigned: `docs/brand-kit-v2-design.md`.
+**Onboarding.** `components/voom/onboarding/OnboardingWizard.tsx` (10 screens, one topic each,
+five required answers, per-screen Skip; option lists in `lib/voom/onboardingData.ts`; the
+Brand Brief screen is the Brand Hub component in local mode; `AnalyzingScreen.tsx` is the
+"we're setting things up" screen shown at the end) → `saveOnboarding` in
+`lib/voom/mutations.ts` → writes `profiles` and `businesses` (website goes only to the email
+brand table; the automation level is saved as the real mode the plan allows) and appends
+`brand_kits` version 1 with the brief, offerings, rules, banned words, notes and facts
+(best-effort). Design and remaining slices: `docs/brand-kit-v2-design.md`.
 
 **Plan → content → approval → publish.**
 1. Daily cron `/api/cron/weekly-plans` or the "Build plan" button (`/api/plan`) runs `lib/voom/workflow/service.ts`.
@@ -143,5 +145,6 @@ All keys go in `.env.local` (copy from `.env.example`). Never commit real values
 `NEXT_PUBLIC_` is visible in the browser; everything else is server-only.
 
 ## Not built yet
-2FA · LinkedIn · Stripe billing · the new onboarding screens, brand asset uploads and website
-reading (`docs/brand-kit-v2-design.md`, slices 3–8) · reference images in image generation.
+2FA · LinkedIn · Stripe billing · onboarding's "smart" screens (uploads, "Here's what I
+learned", sample captions), brand asset uploads and website reading
+(`docs/brand-kit-v2-design.md`, slices 4–8) · reference images in image generation.

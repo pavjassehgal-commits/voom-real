@@ -181,9 +181,13 @@ prop that hides History and the gallery in onboarding.
    before/after, `saveBrandSection` action, onboarding mode ready for slice 3. Tests:
    `tests/brand-hub.test.mjs`. Not yet: the asset gallery (slice 5), "write 3 new samples"
    (slice 6), the "needs confirmation" badge (slice 4), replacing the Settings form (slice 3).
-3. **Onboarding pass A.** Twelve-screen skeleton, per-screen Skip, five required answers, the
-   automation fix (real values, plan badges, data fix for existing label-text rows), screens 1,
-   3a, 4, 5, 7, 8, 9, 10a, 10b. 2, 3b and 6 are placeholders that say so.
+3. **Onboarding pass A. BUILT 2026-10-24.** Ten screens (the design's 1, 3a, 4, 5, 6 chips
+   only, 7, 8, 9, 10a, 10b), per-screen Skip, five required answers, automation saves the real
+   value within the plan (`wanted_automation` kept), Brand Hub component in local-persist mode
+   on the brief screen, Settings brand form replaced by a link card. No placeholder screens:
+   slices 4 to 6 insert screens 2, 3b and the sample captions when their engines exist. No data
+   migration for old label-text `automation_level` rows (they run as Assisted; re-pick on the
+   Automations page). Tests: `tests/onboarding-v2.test.mjs`.
 4. **Extraction from the description.** One structured AI call, screen 3b, prefill of 4 and 5,
    unconfirmed tracking. Tests: failed AI call falls back to the keyword guess.
 5. **Assets.** Screen 2 uploads (logo, products, past posts with the disclaimer), bucket writes,

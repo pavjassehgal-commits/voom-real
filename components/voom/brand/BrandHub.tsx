@@ -15,7 +15,7 @@ import { AutomationMode } from "@/components/voom/operating/AutomationMode";
 import { Btn, Card, Chip, Field, Input, Tag, Textarea } from "@/components/voom/ui/primitives";
 import { saveBrandSection } from "@/lib/brand/actions";
 import {
-  answerKeyLabel, AVOID_RULES, BRAND_SECTIONS, brandSectionMeta,
+  answerKeyLabel, AVOID_RULES, BRAND_SECTIONS, brandSectionMeta, validateBrandSection,
   type BrandKitVersionView, type BrandSectionId, type BrandSectionValues,
 } from "@/lib/brand/sections";
 import type { PlanId } from "@/lib/billing/plans";
@@ -30,6 +30,14 @@ export interface BrandHubProps {
   automation: AutomationModeValue;
   /** Onboarding mode only: "Looks right". */
   onDone?: () => void;
+  /**
+   * Where a Save goes. "server" (default) calls the save action and records a
+   * version. "local" keeps the values in memory and reports them through
+   * `onLocalSave`: the onboarding wizard uses this because the business row
+   * does not exist until "Finish setup", which then writes everything at once.
+   */
+  persist?: "server" | "local";
+  onLocalSave?: (id: BrandSectionId, values: BrandSectionValues[BrandSectionId]) => void;
 }
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -99,7 +107,7 @@ function Pick({ options, value, onChange, disabled }: { options: readonly string
   );
 }
 
-export function BrandHub({ mode, initialValues, history, plan, automation, onDone }: BrandHubProps) {
+export function BrandHub({ mode, initialValues, history, plan, automation, onDone, persist = "server", onLocalSave }: BrandHubProps) {
   const [values, setValues] = useState<BrandSectionValues>(initialValues);
   const [editing, setEditing] = useState<BrandSectionId | null>(null);
   const [draft, setDraft] = useState<BrandSectionValues[BrandSectionId] | null>(null);
@@ -149,6 +157,21 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
     setBusy(true);
     setError("");
     setNotice("");
+    if (persist === "local") {
+      // Same validation as the server, no database: the wizard saves it all at the end.
+      const checked = validateBrandSection(editing, draft);
+      if (!checked.ok) {
+        setError(checked.error);
+        setBusy(false);
+        return;
+      }
+      setValues((prev) => ({ ...prev, [editing]: checked.values }));
+      onLocalSave?.(editing, checked.values);
+      setEditing(null);
+      setDraft(null);
+      setBusy(false);
+      return;
+    }
     try {
       const result = await saveBrandSection(editing, draft);
       if (!result.ok) {
@@ -178,9 +201,11 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
 
   return (
     <div>
-      <div className="mb-4 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">
-        <b className="text-text">Edits apply from the next generation.</b> Posts and plans MARA already wrote are not rewritten.
-      </div>
+      {mode === "hub" ? (
+        <div className="mb-4 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">
+          <b className="text-text">Edits apply from the next generation.</b> Posts and plans MARA already wrote are not rewritten.
+        </div>
+      ) : null}
       {error ? <div role="alert" className="mb-3.5 rounded-xl border border-red-900/40 bg-red-950/30 px-3.5 py-2.5 text-sm text-red-300">{error}</div> : null}
       {notice ? <div role="status" className="mb-3.5 rounded-xl border border-emerald-900/40 bg-emerald-950/30 px-3.5 py-2.5 text-sm text-emerald-300">{notice}</div> : null}
 
@@ -216,9 +241,11 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
       })}
 
       {mode === "onboarding" ? (
-        <div className="mt-2 flex justify-end">
-          <Btn variant="primary" disabled={busy || editing !== null} onClick={onDone}>Looks right</Btn>
-        </div>
+        onDone ? (
+          <div className="mt-2 flex justify-end">
+            <Btn variant="primary" disabled={busy || editing !== null} onClick={onDone}>Looks right</Btn>
+          </div>
+        ) : null
       ) : (
         <Card className="mb-3.5 p-4">
           <h2 className="font-display text-lg font-semibold">History</h2>

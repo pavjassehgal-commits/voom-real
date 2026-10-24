@@ -260,14 +260,12 @@ test("Settings form binds the persisted description and never hardcodes an empty
     read("lib/voom/brand-state.ts"),
   ]);
 
-  // The form loads the stored value into its own state...
-  assert.match(settings, /useState\(brand\.desc\)/);
-  // ...and the save payload sends that state, not a literal "".
-  assert.match(settings, /brandDescription: descInput/);
+  // Since Brand Kit v2 slice 3 the brand fields are edited on the Brand page;
+  // the Settings save sends the STORED description, never a literal "".
+  assert.match(settings, /brandDescription: brand\.desc/);
   assert.doesNotMatch(settings, /brandDescription: ""/);
-  // The description is editable (an explicit clear is the only path to null).
-  assert.match(settings, /value=\{descInput\}/);
-  assert.match(settings, /onChange=\{\(e\) => setDescInput\(e\.target\.value\)\}/);
+  assert.doesNotMatch(settings, /descInput/, "Settings no longer has its own description field");
+  assert.match(settings, /goTo\("brand"\)/, "Settings points at the Brand page instead");
 
   // Both client state updates carry the description so it is never stale.
   assert.match(store, /desc: input\.brandDescription/);

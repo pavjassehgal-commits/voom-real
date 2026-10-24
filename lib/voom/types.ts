@@ -18,10 +18,28 @@ export interface OnboardingAnswers {
   goal: string;
   tone: string[];
   channels: string[];
-  budget: string;
   freq: string;
+  /** A real automation mode (manual | assisted | autopilot) or "" until chosen. */
   auto: string;
-  permission: string;
+  /** Brand Kit v2 answers collected by the new screens (kit-only, not on `businesses`). */
+  offerings: string[];
+  rules: string[];
+  words: string[];
+  notes: string;
+  facts: string[];
+  brief: string;
+}
+
+/** The kit-only answers onboarding saves as brand kit version 1. */
+export interface OnboardingKitInput {
+  brief: string;
+  offerings: string[];
+  rules: string[];
+  words: string[];
+  notes: string;
+  facts: string[];
+  /** The mode the user wanted when their plan did not allow it (for the upgrade prompt). */
+  wantedAutomation?: string;
 }
 
 export interface Toast {
@@ -85,6 +103,8 @@ export interface BusinessProfileInput {
  */
 export interface OnboardingInput extends BusinessProfileInput {
   website?: string;
+  /** Brand Kit v2 (slice 3): written into brand kit version 1 alongside the core answers. */
+  kit?: OnboardingKitInput;
 }
 
 export type CampaignStatus = "draft" | "approved" | "rejected";

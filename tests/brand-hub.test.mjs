@@ -248,8 +248,12 @@ test("list fields keep what the user types: separators are never re-derived from
 });
 
 test("onboarding mode is the same component without History or operations, ending in Looks right", () => {
-  const html = renderToStaticMarkup(h(BrandHub, { mode: "onboarding", initialValues: sections.brandHubValues(BUSINESS, KIT), history: HISTORY, plan: "free", automation: "assisted" }));
+  const html = renderToStaticMarkup(h(BrandHub, { mode: "onboarding", initialValues: sections.brandHubValues(BUSINESS, KIT), history: HISTORY, plan: "free", automation: "assisted", onDone: () => {} }));
   assert.match(html, /Looks right/);
+  assert.doesNotMatch(html, /Edits apply from the next generation/, "the hub banner is for the live page, not the wizard");
+  // Without an onDone the wizard's own footer drives the step, so no second button.
+  const inWizard = renderToStaticMarkup(h(BrandHub, { mode: "onboarding", persist: "local", initialValues: sections.brandHubValues(BUSINESS, KIT), history: [], plan: "free", automation: "assisted" }));
+  assert.doesNotMatch(inWizard, /Looks right/);
   assert.doesNotMatch(html, />History</);
   assert.doesNotMatch(html, /What MARA may do/);
   assert.equal((html.match(/data-brand-section=/g) ?? []).length, 7);

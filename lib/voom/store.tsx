@@ -31,6 +31,8 @@ import { saveOnboarding as saveOnboardingAction, saveBrandSettings as saveBrandS
 import { normalizeMediaSpendSettings, type MediaSpendSettings } from "@/lib/mara/media-spend";
 import { brandFromBusiness, deriveHandle, type Brand } from "./brand-state";
 import { AUTOMATION_MODE_EVENT, storedAutomationMode, type AutomationModeValue } from "./automation";
+import { canUseAutomationMode } from "@/lib/billing/plans";
+import { DEFAULT_FREQ } from "./onboardingData";
 import { applyThemeToDocument, initialTheme, persistTheme, readStoredTheme, subscribeToTheme, themeSnapshot, type ThemeValue } from "./theme";
 
 const NAV_PATHS: Record<string, string> = {
@@ -76,10 +78,14 @@ function emptyOnboard(): OnboardingAnswers {
     goal: "",
     tone: [],
     channels: [],
-    budget: "",
-    freq: "",
+    freq: DEFAULT_FREQ,
     auto: "",
-    permission: "",
+    offerings: [],
+    rules: [],
+    words: [],
+    notes: "",
+    facts: [],
+    brief: "",
   };
 }
 
@@ -170,7 +176,7 @@ interface VoomActions {
   saveMediaSpend: (input: MediaSpendSettings) => Promise<boolean>;
 
   setOnboardField: <K extends keyof OnboardingAnswers>(key: K, value: OnboardingAnswers[K]) => void;
-  toggleOnboardArray: (key: "customer" | "tone" | "channels", value: string, max?: number) => boolean;
+  toggleOnboardArray: (key: "customer" | "tone" | "channels" | "rules", value: string, max?: number) => boolean;
   setOnboardStep: (step: number) => void;
   finishOnboarding: (skipped: boolean) => Promise<boolean>;
   restartOnboarding: () => Promise<void>;
@@ -317,7 +323,7 @@ export function VoomProvider({
           permission: input.publishingPermission,
         },
       }));
-      toast("Brand profile saved");
+      toast("Settings saved");
       return true;
     },
     [toast],
@@ -376,6 +382,10 @@ export function VoomProvider({
       const o = state.onboard;
       setState((s) => ({ ...s, onboardSaving: true, onboardError: null }));
 
+      // The saved mode is the one the plan allows. A higher wish is kept in
+      // the kit so the upgrade prompt can show it (never silently dropped).
+      const wanted = storedAutomationMode(o.auto);
+      const allowed = wanted && canUseAutomationMode(state.plan, wanted) ? wanted : wanted ? (state.plan === "pro" ? "assisted" : "manual") : "";
       const payload: OnboardingInput = {
         displayName: o.displayName,
         brandName: skipped ? "" : o.name,
@@ -385,13 +395,23 @@ export function VoomProvider({
         mainGoal: skipped ? "" : o.goal,
         brandPersonality: skipped ? [] : o.tone,
         preferredChannels: skipped ? [] : o.channels,
-        monthlyAdBudget: skipped ? "" : o.budget,
+        // Budget and publishing permission are no longer asked (nothing live reads them).
+        monthlyAdBudget: "",
         contentFrequency: skipped ? "" : o.freq,
-        automationLevel: skipped ? "" : o.auto,
-        publishingPermission: skipped ? "" : o.permission,
+        automationLevel: skipped ? "" : allowed,
+        publishingPermission: "",
         // Stored through the existing email brand profile path, never on
         // `businesses` (see OnboardingInput).
         website: skipped ? "" : o.site,
+        kit: skipped ? undefined : {
+          brief: o.brief,
+          offerings: o.offerings,
+          rules: o.rules,
+          words: o.words,
+          notes: o.notes,
+          facts: o.facts,
+          ...(wanted && wanted !== allowed ? { wantedAutomation: wanted } : {}),
+        },
       };
 
       const result = await saveOnboardingAction(payload);
@@ -424,7 +444,7 @@ export function VoomProvider({
       }));
       return true;
     },
-    [state.onboard, toast],
+    [state.onboard, state.plan, toast],
   );
 
   const restartOnboarding = useCallback<VoomActions["restartOnboarding"]>(async () => {

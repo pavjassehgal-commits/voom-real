@@ -11,7 +11,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { BRAND_KIT_TABLE } from "./context";
-import type { BusinessProfileInput } from "@/lib/voom/types";
+import type { BusinessProfileInput, OnboardingInput } from "@/lib/voom/types";
 
 export type BrandKitSource = "onboarding" | "brand_hub" | "extraction";
 
@@ -42,6 +42,29 @@ export function brandKitAnswersFromProfile(input: BusinessProfileInput): Record<
     automation: input.automationLevel,
     budget: input.monthlyAdBudget,
     publishing_permission: input.publishingPermission,
+  };
+}
+
+/**
+ * Everything the new onboarding (Brand Kit v2, slice 3) collects, as kit
+ * answers: the core profile keys plus the kit-only screens (rules, banned
+ * words, notes, facts, offerings) and, when the plan refused the wanted
+ * automation mode, `wanted_automation`. Budget and publishing permission are
+ * no longer asked, so they are omitted rather than stored as "".
+ */
+export function brandKitAnswersFromOnboarding(input: OnboardingInput): Record<string, unknown> {
+  const core = brandKitAnswersFromProfile(input);
+  delete core.budget;
+  delete core.publishing_permission;
+  const kit = input.kit;
+  if (!kit) return core;
+  return {
+    ...core,
+    offerings: kit.offerings,
+    avoid: { rules: kit.rules, words: kit.words },
+    notes: kit.notes,
+    facts_confirmed: kit.facts,
+    ...(kit.wantedAutomation ? { wanted_automation: kit.wantedAutomation } : {}),
   };
 }
 

@@ -192,13 +192,16 @@ test("onboarding wizard no longer fakes an email connection or misdescribes the 
   // The wizard cannot connect anything (the workspace does not exist until
   // Finish setup), so it must not offer an in-wizard Connect button.
   assert.doesNotMatch(wizard, /onConnect/);
-  // All four channels are represented, and email is described as what it is.
-  for (const name of ["Instagram", "TikTok", "YouTube", "Email"]) assert.match(wizard, new RegExp(`name: "${name}"|<b className="text-\\[14px\\]">${name}</b>`));
-  assert.match(wizard, /There is no account to connect/);
-  assert.match(wizard, /Settings → Email identity/);
+  // Brand Kit v2 (2026-10-24): the wizard leads with Instagram and TikTok and
+  // shows LinkedIn as coming soon; YouTube and Email stay available to
+  // existing accounts in Settings and on the Brand page, so the wizard must
+  // not describe them as unavailable either.
+  for (const name of ["Instagram", "TikTok"]) assert.match(wizard, new RegExp(`name: "${name}"`));
+  assert.match(wizard, /ONBOARDING_CHANNELS/);
+  assert.doesNotMatch(wizard, /name: "YouTube"|name: "Email"/, "the new flow does not list YouTube or Email rows");
   assert.match(wizard, /nothing is published anywhere until you approve it/);
   // Connection state comes from the real status endpoints, never assumed.
-  for (const channel of ["instagram", "tiktok", "youtube"]) assert.match(wizard, new RegExp(`/api/integrations/${channel}/status`));
+  for (const channel of ["instagram", "tiktok"]) assert.match(wizard, new RegExp(`/api/integrations/${channel}/status`));
 });
 
 // ── 3. No stale "YouTube publishing is not implemented" claims ─────────────

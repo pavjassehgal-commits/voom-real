@@ -2,28 +2,19 @@
 
 import { useEffect, useState } from "react";
 import { useVoomActions, useVoomState } from "@/lib/voom/store";
-import { Q_INDUSTRY, OB_TONE } from "@/lib/voom/onboardingData";
 import type { BusinessProfileInput } from "@/lib/voom/types";
 import { MANUAL_NEVER_AUTO_SPENDS } from "@/lib/mara/media-spend";
-import { Icon } from "@/components/voom/icons";
 import { PageHead } from "@/components/voom/shell/AppShell";
-import { AdSepNote } from "@/components/voom/ui/Notes";
-import { Btn, Card, Chip, Field, Input, Tag, Textarea } from "@/components/voom/ui/primitives";
+import { Btn, Card, Field, Input, Tag } from "@/components/voom/ui/primitives";
 import { getPlanConfig } from "@/lib/billing/plans";
 import type { CreditSummary } from "@/lib/billing/ledger";
 import { EmailIdentityCard } from "@/components/voom/modals/EmailIdentityCard";
 
 export default function SettingsPage() {
   const { brand, mediaSpend, theme, displayName, email, settingsSaving, settingsError, plan } = useVoomState();
-  const { toggleTone, setTheme, toast, restartOnboarding, saveBrandSettings, saveMediaSpend, goTo } = useVoomActions();
+  const { setTheme, toast, restartOnboarding, saveBrandSettings, saveMediaSpend, goTo } = useVoomActions();
 
   const [nameInput, setNameInput] = useState(displayName);
-  const [brandNameInput, setBrandNameInput] = useState(brand.name);
-  // Loaded from the persisted businesses.brand_description, so saving any
-  // other field round-trips the existing value instead of wiping it.
-  const [descInput, setDescInput] = useState(brand.desc);
-  const [industryInput, setIndustryInput] = useState(brand.industry);
-  const [audience, setAudience] = useState(brand.audience);
   const [restarting, setRestarting] = useState(false);
   const [allowAutomaticMedia, setAllowAutomaticMedia] = useState(mediaSpend.allowAutomaticPaidMedia);
   const [mediaBudgetInput, setMediaBudgetInput] = useState(String(mediaSpend.monthlyMediaBudgetUsd));
@@ -49,27 +40,15 @@ export default function SettingsPage() {
 
   const planConfig = getPlanConfig(plan);
 
-  const autonomyRows: [string, string, string][] = [
-    ["Draft content", "Always", "t-green"],
-    [
-      "Publish to Instagram",
-      brand.permission ? (brand.permission.startsWith("No") ? "Automatic" : "Ask first") : "Not set yet",
-      brand.permission.startsWith("No") ? "t-green" : "t-amber",
-    ],
-    ["Send email", "Explicit send only · Ask first", "t-grey"],
-    ["Spend ad budget", "Always ask", "t-red"],
-    ["Automation level", brand.auto || "Not set yet", "t-blue"],
-    ["Posting frequency", brand.freq || "Not set yet", "t-blue"],
-    ["Monthly ad budget", brand.budget || "Not set yet", "t-blue"],
-  ];
-
   async function handleSave() {
     const payload: BusinessProfileInput = {
       displayName: nameInput,
-      brandName: brandNameInput,
-      brandDescription: descInput,
-      industry: industryInput,
-      targetCustomer: audience,
+      // Brand fields are edited on the Brand page; this save sends the stored
+      // values unchanged so the kit's carry-forward rule records no change.
+      brandName: brand.name,
+      brandDescription: brand.desc,
+      industry: brand.industry,
+      targetCustomer: brand.audience,
       mainGoal: brand.goals[0] ?? "",
       brandPersonality: brand.tone,
       preferredChannels: brand.channels,
@@ -78,8 +57,7 @@ export default function SettingsPage() {
       automationLevel: brand.auto,
       publishingPermission: brand.permission,
     };
-    const ok = await saveBrandSettings(payload);
-    if (ok) toast("Brand profile saved");
+    await saveBrandSettings(payload);
   }
 
   async function handleSaveSpending() {
@@ -160,81 +138,18 @@ export default function SettingsPage() {
       </Card>
 
       <Card className="mb-3.5 p-4">
-        <h2 className="mb-3.5 font-display text-lg font-semibold">Brand profile</h2>
-        <div className="flex flex-wrap gap-3">
-          <div className="min-w-[200px] flex-1">
-            <Field label="Brand name">
-              <Input value={brandNameInput} onChange={(e) => setBrandNameInput(e.target.value)} placeholder="Your business name" />
-            </Field>
-          </div>
-        </div>
-        <Field label="Describe your brand" hint="What you do, who you serve and what makes you different. MARA reads this before she writes or plans anything. Clear the field to remove the description.">
-          <Textarea
-            rows={5}
-            value={descInput}
-            onChange={(e) => setDescInput(e.target.value)}
-            placeholder="For example: We're a small café near the marina. Most of our customers are regulars who work nearby, and weekends are our busiest time."
-          />
-        </Field>
-        <Field label="Kind of business">
-          <select
-            className="h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px]"
-            value={industryInput}
-            onChange={(e) => setIndustryInput(e.target.value)}
-          >
-            <option value="">Not set</option>
-            {Q_INDUSTRY.map(([, name]) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <label className="mb-2.5 block text-[12.5px] font-semibold text-text-2">Brand personality</label>
-        <div className="mb-4 flex flex-wrap gap-1.5">
-          {OB_TONE.map((t) => (
-            <Chip key={t} active={brand.tone.includes(t)} onClick={() => toggleTone(t)}>
-              {t}
-            </Chip>
-          ))}
-        </div>
-        <label className="mb-2.5 block text-[12.5px] font-semibold text-text-2">Audience</label>
-        <div className="flex flex-wrap gap-1.5">
-          {audience.length === 0 && <span className="text-[13px] text-text-3">Not set yet.</span>}
-          {audience.map((a) => (
-            <span key={a} className="inline-flex items-center gap-1.5 rounded-full border border-brand bg-[var(--brand-soft)] px-3.5 py-1.5 text-[13px] font-semibold text-brand">
-              {a}{" "}
-              <button onClick={() => setAudience((prev) => prev.filter((x) => x !== a))} className="text-brand/70 hover:text-brand">
-                ×
-              </button>
-            </span>
-          ))}
-          <Chip onClick={() => toast("Audience editor is visual-only", "info")}>
-            <Icon name="plus" size={14} /> Add
-          </Chip>
+        <h2 className="mb-1.5 font-display text-lg font-semibold">Your brand</h2>
+        <p className="mb-3.5 text-[12.5px] leading-relaxed text-text-3">
+          Everything MARA knows about {brand.name || "your business"} — description, audience, voice, rules, facts, pace and channels — lives on
+          the Brand page now, with a history of every change. The automation level is set on the Automations page.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Btn variant="outline" size="sm" onClick={() => goTo("brand")}>Open Brand page</Btn>
+          <Btn variant="ghost" size="sm" onClick={() => goTo("automations")}>Automation level</Btn>
         </div>
       </Card>
 
       <EmailIdentityCard />
-
-      <Card className="mb-3.5 p-4">
-        <h2 className="mb-1.5 font-display text-lg font-semibold">Voom automation</h2>
-        <p className="mb-3.5 text-[12.5px] text-text-3">How much she can do without checking in — set during onboarding.</p>
-        <div className="mb-3.5">
-          <AdSepNote />
-        </div>
-        {autonomyRows.map(([label, value, tone]) => (
-          <div key={label} className="flex items-center justify-between border-b border-line py-2.5 last:border-0">
-            <span className="text-[13.5px] font-semibold">{label}</span>
-            <button
-              className={`inline-flex items-center gap-1.5 rounded-[7px] px-2.5 py-[3px] text-[11.5px] font-semibold ${{ "t-green": "bg-green/15 text-green", "t-amber": "bg-amber/15 text-amber", "t-red": "bg-red/15 text-red", "t-blue": "bg-blue/15 text-blue" }[tone]}`}
-              onClick={() => toast("Autonomy settings are visual-only here", "info")}
-            >
-              {value} <Icon name="arrow" size={12} />
-            </button>
-          </div>
-        ))}
-      </Card>
 
       <Card className="mb-3.5 p-4">
         <h2 className="mb-1.5 font-display text-lg font-semibold">AI Media Spending</h2>
