@@ -12,7 +12,7 @@ test("homepage links only to real routes and never claims unsupported channels",
   for (const href of ["/login", "/signup", "/privacy", "/terms", "/data-deletion"]) assert.match(page, new RegExp(`href="${href}"`));
   assert.doesNotMatch(page, /Facebook|LinkedIn|and more/i, "Voom publishes to Instagram, TikTok, YouTube and email only");
   assert.doesNotMatch(page, /getClaims|createClient|createAdminClient/, "the public page reads no account data");
-  assert.ok(existsSync(new URL("../public/redesign/landing-hero.webp", import.meta.url)));
+  assert.ok(existsSync(new URL("../public/redesign/landing-hero.jpg", import.meta.url)));
 });
 
 test("log in and sign up keep the existing server actions, field names and signed-in redirect", async () => {
