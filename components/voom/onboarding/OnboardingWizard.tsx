@@ -155,7 +155,7 @@ export function OnboardingWizard({ completedOnServer = false }: { completedOnSer
               type="button"
               onClick={() => finish(true)}
               disabled={onboardSaving}
-              className="h-9 rounded-[10px] border border-[var(--line)] bg-white px-3.5 text-[13px] font-semibold text-text transition hover:bg-[var(--surface-2)] disabled:opacity-60"
+              className="h-9 rounded-[10px] border border-[var(--line)] bg-white px-3.5 text-[13px] font-semibold text-text transition hover:bg-[var(--surface-2)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)] focus-visible:ring-offset-1 disabled:cursor-not-allowed"
             >
               Skip
             </button>
@@ -187,13 +187,13 @@ export function OnboardingWizard({ completedOnServer = false }: { completedOnSer
         </div>
       </main>
 
-      <footer className="sticky bottom-0 z-30 border-t border-[var(--line)] bg-white/95 backdrop-blur-[12px]">
+      <footer data-toast-clearance className="sticky bottom-0 z-30 border-t border-[var(--line)] bg-white/95 backdrop-blur-[12px]">
         <div className="flex items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
           <button
             type="button"
             onClick={() => (st === 0 ? goTo("dash") : setOnboardStep(st - 1))}
             disabled={onboardSaving}
-            className="inline-flex h-11 items-center gap-2 rounded-[12px] border border-[var(--line)] bg-white px-4 text-[14px] font-semibold text-text transition hover:bg-[var(--surface-2)] disabled:opacity-60"
+            className="inline-flex h-11 items-center gap-2 rounded-[12px] border border-[var(--line)] bg-white px-4 text-[14px] font-semibold text-text transition hover:bg-[var(--surface-2)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)] focus-visible:ring-offset-1 disabled:cursor-not-allowed"
           >
             <Icon name="back" size={16} /> Back
           </button>
@@ -201,7 +201,7 @@ export function OnboardingWizard({ completedOnServer = false }: { completedOnSer
             type="button"
             onClick={next}
             disabled={onboardSaving}
-            className="voom-create-btn inline-flex h-11 items-center gap-2 rounded-full px-6 text-[14px] font-semibold text-white shadow-[0_10px_22px_-14px_rgba(134,69,250,.9)] transition hover:brightness-[1.05] disabled:opacity-60"
+            className="voom-create-btn inline-flex h-11 items-center gap-2 rounded-full px-6 text-[14px] font-semibold text-white shadow-[0_10px_22px_-14px_rgba(134,69,250,.9)] transition hover:brightness-[1.05] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)] focus-visible:ring-offset-1 disabled:cursor-not-allowed"
           >
             {onboardSaving ? "Saving…" : st === LAST_STEP ? "Finish setup" : st === 1 ? "Send to MARA" : "Continue"}
             {!onboardSaving && <Icon name="arrow" size={16} />}

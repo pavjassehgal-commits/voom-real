@@ -778,3 +778,112 @@ body:has(.voom-public) { background: #f6f6f7; color: #1a1f30; }
 @media (min-width: 640px) {
   .today-perf-tiles { grid-template-columns: repeat(var(--tiles, 3), minmax(0, 1fr)); }
 }
+
+/* ──────────────────────────────────────────────────────────────
+   Notifications (components/voom/ui/ToastHost.tsx)
+   Own tokens: the host lives outside .voom-shell / .voom-public.
+   All text pairs meet WCAG AA (≥4.5:1) on their own surface.
+   ────────────────────────────────────────────────────────────── */
+.voom-toast-host {
+  --toast-bg: #ffffff;
+  --toast-text: #1a1f30;      /* 16.4:1 on #fff */
+  --toast-line: #e8e6ee;
+  --toast-muted: #5b6274;     /* 6.1:1 */
+  --toast-shadow: 0 18px 40px -22px rgba(44, 38, 92, 0.45), 0 4px 12px -6px rgba(26, 31, 48, 0.12);
+  --toast-ok: #1f7a5c;        /* 5.3:1 */
+  --toast-ok-soft: #e8f6f1;
+  --toast-err: #b42f27;       /* 6.2:1 */
+  --toast-err-soft: #fdecea;
+  --toast-warn: #8a5a00;      /* 5.9:1 */
+  --toast-warn-soft: #fdf3e2;
+  --toast-info: #4b38c9;      /* 7.8:1 */
+  --toast-info-soft: #f2f0ff;
+
+  position: fixed;
+  z-index: 200;
+  left: 14px;
+  right: 14px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+  font-family: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+}
+@media (min-width: 640px) {
+  .voom-toast-host { left: auto; right: 20px; bottom: 20px; width: min(400px, calc(100vw - 40px)); }
+}
+/* Workspace on phones: sit above the fixed 68px bottom navigation. */
+@media (max-width: 767px) {
+  body:has(.voom-shell) .voom-toast-host { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+}
+/* A sticky action footer (setup's Back / Continue) is never covered. */
+body:has([data-toast-clearance]) .voom-toast-host { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
+
+/* Dark only where the page itself is dark: the workspace in dark theme. */
+:root[data-theme="dark"] body:not(:has(.voom-public)) .voom-toast-host {
+  --toast-bg: #1b1c27;
+  --toast-text: #f2f2f7;      /* 15.2:1 on #1b1c27; tones 7.6–9.8:1 */
+  --toast-line: #33344a;
+  --toast-muted: #b4b7c6;     /* 8.5:1 */
+  --toast-shadow: 0 18px 40px -20px rgba(0, 0, 0, 0.8);
+  --toast-ok: #4cc9a2;
+  --toast-ok-soft: rgba(53, 172, 143, 0.18);
+  --toast-err: #ff8d86;
+  --toast-err-soft: rgba(240, 118, 110, 0.18);
+  --toast-warn: #f0b955;
+  --toast-warn-soft: rgba(226, 166, 61, 0.18);
+  --toast-info: #c9bdff;
+  --toast-info-soft: rgba(139, 112, 255, 0.2);
+}
+
+.voom-toast {
+  --tone: var(--toast-info);
+  --tone-soft: var(--toast-info-soft);
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 12px 12px 14px;
+  border: 1px solid var(--toast-line);
+  border-left: 4px solid var(--tone);
+  border-radius: 14px;
+  background: var(--toast-bg);
+  color: var(--toast-text);
+  box-shadow: var(--toast-shadow);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+  animation: voom-toast-in 180ms ease-out;
+}
+.voom-toast--ok { --tone: var(--toast-ok); --tone-soft: var(--toast-ok-soft); }
+.voom-toast--err { --tone: var(--toast-err); --tone-soft: var(--toast-err-soft); }
+.voom-toast--warn { --tone: var(--toast-warn); --tone-soft: var(--toast-warn-soft); }
+.voom-toast--info { --tone: var(--toast-info); --tone-soft: var(--toast-info-soft); }
+.voom-toast__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  margin-top: -2px;
+  border-radius: 8px;
+  background: var(--tone-soft);
+  color: var(--tone);
+}
+.voom-toast__close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin: -4px -2px -4px 0;
+  border-radius: 8px;
+  color: var(--toast-muted);
+  transition: background-color 150ms, color 150ms;
+}
+.voom-toast__close:hover { background: var(--tone-soft); color: var(--toast-text); }
+.voom-toast__close:focus-visible { outline: 2px solid var(--tone); outline-offset: 1px; }
+@keyframes voom-toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .voom-toast { animation: none; } }

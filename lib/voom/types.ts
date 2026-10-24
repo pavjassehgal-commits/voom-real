@@ -27,7 +27,7 @@ export interface OnboardingAnswers {
 export interface Toast {
   id: number;
   msg: string;
-  kind: "ok" | "err" | "info";
+  kind: "ok" | "err" | "warn" | "info";
 }
 
 export interface ProfileRecord {
