@@ -173,7 +173,7 @@ function AppSearch() {
       />
       <kbd aria-hidden="true" className="pointer-events-none absolute right-3 top-[11px] rounded-[7px] border border-line bg-surface-2 px-1.5 py-[2px] font-sans text-[11px] font-medium text-text-3">⌘K</kbd>
       {open && searchActive && (
-        <div className="absolute left-0 right-0 top-[52px] z-[70] max-h-[440px] overflow-y-auto rounded-[14px] border border-line bg-surface p-1.5 shadow-[var(--shadow-lg)]">
+        <div className="voom-m-pop absolute left-0 right-0 top-[52px] z-[70] max-h-[440px] overflow-y-auto rounded-[14px] border border-line bg-surface p-1.5 shadow-[var(--shadow-lg)]">
           {state === "error" && (
             <p role="alert" className="px-3 py-3 text-[13px] text-red">
               Search couldn’t load right now. Please try again.
@@ -295,7 +295,7 @@ export function Topbar() {
         </button>
         {menuOpen && (
           <div
-            className="absolute right-0 top-[52px] z-[60] w-[248px] rounded-[18px] border border-line bg-surface p-1.5 shadow-[var(--shadow-lg)]"
+            className="voom-m-pop absolute right-0 top-[52px] z-[60] w-[248px] rounded-[18px] border border-line bg-surface p-1.5 shadow-[var(--shadow-lg)]"
             role="menu"
           >
             <div className="px-3 pb-3 pt-2.5">

@@ -195,9 +195,31 @@ const startFor = (name) => `
   })();
 `;
 
+/**
+ * Fetch-driven surfaces show a loading state first. Before reading the page,
+ * wait (up to 3s) for that surface's real content instead of relying on an
+ * unrelated entrance animation happening to delay the read; the loaded text
+ * then replaces `bodyText`.
+ */
+const waitForLoaded = (scenario) => {
+  const marker = LOADED_MARKER[scenario.name];
+  if (!marker || scenario.evaluate) return scenario;
+  return {
+    ...scenario,
+    evaluate: `(async () => {
+      const marker = ${JSON.stringify(marker)};
+      for (let i = 0; i < 60 && !document.body.innerText.includes(marker); i++) await new Promise((r) => setTimeout(r, 50));
+      return { __loadedText: document.body.innerText };
+    })()`,
+  };
+};
+
 const measured = async (scenarios) => {
   try {
-    return await measureRenderedPages(scenarios);
+    const results = await measureRenderedPages(scenarios.map(waitForLoaded));
+    return results.map((result) => (result.evaluate && typeof result.evaluate.__loadedText === "string"
+      ? { ...result, bodyText: result.evaluate.__loadedText, evaluate: null }
+      : result));
   } catch (error) {
     if (error instanceof RenderedSurfaceUnavailable) return null;
     throw error;

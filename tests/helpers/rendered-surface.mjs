@@ -484,6 +484,9 @@ async function disposeServer(server, directory) {
  *   beforeLoad  expression run on the origin BEFORE the document loads
  *               (used to seed persisted state, e.g. localStorage)
  *   screenshot  path to write a PNG of the loaded page to
+ *   trustedClicks  CSS selectors to click with REAL input (CDP mouse events,
+ *               so `event.isTrusted` is true and user activation is granted),
+ *               in order, after load and before `evaluate`
  *
  * Each result is
  *   { name, innerWidth, bodyScrollWidth, documentScrollWidth, overflowing,
@@ -544,6 +547,21 @@ export async function measureRenderedPages(scenarios) {
         const loaded = new Promise((resolve) => client.on(sessionId, (message) => message.method === "Page.loadEventFired" && resolve()));
         await client.send("Page.navigate", { url: `${origin}/page-${index}.html` }, sessionId);
         await loaded;
+        for (const selector of scenario.trustedClicks ?? []) {
+          const { result: point } = await client.send("Runtime.evaluate", {
+            returnByValue: true,
+            awaitPromise: true,
+            expression: `(async () => {
+              await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+              const r = document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect();
+              return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+            })()`,
+          }, sessionId);
+          if (!point.value) throw new Error(`trustedClicks: nothing matches ${selector}`);
+          for (const type of ["mousePressed", "mouseReleased"]) {
+            await client.send("Input.dispatchMouseEvent", { type, x: point.value.x, y: point.value.y, button: "left", clickCount: 1 }, sessionId);
+          }
+        }
         const measurement = await client.send(
           "Runtime.evaluate",
           {

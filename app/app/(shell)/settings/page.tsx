@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useVoomActions, useVoomState } from "@/lib/voom/store";
 import { Q_INDUSTRY, OB_TONE, Q_CHANNELS, Q_CUSTOMER } from "@/lib/voom/onboardingData";
 import type { BusinessProfileInput } from "@/lib/voom/types";
@@ -14,6 +14,7 @@ import type { CreditSummary } from "@/lib/billing/ledger";
 import { EmailIdentityCard } from "@/components/voom/modals/EmailIdentityCard";
 import { cx } from "@/lib/voom/cx";
 import { logout as logoutAction } from "@/app/app/actions";
+import { HAPTICS_STORAGE_KEY, MOTION_STORAGE_KEY, applyMotionPreference, beginHapticGesture, haptic, hapticsSupported } from "@/lib/voom/haptics";
 
 /**
  * Settings — redesign Batch 4C (Figma "Workspace settings", PDF pages
@@ -97,6 +98,7 @@ export default function SettingsPage() {
   const planConfig = getPlanConfig(plan);
 
   async function handleSave() {
+    const gesture = beginHapticGesture(); // synchronous: the Save click
     const payload: BusinessProfileInput = {
       displayName: nameInput,
       brandName: brandNameInput,
@@ -112,15 +114,18 @@ export default function SettingsPage() {
       publishingPermission: brand.permission,
     };
     const ok = await saveBrandSettings(payload);
+    haptic(ok ? "success" : "error", gesture);
     if (ok) toast("Settings saved");
   }
 
   async function handleSaveSpending() {
+    const gesture = beginHapticGesture(); // synchronous: the Save click
     setSavingSpend(true);
-    await saveMediaSpend({
+    const ok = await saveMediaSpend({
       allowAutomaticPaidMedia: allowAutomaticMedia,
       monthlyMediaBudgetUsd: Number(mediaBudgetInput.trim() || 0),
     });
+    haptic(ok ? "success" : "error", gesture);
     setSavingSpend(false);
   }
 
@@ -347,6 +352,7 @@ export default function SettingsPage() {
                 <div><b className="text-[14px] font-semibold text-text">Theme</b><p className="text-[12.5px] text-text-2">Light or dark interface.</p></div>
                 <Segmented value={theme} options={[["light", "Light"], ["dark", "Dark"]]} onChange={(value) => setTheme(value as "light" | "dark")} />
               </div>
+              <MotionPreferences />
             </Panel>
           )}
 
@@ -467,11 +473,71 @@ function Segmented({ value, options, onChange }: { value: string; options: [stri
   return (
     <div className="inline-flex shrink-0 gap-1 rounded-[12px] border border-line bg-surface-2 p-1" role="group">
       {options.map(([key, label]) => (
-        <button key={key} type="button" aria-pressed={value === key} onClick={() => onChange(key)}
+        <button key={key} type="button" aria-pressed={value === key} data-haptic="light" onClick={() => onChange(key)}
           className={cx("rounded-[9px] px-4 py-1.5 text-[13.5px] font-semibold transition", value === key ? "bg-surface text-text shadow-[var(--shadow-sm)]" : "text-text-2 hover:text-text")}>
           {label}
         </button>
       ))}
     </div>
+  );
+}
+
+/**
+ * Motion and haptic preferences — stored in this browser only, like Theme.
+ * "Reduce motion" applies on top of the system setting (which is always
+ * honoured); haptics only exist where the browser supports vibration.
+ */
+const PREFS_EVENT = "voom:motion-prefs";
+function subscribePrefs(listener: () => void) {
+  window.addEventListener(PREFS_EVENT, listener);
+  window.addEventListener("storage", listener);
+  return () => { window.removeEventListener(PREFS_EVENT, listener); window.removeEventListener("storage", listener); };
+}
+function prefsSnapshot() {
+  let motion = "full";
+  let haptics = "on";
+  try {
+    if (window.localStorage.getItem(MOTION_STORAGE_KEY) === "reduce") motion = "reduce";
+    if (window.localStorage.getItem(HAPTICS_STORAGE_KEY) === "off") haptics = "off";
+  } catch { /* storage unavailable: defaults */ }
+  return `${motion}|${haptics}|${hapticsSupported() ? "1" : "0"}`;
+}
+
+function MotionPreferences() {
+  // Browser-only facts: the server snapshot is the default, so hydration matches.
+  const [motion, haptics, supportedFlag] = useSyncExternalStore(subscribePrefs, prefsSnapshot, () => "full|on|0").split("|");
+  const supported = supportedFlag === "1";
+  function save(key: string, value: string | null) {
+    try {
+      if (value === null) window.localStorage.removeItem(key);
+      else window.localStorage.setItem(key, value);
+    } catch { /* storage unavailable: the choice lasts for this page only */ }
+    window.dispatchEvent(new Event(PREFS_EVENT));
+  }
+  return (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-line px-5 py-5 sm:px-6">
+        <div className="min-w-0 max-w-md"><b className="text-[14px] font-semibold text-text">Motion</b><p className="text-[12.5px] text-text-2">Page transitions and interface animation. Your device&apos;s reduced-motion setting is always respected.</p></div>
+        <Segmented value={motion} options={[["full", "Full"], ["reduce", "Reduced"]]} onChange={(value) => {
+          const next = value === "reduce" ? "reduce" : "full";
+          save(MOTION_STORAGE_KEY, next === "reduce" ? "reduce" : null);
+          applyMotionPreference();
+        }} />
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-line px-5 py-5 sm:px-6">
+        <div className="min-w-0 max-w-md">
+          <b className="text-[14px] font-semibold text-text">Haptic feedback</b>
+          <p className="text-[12.5px] text-text-2">
+            {supported
+              ? "A short vibration when you select, save or hit an error on this device."
+              : "This browser doesn't support vibration (for example Safari on iPhone), so there is nothing to feel here."}
+          </p>
+        </div>
+        <Segmented value={haptics} options={[["on", "On"], ["off", "Off"]]} onChange={(value) => {
+          const next = value === "off" ? "off" : "on";
+          save(HAPTICS_STORAGE_KEY, next === "off" ? "off" : null);
+        }} />
+      </div>
+    </>
   );
 }

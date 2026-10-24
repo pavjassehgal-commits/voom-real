@@ -10,7 +10,7 @@ export function ModalHost() {
   if (!content) return null;
   return (
     <div
-      className="fixed inset-0 z-[100] grid place-items-center bg-[rgba(10,14,13,0.52)] p-4 backdrop-blur-[6px] sm:p-5"
+      className="voom-m-backdrop fixed inset-0 z-[100] grid place-items-center bg-[rgba(10,14,13,0.52)] p-4 backdrop-blur-[6px] sm:p-5"
       onClick={(e) => {
         if (e.target === e.currentTarget) close();
       }}

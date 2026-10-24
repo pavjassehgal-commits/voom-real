@@ -1,6 +1,8 @@
 "use client";
+
 /* eslint-disable @next/next/no-img-element -- private signed URLs expire and must bypass the public image optimizer */
 
+import { beginHapticGesture, haptic } from "@/lib/voom/haptics";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -50,6 +52,7 @@ export function ApprovalsBoard({ initial, drafts = {} }: { initial: ApprovalItem
   const [items, setItems] = useState(initial); const [busy, setBusy] = useState<string | null>(null); const [error, setError] = useState("");
   const [notices, setNotices] = useState<Record<string, string>>({});
   async function decide(id: string, decision: "confirm" | "cancel" | "edit" | "production", changes?: Record<string, unknown>) {
+    const gesture = beginHapticGesture(); // synchronous: the click that made this decision
     setBusy(id); setError("");
     const payload = decision === "production" ? { decision, method: changes?.method } : { decision, changes };
     const response = await fetch(`/api/mara/actions/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
@@ -58,6 +61,7 @@ export function ApprovalsBoard({ initial, drafts = {} }: { initial: ApprovalItem
     if (response.status === 409) setNotices((current) => ({ ...current, [id]: body.error ?? "This post changed. Nothing was approved — review the latest version." }));
     else if (!response.ok || !body.action) setError(body.error ?? "Voom couldn't safely update that action.");
     else setNotices((current) => { const next = { ...current }; delete next[id]; return next; });
+    haptic(response.status === 409 ? "warning" : response.ok && body.action ? "success" : "error", gesture);
     setBusy(null);
     return response.ok && Boolean(body.action);
   }

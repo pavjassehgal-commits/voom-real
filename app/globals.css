@@ -972,3 +972,109 @@ body:has([data-toast-clearance]) .voom-toast-host { bottom: calc(86px + env(safe
   .voom-home-btn:hover, .voom-home-btn:active, .voom-home-btn:hover .voom-home-arrow { transform: none; }
   .voom-home-gradient { background-position: 0% 50%; }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   VOOM MOTION SYSTEM
+   One set of tokens for every animated surface. Rules:
+   - Only opacity, transform / scale and colour animate (no layout).
+   - Press 120–180ms, controls 180–250ms, page entrances 250–350ms.
+   - Deceleration curves; nothing bounces.
+   - prefers-reduced-motion (and the in-app "Reduce motion" choice,
+     html[data-motion="reduce"]) collapses everything to an instant change.
+   ══════════════════════════════════════════════════════════════ */
+:root {
+  --motion-press: 140ms;
+  --motion-control: 200ms;
+  --motion-enter: 300ms;
+  --motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);   /* decelerate: entrances */
+  --motion-ease: cubic-bezier(0.2, 0, 0, 1);          /* standard: state changes */
+  --motion-ease-in: cubic-bezier(0.4, 0, 1, 1);       /* exits */
+  --motion-stagger: 40ms;                             /* per item, capped at 5 steps */
+  --motion-lift: -2px;
+  --motion-press-scale: 0.97;
+}
+
+@keyframes voom-m-page-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes voom-m-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes voom-m-pop { from { opacity: 0; transform: translateY(-4px) scale(0.97); } to { opacity: 1; transform: none; } }
+@keyframes voom-m-dialog { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes voom-m-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes voom-m-select { 0% { transform: scale(0.96); } 100% { transform: none; } }
+@keyframes voom-m-nudge { 0%, 100% { transform: none; } 25% { transform: translateX(-4px); } 60% { transform: translateX(3px); } }
+@keyframes voom-m-confirm { 0% { transform: scale(0.6); opacity: 0; } 70% { transform: scale(1.06); opacity: 1; } 100% { transform: none; } }
+@keyframes voom-m-slide-next { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@keyframes voom-m-slide-prev { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
+
+/* ── Page entrance (client navigations only — see PageTransition) ──
+   The page's top-level blocks rise in a short, capped stagger. The wrapper
+   itself does not fade too (nested opacity would multiply and wash the page
+   out for longer than --motion-enter). */
+.voom-page-enter > * > * { animation: voom-m-rise var(--motion-enter) var(--motion-ease-out) both; }
+/* A page whose root has no child blocks still gets one gentle entrance. */
+.voom-page-enter > :only-child:empty { animation: voom-m-page-in var(--motion-enter) var(--motion-ease-out) both; }
+.voom-page-enter > * > :nth-child(2) { animation-delay: calc(var(--motion-stagger) * 1); }
+.voom-page-enter > * > :nth-child(3) { animation-delay: calc(var(--motion-stagger) * 2); }
+.voom-page-enter > * > :nth-child(4) { animation-delay: calc(var(--motion-stagger) * 3); }
+.voom-page-enter > * > :nth-child(n + 5) { animation-delay: calc(var(--motion-stagger) * 4); }
+
+/* ── Press feedback: every button and button-like link in the app ── */
+:is(.voom-shell, .voom-public, .voom-motion) :is(button, a[role="button"], .voom-create-btn):not(:disabled) {
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform, filter;
+  transition-duration: var(--motion-control);
+  transition-timing-function: var(--motion-ease);
+}
+:is(.voom-shell, .voom-public, .voom-motion) :is(button, a[role="button"]):not(:disabled):active,
+:is(.voom-shell, .voom-public) a.voom-create-btn:active {
+  transform: scale(var(--motion-press-scale));
+  transition-duration: var(--motion-press);
+}
+/* Primary (gradient) actions lift slightly on hover. */
+:is(.voom-shell, .voom-public) :is(a, button).voom-create-btn:not(:disabled):hover { transform: translateY(-1px); filter: brightness(1.04); }
+
+/* ── Interactive cards: lift on hover, settle on press ── */
+.voom-shell :is(a.voom-card, button.voom-card, a.voom-tile, button.voom-tile) {
+  transition: transform var(--motion-control) var(--motion-ease), box-shadow var(--motion-control) var(--motion-ease), border-color var(--motion-control) var(--motion-ease);
+}
+@media (hover: hover) {
+  .voom-shell :is(a.voom-card, button.voom-card):hover { transform: translateY(var(--motion-lift)); box-shadow: 0 14px 30px -20px rgba(44, 38, 92, 0.45); }
+  .voom-shell :is(a.voom-tile, button.voom-tile):hover { transform: translateY(-1px); }
+}
+
+/* ── Navigation and selection: the newly selected item settles in ──
+   Only after the owner's first interaction (html[data-interacted], set by
+   MotionRuntime), so already-selected items don't pop on every page load. */
+html[data-interacted] .voom-shell nav :is(a, button)[aria-current="page"] { animation: voom-m-select var(--motion-control) var(--motion-ease-out); }
+html[data-interacted] :is(.voom-shell, .voom-public) :is(button[aria-pressed="true"], [role="tab"][aria-selected="true"]) { animation: voom-m-select var(--motion-control) var(--motion-ease-out); }
+
+/* ── Menus, popovers and dialogs ── */
+.voom-m-pop { transform-origin: top right; animation: voom-m-pop var(--motion-control) var(--motion-ease-out) both; }
+.voom-m-backdrop { animation: voom-m-fade var(--motion-control) var(--motion-ease) both; }
+.voom-m-backdrop > * { animation: voom-m-dialog var(--motion-enter) var(--motion-ease-out) both; }
+
+/* ── Validation and confirmation ── */
+:is(.voom-shell, .voom-public) :is(input, textarea, select)[aria-invalid="true"] { animation: voom-m-nudge 260ms var(--motion-ease); }
+.voom-m-nudge { animation: voom-m-nudge 260ms var(--motion-ease); }
+.voom-toast--ok .voom-toast__icon { animation: voom-m-confirm 320ms var(--motion-ease-out) both; }
+
+/* ── Calendar: the grid slides in the direction of travel ── */
+.voom-m-slide-next { animation: voom-m-slide-next var(--motion-enter) var(--motion-ease-out) both; }
+.voom-m-slide-prev { animation: voom-m-slide-prev var(--motion-enter) var(--motion-ease-out) both; }
+
+/* ── Reduced motion: system setting or the in-app choice ── */
+@media (prefers-reduced-motion: reduce) {
+  :is(.voom-shell, .voom-public, .voom-motion, .voom-toast-host, .voom-m-backdrop),
+  :is(.voom-shell, .voom-public, .voom-motion, .voom-toast-host, .voom-m-backdrop) * {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+html[data-motion="reduce"] :is(.voom-shell, .voom-public, .voom-motion, .voom-toast-host, .voom-m-backdrop),
+html[data-motion="reduce"] :is(.voom-shell, .voom-public, .voom-motion, .voom-toast-host, .voom-m-backdrop) * {
+  animation-duration: 1ms !important;
+  animation-delay: 0ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+}
