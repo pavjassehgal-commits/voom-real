@@ -51,6 +51,12 @@ export function brandKitAnswersFromProfile(input: BusinessProfileInput): Record<
  * words, notes, facts, offerings) and, when the plan refused the wanted
  * automation mode, `wanted_automation`. Budget and publishing permission are
  * no longer asked, so they are omitted rather than stored as "".
+ *
+ * Slice 4 adds `provenance` (answer key -> "description" for every value that
+ * is MARA's reading accepted unchanged; keys the owner typed are simply
+ * absent) and `facts_unconfirmed` (facts MARA found that the owner did not
+ * tick; generation reads only `facts_confirmed`). Both are written only when
+ * non-empty.
  */
 export function brandKitAnswersFromOnboarding(input: OnboardingInput): Record<string, unknown> {
   const core = brandKitAnswersFromProfile(input);
@@ -58,12 +64,15 @@ export function brandKitAnswersFromOnboarding(input: OnboardingInput): Record<st
   delete core.publishing_permission;
   const kit = input.kit;
   if (!kit) return core;
+  const provenance = Object.fromEntries((kit.fromDescription ?? []).map((key) => [key, "description"]));
   return {
     ...core,
     offerings: kit.offerings,
     avoid: { rules: kit.rules, words: kit.words },
     notes: kit.notes,
     facts_confirmed: kit.facts,
+    ...(kit.factsUnconfirmed?.length ? { facts_unconfirmed: kit.factsUnconfirmed } : {}),
+    ...(Object.keys(provenance).length ? { provenance } : {}),
     ...(kit.wantedAutomation ? { wanted_automation: kit.wantedAutomation } : {}),
   };
 }

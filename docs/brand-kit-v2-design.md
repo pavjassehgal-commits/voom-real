@@ -188,8 +188,23 @@ prop that hides History and the gallery in onboarding.
    slices 4 to 6 insert screens 2, 3b and the sample captions when their engines exist. No data
    migration for old label-text `automation_level` rows (they run as Assisted; re-pick on the
    Automations page). Tests: `tests/onboarding-v2.test.mjs`.
-4. **Extraction from the description.** One structured AI call, screen 3b, prefill of 4 and 5,
-   unconfirmed tracking. Tests: failed AI call falls back to the keyword guess.
+4. **Extraction from the description. BUILT 2026-10-24.** `lib/brand/extract.ts` (strict
+   schema whose choice fields are enums of our lists, the prompt, the one call) and
+   `lib/brand/extract-actions.ts` (server action: login, `brand_extract` limiter bucket 10/hour,
+   plain failure reasons). "Send to MARA" shows a reading panel for up to 12 s, then goes to
+   the basics with every guess (name, category, offerings, audience, goal, tones, brief draft)
+   prefilled into the screen that asks for it, marked "MARA's guess". **Screen 3b was built
+   and then removed the same day**: confirming on 3b and again on the asking screens read as a
+   double ask (DECISIONS 2026-10-24, slice 4), so each answer is now confirmed exactly once.
+   Facts she found wait as "Needs confirmation" under Facts on the Brand Brief screen with a
+   one-tap Confirm; only confirmed facts become `facts_confirmed`, the rest are stored as
+   `facts_unconfirmed` (never read by generation) and shown on the Brand page's Facts section
+   with Confirm / Remove behind Edit. `provenance` records which saved values are MARA's
+   reading accepted unchanged (editing a field drops the claim). Failed, slow, empty or
+   off-list reads keep the keyword category guess and say so on the basics screen; the same
+   description text is never sent twice. Not built: the "from your website" badge (slice 7)
+   and the generic `unconfirmed` key list (the facts list covers the only unconfirmed data
+   that exists). Tests: `tests/brand-extract.test.mjs`.
 5. **Assets.** Screen 2 uploads (logo, products, past posts with the disclaimer), bucket writes,
    product descriptions, past-post chips, colours from the logo, logo and colours synced to the
    email brand. Tests: upload limits, path ownership, colour computation on a fixture.

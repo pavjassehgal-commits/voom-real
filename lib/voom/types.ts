@@ -28,6 +28,35 @@ export interface OnboardingAnswers {
   notes: string;
   facts: string[];
   brief: string;
+  /**
+   * Slice 4: what MARA read from the description, or null when the read was
+   * skipped or failed. `learnedFor` is the description text that was read, so
+   * going back and pressing "Send to MARA" on the same text does not call
+   * the AI again.
+   */
+  learned: BrandLearned | null;
+  learnedFor: string;
+  /** "failed" after an AI read that did not work (the basics screen says so); "" otherwise. */
+  learnedNote: "" | "failed";
+  /** Kit answer keys whose current value is MARA's guess, accepted unchanged. Editing a field removes its key. */
+  fromMara: BrandLearnedKey[];
+  /** Facts MARA found that the owner has not ticked. Stored aside, never used in captions. */
+  factsUnconfirmed: string[];
+}
+
+/** The kit answer keys MARA's reading can fill (slice 4). `facts` means the unconfirmed list. */
+export type BrandLearnedKey = "name" | "category" | "offerings" | "audience" | "goal" | "personality" | "brief" | "facts";
+
+/** One structured AI read of the description; every value is a guess for the owner to confirm. */
+export interface BrandLearned {
+  name: string;
+  category: string;
+  offerings: string[];
+  audience: string[];
+  goal: string;
+  personality: string[];
+  brief: string;
+  facts: string[];
 }
 
 /** The kit-only answers onboarding saves as brand kit version 1. */
@@ -40,6 +69,10 @@ export interface OnboardingKitInput {
   facts: string[];
   /** The mode the user wanted when their plan did not allow it (for the upgrade prompt). */
   wantedAutomation?: string;
+  /** Slice 4: answer keys whose saved value is MARA's reading of the description, accepted unchanged. */
+  fromDescription?: string[];
+  /** Slice 4: facts MARA found that the owner did not confirm. Never read by generation. */
+  factsUnconfirmed?: string[];
 }
 
 export interface Toast {

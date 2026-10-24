@@ -27,7 +27,7 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 | Database + auth + storage | Supabase. Packages `@supabase/ssr`, `@supabase/supabase-js` |
 | Validation | zod |
 | Images | sharp (inspect/resize), image overlays |
-| Tests | Node's built-in test runner: `npm test` runs `tests/*.test.mjs` (112 files, 1,724 tests; 4 are deliberately skipped in `voom-plans-credits-v1` with notes pointing to their replacements). Some use PGlite (an in-memory Postgres) to test SQL; 25 layout tests render pages in a real headless Chrome (found at `/Applications/Google Chrome.app`, or `VOOM_CHROMIUM_PATH`). Baseline counts live in `docs/baseline.md`. |
+| Tests | Node's built-in test runner: `npm test` runs `tests/*.test.mjs` (113 files, 1,734 tests; 4 are deliberately skipped in `voom-plans-credits-v1` with notes pointing to their replacements). Some use PGlite (an in-memory Postgres) to test SQL; 25 layout tests render pages in a real headless Chrome (found at `/Applications/Google Chrome.app`, or `VOOM_CHROMIUM_PATH`). Baseline counts live in `docs/baseline.md`. |
 | Hosting | Vercel (`vercel.json` has 2 daily crons) |
 
 ## Folder map
@@ -53,7 +53,7 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 |---|---|
 | `lib/voom/` | Core app: types, client state store (`store.tsx`), onboarding questions (`onboardingData.ts`), saving onboarding/settings (`mutations.ts`), "who is logged in" (`server-data.ts` → `getCurrentUser`), timezone, cadence, schedule guards |
 | `lib/voom/workflow/` | The rolling 7-day marketing plan: builds slots, assigns channels, asks MARA to fill them, moves items through plan → draft → approval → schedule |
-| `lib/brand/` | Brand Kit v2 (migration 0059): `context.ts` is the ONE reader generation uses (`loadBrandContext()` = core fields from `businesses` + the newest `brand_kits` row's brief, offerings, avoid rules, banned words, facts, notes, voice samples; fails open to "no kit"); `versions.ts` appends a kit version on every onboarding/Settings/Brand Hub save, carrying the previous version forward and replacing only the fields that save owns; `sections.ts` defines the Brand Hub sections and which fields and `businesses` columns each owns; `actions.ts` is the hub's save action; `read.ts` loads the version history |
+| `lib/brand/` | Brand Kit v2 (migration 0059): `context.ts` is the ONE reader generation uses (`loadBrandContext()` = core fields from `businesses` + the newest `brand_kits` row's brief, offerings, avoid rules, banned words, facts, notes, voice samples; fails open to "no kit"); `versions.ts` appends a kit version on every onboarding/Settings/Brand Hub save, carrying the previous version forward and replacing only the fields that save owns; `sections.ts` defines the Brand Hub sections and which fields and `businesses` columns each owns; `actions.ts` is the hub's save action; `read.ts` loads the version history; `extract.ts` + `extract-actions.ts` are the one AI read of the onboarding description (strict schema over our own option lists, never stored) |
 | `lib/ai/` | Connection to the AI text model (any OpenAI-compatible API; default Groq) |
 | `lib/mara/` | MARA's brain: chat prompt, tools, Reel production, video generation and polling, paid-media spending rules, Autopilot safety |
 | `lib/media/` | Image/video generation providers, checking uploaded files, overlays |
@@ -99,10 +99,17 @@ Missing today: 2FA.
 **Onboarding.** `components/voom/onboarding/OnboardingWizard.tsx` (10 screens, one topic each,
 five required answers, per-screen Skip; option lists in `lib/voom/onboardingData.ts`; the
 Brand Brief screen is the Brand Hub component in local mode; `AnalyzingScreen.tsx` is the
-"we're setting things up" screen shown at the end) → `saveOnboarding` in
-`lib/voom/mutations.ts` → writes `profiles` and `businesses` (website goes only to the email
-brand table; the automation level is saved as the real mode the plan allows) and appends
-`brand_kits` version 1 with the brief, offerings, rules, banned words, notes and facts
+"we're setting things up" screen shown at the end). "Send to MARA" on the description screen
+calls `extractBrandDescription` (`lib/brand/extract-actions.ts`, one structured AI read via
+`lib/brand/extract.ts`, 12 s wait, 10 reads per user per hour): what she found is prefilled
+into the screen that asks for it, marked as her guess, and facts wait under Facts on the
+Brand Brief screen until confirmed; a failed read falls back to the keyword guess
+(`detectIndustry`) for the category as before. Finish →
+`saveOnboarding` in `lib/voom/mutations.ts` → writes `profiles` and `businesses` (website goes
+only to the email brand table; the automation level is saved as the real mode the plan allows)
+and appends `brand_kits` version 1 with the brief, offerings, rules, banned words, notes,
+confirmed facts, plus `facts_unconfirmed` (facts MARA found that were not ticked; never read
+by generation) and `provenance` (which saved values are MARA's reading, accepted unchanged)
 (best-effort). Design and remaining slices: `docs/brand-kit-v2-design.md`.
 
 **Plan → content → approval → publish.**
@@ -145,6 +152,6 @@ All keys go in `.env.local` (copy from `.env.example`). Never commit real values
 `NEXT_PUBLIC_` is visible in the browser; everything else is server-only.
 
 ## Not built yet
-2FA · LinkedIn · Stripe billing · onboarding's "smart" screens (uploads, "Here's what I
-learned", sample captions), brand asset uploads and website reading
-(`docs/brand-kit-v2-design.md`, slices 4–8) · reference images in image generation.
+2FA · LinkedIn · Stripe billing · onboarding's upload and sample-caption screens, brand asset
+uploads, website reading and Instagram import (`docs/brand-kit-v2-design.md`, slices 5–8) ·
+reference images in image generation.

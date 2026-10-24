@@ -15,6 +15,8 @@ export const AI_RATE_LIMITS = {
   email_flow_create: { limit: 10, windowSeconds: 3600 },
   plan_run: { limit: 6, windowSeconds: 3600 },
   reel_produce: { limit: 20, windowSeconds: 3600 },
+  /** Onboarding "Send to MARA": one read per attempt, so a handful an hour is plenty. */
+  brand_extract: { limit: 10, windowSeconds: 3600 },
 } as const;
 
 export type AiRateLimitBucket = keyof typeof AI_RATE_LIMITS;

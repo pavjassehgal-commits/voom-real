@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Onboarding, Brand Kit v2 (docs/brand-kit-v2-design.md, slice 3).
+ * Onboarding, Brand Kit v2 (docs/brand-kit-v2-design.md, slices 3 and 4).
  *
  * Ten screens, one topic each, with a per-screen Skip where the answer has a
  * safe default and no global Skip. Five answers are required: your name, the
@@ -9,12 +9,21 @@
  * Everything is kept in the store until "Finish setup", which writes the
  * `businesses` row and brand kit version 1 in one go (lib/voom/mutations.ts).
  *
- * The three "smart" screens of the design (uploads, "Here's what I learned",
- * sample captions) arrive with slices 4 to 6 and are not shown until then.
+ * "Send to MARA" on the description screen makes ONE structured AI read
+ * (lib/brand/extract.ts). Every guess is prefilled into the screen that asks
+ * for it, marked "MARA's guess", so each answer is confirmed exactly once:
+ * there, or on the Brand Brief screen for the brief, offerings and facts
+ * (facts she found wait as "Needs confirmation" until tapped). When the read
+ * fails, is slow or finds nothing, the keyword guess picks the category as
+ * before and the basics screen says so.
+ *
+ * Still to come: uploads (slice 5) and sample captions (slice 6).
  */
 import { useEffect, useMemo, useState } from "react";
 import { useVoomActions, useVoomState } from "@/lib/voom/store";
 import { detectIndustry } from "@/lib/voom/demoData";
+import { brandLearnedIsEmpty } from "@/lib/brand/extract";
+import { extractBrandDescription, type ExtractBrandResult } from "@/lib/brand/extract-actions";
 import {
   AUTOMATION_CHOICES,
   OB_STEPS,
@@ -35,8 +44,16 @@ import Logo from "@/app/components/Logo";
 
 export const LAST_STEP = OB_STEPS.length - 1;
 
+/** Screen indices that other code refers to. */
+const STEP_DESCRIBE = 1;
+const STEP_BASICS = 2;
+const STEP_BRIEF = 8;
+
 /** Screens whose answer has a safe default. Everything else must be answered. */
 export const SKIPPABLE_STEPS: readonly number[] = [4, 5, 6, 8, 9];
+
+/** How long "Send to MARA" waits for the read before carrying on without it. */
+export const EXTRACTION_WAIT_MS = 12_000;
 
 /** The five required answers, by screen. Returns the message to show, or null when the screen may continue. */
 export function stepBlocker(step: number, onboard: { displayName: string; desc: string; industry: string; goal: string; auto: string }): string | null {
@@ -50,11 +67,42 @@ export function stepBlocker(step: number, onboard: { displayName: string; desc: 
 
 export function OnboardingWizard() {
   const { onboard, onboardStep, igConnected, onboardSaving, onboardError } = useVoomState();
-  const { setOnboardField, setOnboardStep, finishOnboarding, toast, goTo } = useVoomActions();
+  const { setOnboardField, setOnboardStep, applyLearned, markLearnedFailed, finishOnboarding, toast, goTo } = useVoomActions();
   const [analyzing, setAnalyzing] = useState(false);
+  const [reading, setReading] = useState(false);
 
   const st = onboardStep;
   const words = onboard.desc.trim().split(/\s+/).filter(Boolean).length;
+
+  /**
+   * One AI read per description text. The same text is never sent twice
+   * (going back and forward reuses the result, or the recorded failure); a
+   * slow, failed or empty read falls back to the keyword category guess.
+   * Either way the next screen is the basics, prefilled where she could.
+   */
+  async function sendToMara() {
+    const desc = onboard.desc.trim();
+    if (onboard.learnedFor === desc && (onboard.learned || onboard.learnedNote === "failed")) {
+      setOnboardStep(STEP_BASICS);
+      return;
+    }
+    setReading(true);
+    const result = await Promise.race<ExtractBrandResult>([
+      extractBrandDescription(desc).catch(() => ({ ok: false, reason: "unavailable" })),
+      new Promise((resolve) => setTimeout(() => resolve({ ok: false, reason: "unavailable" }), EXTRACTION_WAIT_MS)),
+    ]);
+    setReading(false);
+    if (result.ok && !brandLearnedIsEmpty(result.learned)) {
+      applyLearned(result.learned, desc);
+    } else {
+      markLearnedFailed(desc);
+      if (!onboard.industry) {
+        const detected = detectIndustry(desc);
+        if (detected) setOnboardField("industry", detected);
+      }
+    }
+    setOnboardStep(STEP_BASICS);
+  }
 
   async function next() {
     const blocker = stepBlocker(st, onboard);
@@ -62,15 +110,23 @@ export function OnboardingWizard() {
       toast(blocker, "err");
       return;
     }
-    if (st === 1 && !onboard.industry) {
-      const detected = detectIndustry(onboard.desc);
-      if (detected) setOnboardField("industry", detected);
+    if (st === STEP_DESCRIBE) {
+      await sendToMara();
+      return;
     }
     if (st < LAST_STEP) {
       setOnboardStep(st + 1);
       return;
     }
     await finish();
+  }
+
+  function back() {
+    if (st === 0) {
+      goTo("dash");
+      return;
+    }
+    setOnboardStep(st - 1);
   }
 
   async function skip() {
@@ -91,7 +147,8 @@ export function OnboardingWizard() {
     return <AnalyzingScreen onDone={() => goTo("dash")} />;
   }
 
-  const continueLabel = onboardSaving ? "Saving…" : st === LAST_STEP ? "Finish setup" : st === 1 ? "Send to MARA" : st === 8 ? "Looks right" : "Continue";
+  const busy = onboardSaving || reading;
+  const continueLabel = onboardSaving ? "Saving…" : reading ? "Reading…" : st === LAST_STEP ? "Finish setup" : st === STEP_DESCRIBE ? "Send to MARA" : st === STEP_BRIEF ? "Looks right" : "Continue";
 
   return (
     <div className="flex min-h-dvh flex-col bg-bg">
@@ -115,7 +172,7 @@ export function OnboardingWizard() {
             </div>
           )}
           {st === 0 && <StepName />}
-          {st === 1 && <StepDescribe words={words} />}
+          {st === 1 && <StepDescribe words={words} reading={reading} />}
           {st === 2 && <StepBasics />}
           {st === 3 && <StepAudienceGoal />}
           {st === 4 && <StepVoice />}
@@ -128,17 +185,17 @@ export function OnboardingWizard() {
       </div>
 
       <div className="sticky bottom-0 flex justify-between gap-3 border-t border-line bg-surface px-6 py-4">
-        <Btn variant="ghost" onClick={() => (st === 0 ? goTo("dash") : setOnboardStep(st - 1))} disabled={onboardSaving}>
+        <Btn variant="ghost" onClick={back} disabled={busy}>
           <Icon name="back" size={16} /> Back
         </Btn>
         <div className="flex items-center gap-2">
           {SKIPPABLE_STEPS.includes(st) ? (
-            <Btn variant="ghost" onClick={() => void skip()} disabled={onboardSaving}>
+            <Btn variant="ghost" onClick={() => void skip()} disabled={busy}>
               Skip this step
             </Btn>
           ) : null}
-          <Btn variant="primary" onClick={() => void next()} disabled={onboardSaving}>
-            {continueLabel} {!onboardSaving && <Icon name="arrow" size={16} />}
+          <Btn variant="primary" onClick={() => void next()} disabled={busy}>
+            {continueLabel} {!busy && <Icon name="arrow" size={16} />}
           </Btn>
         </div>
       </div>
@@ -185,7 +242,7 @@ function QBlock({ title, help, children }: { title: string; help?: string; child
   );
 }
 
-function StepDescribe({ words }: { words: number }) {
+function StepDescribe({ words, reading }: { words: number; reading: boolean }) {
   const { onboard } = useVoomState();
   const { setOnboardField } = useVoomActions();
   return (
@@ -196,13 +253,69 @@ function StepDescribe({ words }: { words: number }) {
         className="text-[15.5px] leading-[1.65]"
         placeholder="For example: We're a small café near the marina. We roast our own beans, most of our customers are regulars who work nearby, and weekends are our busiest time. We want more people to know we do brunch."
         value={onboard.desc}
+        disabled={reading}
         onChange={(e) => setOnboardField("desc", e.target.value)}
       />
       <div className="mt-2.5 flex items-center justify-between">
         <span className="text-xs text-text-3">
           <span>{words}</span> words — a few sentences is plenty
         </span>
+        <span className="text-xs text-text-3">MARA reads it once and fills in what she can on the next screens.</span>
       </div>
+      {reading ? (
+        <div role="status" className="mt-4 rounded-2xl border border-brand bg-[var(--brand-soft)] p-4">
+          <div className="flex items-start gap-2.5">
+            <Orb size="sm" className="mt-0.5" />
+            <p className="text-[13.5px] leading-[1.6]">
+              <b>MARA is reading your description…</b> a few seconds at most. She fills in what she can and marks it as her guess for you to check.
+            </p>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** The help line under a prefilled question. */
+const GUESS_HELP = "MARA's guess from your description is highlighted. Change it if she got it wrong.";
+
+function AudienceChips({ selected, onToggle }: { selected: string[]; onToggle: (value: string) => void }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {Q_CUSTOMER.map((c) => (
+        <Chip key={c} active={selected.includes(c)} onClick={() => onToggle(c)}>
+          {c}
+        </Chip>
+      ))}
+    </div>
+  );
+}
+
+function GoalPicks({ value, onPick }: { value: string; onPick: (goal: string) => void }) {
+  return (
+    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+      {Q_GOAL.map(([emoji, name]) => (
+        <button
+          key={name}
+          onClick={() => onPick(name)}
+          className={`rounded-[14px] border-[1.5px] p-3.5 text-left transition hover:-translate-y-0.5 ${value === name ? "border-brand bg-[var(--brand-soft)]" : "border-line"}`}
+        >
+          <span className="mb-1.5 block text-[22px]">{emoji}</span>
+          <b className="text-[13.5px]">{name}</b>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ToneChips({ selected, onToggle }: { selected: string[]; onToggle: (value: string) => void }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {OB_TONE.map((t) => (
+        <Chip key={t} active={selected.includes(t)} onClick={() => onToggle(t)}>
+          {t}
+        </Chip>
+      ))}
     </div>
   );
 }
@@ -229,10 +342,27 @@ function IndustryPicks() {
 function StepBasics() {
   const { onboard } = useVoomState();
   const { setOnboardField } = useVoomActions();
-  const guessed = useMemo(() => Boolean(onboard.industry) && detectIndustry(onboard.desc) === onboard.industry, [onboard.desc, onboard.industry]);
+  const guessed = useMemo(
+    () => onboard.fromMara.includes("category") || (Boolean(onboard.industry) && detectIndustry(onboard.desc) === onboard.industry),
+    [onboard.desc, onboard.industry, onboard.fromMara],
+  );
   return (
     <div>
       <Title sub="So MARA writes as you, not about you.">The basics</Title>
+      {onboard.learnedNote === "failed" ? (
+        <p className="mb-4 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">
+          MARA couldn&apos;t read your description just now, so pick these yourself. Nothing else changes.
+        </p>
+      ) : onboard.learned ? (
+        <div className="mb-4 rounded-2xl border border-brand bg-[var(--brand-soft)] p-4">
+          <div className="flex items-start gap-2.5">
+            <Orb size="sm" className="mt-0.5" />
+            <p className="text-[13.5px] leading-[1.6]">
+              I read your description and filled in what I could, here and on the next screens. My guesses are marked; change anything I got wrong.
+            </p>
+          </div>
+        </div>
+      ) : null}
       <div className="mb-4 flex flex-wrap gap-3">
         <label className="min-w-[200px] flex-1">
           <span className="mb-1.5 block text-[12.5px] font-semibold text-text-2">Business name</span>
@@ -259,7 +389,7 @@ function StepBasics() {
           </span>
         </label>
       </div>
-      <QBlock title="What kind of business is this?" help={guessed ? "MARA's guess from your description is highlighted. Change it if she got it wrong." : "Pick the closest match."}>
+      <QBlock title="What kind of business is this?" help={guessed ? GUESS_HELP : "Pick the closest match."}>
         <IndustryPicks />
       </QBlock>
     </div>
@@ -272,28 +402,11 @@ function StepAudienceGoal() {
   return (
     <div>
       <Title sub="MARA uses these to choose the angle for every post.">Who you serve, and why</Title>
-      <QBlock title="Who is your target customer?" help="Choose all that apply. Leave it empty and MARA writes for a broad audience.">
-        <div className="flex flex-wrap gap-2">
-          {Q_CUSTOMER.map((c) => (
-            <Chip key={c} active={onboard.customer.includes(c)} onClick={() => toggleOnboardArray("customer", c)}>
-              {c}
-            </Chip>
-          ))}
-        </div>
+      <QBlock title="Who is your target customer?" help={onboard.fromMara.includes("audience") ? GUESS_HELP : "Choose all that apply. Leave it empty and MARA writes for a broad audience."}>
+        <AudienceChips selected={onboard.customer} onToggle={(c) => toggleOnboardArray("customer", c)} />
       </QBlock>
-      <QBlock title="What is your main marketing goal?" help="Pick the one that matters most right now.">
-        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-          {Q_GOAL.map(([emoji, name]) => (
-            <button
-              key={name}
-              onClick={() => setOnboardField("goal", name)}
-              className={`rounded-[14px] border-[1.5px] p-3.5 text-left transition hover:-translate-y-0.5 ${onboard.goal === name ? "border-brand bg-[var(--brand-soft)]" : "border-line"}`}
-            >
-              <span className="mb-1.5 block text-[22px]">{emoji}</span>
-              <b className="text-[13.5px]">{name}</b>
-            </button>
-          ))}
-        </div>
+      <QBlock title="What is your main marketing goal?" help={onboard.fromMara.includes("goal") ? GUESS_HELP : "Pick the one that matters most right now."}>
+        <GoalPicks value={onboard.goal} onPick={(goal) => setOnboardField("goal", goal)} />
       </QBlock>
     </div>
   );
@@ -305,14 +418,8 @@ function StepVoice() {
   return (
     <div>
       <Title sub="These shape the words MARA chooses. Skip it and she keeps a neutral tone until you tell her otherwise.">How you sound</Title>
-      <QBlock title="What is your brand personality?" help="Choose up to three.">
-        <div className="flex flex-wrap gap-2">
-          {OB_TONE.map((t) => (
-            <Chip key={t} active={onboard.tone.includes(t)} onClick={() => toggleOnboardArray("tone", t, 3)}>
-              {t}
-            </Chip>
-          ))}
-        </div>
+      <QBlock title="What is your brand personality?" help={onboard.fromMara.includes("personality") ? `${GUESS_HELP} Up to three.` : "Choose up to three."}>
+        <ToneChips selected={onboard.tone} onToggle={(t) => toggleOnboardArray("tone", t, 3)} />
       </QBlock>
     </div>
   );
@@ -441,9 +548,10 @@ function StepBrief() {
     audience: { audience: onboard.customer, goal: onboard.goal },
     voice: { personality: onboard.tone, liked: [], disliked: [] },
     avoid: { rules: onboard.rules, words: onboard.words, notes: onboard.notes },
-    facts: { facts: onboard.facts },
+    facts: { facts: onboard.facts, unconfirmed: onboard.factsUnconfirmed },
     operate: { pace: onboard.freq, channels: onboard.channels, ...(onboard.auto === "manual" || onboard.auto === "assisted" || onboard.auto === "autopilot" ? { automation: onboard.auto } : {}) },
   }), [onboard]);
+  const drafted = onboard.fromMara.includes("brief") || onboard.fromMara.includes("offerings");
 
   function onLocalSave(id: BrandSectionId, saved: BrandSectionValues[BrandSectionId]) {
     switch (id) {
@@ -470,7 +578,12 @@ function StepBrief() {
         setOnboardField("notes", v.notes);
         return;
       }
-      case "facts": setOnboardField("facts", (saved as BrandSectionValues["facts"]).facts); return;
+      case "facts": {
+        const v = saved as BrandSectionValues["facts"];
+        setOnboardField("facts", v.facts);
+        setOnboardField("factsUnconfirmed", v.unconfirmed);
+        return;
+      }
       default: return;
     }
   }
@@ -482,7 +595,10 @@ function StepBrief() {
         <div className="flex items-start gap-2.5">
           <Orb size="sm" className="mt-0.5" />
           <p className="text-[13.5px] leading-[1.6]">
-            I&apos;ll draft the brief for you in a later update. For now, write a few lines in the Brand Brief box or leave it, and I&apos;ll work from your description.
+            {drafted
+              ? "I drafted the Brand Brief and what you offer from your description. Edit anything that's off; what you change here is what I'll work from."
+              : "Write a few lines in the Brand Brief box or leave it, and I'll work from your description."}
+            {onboard.factsUnconfirmed.length ? " Under Facts, tap Confirm on each claim that's true; I never state the others." : ""}
           </p>
         </div>
       </div>

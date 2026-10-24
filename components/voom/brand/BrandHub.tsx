@@ -152,6 +152,22 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
     setError("");
   }
 
+  /**
+   * One-tap Confirm on a fact MARA found (onboarding only, where nothing is
+   * saved until Finish): the same change the Facts editor makes, without
+   * opening it. The live page keeps Edit → Confirm → Save, one version per save.
+   */
+  function confirmFactLocal(fact: string) {
+    const current = values.facts;
+    const next: BrandSectionValues["facts"] = {
+      facts: current.facts.includes(fact) ? current.facts : [...current.facts, fact],
+      unconfirmed: current.unconfirmed.filter((f) => f !== fact),
+    };
+    setValues((prev) => ({ ...prev, facts: next }));
+    onLocalSave?.("facts", next);
+  }
+  const oneTapConfirm = persist === "local" && mode === "onboarding" && editing === null ? confirmFactLocal : undefined;
+
   async function save() {
     if (!editing || !draft) return;
     setBusy(true);
@@ -233,7 +249,7 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
             {isEditing && draft ? (
               <SectionEditor id={section.id} draft={draft} onChange={setDraft} disabled={busy} />
             ) : (
-              <SectionView id={section.id} values={values} plan={plan} automation={automation} mode={mode} />
+              <SectionView id={section.id} values={values} plan={plan} automation={automation} mode={mode} onConfirmFact={oneTapConfirm} />
             )}
           </Card>
           </section>
@@ -313,13 +329,16 @@ function answersFor(id: BrandSectionId, saved: BrandSectionValues[BrandSectionId
       const v = saved as BrandSectionValues["avoid"];
       return { avoid: { rules: v.rules, words: v.words }, notes: v.notes };
     }
-    case "facts": return { facts_confirmed: (saved as BrandSectionValues["facts"]).facts };
+    case "facts": {
+      const v = saved as BrandSectionValues["facts"];
+      return { facts_confirmed: v.facts, facts_unconfirmed: v.unconfirmed };
+    }
     case "operate": return { ...(saved as BrandSectionValues["operate"]) };
     default: return {};
   }
 }
 
-function SectionView({ id, values, plan, automation, mode }: { id: BrandSectionId; values: BrandSectionValues; plan: PlanId; automation: AutomationModeValue; mode: "hub" | "onboarding" }) {
+function SectionView({ id, values, plan, automation, mode, onConfirmFact }: { id: BrandSectionId; values: BrandSectionValues; plan: PlanId; automation: AutomationModeValue; mode: "hub" | "onboarding"; onConfirmFact?: (fact: string) => void }) {
   switch (id) {
     case "basics":
       return (
@@ -362,9 +381,29 @@ function SectionView({ id, values, plan, automation, mode }: { id: BrandSectionI
         </div>
       );
     case "facts":
-      return values.facts.facts.length
-        ? <ul className="list-disc space-y-1 pl-5 text-[14px]">{values.facts.facts.map((fact) => <li key={fact}>{fact}</li>)}</ul>
-        : <p className="text-[13.5px] text-text-3">No confirmed facts. MARA states no years, awards or numbers until you add some.</p>;
+      return (
+        <div className="space-y-3">
+          {values.facts.facts.length
+            ? <ul className="list-disc space-y-1 pl-5 text-[14px]">{values.facts.facts.map((fact) => <li key={fact}>{fact}</li>)}</ul>
+            : <p className="text-[13.5px] text-text-3">No confirmed facts. MARA states no years, awards or numbers until you add some.</p>}
+          {values.facts.unconfirmed.length ? (
+            <div>
+              <div className="mb-1 flex items-center gap-2 text-[12px] font-semibold text-text-2">Needs confirmation <Tag tone="t-amber">{values.facts.unconfirmed.length}</Tag></div>
+              <p className="mb-1.5 text-[12.5px] text-text-3">
+                MARA found these in your description. She never states them until you confirm them{onConfirmFact ? "; Edit removes one for good." : " with Edit."}
+              </p>
+              <ul className="space-y-1">
+                {values.facts.unconfirmed.map((fact) => (
+                  <li key={fact} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-2 px-3 py-2 text-[13px] text-text-2">
+                    <span>{fact}</span>
+                    {onConfirmFact ? <Btn variant="outline" size="sm" onClick={() => onConfirmFact(fact)}>Confirm</Btn> : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      );
     case "operate":
       return (
         <div className="space-y-3">
@@ -437,7 +476,27 @@ function SectionEditor({ id, draft, onChange, disabled }: { id: BrandSectionId; 
     }
     case "facts": {
       const d = draft as BrandSectionValues["facts"];
-      return <Field label="Facts MARA may state" hint="One per line. Only what you can stand behind: 'Roasting since 2014', 'Family-run'."><ListText items={d.facts} separator="line" rows={4} disabled={disabled} onChange={(facts) => onChange({ facts })} /></Field>;
+      return (
+        <div>
+          <Field label="Facts MARA may state" hint="One per line. Only what you can stand behind: 'Roasting since 2014', 'Family-run'."><ListText items={d.facts} separator="line" rows={4} disabled={disabled} onChange={(facts) => onChange({ ...d, facts })} /></Field>
+          {d.unconfirmed.length ? (
+            <div>
+              <div className="mb-1.5 text-[12.5px] font-semibold text-text-2">Needs confirmation</div>
+              <ul className="space-y-1.5">
+                {d.unconfirmed.map((fact) => (
+                  <li key={fact} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-2 px-3 py-2 text-[13px]">
+                    <span>{fact}</span>
+                    <span className="flex gap-1.5">
+                      <Btn variant="outline" size="sm" disabled={disabled} onClick={() => onChange({ facts: d.facts.includes(fact) ? d.facts : [...d.facts, fact], unconfirmed: d.unconfirmed.filter((f) => f !== fact) })}>Confirm</Btn>
+                      <Btn variant="ghost" size="sm" disabled={disabled} onClick={() => onChange({ ...d, unconfirmed: d.unconfirmed.filter((f) => f !== fact) })}>Remove</Btn>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      );
     }
     case "operate": {
       const d = draft as BrandSectionValues["operate"];

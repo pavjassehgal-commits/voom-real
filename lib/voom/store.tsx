@@ -21,6 +21,8 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import type {
+  BrandLearned,
+  BrandLearnedKey,
   BusinessProfileInput,
   BusinessRecord,
   OnboardingAnswers,
@@ -86,7 +88,33 @@ function emptyOnboard(): OnboardingAnswers {
     notes: "",
     facts: [],
     brief: "",
+    learned: null,
+    learnedFor: "",
+    learnedNote: "",
+    fromMara: [],
+    factsUnconfirmed: [],
   };
+}
+
+/**
+ * Which kit answer key each prefillable onboarding field is. Editing one of
+ * these fields removes MARA's claim on it (`fromMara`), so the saved
+ * provenance only ever says "description" for values the owner left as read.
+ */
+const LEARNED_KEY_FOR_FIELD: Partial<Record<keyof OnboardingAnswers, BrandLearnedKey>> = {
+  name: "name",
+  industry: "category",
+  offerings: "offerings",
+  customer: "audience",
+  goal: "goal",
+  tone: "personality",
+  brief: "brief",
+};
+
+function withoutMaraClaim(onboard: OnboardingAnswers, field: keyof OnboardingAnswers): OnboardingAnswers {
+  const key = LEARNED_KEY_FOR_FIELD[field];
+  if (!key || !onboard.fromMara.includes(key)) return onboard;
+  return { ...onboard, fromMara: onboard.fromMara.filter((k) => k !== key) };
 }
 
 export function getInitials(name: string, email: string | null | undefined): string {
@@ -178,6 +206,12 @@ interface VoomActions {
   setOnboardField: <K extends keyof OnboardingAnswers>(key: K, value: OnboardingAnswers[K]) => void;
   toggleOnboardArray: (key: "customer" | "tone" | "channels" | "rules", value: string, max?: number) => boolean;
   setOnboardStep: (step: number) => void;
+  /**
+   * Slice 4. `applyLearned` keeps MARA's reading and prefills every empty (or
+   * still-MARA's) field; `markLearnedFailed` records a read that did not work.
+   */
+  applyLearned: (learned: BrandLearned, forDescription: string) => void;
+  markLearnedFailed: (forDescription: string) => void;
   finishOnboarding: (skipped: boolean) => Promise<boolean>;
   restartOnboarding: () => Promise<void>;
 }
@@ -354,7 +388,7 @@ export function VoomProvider({
   );
 
   const setOnboardField = useCallback<VoomActions["setOnboardField"]>((key, value) => {
-    setState((s) => ({ ...s, onboard: { ...s.onboard, [key]: value } }));
+    setState((s) => ({ ...s, onboard: { ...withoutMaraClaim(s.onboard, key), [key]: value } }));
   }, []);
 
   const toggleOnboardArray = useCallback<VoomActions["toggleOnboardArray"]>((key, value, max) => {
@@ -367,7 +401,7 @@ export function VoomProvider({
         return s;
       }
       const next = has ? arr.filter((v) => v !== value) : [...arr, value];
-      return { ...s, onboard: { ...s.onboard, [key]: next } };
+      return { ...s, onboard: { ...withoutMaraClaim(s.onboard, key), [key]: next } };
     });
     if (!ok) toast(`Pick up to ${max}`, "err");
     return ok;
@@ -375,6 +409,40 @@ export function VoomProvider({
 
   const setOnboardStep = useCallback<VoomActions["setOnboardStep"]>((step) => {
     setState((s) => ({ ...s, onboardStep: step }));
+  }, []);
+
+  const applyLearned = useCallback<VoomActions["applyLearned"]>((learned, forDescription) => {
+    setState((s) => {
+      const o = s.onboard;
+      const fromMara: BrandLearnedKey[] = [];
+      const next: OnboardingAnswers = { ...o, learned, learnedFor: forDescription.trim(), learnedNote: "" };
+      // A field is prefilled only when the owner has not typed into it (empty,
+      // or still MARA's from an earlier read). Their own words always win.
+      const take = <F extends keyof OnboardingAnswers>(field: F, value: OnboardingAnswers[F], empty: boolean) => {
+        const key = LEARNED_KEY_FOR_FIELD[field];
+        if (!key) return;
+        const current = o[field];
+        const free = (Array.isArray(current) ? current.length === 0 : current === "") || o.fromMara.includes(key);
+        if (empty || !free) return;
+        next[field] = value;
+        fromMara.push(key);
+      };
+      take("name", learned.name, !learned.name);
+      take("industry", learned.category, !learned.category);
+      take("offerings", learned.offerings, !learned.offerings.length);
+      take("customer", learned.audience, !learned.audience.length);
+      take("goal", learned.goal, !learned.goal);
+      take("tone", learned.personality, !learned.personality.length);
+      take("brief", learned.brief, !learned.brief);
+      // Facts are never prefilled: they wait, unticked, until the owner confirms each one.
+      next.factsUnconfirmed = learned.facts.filter((fact) => !o.facts.includes(fact));
+      next.fromMara = fromMara;
+      return { ...s, onboard: next };
+    });
+  }, []);
+
+  const markLearnedFailed = useCallback<VoomActions["markLearnedFailed"]>((forDescription) => {
+    setState((s) => ({ ...s, onboard: { ...s.onboard, learned: null, learnedFor: forDescription.trim(), learnedNote: "failed" } }));
   }, []);
 
   const finishOnboarding = useCallback<VoomActions["finishOnboarding"]>(
@@ -411,6 +479,10 @@ export function VoomProvider({
           notes: o.notes,
           facts: o.facts,
           ...(wanted && wanted !== allowed ? { wantedAutomation: wanted } : {}),
+          // Slice 4: which saved values are MARA's reading, and the facts she
+          // found that the owner did not tick (kept aside, never used).
+          ...(o.fromMara.length ? { fromDescription: o.fromMara } : {}),
+          ...(o.factsUnconfirmed.length ? { factsUnconfirmed: o.factsUnconfirmed } : {}),
         },
       };
 
@@ -473,6 +545,8 @@ export function VoomProvider({
       setOnboardField,
       toggleOnboardArray,
       setOnboardStep,
+      applyLearned,
+      markLearnedFailed,
       finishOnboarding,
       restartOnboarding,
     }),
@@ -491,6 +565,8 @@ export function VoomProvider({
       setOnboardField,
       toggleOnboardArray,
       setOnboardStep,
+      applyLearned,
+      markLearnedFailed,
       finishOnboarding,
       restartOnboarding,
     ],

@@ -41,7 +41,7 @@ export const BRAND_SECTIONS: readonly BrandSectionMeta[] = [
   { id: "audience", title: "Who we're for", intro: "Who you serve and what you want more of.", ownsKeys: ["audience", "goal"], businessColumns: ["target_customer", "main_goal"] },
   { id: "voice", title: "How we sound", intro: "Your personality, plus captions that sound like you and captions that don't.", ownsKeys: ["personality", "voice_samples"], businessColumns: ["brand_personality"] },
   { id: "avoid", title: "What we avoid", intro: "Hard rules, banned words and anything specific MARA should know.", ownsKeys: ["avoid", "notes"], businessColumns: [] },
-  { id: "facts", title: "Facts MARA may state", intro: "The only specific facts (years, awards, numbers, places) MARA is allowed to say.", ownsKeys: ["facts_confirmed"], businessColumns: [] },
+  { id: "facts", title: "Facts MARA may state", intro: "The only specific facts (years, awards, numbers, places) MARA is allowed to say.", ownsKeys: ["facts_confirmed", "facts_unconfirmed"], businessColumns: [] },
   { id: "operate", title: "What MARA may do", intro: "How often she posts, how much she does on her own, and where.", ownsKeys: ["pace", "channels", "automation"], businessColumns: ["content_frequency", "preferred_channels", "automation_level"], hubOnly: true },
 ];
 
@@ -66,7 +66,8 @@ const SCHEMAS = {
   audience: z.object({ audience: lines(10, 80), goal: z.string().trim().max(120).default("") }).strict(),
   voice: z.object({ personality: lines(10, 40), liked: lines(5, 600), disliked: lines(5, 600) }).strict(),
   avoid: z.object({ rules: lines(20, 200), words: lines(50, 60), notes: z.string().trim().max(800).default("") }).strict(),
-  facts: z.object({ facts: lines(20, 200) }).strict(),
+  /** `unconfirmed`: facts MARA found in the description that the owner has not confirmed (slice 4). Never read by generation. */
+  facts: z.object({ facts: lines(20, 200), unconfirmed: lines(20, 200).default([]) }).strict(),
   operate: z.object({
     pace: z.string().trim().max(80).default(""),
     channels: lines(10, 40),
@@ -140,7 +141,10 @@ export function validateBrandSection(id: unknown, raw: unknown): ValidatedSectio
     }
     case "facts": {
       const v = values as BrandSectionValues["facts"];
-      return { ok: true, id: sectionId, values, answers: { facts_confirmed: v.facts }, business: {} };
+      // A fact cannot be both confirmed and waiting for confirmation.
+      const unconfirmed = v.unconfirmed.filter((fact) => !v.facts.includes(fact));
+      const cleaned = { facts: v.facts, unconfirmed };
+      return { ok: true, id: sectionId, values: cleaned, answers: { facts_confirmed: v.facts, facts_unconfirmed: unconfirmed }, business: {} };
     }
     case "operate": {
       const v = values as BrandSectionValues["operate"];
@@ -219,7 +223,7 @@ export function brandHubValues(business: BrandBusinessCore | null, kit: Pick<Bra
       disliked: list(voice.disliked),
     },
     avoid: { rules: list(avoid.rules), words: list(avoid.words), notes: str(a.notes) },
-    facts: { facts: list(a.facts_confirmed) },
+    facts: { facts: list(a.facts_confirmed), unconfirmed: list(a.facts_unconfirmed) },
     operate: {
       pace: has("pace") ? str(a.pace) : str(business?.content_frequency),
       channels: has("channels") ? list(a.channels) : list(business?.preferred_channels),
@@ -242,6 +246,8 @@ export const ANSWER_KEY_LABELS: Record<string, string> = {
   avoid: "What we avoid",
   notes: "Notes for MARA",
   facts_confirmed: "Facts",
+  facts_unconfirmed: "Facts needing confirmation",
+  provenance: "Where answers came from",
   pace: "Posting pace",
   channels: "Channels",
   automation: "Automation level",
