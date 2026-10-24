@@ -1,6 +1,6 @@
 "use client";
 
-import { haptic } from "@/lib/voom/haptics";
+import { beginHapticGesture, haptic } from "@/lib/voom/haptics";
 import { useState } from "react";
 import { Icon } from "@/components/voom/icons";
 import { Btn, cx } from "@/components/voom/ui/primitives";
@@ -49,9 +49,10 @@ export function AutomationMode({
   }
 
   async function choose(next: AutomationModeValue) {
+    const gesture = beginHapticGesture(); // synchronous: the click that chose this mode
     if (next === mode || busy) return;
     if (!isModeAllowed(next)) {
-      haptic("warning");
+      haptic("warning", gesture);
       setError(
         next === "autopilot"
           ? "Autopilot is available on Max plan only. Upgrade to Max to use Autopilot."
@@ -71,7 +72,7 @@ export function AutomationMode({
     else setError(body.error ?? "Voom couldn't save that mode.");
     // The server echoes the saved mode; fall back to the mode we asked for.
     if (response.ok) announceSavedMode(storedAutomationMode(body.mode) ?? next);
-    haptic(response.ok ? "success" : "error");
+    haptic(response.ok ? "success" : "error", gesture);
     setBusy(false);
   }
 

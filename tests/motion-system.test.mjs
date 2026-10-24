@@ -31,42 +31,50 @@ function fakeBrowser({ vibrate = true, active = true, activation = true, stored 
 const haptics = await import("../lib/voom/haptics.ts");
 
 test("haptics fire the documented patterns only for a real, permitted user gesture", () => {
+  const trusted = { isTrusted: true };
+  const fire = (kind) => haptics.haptic(kind, haptics.beginHapticGesture(trusted));
   let calls = fakeBrowser();
-  haptics.haptic("light"); haptics.haptic("success"); haptics.haptic("warning"); haptics.haptic("error");
+  fire("light"); fire("success"); fire("warning"); fire("error");
   assert.deepEqual(calls, [10, 20, [12, 60, 12], [16, 60, 16]]);
 
+  calls = fakeBrowser();
+  haptics.haptic("success", haptics.beginHapticGesture({ isTrusted: false }));
+  haptics.haptic("success", haptics.beginHapticGesture());
+  haptics.haptic("success", null);
+  assert.deepEqual(calls, [], "an untrusted event, no event being dispatched, or no token: never vibrates");
+
   calls = fakeBrowser({ active: false });
-  haptics.haptic("success");
+  fire("success");
   assert.deepEqual(calls, [], "no user gesture (page load, passive notification, background event): never vibrates");
 
   calls = fakeBrowser({ activation: false });
-  haptics.haptic("success");
+  fire("success");
   assert.deepEqual(calls, [], "missing activation metadata fails closed");
 
   calls = fakeBrowser();
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { vibrate: (p) => { calls.push(p); return true; }, userActivation: {} } });
-  haptics.haptic("success");
+  fire("success");
   assert.deepEqual(calls, [], "activation without a positive isActive fails closed");
 
   calls = fakeBrowser({ stored: { [haptics.HAPTICS_STORAGE_KEY]: "off" } });
-  haptics.haptic("light");
+  fire("light");
   assert.deepEqual(calls, [], "the owner's Off setting wins");
 
   calls = fakeBrowser({ reduced: true });
-  haptics.haptic("light");
+  fire("light");
   assert.deepEqual(calls, [], "system reduced motion disables haptics");
 
   calls = fakeBrowser({ stored: { [haptics.MOTION_STORAGE_KEY]: "reduce" } });
-  haptics.haptic("light");
+  fire("light");
   assert.deepEqual(calls, [], "in-app reduced motion disables haptics");
 });
 
 test("haptics are a silent no-op where vibration is unsupported (e.g. iOS Safari)", () => {
   fakeBrowser({ vibrate: false });
   assert.equal(haptics.hapticsSupported(), false);
-  assert.doesNotThrow(() => haptics.haptic("error"));
+  assert.doesNotThrow(() => haptics.haptic("error", haptics.beginHapticGesture({ isTrusted: true })));
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { vibrate: () => { throw new Error("blocked"); }, userActivation: { isActive: true } } });
-  assert.doesNotThrow(() => haptics.haptic("light"), "a throwing implementation is swallowed");
+  assert.doesNotThrow(() => haptics.haptic("light", haptics.beginHapticGesture({ isTrusted: true })), "a throwing implementation is swallowed");
 });
 
 test("haptics are only wired to direct interactions, never to toasts or background work", async () => {
@@ -145,12 +153,14 @@ const hapticBundle = buildClientBundle(`
   import { createRoot } from "react-dom/client";
   import { createElement as h } from "react";
   import { MotionRuntime } from "./components/voom/motion/MotionRuntime.tsx";
-  import { haptic } from "./lib/voom/haptics.ts";
+  import { beginHapticGesture, haptic } from "./lib/voom/haptics.ts";
   window.__clicks = 0;
   window.__haptic = haptic;
   createRoot(document.getElementById("root")).render(h("div", null,
     h(MotionRuntime),
-    h("button", { id: "tap", type: "button", "data-haptic": "light", style: { width: 200, height: 60 }, onClick: () => { window.__clicks += 1; } }, "Tap"),
+    // Records the gesture token exactly as app handlers do (synchronously, first line).
+    h("button", { id: "tap", type: "button", "data-haptic": "light", style: { width: 200, height: 60 }, onClick: () => { window.__token = beginHapticGesture(); window.__clicks += 1; } }, "Tap"),
+    h("div", { id: "elsewhere", style: { width: 200, height: 60 } }, "Elsewhere"),
   ));
 `);
 
@@ -210,8 +220,9 @@ test("preferences, reduced motion, unsupported browsers and late results all sta
     // A save that resolves after the click's transient activation has expired (~5s in Chromium).
     { name: "late", onDocumentStart: spy(), trustedClicks: ["#tap"], evaluate: `(async () => {
         const during = navigator.userActivation.isActive;
+        window.__haptic("success", window.__token);          // a prompt result for this tap: allowed
         await new Promise((r) => setTimeout(r, 5600));
-        window.__haptic("success");
+        window.__haptic("success", window.__token);          // a late result: activation and token expired
         return { during, after: navigator.userActivation.isActive, ...${read$} };
       })()` },
   ]);
@@ -223,5 +234,62 @@ test("preferences, reduced motion, unsupported browsers and late results all sta
   assert.equal(r.unsupported.clicks, 1, "the control works without haptics");
   assert.equal(r.late.during, true);
   assert.equal(r.late.after, false, "activation has expired");
-  assert.deepEqual(r.late.vib, [10], "only the click's own light tap — the late success result cannot vibrate");
+  assert.deepEqual(r.late.vib, [10, 20], "the tap and its prompt result vibrate; the late result cannot");
+});
+
+test("a result cannot borrow a newer, unrelated gesture's activation", async (t) => {
+  const r = await hapticRun(t, [
+    { name: "borrow", onDocumentStart: spy(), trustedClicks: ["#tap", "#elsewhere"], evaluate: `(async () => {
+        window.__haptic("success", window.__token); // token from #tap; a newer real click happened since
+        return { active: navigator.userActivation.isActive, ...${read$} };
+      })()` },
+  ]);
+  if (!r) return;
+  assert.equal(r.borrow.active, true, "activation from the newer click is active");
+  assert.deepEqual(r.borrow.vib, [10], "only #tap's own light tap; the stale token cannot vibrate");
+});
+
+/* ── Codex's case in the REAL setup wizard ─────────────────────────────── */
+
+const wizardBundle = buildClientBundle(`
+  import { createRoot } from "react-dom/client";
+  import { createElement as h } from "react";
+  import { Providers } from "./app/app/Providers.tsx";
+  import { OnboardingWizard } from "./components/voom/onboarding/OnboardingWizard.tsx";
+  import { businessRecord } from "./tests/helpers/shell-surface.tsx";
+  createRoot(document.getElementById("root")).render(
+    h(Providers, { initialDisplayName: "", initialEmail: "sam@example.com", initialBusiness: businessRecord({ onboarding_completed: false }) },
+      h("div", { id: "elsewhere", style: { height: 40 } }, "Elsewhere"),
+      h(OnboardingWizard, { completedOnServer: false })),
+  );
+`);
+
+test("setup wizard: a timer-generated Continue click 30ms after a genuine click never vibrates", async (t) => {
+  const html = withClientBundle(await documentFrom('<div id="root"></div>'), wizardBundle);
+  const continueSel = "footer button:last-child";
+  const timerContinue = `(async () => {
+    const active = navigator.userActivation.isActive;
+    await new Promise((r) => setTimeout(() => { document.querySelector(${JSON.stringify(continueSel)}).click(); r(); }, 30));
+    await new Promise((r) => setTimeout(r, 120));
+    return { active, vib: window.__vib, toasts: document.querySelectorAll(".voom-toast").length, step1: /What should MARA call you\?/.test(document.body.innerText) };
+  })()`;
+  let results;
+  try {
+    results = await measureRenderedPages([
+      // Exact report: genuine click elsewhere, then a scripted Continue 30ms later (Name empty).
+      { name: "elsewhere", width: 1280, height: 800, html, onDocumentStart: spy(), trustedClicks: ["#elsewhere"], evaluate: timerContinue },
+      // Genuine Continue gives its warning once; the scripted repeat adds nothing.
+      { name: "continue", width: 1280, height: 800, html, onDocumentStart: spy(), trustedClicks: [continueSel], evaluate: timerContinue },
+    ]);
+  } catch (error) {
+    if (error instanceof RenderedSurfaceUnavailable) return t.skip("no Chromium available");
+    throw error;
+  }
+  const [elsewhere, cont] = results;
+  for (const r of results) assert.equal(r.evaluateError, null, r.evaluateError ?? "");
+  assert.equal(elsewhere.evaluate.active, true, "a real gesture's activation is active when the scripted click fires");
+  assert.deepEqual(elsewhere.evaluate.vib, [], "Codex's case: the scripted Continue never vibrates");
+  assert.equal(elsewhere.evaluate.toasts, 1, "validation itself is unchanged: the error still shows");
+  assert.equal(elsewhere.evaluate.step1, true);
+  assert.deepEqual(cont.evaluate.vib, [[12, 60, 12]], "a genuine Continue warns exactly once");
 });

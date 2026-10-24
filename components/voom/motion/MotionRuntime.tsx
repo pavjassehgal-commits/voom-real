@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { applyMotionPreference, haptic } from "@/lib/voom/haptics";
+import { applyMotionPreference, beginHapticGesture, haptic } from "@/lib/voom/haptics";
 
 /**
  * Browser-side motion wiring, mounted once in Providers:
@@ -20,7 +20,7 @@ export function MotionRuntime() {
       if (!event.isTrusted) return;
       const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-haptic]") : null;
       if (!target || target.matches(":disabled, [aria-disabled='true']")) return;
-      if (target.dataset.haptic === "light") haptic("light");
+      if (target.dataset.haptic === "light") haptic("light", beginHapticGesture(event));
     }
     // Selection animations wait for the first real interaction (see globals.css).
     function markInteracted() { document.documentElement.setAttribute("data-interacted", ""); }

@@ -22,7 +22,7 @@ import { ChannelGlyph } from "../redesign/ui";
 import { VoomLogo } from "../shell/VoomLogo";
 import { SetupComplete } from "./SetupComplete";
 import { OnboardingIcon } from "./onboardingIcons";
-import { haptic } from "@/lib/voom/haptics";
+import { beginHapticGesture, haptic, type HapticGesture } from "@/lib/voom/haptics";
 
 const LAST_STEP = 7;
 
@@ -71,31 +71,33 @@ export function OnboardingWizard({ completedOnServer = false }: { completedOnSer
   const words = onboard.desc.trim().split(/\s+/).filter(Boolean).length;
 
   // Feedback only: the same messages and rules, plus a warning pulse where supported.
-  function fail(message: string) {
-    haptic("warning");
+  function fail(message: string, gesture: HapticGesture) {
+    haptic("warning", gesture);
     toast(message, "err");
   }
 
   async function next() {
+    // Taken synchronously from the click that called us: a scripted click gets no haptics.
+    const gesture = beginHapticGesture();
     if (st === 0) {
       if (!onboard.displayName.trim()) {
-        fail("Tell MARA what to call you");
+        fail("Tell MARA what to call you", gesture);
         return;
       }
-      haptic("light");
+      haptic("light", gesture);
       setOnboardStep(1);
       return;
     }
     if (st === 1) {
       if (words < 5) {
-        fail("Tell MARA a little more — a sentence or two");
+        fail("Tell MARA a little more — a sentence or two", gesture);
         return;
       }
       if (!onboard.industry) {
         const detected = detectIndustry(onboard.desc);
         if (detected) setOnboardField("industry", detected);
       }
-      haptic("light");
+      haptic("light", gesture);
       setOnboardStep(2);
       return;
     }
@@ -108,34 +110,35 @@ export function OnboardingWizard({ completedOnServer = false }: { completedOnSer
     if (need[st]) {
       const [field, msg] = need[st];
       if (!onboard[field as keyof typeof onboard]) {
-        fail(msg);
+        fail(msg, gesture);
         return;
       }
     }
     if (st === 3 && !onboard.customer.length) {
-      fail("Pick at least one target customer");
+      fail("Pick at least one target customer", gesture);
       return;
     }
     if (st === 6 && !onboard.permission) {
-      fail("Choose a publishing permission");
+      fail("Choose a publishing permission", gesture);
       return;
     }
     if (st < LAST_STEP) {
-      haptic("light");
+      haptic("light", gesture);
       setOnboardStep(st + 1);
       return;
     }
-    await finish(false);
+    await finish(false, gesture);
   }
 
-  async function finish(skipped: boolean) {
+  // Default parameter: evaluated synchronously when Skip's click handler calls us.
+  async function finish(skipped: boolean, gesture: HapticGesture = beginHapticGesture()) {
     if (!skipped && !onboard.displayName.trim()) {
       setOnboardStep(0);
-      fail("Tell MARA what to call you");
+      fail("Tell MARA what to call you", gesture);
       return;
     }
     const ok = await finishOnboarding(skipped);
-    haptic(ok ? "success" : "error");
+    haptic(ok ? "success" : "error", gesture);
     if (ok) setComplete({ skipped });
   }
 

@@ -14,7 +14,7 @@ import type { CreditSummary } from "@/lib/billing/ledger";
 import { EmailIdentityCard } from "@/components/voom/modals/EmailIdentityCard";
 import { cx } from "@/lib/voom/cx";
 import { logout as logoutAction } from "@/app/app/actions";
-import { HAPTICS_STORAGE_KEY, MOTION_STORAGE_KEY, applyMotionPreference, haptic, hapticsSupported } from "@/lib/voom/haptics";
+import { HAPTICS_STORAGE_KEY, MOTION_STORAGE_KEY, applyMotionPreference, beginHapticGesture, haptic, hapticsSupported } from "@/lib/voom/haptics";
 
 /**
  * Settings — redesign Batch 4C (Figma "Workspace settings", PDF pages
@@ -98,6 +98,7 @@ export default function SettingsPage() {
   const planConfig = getPlanConfig(plan);
 
   async function handleSave() {
+    const gesture = beginHapticGesture(); // synchronous: the Save click
     const payload: BusinessProfileInput = {
       displayName: nameInput,
       brandName: brandNameInput,
@@ -113,17 +114,18 @@ export default function SettingsPage() {
       publishingPermission: brand.permission,
     };
     const ok = await saveBrandSettings(payload);
-    haptic(ok ? "success" : "error");
+    haptic(ok ? "success" : "error", gesture);
     if (ok) toast("Settings saved");
   }
 
   async function handleSaveSpending() {
+    const gesture = beginHapticGesture(); // synchronous: the Save click
     setSavingSpend(true);
     const ok = await saveMediaSpend({
       allowAutomaticPaidMedia: allowAutomaticMedia,
       monthlyMediaBudgetUsd: Number(mediaBudgetInput.trim() || 0),
     });
-    haptic(ok ? "success" : "error");
+    haptic(ok ? "success" : "error", gesture);
     setSavingSpend(false);
   }
 
@@ -534,7 +536,6 @@ function MotionPreferences() {
         <Segmented value={haptics} options={[["on", "On"], ["off", "Off"]]} onChange={(value) => {
           const next = value === "off" ? "off" : "on";
           save(HAPTICS_STORAGE_KEY, next === "off" ? "off" : null);
-          if (next === "on") haptic("light");
         }} />
       </div>
     </>
