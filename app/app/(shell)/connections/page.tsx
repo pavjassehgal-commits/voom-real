@@ -11,6 +11,8 @@ import { readTikTokConfig } from "@/lib/tiktok/config";
 import { getTikTokConnection } from "@/lib/tiktok/data";
 import { readYouTubeConfig } from "@/lib/youtube/config";
 import { getYouTubeConnection } from "@/lib/youtube/data";
+import { readLinkedInConfig } from "@/lib/linkedin/config";
+import { getLinkedInConnection } from "@/lib/linkedin/data";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 
@@ -30,7 +32,7 @@ type Tone = "green" | "amber" | "grey" | "blue";
  * granted video.publish scope, YouTube the youtube.upload scope). Connect,
  * reconnect and disconnect stay on each provider's own page, where the real
  * authorization flows live; this page links there. The reference's Facebook,
- * X and LinkedIn cards, its "Coming soon" row (Pinterest, WhatsApp, Threads,
+ * X cards, its "Coming soon" row (Pinterest, WhatsApp, Threads,
  * Google Business) and per-account follower figures are not shown: Voom does
  * not support those channels and stores no follower counts. SMS marketing was
  * removed from the product, so there is no SMS card.
@@ -47,21 +49,25 @@ export default async function ConnectionsPage() {
   const instagramConfig = readInstagramConfig();
   const youTubeConfig = readYouTubeConfig();
   const tikTokConfig = readTikTokConfig();
-  const [instagram, youTube, tikTok] = user ? await Promise.all([
+  const linkedInConfig = readLinkedInConfig();
+  const [instagram, youTube, tikTok, linkedIn] = user ? await Promise.all([
     getInstagramConnection(admin, user.id, Boolean(instagramConfig)).catch(() => null),
     getYouTubeConnection(admin, user.id, Boolean(youTubeConfig), youTubeConfig?.projectAudited === true).catch(() => null),
     getTikTokConnection(admin, user.id, Boolean(tikTokConfig), tikTokConfig?.appAudited === true).catch(() => null),
-  ]) : [null, null, null];
+    getLinkedInConnection(admin, user.id, Boolean(linkedInConfig)).catch(() => null),
+  ]) : [null, null, null, null];
   const youTubeConnected = Boolean(youTube?.connected) && Boolean(youTube?.scopes.includes(YOUTUBE_UPLOAD_SCOPE));
   const tikTokConnected = Boolean(tikTok?.connected) && Boolean(tikTok?.scopes.includes("video.publish"));
   const instagramConnected = Boolean(instagram?.connected);
+  // LinkedIn remains manual, explicit text publishing in this foundation;
+  // it does not expand the automated-campaign channel allowlist.
   const eligible = data.coordinator?.state.emailState.eligibleContactsCount ?? null;
 
   const igExpiresInDays = daysUntil(instagram?.tokenExpiresAt);
   const needsAttention = (status: string | undefined) => status === "expired" || status === "revoked" || status === "error";
   const attention = [needsAttention(instagram?.status), needsAttention(tikTok?.status), needsAttention(youTube?.status)].filter(Boolean).length
     + (instagramConnected && igExpiresInDays !== null && igExpiresInDays <= 7 ? 1 : 0);
-  const connectedCount = [instagramConnected, tikTokConnected, youTubeConnected].filter(Boolean).length;
+  const connectedCount = [instagramConnected, tikTokConnected, youTubeConnected, linkedIn?.connected].filter(Boolean).length;
 
   return (
     <div className="min-w-0">
@@ -82,7 +88,7 @@ export default async function ConnectionsPage() {
       <div className="mb-4">
         <h2 className="text-[17px] font-semibold text-text">Your accounts</h2>
         <p className="text-[13px] text-text-2">
-          {connectedCount} of 3 social accounts connected{attention ? ` · ${attention} need${attention === 1 ? "s" : ""} attention` : ""} · email is set up in Settings
+          {connectedCount} of 4 social accounts connected{attention ? ` · ${attention} need${attention === 1 ? "s" : ""} attention` : ""} · email is set up in Settings
         </p>
       </div>
 
@@ -158,6 +164,12 @@ export default async function ConnectionsPage() {
             : youTubeConnected ? { href: "/app/youtube", label: "Manage", primary: false }
             : { href: "/app/youtube", label: needsAttention(youTube?.status) ? "Reconnect YouTube" : "Connect YouTube", primary: true }}
         />
+        <ChannelCard channel="linkedin" name="LinkedIn" selected={false}
+          tone={linkedIn?.connected ? "green" : "grey"} status={linkedIn?.connected ? "Connected" : linkedInConfig ? "Not connected" : "Setup required"}
+          identity={linkedIn?.displayName ?? null} subline="Personal profile · text posts" facts={null}
+          description="Connect your personal LinkedIn profile. Each text post requires your explicit review and approval. Company Pages, images and videos are not supported yet."
+          warning={linkedInConfig && !linkedIn ? "LinkedIn status could not be read. Refresh before publishing." : null}
+          action={{ href: "/app/linkedin", label: linkedIn?.connected ? "Manage" : "Connect LinkedIn", primary: !linkedIn?.connected }} />
         <ChannelCard
           channel="email"
           name="Email"
@@ -177,7 +189,7 @@ export default async function ConnectionsPage() {
       </div>
 
       <p className="mt-5 max-w-3xl text-[12.5px] leading-relaxed text-text-3">
-        Voom campaigns run on Instagram, TikTok, YouTube and email. Each reports Published only after the provider itself
+        Voom campaigns run on Instagram, TikTok, YouTube and email. LinkedIn currently supports separately reviewed personal-profile text posts. Each reports Published only after the provider itself
         confirms (Instagram&apos;s media id, TikTok&apos;s own PUBLISH_COMPLETE, YouTube&apos;s processed video). SMS marketing is
         no longer part of the product.
       </p>

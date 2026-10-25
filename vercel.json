@@ -1,7 +1,9 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
   "git": {
-    "deploymentEnabled": false
+    "deploymentEnabled": {
+      "feature/linkedin-personal-publishing": false,
+      "linkedin-staging": false
+    }
   },
   "crons": []
 }

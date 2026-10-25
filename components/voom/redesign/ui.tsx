@@ -8,13 +8,14 @@ import { TONE_CLASSES, workflowTone } from "@/lib/voom/workflow/presentation";
  * Server-safe: no client hooks, so server and client screens can both use them.
  */
 
-export type ChannelKey = "instagram" | "tiktok" | "youtube" | "email" | "other";
+export type ChannelKey = "instagram" | "tiktok" | "youtube" | "linkedin" | "email" | "other";
 
 export function channelKey(value: string | null | undefined): ChannelKey {
   const key = (value ?? "").toLowerCase();
   if (key.startsWith("instagram") || key === "reel" || key === "story") return "instagram";
   if (key.startsWith("tiktok")) return "tiktok";
   if (key.startsWith("youtube")) return "youtube";
+  if (key.startsWith("linkedin")) return "linkedin";
   if (key.startsWith("email")) return "email";
   return "other";
 }
@@ -23,6 +24,7 @@ export const CHANNEL_NAMES: Record<ChannelKey, string> = {
   instagram: "Instagram",
   tiktok: "TikTok",
   youtube: "YouTube",
+  linkedin: "LinkedIn",
   email: "Email",
   other: "Channel",
 };
@@ -39,6 +41,7 @@ export function ChannelGlyph({ channel, channelLabel, size = 20 }: { channel?: s
   if (kind === "instagram") return frame("linear-gradient(135deg,#f9a03f 0%,#e1306c 50%,#833ab4 100%)", <><rect x="4" y="4" width="16" height="16" rx="5" /><circle cx="12" cy="12" r="3.6" /><circle cx="16.8" cy="7.2" r="0.9" fill="#fff" stroke="none" /></>);
   if (kind === "tiktok") return frame("#111111", <path d="M14 4v10.5a3.5 3.5 0 11-3.5-3.5M14 4c.6 2.6 2.4 4.1 5 4.3" />);
   if (kind === "youtube") return frame("#ff0033", <path d="M10 8.5l5.5 3.5-5.5 3.5z" fill="#fff" stroke="none" />);
+  if (kind === "linkedin") return frame("#0a66c2", <><path d="M6 10v8M6 6v.1M11 18v-8m0 4a3.5 3.5 0 017 0v4" /></>);
   if (kind === "email") return frame("#2c6fb0", <><rect x="3.5" y="6" width="17" height="12" rx="2" /><path d="M4.5 7.5l7.5 5.5 7.5-5.5" /></>);
   return frame("var(--text-3)", <circle cx="12" cy="12" r="4" />);
 }
