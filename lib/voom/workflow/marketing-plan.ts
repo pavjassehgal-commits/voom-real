@@ -1,4 +1,4 @@
-import { SOCIAL_FORMAT_LABELS } from "@/lib/social/channels";
+import { PLAN_FORMAT_LABELS } from "./channels";
 import { DEFAULT_HORIZON_DAYS, isWithinHorizon } from "@/lib/voom/cadence";
 import type { RollingPlanResult } from "@/lib/voom/workflow/rolling-plan";
 import type { WorkflowSnapshot } from "@/lib/voom/workflow/read";
@@ -95,7 +95,7 @@ export function planReplenishOutcome(
   }
 
   const addedChannelFormats = [...new Set(createdItems.map((item) =>
-    SOCIAL_FORMAT_LABELS[item.channel][item.format] ?? `${item.channel} ${item.format}`,
+    PLAN_FORMAT_LABELS[item.channel][item.format] ?? `${item.channel} ${item.format}`,
   ))];
   return {
     state: "added",

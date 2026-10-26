@@ -227,8 +227,8 @@ export async function buildMarketingState(
     const kind = String(d.kind ?? "instagram_post");
     // TikTok/YouTube planning drafts carry their real channel. This state is
     // used only for date coverage; the provider queue owns execution status.
-    const isSocialDraft = kind === "tiktok_video" || kind === "youtube_short" || kind === "youtube_video";
-    const format: ContentType | "video" | "short" = kind === "reel" ? "reel"
+    const isSocialDraft = kind === "tiktok_video" || kind === "youtube_short" || kind === "youtube_video" || kind === "linkedin_text";
+    const format: ContentType | "video" | "short" | "text" = kind === "linkedin_text" ? "text" : kind === "reel" ? "reel"
       : kind === "story" ? "story"
       : kind === "youtube_short" ? "short"
       : isSocialDraft ? "video"
@@ -279,8 +279,9 @@ export async function buildMarketingState(
     const isTikTok = channelLabel === "tiktok";
     const isYouTubeShort = channelLabel === "youtube short";
     const isYouTubeVideo = channelLabel === "youtube video";
-    const isSocialCalendar = isTikTok || isYouTubeShort || isYouTubeVideo;
-    const format: ContentType | "video" | "short" = isYouTubeShort ? "short"
+    const isLinkedIn = channelLabel === "linkedin";
+    const isSocialCalendar = isTikTok || isYouTubeShort || isYouTubeVideo || isLinkedIn;
+    const format: ContentType | "video" | "short" | "text" = isLinkedIn ? "text" : isYouTubeShort ? "short"
       : isSocialCalendar ? "video"
       : channelLabel.includes("reel") ? "reel"
       : channelLabel.includes("story") ? "story"
@@ -292,7 +293,7 @@ export async function buildMarketingState(
       sourceId: String(c.id),
       // In the non-social branch `format` is always post/reel/story at
       // runtime; the cast keeps the template inside the channel union.
-      channel: isTikTok ? "tiktok_video" : isYouTubeShort ? "youtube_short" : isYouTubeVideo ? "youtube_video" : `instagram_${format as ContentType}`,
+      channel: isLinkedIn ? "linkedin_text" : isTikTok ? "tiktok_video" : isYouTubeShort ? "youtube_short" : isYouTubeVideo ? "youtube_video" : `instagram_${format as ContentType}`,
       format,
       title: String(c.title),
       publishAt,

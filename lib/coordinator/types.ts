@@ -55,9 +55,9 @@ export interface CalendarCommitment {
    * commitments carry their real channel — Instagram, TikTok, YouTube or
    * email. Understanding a channel never grants execution over it.
    */
-  channel: "instagram_post" | "instagram_reel" | "instagram_story" | "tiktok_video" | "youtube_short" | "youtube_video" | "email";
+  channel: "instagram_post" | "instagram_reel" | "instagram_story" | "tiktok_video" | "youtube_short" | "youtube_video" | "linkedin_text" | "email";
   /** Instagram keeps post/reel/story; social video commitments use video/short. */
-  format: ContentType | "video" | "short";
+  format: ContentType | "video" | "short" | "text";
   title: string;
   publishAt: string;
   localDate: string;

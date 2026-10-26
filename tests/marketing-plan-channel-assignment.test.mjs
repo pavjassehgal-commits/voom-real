@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 const channels = await import("../lib/social/channels.ts");
+const planningChannels = await import("../lib/voom/workflow/channels.ts");
 const channelPlanner = await import("../lib/voom/workflow/channel-planner.ts");
 const rolling = await import("../lib/voom/workflow/rolling-plan.ts");
 const prompt = await import("../lib/voom/workflow/prompt.ts");
@@ -320,11 +321,101 @@ test("supported-channel normalization excludes email, unsupported channels and d
   assert.deepEqual(channelPlanner.normalizeSelectedSocialChannels(null), []);
 });
 
+test("LinkedIn is a selectable text-only planning preference, never a new media format", async () => {
+  const { Q_CHANNELS } = await import("../lib/voom/onboardingData.ts");
+  assert.ok(Q_CHANNELS.includes("LinkedIn"));
+  assert.deepEqual(channelPlanner.normalizeSelectedSocialChannels(["LinkedIn", "linkedin_text", "email", "linkedin video"]), ["linkedin"]);
+  assert.deepEqual(channelPlanner.parseWorkflowSlotIdentity(`${DATE}|linkedin_text`), {date:DATE,channel:"linkedin",format:"text",legacy:false});
+  assert.equal(channelPlanner.parseWorkflowSlotIdentity(`${DATE}|linkedin_video`), null);
+  assert.equal(planningChannels.isPlanChannelFormat("linkedin", "post"), false);
+  assert.equal(channels.isSocialMediaChannel("linkedin"), false, "no media-generation eligibility added");
+});
+
+const linkedinContent = (overrides = {}) => ({
+  concept:"A practical lesson for business owners", hook:"",
+  caption:"A useful professional lesson from running a small business.\n\nExplain the trade-off and offer an actionable takeaway.",
+  cta:"What has worked for your team?", hashtags:["SmallBusiness"], description:"", script:[], visualBrief:"", ...overrides,
+});
+const linkedinProvider = { async structured(request) {
+  assert.match(request.messages[0].content, /LinkedIn Text Post:.*professional\/business/);
+  return request.parse(linkedinContent());
+} };
+
+test("LinkedIn plans are owner-scoped, idempotent and never auto-approved or queued in any automation mode", async () => {
+  for (const mode of ["manual","assisted","autopilot"]) {
+    const admin = createMemoryAdmin(adminSeed({preferredChannels:["LinkedIn","Email"],businessOverrides:{automation_level:mode,plan:"max"}}));
+    admin.tables.get("mara_drafts").push({id:"other-owner",owner_user_id:"someone-else",kind:"linkedin_text",content:"Private text",source_plan_id:"another-plan"});
+    const input = {ownerId:OWNER,now:NOW,trigger:"replenish",planningDeps:{provider:linkedinProvider}};
+    const first = await service.runOwnerWorkflow(admin,input);
+    assert.equal(first.created,7,mode);
+    assert.equal(first.failures.length,0,mode);
+    const drafts = admin.tables.get("mara_drafts").filter(d=>d.owner_user_id===OWNER);
+    assert.equal(drafts.length,7);
+    for (const draft of drafts) {
+      assert.equal(draft.kind,"linkedin_text");assert.equal(draft.social_channel,"linkedin");assert.equal(draft.social_format,"text");
+      assert.equal(draft.status,"draft");assert.equal(draft.media_brief,null);assert.doesNotMatch(draft.content,/CTA:/);
+      assert.ok(draft.content.length<=3000);
+    }
+    const again = await service.runOwnerWorkflow(admin,input);
+    assert.equal(again.created,0);assert.equal(again.reused,7);
+    assert.ok(!admin.reads.includes("linkedin_connections"),"connection is not planning eligibility");
+    assert.ok(!admin.writes.some(w=>/publish_queue|media_generations|pending_actions|content_calendar/.test(w.table)),"no execution side effects");
+    const snapshot = await workflowRead.loadWorkflowSnapshot(admin,OWNER,{now:NOW});
+    assert.equal(snapshot.items.length,7);
+    assert.ok(snapshot.items.every(item=>item.channel==="linkedin"&&item.contentType==="text"&&item.status==="planned"&&!item.hasMedia));
+    assert.ok(snapshot.items.every(item=>item.statusLabel.includes("explicit LinkedIn approval")));
+    assert.equal(admin.tables.get("mara_drafts").find(d=>d.id==="other-owner").content,"Private text");
+    const state = await (await import("../lib/coordinator/state.ts")).buildMarketingState(admin,OWNER,BUSINESS,NOW);
+    assert.ok(state.commitments.filter(c=>c.channel==="linkedin_text").length===7,"LinkedIn is not misclassified as Instagram coverage");
+    assert.equal((await import("../lib/coordinator/engine.ts")).identifyCalendarGaps(state).length,0);
+    if (mode==="manual") {
+      const scheduled = await service.runOwnerWorkflow(admin,{...input,trigger:"scheduled"});
+      assert.equal(scheduled.created,0);
+    }
+  }
+});
+
+test("LinkedIn generation rejects media, long text and platform reassignment before any persistence", async () => {
+  const input = {business:{brand_name:"Demo"},goal:"Awareness",cadence:"daily",timeZone:TZ,
+    slot:{date:DATE,slotKey:`${DATE}|linkedin_text`,channel:"linkedin",format:"text",contentType:"text",publishAt:timezone.localToUtcIso(DATE,1110,TZ)},plannedConcepts:[]};
+  const valid = await service.generateWorkflowPlannedContent({...input,provider:linkedinProvider});
+  assert.equal(valid.visualBrief,"");assert.deepEqual(valid.script,[]);
+  for (const invalid of [{caption:"x".repeat(2990)}, {script:["Upload a video"]},{visualBrief:"Generate an image"},
+    {description:"Company Page"},{hook:"Video hook"},{hashtags:["a","b","c","d"]},{channel:"instagram"},{caption:"   "}]) {
+    await assert.rejects(()=>service.generateWorkflowPlannedContent({...input,provider:{async structured(request){return request.parse(linkedinContent(invalid));}}}),/content_generation_failed/);
+  }
+  let calls=0;
+  await assert.rejects(()=>service.generateWorkflowPlannedContent({...input,slot:{...input.slot,format:"video"},provider:{async structured(){calls++;}}}),/content_generation_failed/);
+  assert.equal(calls,0);
+});
+
+test("LinkedIn queue truth and owner isolation survive readback and preference changes", async () => {
+  const admin=createMemoryAdmin(adminSeed({preferredChannels:["LinkedIn"]}));
+  const input={ownerId:OWNER,now:NOW,trigger:"replenish",planningDeps:{provider:linkedinProvider}};
+  await service.runOwnerWorkflow(admin,input);
+  const drafts=admin.tables.get("mara_drafts");
+  const states=["scheduled","claimed","submitting","uncertain","published","failed","permission_required"];
+  admin.tables.set("linkedin_publish_queue",states.map((status,i)=>({draft_id:drafts[i].id,owner_user_id:OWNER,status})));
+  admin.tables.get("linkedin_publish_queue").unshift({draft_id:drafts[0].id,owner_user_id:"other-owner",status:"published"});
+  const snapshot=await workflowRead.loadWorkflowSnapshot(admin,OWNER,{now:NOW});
+  assert.deepEqual(snapshot.items.map(i=>i.status),["scheduled","publishing","publishing","failed","published","failed","failed"]);
+  assert.equal(snapshot.items.find(i=>i.queueStatus==="uncertain").statusLabel,"Check LinkedIn — result unknown");
+  assert.equal(snapshot.items[0].queueStatus,"scheduled","another owner's row cannot override status");
+  admin.tables.get("businesses")[0].preferred_channels=["YouTube"];
+  const before=drafts.map(d=>[d.id,d.content,d.source_plan_item_key]);
+  const rerun=await service.runOwnerWorkflow(admin,{...input,planningDeps:{provider:structuredProvider()}});
+  assert.equal(rerun.created,0,"provider-owned LinkedIn work is retained even when preferences change");
+  assert.deepEqual(drafts.map(d=>[d.id,d.content,d.source_plan_item_key]),before);
+});
+
 test("every supported channel combination assigns one valid native item per date and balances deterministically", () => {
   const combinations = [
     ["instagram"], ["tiktok"], ["youtube"],
     ["instagram", "tiktok"], ["instagram", "youtube"], ["tiktok", "youtube"],
     ["instagram", "tiktok", "youtube"],
+    ["linkedin"], ["instagram", "linkedin"], ["tiktok", "linkedin"], ["youtube", "linkedin"],
+    ["instagram", "tiktok", "linkedin"], ["instagram", "youtube", "linkedin"], ["tiktok", "youtube", "linkedin"],
+    ["instagram", "tiktok", "youtube", "linkedin"],
   ];
   for (const selectedChannels of combinations) {
     const input = baseInput({ selectedChannels });
@@ -336,16 +427,17 @@ test("every supported channel combination assigns one valid native item per date
     assert.equal(new Set(slots.map((slot) => slot.date)).size, 7, "no date is cloned across platforms");
     for (const slot of slots) {
       assert.ok(selectedChannels.includes(slot.channel), `unselected ${slot.channel} leaked into ${selectedChannels}`);
-      assert.ok(channels.isValidChannelFormat(slot.channel, slot.format), `${slot.channel}/${slot.format} is native`);
+      assert.ok(planningChannels.isPlanChannelFormat(slot.channel, slot.format), `${slot.channel}/${slot.format} is native`);
       assert.equal(slot.slotKey, channelPlanner.workflowSlotKey(slot.date, slot.channel, slot.format));
       if (slot.channel === "instagram") assert.equal(slot.contentType, slot.format);
       if (slot.channel === "tiktok") assert.equal(slot.contentType, "video");
       if (slot.channel === "youtube") assert.equal(slot.contentType, slot.format === "short" ? "short" : "video");
+      if (slot.channel === "linkedin") assert.equal(slot.contentType, "text");
     }
     const channelCounts = selectedChannels.map((channel) => slots.filter((slot) => slot.channel === channel).length);
     assert.ok(Math.max(...channelCounts) - Math.min(...channelCounts) <= 1, `channel balance: ${channelCounts}`);
     for (const channel of selectedChannels) {
-      const formats = channels.SOCIAL_FORMATS[channel];
+      const formats = planningChannels.PLAN_FORMATS[channel];
       const counts = formats.map((format) => slots.filter((slot) => slot.channel === channel && slot.format === format).length);
       if (counts.length > 1) assert.ok(Math.max(...counts) - Math.min(...counts) <= 1, `${channel} format balance: ${counts}`);
     }

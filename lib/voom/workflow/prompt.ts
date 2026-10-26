@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { actionChannelLabel, actionChannelFor, type SocialFormat, type SocialMediaChannel } from "@/lib/social/channels";
+import { planActionChannelLabel, planActionChannelFor, type PlanFormat, type PlanChannel } from "./channels";
 import { PERFORMANCE_ADVISORY_RULES, compactPlanContext, type PerformancePlanContext } from "@/lib/performance/plan-context";
 import type { TrendPromptContext } from "@/lib/trends/opportunity";
 
@@ -18,7 +18,7 @@ export const plannedContentSchema = z.object({
   hashtags: z.array(z.string().min(1).max(30)).max(15).default([]),
   description: z.string().max(5000).default(""),
   script: z.array(z.string().min(1).max(400)).max(40).default([]),
-  visualBrief: z.string().min(1).max(1200),
+  visualBrief: z.string().max(1200),
 }).strict();
 
 export type PlannedContent = z.infer<typeof plannedContentSchema>;
@@ -38,7 +38,7 @@ export const plannedContentJsonSchema = {
       hashtags: { type: "array", maxItems: 15, items: { type: "string", minLength: 1, maxLength: 30 } },
       description: { type: "string", maxLength: 5000 },
       script: { type: "array", maxItems: 40, items: { type: "string", minLength: 1, maxLength: 400 } },
-      visualBrief: { type: "string", minLength: 1, maxLength: 1200 },
+      visualBrief: { type: "string", maxLength: 1200 },
     },
   },
 } as const;
@@ -51,6 +51,7 @@ Return JSON only, with exactly these keys:
 {"concept":"string","hook":"string","caption":"string","cta":"string","hashtags":["string"],"description":"string","script":["string"],"visualBrief":"string"}
 
 Platform guidance (follow only the assignedSocialSlot):
+- LinkedIn Text Post: write a useful professional/business insight in the personal profile owner's voice. Use a clear opening, readable short paragraphs and a relevant business takeaway or discussion question. Avoid Instagram-style promotional captions, engagement bait and unsupported claims. Text only: no image, video, carousel or Company Page instructions. Keep hook, description, visualBrief and script empty; use at most three relevant hashtags and a natural CTA only when useful. The complete post including CTA and hashtags must fit 3,000 characters.
 - Instagram Post: write a concise native feed caption and one square-image visual brief. Keep description, hook and script empty.
 - Instagram Reel: write a distinct opening hook, concise caption, and a practical vertical-video beat list. Keep description empty.
 - Instagram Story: write one short on-screen line and a vertical visual brief; hashtags, description, hook and script may be empty.
@@ -66,7 +67,7 @@ Rules:
 - hashtags: use only relevant tags and obey the platform guidance; an empty list is acceptable when inappropriate.
 - description: YouTube metadata only; do not fabricate chapters or claims.
 - script: short-video beat list or a substantial long-form outline, as appropriate; empty for non-video Instagram Posts/Stories.
-- visualBrief: production direction suitable for the assigned native format. For videos, describe footage and sound direction; for static content, describe the single visual. No readable text, logos or watermarks.
+- visualBrief: empty for LinkedIn text; otherwise production direction suitable for the assigned native format. For videos, describe footage and sound direction; for static content, describe the single visual. No readable text, logos or watermarks.
 - Ground everything ONLY in the supplied business context and marketing goal. Never invent prices, discounts, offers, opening hours, links, awards, reviews, guarantees or statistics.
 - Never claim the content was generated, scheduled, sent or published. This is a plan for the user's workflow.
 - Plain text only. No markdown.
@@ -103,8 +104,8 @@ export function buildPlannedContentPayload(input: {
   business: Record<string, unknown>;
   goal: string;
   cadenceLabel: string;
-  channel: SocialMediaChannel;
-  format: SocialFormat;
+  channel: PlanChannel;
+  format: PlanFormat;
   localDate: string;
   localTime: string;
   timezone: string;
@@ -113,7 +114,7 @@ export function buildPlannedContentPayload(input: {
   /** Verified trend evidence; present only when the trend feature flag is on. */
   trendOpportunity?: TrendPromptContext | null;
 }) {
-  const actionChannel = actionChannelFor(input.channel, input.format);
+  const actionChannel = planActionChannelFor(input.channel, input.format);
   const payload = {
     business: input.business,
     marketingGoal: input.goal.slice(0, 300),
@@ -122,7 +123,7 @@ export function buildPlannedContentPayload(input: {
     assignedSocialSlot: {
       channel: input.channel,
       format: input.format,
-      label: actionChannelLabel(actionChannel),
+      label: planActionChannelLabel(actionChannel),
     },
     contentType: actionChannel,
     scheduledFor: { date: input.localDate, localTime: input.localTime, timezone: input.timezone },

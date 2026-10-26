@@ -3,13 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BTN, PageHeader, StatusChip } from "@/components/voom/redesign/ui";
 import type { LinkedInConnectionView } from "@/lib/linkedin/data";
+import { LINKEDIN_STATUS_LABELS } from "@/lib/linkedin/status";
+export { LINKEDIN_STATUS_LABELS } from "@/lib/linkedin/status";
 
 type Draft = {id:string;content:string;status:string;content_version:number;proposed_publish_at:string|null};
 type Queue = {draft_id:string;status:string;scheduled_at:string;provider_ref:string|null;failure_code:string|null;attempts:number};
-export const LINKEDIN_STATUS_LABELS: Record<string,string> = {
-  scheduled:"Scheduled",claimed:"Preparing submission",submitting:"Submitting to LinkedIn",published:"Published",
-  failed:"Failed",permission_required:"Reconnect required",cancelled:"Cancelled",uncertain:"Check LinkedIn — result unknown",
-};
 // No secrets, internal errors or user-provided HTML are rendered by this UI.
 export function LinkedInWorkspace() {
   const [connection,setConnection] = useState<LinkedInConnectionView|null>(null);
@@ -34,7 +32,8 @@ export function LinkedInWorkspace() {
     // Unconfigured installations remain safe and useful: show setup required,
     // rather than treating missing credentials/schema as a working connection.
     if (!body.connection.configured) { setDrafts([]); setQueue([]); return; }
-    const response = await fetch("/api/integrations/linkedin/drafts",{cache:"no-store"});
+    const requestedDraft = new URLSearchParams(window.location.search).get("draft");
+    const response = await fetch(`/api/integrations/linkedin/drafts${requestedDraft ? `?draft=${encodeURIComponent(requestedDraft)}` : ""}`,{cache:"no-store"});
     const rows = await response.json();
     if (!response.ok) throw new Error(rows.error || "Drafts could not be loaded.");
     setDrafts(rows.drafts); setQueue(rows.queue);
@@ -44,9 +43,20 @@ export function LinkedInWorkspace() {
     let active=true;
     Promise.resolve().then(async()=>{
       if(!active)return;
-      await load();
+      const drafts = await load();
       if(!active)return;
       const callback = new URLSearchParams(window.location.search);
+      const draftId = callback.get("draft");
+      const draft = drafts?.find((row) => row.id === draftId);
+      if (draft) {
+        setSelected(draft); setText(draft.content); setConfirmed(false);
+        // The plan's recommended time is not approval. Only a future time is
+        // prefilled; expired suggestions become Post now with fresh consent.
+        const time = draft.proposed_publish_at ? new Date(draft.proposed_publish_at) : null;
+        if (time && time.getTime() > Date.now()) {
+          setSchedule(new Date(time.getTime() - time.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+        }
+      } else if (draftId) setError("That draft is unavailable. Choose one of your own LinkedIn drafts below.");
       if (callback.has("linkedin_error")) setError(callback.get("linkedin_error")==="linkedin_already_linked"
         ? "This LinkedIn profile belongs to another VOOM connection. Disconnect it from that account first."
         : "LinkedIn did not connect. Start Connect LinkedIn again; no account was transferred.");

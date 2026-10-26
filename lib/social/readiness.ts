@@ -7,6 +7,8 @@ import { getTikTokConnection } from "@/lib/tiktok/data";
 import { readTikTokConfig } from "@/lib/tiktok/config";
 import { getYouTubeConnection } from "@/lib/youtube/data";
 import { readYouTubeConfig } from "@/lib/youtube/config";
+import { getLinkedInConnection } from "@/lib/linkedin/data";
+import { readLinkedInConfig } from "@/lib/linkedin/config";
 
 /**
  * Provider-connection readiness for the workspace surfaces.
@@ -23,12 +25,12 @@ import { readYouTubeConfig } from "@/lib/youtube/config";
  * "not connected": a failed read is not evidence of a missing connection.
  */
 export interface SocialChannelReadiness {
-  channel: "instagram" | "tiktok" | "youtube";
+  channel: "instagram" | "tiktok" | "youtube" | "linkedin";
   connected: boolean;
   configured: boolean;
 }
 
-export const SOCIAL_CHANNEL_READINESS_ORDER: readonly SocialChannelReadiness["channel"][] = ["instagram", "tiktok", "youtube"];
+export const SOCIAL_CHANNEL_READINESS_ORDER: readonly SocialChannelReadiness["channel"][] = ["instagram", "tiktok", "youtube", "linkedin"];
 
 export async function readSocialChannelReadiness(
   db: SupabaseClient,
@@ -37,8 +39,9 @@ export async function readSocialChannelReadiness(
   const youTubeConfig = readYouTubeConfig();
   const tikTokConfig = readTikTokConfig();
   const instagramConfig = readInstagramConfig();
+  const linkedinConfig = readLinkedInConfig();
 
-  const [instagram, tikTok, youTube] = await Promise.all([
+  const [instagram, tikTok, youTube, linkedin] = await Promise.all([
     getInstagramConnection(db, ownerId, Boolean(instagramConfig))
       .then((row) => ({ connected: Boolean(row.connected), configured: Boolean(row.configured) }))
       .catch(() => null),
@@ -48,12 +51,15 @@ export async function readSocialChannelReadiness(
     getYouTubeConnection(db, ownerId, Boolean(youTubeConfig), youTubeConfig?.projectAudited === true)
       .then((row) => ({ connected: Boolean(row?.connected) && Boolean(row?.scopes.includes("https://www.googleapis.com/auth/youtube.upload")), configured: Boolean(youTubeConfig) }))
       .catch(() => null),
+    getLinkedInConnection(db, ownerId, Boolean(linkedinConfig))
+      .then((row) => ({ connected: row.connected, configured: row.configured })).catch(() => null),
   ]);
 
   const entries: (SocialChannelReadiness | null)[] = [
     instagram ? { channel: "instagram", ...instagram } : null,
     tikTok ? { channel: "tiktok", ...tikTok } : null,
     youTube ? { channel: "youtube", ...youTube } : null,
+    linkedin ? { channel: "linkedin", ...linkedin } : null,
   ];
   return entries.filter((entry): entry is SocialChannelReadiness => entry !== null);
 }

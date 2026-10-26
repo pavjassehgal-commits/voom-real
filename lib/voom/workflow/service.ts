@@ -34,12 +34,13 @@ import {
 import { calendarChannelForContentType, draftKindForContentType } from "./state";
 import { createSocialDraft } from "@/lib/social/server-drafts";
 import {
-  SOCIAL_CHANNEL_LABELS,
-  actionChannelFor,
-  isValidChannelFormat,
-  type SocialFormat,
-  type SocialMediaChannel,
-} from "@/lib/social/channels";
+  PLAN_CHANNEL_LABELS,
+  planActionChannelFor,
+  isPlanChannelFormat,
+  type PlanFormat,
+  type PlanChannel,
+  composeLinkedInPlanText,
+} from "./channels";
 import {
   normalizeSelectedSocialChannels,
   parseWorkflowSlotIdentity,
@@ -217,7 +218,7 @@ interface PortContext {
   mode: AutomationModeValue;
   trigger: WorkflowTrigger;
   /** Canonical selected social channels from businesses.preferred_channels. */
-  selectedChannels?: SocialMediaChannel[];
+  selectedChannels?: PlanChannel[];
   /** Coordinator gap dates and the actual existing channel commitments. */
   targetDates?: string[];
   channelCoverage?: ChannelCoverage[];
@@ -282,7 +283,7 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
     },
 
     async ensurePlan({ validFrom, validUntil, cadence, goal, selectedChannels }) {
-      const channelLabels = selectedChannels.map((channel) => SOCIAL_CHANNEL_LABELS[channel]);
+      const channelLabels = selectedChannels.map((channel) => PLAN_CHANNEL_LABELS[channel]);
       const { data: existing, error: readError } = await admin.from("marketing_plans").select("id")
         .eq("owner_user_id", context.ownerId).eq("status", "active")
         .order("created_at", { ascending: false }).limit(1).maybeSingle();
@@ -327,14 +328,15 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
       const rows = (data ?? []) as Record<string, unknown>[];
       if (!rows.length) return [];
       const ids = rows.map((row) => String(row.id));
-      const [approvalRows, instagramQueues, tiktokQueues, youtubeQueues] = await Promise.all([
+      const [approvalRows, instagramQueues, tiktokQueues, youtubeQueues, linkedinQueues] = await Promise.all([
         admin.from("mara_pending_actions").select("sanitized_arguments,new_value,status")
           .eq("owner_user_id", context.ownerId).eq("tool_name", "propose_calendar_item").in("status", ["pending", "failed"]),
         admin.from("instagram_publish_queue").select("draft_id,status").eq("owner_user_id", context.ownerId).in("draft_id", ids),
         admin.from("tiktok_publish_queue").select("draft_id,status").eq("owner_user_id", context.ownerId).in("draft_id", ids),
         admin.from("youtube_publish_queue").select("draft_id,status").eq("owner_user_id", context.ownerId).in("draft_id", ids),
+        admin.from("linkedin_publish_queue").select("draft_id,status").eq("owner_user_id", context.ownerId).in("draft_id", ids),
       ]);
-      if (approvalRows.error || instagramQueues.error || tiktokQueues.error || youtubeQueues.error) {
+      if (approvalRows.error || instagramQueues.error || tiktokQueues.error || youtubeQueues.error || linkedinQueues.error) {
         throw new Error("plan_reconcile_state_read_failed");
       }
       const approvalIds = new Set<string>();
@@ -343,7 +345,7 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
         if (typeof value?.sourceDraftId === "string") approvalIds.add(value.sourceDraftId);
       }
       const queuedIds = new Set<string>();
-      for (const queue of [instagramQueues, tiktokQueues, youtubeQueues]) {
+      for (const queue of [instagramQueues, tiktokQueues, youtubeQueues, linkedinQueues]) {
         for (const row of queue.data ?? []) {
           if (row.status !== "cancelled") queuedIds.add(String(row.draft_id));
         }
@@ -402,7 +404,7 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
     },
 
     async createDraft({ planId, slot, content }) {
-      if (slot.channel !== "instagram") {
+      if (slot.channel !== "instagram" && slot.channel !== "linkedin") {
         const kind = socialDraftKind(slot.channel, slot.format);
         const draftId = await createSocialDraft(admin, context.ownerId, {
           kind,
@@ -435,19 +437,21 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
         return item;
       }
 
-      const caption = composePostCaption({ caption: content.caption, cta: content.cta, hashtags: content.hashtags });
+      const isLinkedIn = slot.channel === "linkedin";
+      const caption = isLinkedIn ? composeLinkedInPlanText(content)
+        : composePostCaption({ caption: content.caption, cta: content.cta, hashtags: content.hashtags });
       const row = {
         owner_user_id: context.ownerId,
         conversation_id: conversationId,
         source_plan_id: planId,
         source_plan_item_key: slot.slotKey,
-        kind: draftKindForContentType(slot.contentType as ContentType),
-        channel: calendarChannelForContentType(slot.contentType as ContentType),
+        kind: isLinkedIn ? "linkedin_text" : draftKindForContentType(slot.contentType as ContentType),
+        channel: isLinkedIn ? "LinkedIn" : calendarChannelForContentType(slot.contentType as ContentType),
         title: content.concept.slice(0, 160),
         content: (caption || content.concept).slice(0, 12000),
         proposed_publish_at: slot.publishAt,
         status: "draft",
-        media_brief: content.visualBrief.slice(0, 800),
+        media_brief: isLinkedIn ? null : content.visualBrief.slice(0, 800),
         social_channel: slot.channel,
         social_format: slot.format,
         content_meta: {
@@ -545,13 +549,13 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
     async savePlanItems(planId, items) {
       const plannedPosts = items.map((item) => {
         const identity = parseWorkflowSlotIdentity(item.slotKey);
-        const actionChannel = actionChannelFor(item.channel, item.format);
+        const actionChannel = planActionChannelFor(item.channel, item.format);
         return {
           draftId: item.draftId,
           slotDate: identity?.date ?? item.slotKey,
           slotKey: item.slotKey,
           channelFormat: actionChannel,
-          channel: SOCIAL_CHANNEL_LABELS[item.channel],
+          channel: PLAN_CHANNEL_LABELS[item.channel],
           format: item.format,
           contentType: item.contentType,
           title: item.concept,
@@ -798,6 +802,7 @@ export async function generateWorkflowPlannedContent(input: {
   provider?: AiProvider;
 }): Promise<GeneratedContent> {
   const { slot, business } = input;
+  if (!isPlanChannelFormat(slot.channel, slot.format)) throw new Error("content_generation_failed");
   const payload = buildPlannedContentPayload({
     business: {
       name: String(business.brand_name ?? "Your business"),
@@ -837,8 +842,12 @@ export async function generateWorkflowPlannedContent(input: {
       parse: (value) => plannedContentSchema.parse(value),
     });
     const script = plan.script.map((line) => line.trim()).filter(Boolean);
+    if (slot.channel === "linkedin") {
+      if (!plan.caption.trim() || slot.format !== "text" || script.length || plan.description.trim() || plan.visualBrief.trim() || plan.hook.trim()
+        || plan.hashtags.length > 3 || composeLinkedInPlanText(plan).length > 3000) throw new Error("linkedin_text_invalid");
+    } else if (!plan.visualBrief.trim()) throw new Error("visual_brief_required");
     if (slot.channel === "instagram" && plan.caption.length > 2200) throw new Error("caption_too_long");
-    if (slot.channel !== "instagram") {
+    if (slot.channel !== "instagram" && slot.channel !== "linkedin") {
       const minimumBeats = slot.channel === "youtube" && slot.format === "video" ? 4 : 3;
       if (script.length < minimumBeats) throw new Error("native_video_outline_too_thin");
       if (slot.channel === "youtube" && plan.description.trim().length < 20) throw new Error("youtube_description_required");
@@ -886,18 +895,18 @@ function toWorkflowItem(
   if (!slotKey) return null;
   const keyIdentity = parseWorkflowSlotIdentity(slotKey);
   const kindPair = pairForDraftKind(kind);
-  const persistedPair = isValidChannelFormat(row.social_channel, row.social_format)
-    ? { channel: row.social_channel as SocialMediaChannel, format: row.social_format as SocialFormat }
+  const persistedPair = isPlanChannelFormat(row.social_channel, row.social_format)
+    ? { channel: row.social_channel as PlanChannel, format: row.social_format as PlanFormat }
     : null;
   // A composite source key is the immutable assignment. Old date-only keys
   // continue to read the actual persisted pair (or the legacy Instagram kind).
   const pair = keyIdentity?.channel && keyIdentity.format
     ? { channel: keyIdentity.channel, format: keyIdentity.format }
     : persistedPair ?? kindPair;
-  if (!pair || !isValidChannelFormat(pair.channel, pair.format)) return null;
+  if (!pair || !isPlanChannelFormat(pair.channel, pair.format)) return null;
   const contentType: PlannedContentType = pair.channel === "instagram"
     ? pair.format as "post" | "reel" | "story"
-    : pair.channel === "youtube" && pair.format === "short" ? "short" : "video";
+    : pair.channel === "linkedin" ? "text" : pair.channel === "youtube" && pair.format === "short" ? "short" : "video";
   return {
     draftId: String(row.id),
     slotKey,
@@ -913,7 +922,7 @@ function toWorkflowItem(
   };
 }
 
-function pairForDraftKind(kind: string): { channel: SocialMediaChannel; format: SocialFormat } | null {
+function pairForDraftKind(kind: string): { channel: PlanChannel; format: PlanFormat } | null {
   switch (kind) {
     case "instagram_post": return { channel: "instagram", format: "post" };
     case "reel": return { channel: "instagram", format: "reel" };
@@ -921,11 +930,12 @@ function pairForDraftKind(kind: string): { channel: SocialMediaChannel; format: 
     case "tiktok_video": return { channel: "tiktok", format: "video" };
     case "youtube_short": return { channel: "youtube", format: "short" };
     case "youtube_video": return { channel: "youtube", format: "video" };
+    case "linkedin_text": return { channel: "linkedin", format: "text" };
     default: return null;
   }
 }
 
-function socialDraftKind(channel: SocialMediaChannel, format: SocialFormat): "tiktok_video" | "youtube_short" | "youtube_video" {
+function socialDraftKind(channel: PlanChannel, format: PlanFormat): "tiktok_video" | "youtube_short" | "youtube_video" {
   if (channel === "tiktok" && format === "video") return "tiktok_video";
   if (channel === "youtube" && format === "short") return "youtube_short";
   if (channel === "youtube" && format === "video") return "youtube_video";

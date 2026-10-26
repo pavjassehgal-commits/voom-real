@@ -19,11 +19,11 @@
  */
 
 import {
-  SOCIAL_CHANNEL_LABELS,
-  SOCIAL_FORMAT_LABELS,
-  type SocialFormat,
-  type SocialMediaChannel,
-} from "@/lib/social/channels";
+  PLAN_CHANNEL_LABELS as SOCIAL_CHANNEL_LABELS,
+  PLAN_FORMAT_LABELS as SOCIAL_FORMAT_LABELS,
+  type PlanFormat as SocialFormat,
+  type PlanChannel as SocialMediaChannel,
+} from "./channels.ts";
 
 /** The four semantic tones a workflow state may take. */
 export type WorkspaceTone = "green" | "amber" | "red" | "blue" | "grey";
@@ -90,7 +90,7 @@ export const TONE_CLASSES: Record<WorkspaceTone, ToneClasses> = {
  * Distinct enough to scan a week at a glance, restrained enough that a
  * seven-day plan never becomes provider branding.
  */
-export type ChannelKey = "instagram" | "tiktok" | "youtube" | "email";
+export type ChannelKey = "instagram" | "tiktok" | "youtube" | "linkedin" | "email";
 
 export interface ChannelIdentity {
   key: ChannelKey;
@@ -106,6 +106,7 @@ const CHANNEL_IDENTITIES: Record<ChannelKey, ChannelIdentity> = {
   instagram: { key: "instagram", label: "Instagram", short: "IG", accent: "var(--ch-instagram)", soft: "var(--ch-instagram-soft)" },
   tiktok: { key: "tiktok", label: "TikTok", short: "TT", accent: "var(--ch-tiktok)", soft: "var(--ch-tiktok-soft)" },
   youtube: { key: "youtube", label: "YouTube", short: "YT", accent: "var(--ch-youtube)", soft: "var(--ch-youtube-soft)" },
+  linkedin: { key: "linkedin", label: "LinkedIn", short: "LI", accent: "var(--ch-linkedin)", soft: "var(--ch-linkedin-soft)" },
   email: { key: "email", label: "Email", short: "EM", accent: "var(--ch-email)", soft: "var(--ch-email-soft)" },
 };
 
@@ -126,12 +127,13 @@ export const CHANNEL_ACCENT_HEX: Record<ChannelKey, string> = {
   instagram: "#7c4dff",
   tiktok: "#0b8fa8",
   youtube: "#cf4629",
+  linkedin: "#2f6f9f",
   email: "#2f62d6",
 };
 
 /** Resolves any channel value (unknown values degrade to the neutral band). */
 export function channelIdentity(channel: string | null | undefined): ChannelIdentity {
-  if (channel === "instagram" || channel === "tiktok" || channel === "youtube" || channel === "email") {
+  if (channel === "instagram" || channel === "tiktok" || channel === "youtube" || channel === "linkedin" || channel === "email") {
     return CHANNEL_IDENTITIES[channel];
   }
   return { key: "instagram", label: "Social", short: "SO", accent: "var(--line-strong)", soft: "var(--surface-2)" };
@@ -139,6 +141,10 @@ export function channelIdentity(channel: string | null | undefined): ChannelIden
 
 /** Static Tailwind classes per channel (literal strings for the scanner). */
 export const CHANNEL_CLASSES: Record<ChannelKey, ToneClasses> = {
+  linkedin: {
+    text: "text-[var(--ch-linkedin)]", soft: "bg-[var(--ch-linkedin-soft)]",
+    dot: "bg-[var(--ch-linkedin)]", ring: "ring-[var(--ch-linkedin)]/25",
+  },
   instagram: {
     text: "text-[var(--ch-instagram)]",
     soft: "bg-[var(--ch-instagram-soft)]",
@@ -193,7 +199,7 @@ export function providerConfirmationLabel(
   facts: { instagramMediaId?: string | null; queueStatus?: string | null },
 ): string | null {
   if (channel === "instagram") return facts.instagramMediaId ? "Meta-confirmed" : null;
-  if (channel === "tiktok" || channel === "youtube") {
+  if (channel === "tiktok" || channel === "youtube" || channel === "linkedin") {
     return facts.queueStatus === "published" ? "Provider-confirmed" : null;
   }
   return null;

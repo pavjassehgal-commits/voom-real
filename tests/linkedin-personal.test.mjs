@@ -171,6 +171,24 @@ test('unapproved drafts never enter the queue automatically; explicit approval c
   assert.equal((await query("select * from content_calendar_items where channel='LinkedIn'")).length,1);
   assert.equal((await query("select * from mara_tool_runs where tool_name='linkedin_approve_schedule'")).length,1);
 });
+test('a Marketing Plan LinkedIn text draft uses the existing version-bound queue and edit withdrawal',async(t)=>{
+  const {connection,business}=await fixture(t);
+  const [plan]=await query(`insert into marketing_plans(owner_user_id,business_id,business_goal,weekly_strategy,selected_channels,content_frequency,valid_from,valid_until)
+    values($1,$2,'Useful business awareness','Seven selected-channel daily recommendations',array['LinkedIn'],'Daily',current_date,current_date+6) returning id`,[OWNER,business.id]);
+  await query("update mara_drafts set source_plan_id=$1,source_plan_item_key=current_date::text||'|linkedin_text',proposed_publish_at=now()+interval '1 hour' where id=$2",[plan.id,DRAFT]);
+  const [draft]=await query('select * from mara_drafts where id=$1',[DRAFT]);
+  assert.equal((await query('select * from linkedin_publish_queue')).length,0);
+  assert.equal((await query('select * from claim_linkedin_jobs(5)')).length,0,'MARA recommendation alone is never publishable');
+  const sendAt=new Date(Date.now()+3600000).toISOString();
+  await query('select approve_linkedin_draft($1,$2,$3,$4,$5,$6)',[OWNER,DRAFT,draft.content_version,connection,'member_A',sendAt]);
+  const [approved]=await query('select * from mara_drafts where id=$1',[DRAFT]);
+  await query('select approve_linkedin_draft($1,$2,$3,$4,$5,$6)',[OWNER,DRAFT,approved.content_version,connection,'member_A',sendAt]);
+  assert.equal((await query('select * from linkedin_publish_queue')).length,1);
+  assert.equal((await query("select * from content_calendar_items where social_channel='linkedin' and social_format='text'")).length,1);
+  await query('select edit_linkedin_draft($1,$2,$3,$4,$5,false)',[OWNER,DRAFT,approved.content_version,'Revised professional text',sendAt]);
+  assert.equal((await query('select status from linkedin_publish_queue'))[0].status,'cancelled');
+  assert.equal((await query('select source_plan_id from mara_drafts where id=$1',[DRAFT]))[0].source_plan_id,plan.id);
+});
 test('repeated approval is idempotent and cannot duplicate queue or calendar rows',async(t)=>{
   const {connection}=await fixture(t);const id=await approve(connection);
   const [draft]=await query('select * from mara_drafts where id=$1',[DRAFT]);

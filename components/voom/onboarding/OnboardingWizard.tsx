@@ -39,8 +39,7 @@ const LAST_STEP = 7;
  * reference's own panel export (public/redesign/setup-art-*.webp, 640×530) and
  * shown no wider than 360 CSS px, so it stays sharp; it sits under the step
  * intro on large screens and is left out on phones, where the form comes
- * first. The reference's channel artwork includes LinkedIn, which Voom does
- * not support, so it is not used.
+ * first. Channel choices come from the shared supported preferences below.
  */
 const STEPS: { label: string; art: string }[] = [
   { label: "Name", art: "mara" },
@@ -437,7 +436,7 @@ const TONE_HINT: Record<string, string> = {
   Modern: "Fresh, current and forward-looking",
 };
 
-const CHANNEL_KEY: Record<string, string> = { Instagram: "instagram", TikTok: "tiktok", YouTube: "youtube", Email: "email" };
+const CHANNEL_KEY: Record<string, string> = { Instagram: "instagram", TikTok: "tiktok", YouTube: "youtube", LinkedIn: "linkedin", Email: "email" };
 
 function StepVoiceChannels() {
   const { onboard } = useVoomState();
