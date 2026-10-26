@@ -17,7 +17,10 @@ test('release preserves both production schedules and adds exactly one bounded L
     { path: '/api/cron/trend-collection', schedule: '0 4 * * *' },
     { path: '/api/cron/linkedin-publish', schedule: '*/5 * * * *' },
   ]);
-  assert.deepEqual(config.git.deploymentEnabled, { 'codex/linkedin-production-release': false });
+  assert.deepEqual(config.git.deploymentEnabled, {
+    'codex/linkedin-production-release': false,
+    'codex/linkedin-marketing-plan': false,
+  });
   assert.equal('env' in config, false);
   assert.equal('build' in config, false);
 });

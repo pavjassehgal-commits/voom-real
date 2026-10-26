@@ -55,6 +55,11 @@ export function PlanItemCard(props: {
 export function readinessSteps(item: WorkflowView): { label: string; done: boolean }[] {
   const approved = ["scheduled", "publishing", "published", "missed"].includes(item.status);
   const scheduled = Boolean(item.publishAt) && approved;
+  if (item.channel === "linkedin") return [
+    { label: "Text", done: Boolean(item.caption.trim()) },
+    { label: "Approved", done: approved },
+    { label: "Scheduled", done: scheduled },
+  ];
   if (item.channel === "instagram") {
     return [
       { label: "Concept", done: Boolean(item.concept) },
@@ -321,14 +326,18 @@ function NativeSocialPlanItemCard({ item, onChanged }: {
           <div className="min-w-0 flex-1">
             <p className="text-[14.5px] font-semibold leading-snug tracking-[-0.015em] text-text">{item.concept}</p>
             <p className="mt-1 line-clamp-2 text-[12.5px] leading-relaxed text-text-3">
-              {item.hasMedia ? "Video attached and ready in Voom" : "No video file attached yet"} · {item.script.length > 0 ? `${item.script.length} script beat${item.script.length === 1 ? "" : "s"}` : "outline not set"}
+              {item.channel === "linkedin"
+                ? "Personal-profile text post · connection and explicit approval required before publishing"
+                : <>{item.hasMedia ? "Video attached and ready in Voom" : "No video file attached yet"} · {item.script.length > 0 ? `${item.script.length} script beat${item.script.length === 1 ? "" : "s"}` : "outline not set"}</>}
             </p>
             <ProgressDots className="mt-2" steps={readinessSteps(item)} />
           </div>
           <div className="flex min-w-0 flex-wrap items-center gap-2 lg:justify-end">
-            <Btn variant="outline" size="sm" onClick={() => open(<SocialEditorModal draftId={item.draftId} onChanged={() => void refresh()} />)}>
+            {item.channel === "linkedin" ? <Link href={`/app/linkedin?draft=${encodeURIComponent(item.draftId)}`} className="inline-flex items-center rounded-xl border border-line px-3 py-2 text-sm font-semibold text-text">
+              Review LinkedIn draft
+            </Link> : <Btn variant="outline" size="sm" onClick={() => open(<SocialEditorModal draftId={item.draftId} onChanged={() => void refresh()} />)}>
               Open {identity.label} draft
-            </Btn>
+            </Btn>}
           </div>
         </div>
 

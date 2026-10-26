@@ -5,7 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildMarketingState } from "./state";
 import { evaluateMarketingNeeds } from "./engine";
 import { runOwnerWorkflow } from "@/lib/voom/workflow/service";
-import { parseActionChannel } from "@/lib/social/channels";
+import { parsePlanActionChannel as parseActionChannel } from "@/lib/voom/workflow/channels";
 import { proposeEmailFlow } from "@/lib/email-flows/create";
 import type { AdminClient } from "@/lib/post/server-data";
 import type { PerformanceReport } from "@/lib/performance/insights";

@@ -16,7 +16,7 @@ export interface MaraOverviewProps {
   mediaActiveCount: number;
   credits: { remaining: number; total: number } | null;
   gapDates: string[];
-  disconnected: ("instagram" | "tiktok" | "youtube")[];
+  disconnected: ("instagram" | "tiktok" | "youtube" | "linkedin")[];
   insights: { title: string; description: string }[];
   days: { date: string; gap: boolean; items: { draftId: string; channel: string; concept: string }[] }[];
   knows: [string, string][];
@@ -139,7 +139,7 @@ export function MaraOverview({ mode, planId, timeZone, plannedCount, pending, me
   </div>;
 }
 
-const CHANNEL = { instagram: "Instagram", tiktok: "TikTok", youtube: "YouTube" } as const;
+const CHANNEL = { instagram: "Instagram", tiktok: "TikTok", youtube: "YouTube", linkedin: "LinkedIn" } as const;
 
 function DecisionCard({ icon, title, chip, detail, actions }: { icon: string; title: string; chip: ReactNode; detail: string; actions: ReactNode }) {
   return (

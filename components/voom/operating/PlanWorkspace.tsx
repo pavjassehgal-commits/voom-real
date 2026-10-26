@@ -28,7 +28,7 @@ const SHOW_PLANNING_PREVIEW = process.env.NEXT_PUBLIC_ENABLE_PLANNING_PREVIEW ==
 
 /** The truthful readiness of one channel's provider connection, read server-side. */
 export interface ChannelReadiness {
-  channel: "instagram" | "tiktok" | "youtube";
+  channel: "instagram" | "tiktok" | "youtube" | "linkedin";
   connected: boolean;
   configured: boolean;
 }
@@ -148,6 +148,12 @@ export function PlanWorkspace({
       )}
 
       {/* TEMPORARY: planning-only preview control — dev-flag gated. */}
+      {snapshot.selectedChannels.includes("linkedin") && channelReadiness.find((entry) => entry.channel === "linkedin")?.connected === false && (
+        <p role="status" className="mb-4 rounded-xl border border-line bg-surface-2 p-4 text-sm text-text-2">
+          LinkedIn ideas can be planned while disconnected. <Link href="/app/linkedin" className="font-semibold underline">Connect LinkedIn</Link> before approving and publishing any LinkedIn text post.
+        </p>
+      )}
+
       {SHOW_PLANNING_PREVIEW && <PlanningOnlyPreviewCard className="mb-4" />}
 
       {outcome && outcome.state !== "no_supported_social_channels_selected" && <PlanOutcomeNotice outcome={outcome} error={error} />}
@@ -272,6 +278,7 @@ export function PlanWorkspace({
       <div className="mt-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5 lg:grid-cols-2">
         <section className="voom-card p-5 sm:p-6" aria-labelledby="plan-mix">
           <h2 id="plan-mix" className="text-[16px] font-semibold text-text">This week’s mix</h2>
+          <Link href="/app/settings" className="text-sm font-semibold text-brand underline">Update channel preferences</Link>
           <p className="mt-1 text-[13.5px] text-text-2">{CADENCE_LABELS[snapshot.cadence]} · {describeMix(mix)}</p>
           <ul className="mt-4 space-y-3">
             {(snapshot.selectedChannels.length ? snapshot.selectedChannels : [...new Set(snapshot.items.map((item) => item.channel))]).map((channel) => {
@@ -354,7 +361,7 @@ function Thumb({ item }: { item: WorkflowView }) {
       {item.mediaPreviewUrl && !item.mediaMimeType?.startsWith("video")
         // eslint-disable-next-line @next/next/no-img-element -- short-lived signed preview URL
         ? <img src={item.mediaPreviewUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
-        : <Icon name={item.format === "post" ? "img" : "video"} size={16} />}
+        : <Icon name={item.format === "text" ? "file" : item.format === "post" ? "img" : "video"} size={16} />}
     </span>
   );
 }
@@ -448,6 +455,7 @@ function describeMix(mix: { count: number; channel: string; format: string }[]):
 }
 
 function formatWord(format: string): string {
+  if (format === "text") return "Text Post";
   if (format === "post") return "Post";
   if (format === "reel") return "Reel";
   if (format === "story") return "Story";

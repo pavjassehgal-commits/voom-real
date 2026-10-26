@@ -23,7 +23,7 @@ import {
   type ContentType,
 } from "../cadence.ts";
 import { formatLocalTime, isoToLocalDate, localDate, localMinutes, localToUtcIso } from "../timezone.ts";
-import type { SocialFormat, SocialMediaChannel } from "@/lib/social/channels";
+import type { PlanFormat, PlanChannel } from "./channels";
 import {
   normalizeSelectedSocialChannels,
   parseWorkflowSlotIdentity,
@@ -47,8 +47,8 @@ export interface PlanSlot {
   /** Legacy date-only identities remain unchanged; all new slots use date|channel_format. */
   slotKey: string;
   index: number;
-  channel: SocialMediaChannel;
-  format: SocialFormat;
+  channel: PlanChannel;
+  format: PlanFormat;
   contentType: PlannedContentType;
   /** Absolute UTC instant for the recommended local publish time. */
   publishAt: string;
@@ -78,8 +78,8 @@ export interface GeneratedContent {
 export interface WorkflowItem extends ExistingPlanAssignment {
   draftId: string;
   slotKey: string;
-  channel: SocialMediaChannel;
-  format: SocialFormat;
+  channel: PlanChannel;
+  format: PlanFormat;
   contentType: PlannedContentType;
   concept: string;
   caption: string;
@@ -97,7 +97,7 @@ export interface RollingPlanPorts {
     validUntil: string;
     cadence: Cadence;
     goal: string;
-    selectedChannels: SocialMediaChannel[];
+    selectedChannels: PlanChannel[];
   }): Promise<string>;
   /** Existing workflow items for the plan, keyed by stable slot identity. */
   listItems(planId: string): Promise<WorkflowItem[]>;
@@ -127,7 +127,7 @@ export interface RollingPlanInput {
   goal: string;
   horizonDays?: number;
   /** Saved selected social channels. `[]` is an intentional no-selection state. */
-  selectedChannels?: SocialMediaChannel[];
+  selectedChannels?: PlanChannel[];
   /** Existing plan assignments, used to preserve and balance prior work. */
   existingAssignments?: ExistingPlanAssignment[];
   /** Other channel commitments in the coordinator's authoritative horizon. */
@@ -161,8 +161,8 @@ export interface PlanSummaryItem {
   publishAt: string;
   localDate: string;
   localTime: string;
-  channel: SocialMediaChannel;
-  format: SocialFormat;
+  channel: PlanChannel;
+  format: PlanFormat;
   contentType: PlannedContentType;
   draftId: string;
   created: boolean;
@@ -367,9 +367,9 @@ export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingP
     itemsForPlan.set(item.slotKey, item);
     summaryByKey.set(item.slotKey, summaryItem(item, input.timeZone, created));
 
-    // TikTok and YouTube drafts use Social Studio, private video assets and
-    // their own durable provider queues. They never enter Instagram media or
-    // approval actions from this workflow (and no platform is auto-published).
+    // TikTok/YouTube use Social Studio; LinkedIn text uses its existing review
+    // workspace and explicit, account/version-bound approval. None enters
+    // Instagram media generation or automatic approval from this workflow.
     if (slot.channel !== "instagram") continue;
 
     // Assisted deliberately remains planning-only for paid media, but its
@@ -443,7 +443,7 @@ export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingP
   return result;
 }
 
-function normalizeInputChannels(value: SocialMediaChannel[] | undefined): SocialMediaChannel[] {
+function normalizeInputChannels(value: PlanChannel[] | undefined): PlanChannel[] {
   // Production runOwnerWorkflow supplies the saved selection explicitly,
   // including an empty list. Missing or invalid input is never an Instagram
   // fallback.

@@ -495,6 +495,8 @@ body::before {
   --ch-youtube: #cf4629;
   --ch-youtube-soft: rgba(207, 70, 41, 0.11);
   --ch-email: #2f62d6;
+  --ch-linkedin: #2f6f9f;
+  --ch-linkedin-soft: rgba(47, 111, 159, 0.11);
   --ch-email-soft: rgba(47, 98, 214, 0.11);
 
   /* Workspace panel — luminous frost, never flat white */
@@ -509,6 +511,8 @@ body::before {
   --ch-youtube: #ff8563;
   --ch-youtube-soft: rgba(255, 133, 99, 0.15);
   --ch-email: #7aa2ff;
+  --ch-linkedin: #83b9e5;
+  --ch-linkedin-soft: rgba(131, 185, 229, 0.15);
   --ch-email-soft: rgba(122, 162, 255, 0.15);
 
   --ws-panel: linear-gradient(168deg, rgba(23, 28, 45, 0.92), rgba(15, 19, 32, 0.88));
@@ -523,6 +527,8 @@ body::before {
     --ch-youtube: #ff8563;
     --ch-youtube-soft: rgba(255, 133, 99, 0.15);
     --ch-email: #7aa2ff;
+    --ch-linkedin: #83b9e5;
+    --ch-linkedin-soft: rgba(131, 185, 229, 0.15);
     --ch-email-soft: rgba(122, 162, 255, 0.15);
     --ws-panel: linear-gradient(168deg, rgba(23, 28, 45, 0.92), rgba(15, 19, 32, 0.88));
   }

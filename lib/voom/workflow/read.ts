@@ -1,17 +1,18 @@
 import "server-only";
 import { normalizePlan, canUseAutomationMode } from "@/lib/billing/plans";
+import { LINKEDIN_STATUS_LABELS } from "@/lib/linkedin/status";
 
 import { accountTimezone, formatLocalTime, isoToLocalDate, localDate, relativeDayLabel } from "@/lib/voom/timezone";
 import { CADENCE_LABELS, DEFAULT_HORIZON_DAYS, isWithinHorizon, normalizeCadence, type Cadence } from "@/lib/voom/cadence";
 import type { AdminClient } from "@/lib/post/server-data";
 import { classifyReelProduction, type MaraProductionOption, type ReelProductionMethod } from "@/lib/mara/reel-production";
 import {
-  isValidChannelFormat,
-  SOCIAL_CHANNEL_LABELS,
-  SOCIAL_FORMAT_LABELS,
-  type SocialFormat,
-  type SocialMediaChannel,
-} from "@/lib/social/channels";
+  isPlanChannelFormat,
+  PLAN_CHANNEL_LABELS,
+  PLAN_FORMAT_LABELS,
+  type PlanFormat,
+  type PlanChannel,
+} from "./channels";
 import { tikTokQueueLabel } from "@/lib/social/server-drafts";
 import { getTikTokQueueItemsForDrafts } from "@/lib/tiktok/publish-queue";
 import { getYouTubeQueueItemsForDrafts } from "@/lib/youtube/publish-queue";
@@ -66,8 +67,8 @@ export interface WorkflowView {
   calendarItemId: string | null;
   slotDate: string;
   /** Actual immutable social assignment; never inferred as Instagram for unknown rows. */
-  channel: SocialMediaChannel;
-  format: SocialFormat;
+  channel: PlanChannel;
+  format: PlanFormat;
   channelLabel: string;
   contentType: PlannedContentType;
   contentTypeLabel: string;
@@ -115,7 +116,7 @@ export interface WorkflowSnapshot {
   cadenceLabel: string;
   mode: "manual" | "assisted" | "autopilot";
   /** Normalized selected social channels; connection state is not planning eligibility. */
-  selectedChannels: SocialMediaChannel[];
+  selectedChannels: PlanChannel[];
   planId: string | null;
   planGoal: string | null;
   planValidFrom: string | null;
@@ -157,13 +158,13 @@ function pairForDraftRow(row: {
   social_channel?: unknown;
   social_format?: unknown;
   source_plan_item_key?: unknown;
-}): { channel: SocialMediaChannel; format: SocialFormat } | null {
+}): { channel: PlanChannel; format: PlanFormat } | null {
   const identity = parseWorkflowSlotIdentity(row.source_plan_item_key);
   // A composite source key is the immutable server assignment; never let
   // stale/conflicting columns make it appear as Instagram.
   if (identity?.channel && identity.format) return { channel: identity.channel, format: identity.format };
-  if (isValidChannelFormat(row.social_channel, row.social_format)) {
-    return { channel: row.social_channel as SocialMediaChannel, format: row.social_format as SocialFormat };
+  if (isPlanChannelFormat(row.social_channel, row.social_format)) {
+    return { channel: row.social_channel as PlanChannel, format: row.social_format as PlanFormat };
   }
   switch (row.kind) {
     case "instagram_post": return { channel: "instagram", format: "post" };
@@ -172,6 +173,7 @@ function pairForDraftRow(row: {
     case "tiktok_video": return { channel: "tiktok", format: "video" };
     case "youtube_short": return { channel: "youtube", format: "short" };
     case "youtube_video": return { channel: "youtube", format: "video" };
+    case "linkedin_text": return { channel: "linkedin", format: "text" };
     default: return null;
   }
 }
@@ -183,6 +185,9 @@ function nativeWorkflowStatus(draftStatus: string, queueStatus: string | null): 
     case "waiting_for_media": return "waiting_for_media";
     case "needs_declaration": return "needs_content";
     case "permission_required": return "failed";
+    case "uncertain": return "failed";
+    case "claimed":
+    case "submitting": return "publishing";
     case "uploading":
     case "posting":
     case "provider_processing": return "publishing";
@@ -365,7 +370,8 @@ export async function loadWorkflowSnapshot(
   const ids = rows.map((row) => String(row.id));
   const youtubeIds = rows.filter((row) => pairForDraftRow(row)?.channel === "youtube").map((row) => String(row.id));
   const tiktokIds = rows.filter((row) => pairForDraftRow(row)?.channel === "tiktok").map((row) => String(row.id));
-  const [assets, generations, instagramQueue, calendar, approvals, productionActions, youtubeQueue, tiktokQueue] = await Promise.all([
+  const linkedinIds = rows.filter((row) => pairForDraftRow(row)?.channel === "linkedin").map((row) => String(row.id));
+  const [assets, generations, instagramQueue, calendar, approvals, productionActions, youtubeQueue, tiktokQueue, linkedinQueue] = await Promise.all([
     admin.from("post_draft_assets").select("draft_id,mime_type,origin,storage_path,display_name,status").eq("owner_user_id", ownerId).in("draft_id", ids),
     admin.from("mara_media_generations").select("draft_id,status,media_type,error_code,created_at,updated_at").eq("owner_user_id", ownerId).in("draft_id", ids).order("updated_at", { ascending: true }),
     admin.from("instagram_publish_queue").select("draft_id,status,instagram_media_id,failure_message,scheduled_at").eq("owner_user_id", ownerId).in("draft_id", ids),
@@ -377,8 +383,10 @@ export async function loadWorkflowSnapshot(
       .order("updated_at", { ascending: true }),
     getYouTubeQueueItemsForDrafts(admin, ownerId, youtubeIds),
     getTikTokQueueItemsForDrafts(admin, ownerId, tiktokIds),
+    linkedinIds.length ? admin.from("linkedin_publish_queue").select("draft_id,status")
+      .eq("owner_user_id", ownerId).in("draft_id", linkedinIds) : Promise.resolve({ data: [], error: null }),
   ]);
-  if (assets.error || generations.error || instagramQueue.error || calendar.error || approvals.error || productionActions.error) {
+  if (assets.error || generations.error || instagramQueue.error || calendar.error || approvals.error || productionActions.error || linkedinQueue.error) {
     throw new Error("workflow_snapshot_read_failed");
   }
 
@@ -422,6 +430,7 @@ export async function loadWorkflowSnapshot(
   // turned every Instagram visual into its own sequential network call.
   const signIndexes: number[] = [];
   const signPaths: string[] = [];
+  const linkedinByDraft = new Map((linkedinQueue.data ?? []).map((row) => [String(row.draft_id), row]));
   for (const row of rows) {
     const draftId = String(row.id);
     const identity = parseWorkflowSlotIdentity(row.source_plan_item_key)!;
@@ -429,13 +438,14 @@ export async function loadWorkflowSnapshot(
     const isInstagram = pair.channel === "instagram";
     const contentType: PlannedContentType = isInstagram
       ? pair.format as "post" | "reel" | "story"
-      : pair.channel === "youtube" && pair.format === "short" ? "short" : "video";
+      : pair.channel === "linkedin" ? "text" : pair.channel === "youtube" && pair.format === "short" ? "short" : "video";
     const publishAt = String(row.proposed_publish_at ?? "");
     const asset = assetByDraft.get(draftId) as { mime_type?: unknown; origin?: unknown; storage_path?: unknown; display_name?: unknown; status?: unknown } | undefined;
     const hasMedia = Boolean(asset && (asset.status === "uploaded" || typeof asset.storage_path === "string"));
     const media = mediaByDraft.get(draftId) ?? null;
     const youtubeRow = pair.channel === "youtube" ? youtubeQueue.get(draftId) ?? null : null;
     const tiktokRow = pair.channel === "tiktok" ? tiktokQueue.get(draftId) ?? null : null;
+    const linkedinRow = pair.channel === "linkedin" ? linkedinByDraft.get(draftId) ?? null : null;
     const socialQueue = youtubeRow ?? tiktokRow;
     const instagramRow = isInstagram ? publish.get(draftId) as {
       status?: string;
@@ -445,7 +455,7 @@ export async function loadWorkflowSnapshot(
     } | undefined : undefined;
     const queueStatus = isInstagram
       ? (instagramRow?.status ?? null)
-      : (socialQueue?.status ?? null);
+      : (linkedinRow?.status ?? socialQueue?.status ?? null);
     const draftStatus = String(row.status ?? "draft") as "draft" | "approved" | "rejected";
     const facts = {
       draftStatus,
@@ -462,7 +472,7 @@ export async function loadWorkflowSnapshot(
     };
     const status = isInstagram
       ? deriveWorkflowStatus(facts)
-      : nativeWorkflowStatus(draftStatus, socialQueue?.status ?? null);
+      : nativeWorkflowStatus(draftStatus, queueStatus);
 
     // Only Instagram's media workflow uses the mara-media bucket. TikTok and
     // YouTube assets remain private in post_draft_assets and are represented by
@@ -480,7 +490,10 @@ export async function loadWorkflowSnapshot(
       : {};
     const nativeStatusLabel = isInstagram
       ? WORKFLOW_STATUS_LABELS[status]
-      : socialQueueStatusLabel(pair.channel as "tiktok" | "youtube", socialQueue, draftStatus, publishAt);
+      : pair.channel === "linkedin"
+        ? linkedinRow ? LINKEDIN_STATUS_LABELS[linkedinRow.status] ?? "Status unavailable"
+          : draftStatus === "rejected" ? "Rejected" : draftStatus === "approved" ? "Approved — queue sync not confirmed" : "Draft — explicit LinkedIn approval required"
+        : socialQueueStatusLabel(pair.channel as "tiktok" | "youtube", socialQueue, draftStatus, publishAt);
     const failureMessage = isInstagram
       ? instagramRow?.failure_message ?? null
       : socialQueue?.failure_message ?? null;
@@ -491,11 +504,11 @@ export async function loadWorkflowSnapshot(
       slotDate: identity.date,
       channel: pair.channel,
       format: pair.format,
-      channelLabel: SOCIAL_CHANNEL_LABELS[pair.channel],
+      channelLabel: PLAN_CHANNEL_LABELS[pair.channel],
       contentType,
       contentTypeLabel: isInstagram
         ? contentTypeLabel(contentType as "post" | "reel" | "story")
-        : SOCIAL_FORMAT_LABELS[pair.channel][pair.format] ?? SOCIAL_CHANNEL_LABELS[pair.channel],
+        : PLAN_FORMAT_LABELS[pair.channel][pair.format] ?? PLAN_CHANNEL_LABELS[pair.channel],
       sourceLabel: "Marketing Plan",
       sourcePlanId: String(row.source_plan_id ?? snapshot.planId),
       sourcePlanItemKey: String(row.source_plan_item_key),

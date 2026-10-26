@@ -341,5 +341,6 @@ function isSocialCommitmentChannel(channel: string): boolean {
   return channel.startsWith("instagram_")
     || channel === "tiktok_video"
     || channel === "youtube_short"
-    || channel === "youtube_video";
+    || channel === "youtube_video"
+    || channel === "linkedin_text";
 }
