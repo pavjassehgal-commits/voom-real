@@ -1,5 +1,6 @@
 import "server-only";
-import { normalizePlan, canUseAutomationMode } from "@/lib/billing/plans";
+import { normalizePlan, canUseAutomationMode, canGenerateExplicitMedia } from "@/lib/billing/plans";
+import { videoJobSafeError } from "@/lib/mara/video-job";
 import { LINKEDIN_STATUS_LABELS } from "@/lib/linkedin/status";
 
 import { accountTimezone, formatLocalTime, isoToLocalDate, localDate, relativeDayLabel } from "@/lib/voom/timezone";
@@ -95,6 +96,8 @@ export interface WorkflowView {
   instagramMediaId: string | null;
   /** Latest mara_media_generations status for this draft. */
   mediaStatus: string | null;
+  canGenerateNativeVideo?: boolean;
+  mediaGenerationError?: string | null;
   /** Short-lived signed preview of the stored visual. Null until Voom owns bytes. */
   mediaPreviewUrl: string | null;
   /** "image" | "video" for the stored visual, when present. */
@@ -470,15 +473,15 @@ export async function loadWorkflowSnapshot(
       publishAt,
       now,
     };
-    const status = isInstagram
+    const nativeVideo = pair.channel === "tiktok" || (pair.channel === "youtube" && pair.format === "short");
+    const nativeMedia = nativeVideo && draftStatus === "draft" && media?.mediaType === "video";
+    const status = isInstagram || nativeMedia
       ? deriveWorkflowStatus(facts)
       : nativeWorkflowStatus(draftStatus, queueStatus);
 
-    // Only Instagram's media workflow uses the mara-media bucket. TikTok and
-    // YouTube assets remain private in post_draft_assets and are represented by
-    // safe metadata below; the provider queues receive them through their own
-    // existing publisher path.
-    if (isInstagram && hasMedia) {
+    // Native generated videos reuse the SAME private bucket and batched signed
+    // previews. No storage paths or provider job IDs reach the browser.
+    if ((isInstagram || nativeVideo) && hasMedia && String(asset?.storage_path).startsWith(`${ownerId}/`)) {
       signIndexes.push(snapshot.items.length);
       signPaths.push(String(asset!.storage_path));
     }
@@ -488,7 +491,7 @@ export async function loadWorkflowSnapshot(
     const contentMeta = row.content_meta && typeof row.content_meta === "object" && !Array.isArray(row.content_meta)
       ? row.content_meta as Record<string, unknown>
       : {};
-    const nativeStatusLabel = isInstagram
+    const nativeStatusLabel = isInstagram || nativeMedia
       ? WORKFLOW_STATUS_LABELS[status]
       : pair.channel === "linkedin"
         ? linkedinRow ? LINKEDIN_STATUS_LABELS[linkedinRow.status] ?? "Status unavailable"
@@ -525,18 +528,20 @@ export async function loadWorkflowSnapshot(
       status,
       statusLabel: nativeStatusLabel,
       failedStage: status === "failed"
-        ? (draftStatus === "rejected" ? "rejected" : !isInstagram ? "publishing" : failureStage(facts))
+        ? (draftStatus === "rejected" ? "rejected" : nativeMedia ? "media" : !isInstagram ? "publishing" : failureStage(facts))
         : failureStage(facts),
       failureMessage,
       missedReason: isInstagram ? missedReason(facts) : null,
       approvalActionId: isInstagram ? approvalIds.get(draftId) ?? null : null,
       hasMedia,
       instagramMediaId: isInstagram ? instagramRow?.instagram_media_id ?? null : null,
-      mediaStatus: isInstagram ? media?.status ?? null : null,
+      mediaStatus: isInstagram || nativeVideo ? media?.status ?? null : null,
+      ...(nativeVideo ? { canGenerateNativeVideo: canGenerateExplicitMedia(planId),
+        mediaGenerationError: media?.status === "failed" ? videoJobSafeError(media.errorCode) : null } : {}),
       mediaPreviewUrl: null,
       mediaMimeType: hasMedia && typeof asset?.mime_type === "string" ? asset.mime_type : null,
       mediaDisplayName: hasMedia && typeof asset?.display_name === "string" ? asset.display_name : null,
-      mediaFromMara: asset?.origin === "mara",
+      mediaFromMara: asset?.origin === "mara" || (nativeVideo && contentMeta.maraGeneratedVideo === true && hasMedia),
       queueStatus,
       production,
     });

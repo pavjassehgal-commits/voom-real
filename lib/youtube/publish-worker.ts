@@ -157,9 +157,11 @@ export function buildYouTubeFlowPorts(
 
   return {
     async loadDraft(ownerId, draftId) {
-      const { data } = await db.from("mara_drafts").select("status")
+      const { data } = await db.from("mara_drafts").select("status,content_meta")
         .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
-      return data ? { status: String(data.status ?? "") } : null;
+      const meta = data?.content_meta as { containsSyntheticMedia?: unknown } | null;
+      return data ? { status: String(data.status ?? ""),
+        containsSyntheticMedia: typeof meta?.containsSyntheticMedia === "boolean" ? meta.containsSyntheticMedia : undefined } : null;
     },
     async loadConnection(ownerId) {
       const { data } = await db.from("youtube_connections").select("status,scopes")

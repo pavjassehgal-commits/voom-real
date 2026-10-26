@@ -19,6 +19,11 @@ import {
 export const VIDEO_JOB_SELECT =
   "id,owner_user_id,draft_id,conversation_id,media_type,generation_mode,prompt,aspect_ratio,status,provider,provider_job_id,provider_polling_url,provider_status,provider_retry_after_at,provider_diagnostic,storage_path,mime_type,byte_size,duration_seconds,estimated_cost_usd,error_code,idempotency_key,source_asset_id,overlay,started_at,attempt_count,created_at,updated_at,completed_at";
 
+export type VideoKind = "reel" | "story" | "tiktok_video" | "youtube_short";
+export function isNativeVideoKind(kind: unknown): kind is "tiktok_video" | "youtube_short" {
+  return kind === "tiktok_video" || kind === "youtube_short";
+}
+
 export interface VideoJobRow extends Record<string, unknown> {
   id: string;
   owner_user_id: string;
@@ -79,7 +84,7 @@ export interface VideoGenerationPorts {
   insertGeneration(row: Record<string, unknown>): Promise<"inserted" | "idempotency_conflict" | "active_conflict" | "error">;
   updateGeneration(ownerId: string, id: string, patch: Record<string, unknown>, whereStatuses?: string[]): Promise<VideoJobRow | null>;
   claimGenerationForPoll?(ownerId: string, id: string, nowIso: string, eligibleBeforeIso: string): Promise<VideoJobRow | null>;
-  planMedia(input: { ownerId: string; draftId: string; concept: string; script: string; brief: string; contentType: "reel" | "instagram_story"; hasSourceImage: boolean }): Promise<VideoPlanResult>;
+  planMedia(input: { ownerId: string; draftId: string; concept: string; script: string; brief: string; contentType: "reel" | "instagram_story" | "tiktok_video" | "youtube_short"; hasSourceImage: boolean }): Promise<VideoPlanResult>;
   generateBaseImage(input: { prompt: string; aspectRatio: MediaAspectRatio }): Promise<GeneratedMedia>;
   createVideoJob(input: { prompt: string; durationSeconds: number; referenceImage: ReferenceImage | null; name: string }): Promise<CreatedVideoJob>;
   pollVideoJob(providerJobId: string, pollingUrl?: string | null): Promise<VideoJobPoll>;
@@ -94,6 +99,10 @@ export interface VideoGenerationPorts {
   refundCredits?(ownerId: string, generationId: string): Promise<void>;
   settleCredits?(ownerId: string, generationId: string): Promise<void>;
   recordUsageAttempt?(attempt: ProviderUsageAttempt): Promise<void>;
+  /** Native-only atomic job claim before paid planning/base-image work. */
+  prepareGeneration?(input: { ownerId: string; draftId: string; generationId: string; idempotencyKey: string }): Promise<boolean>;
+  /** Native-only atomic asset link + completion, reusing the existing tables. */
+  completeGeneration?(ownerId: string, generationId: string, input: { storagePath: string; byteSize: number; durationSeconds: number; displayName: string }): Promise<VideoJobRow | null>;
 }
 
 export type StartResult =
@@ -108,7 +117,7 @@ export interface StartInput {
   draftId: string;
   conversationId: string;
   scope: "post" | "reel";
-  kind: "reel" | "story";
+  kind: VideoKind;
   concept: string;
   script: string;
   brief: string;
@@ -170,7 +179,17 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
     }
   }
 
-  
+  if (ports.prepareGeneration) {
+    let prepared = false;
+    try { prepared = await ports.prepareGeneration({ ownerId: input.ownerId, draftId: input.draftId, generationId, idempotencyKey: input.idempotencyKey }); } catch { /* fail closed before any provider */ }
+    if (!prepared) {
+      if (ports.refundCredits) await ports.refundCredits(input.ownerId, generationId).catch(() => undefined);
+      const current = await ports.findActiveGeneration(input.ownerId, input.draftId);
+      if (current) return { ok: false, status: 409, code: "active", generation: current, message: "A video generation is already running for this content." };
+      return { ok: false, status: 503, code: "db_failure", errorCode: "db_failure", message: "Voom couldn't reserve that draft safely. Nothing was generated." };
+    }
+  }
+
   let plan: VideoPlanResult;
   try {
     plan = await ports.planMedia({
@@ -179,7 +198,7 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
       concept: input.concept,
       script: input.script,
       brief: input.brief,
-      contentType: input.kind === "reel" ? "reel" : "instagram_story",
+      contentType: isNativeVideoKind(input.kind) ? input.kind : input.kind === "reel" ? "reel" : "instagram_story",
       hasSourceImage: input.sourceAsset !== null,
     });
   } catch (reason) {
@@ -387,7 +406,7 @@ export async function advanceVideoGeneration(
   ports: VideoGenerationPorts,
   ownerId: string,
   generationId: string,
-  kind: "reel" | "story",
+  kind: VideoKind,
   options: { reconcile?: boolean } = {},
 ): Promise<AdvanceResult> {
   const row = await ports.findGeneration(ownerId, generationId);
@@ -425,6 +444,11 @@ export async function advanceVideoGeneration(
   }
 
   if (row.status === "queued" && !row.provider_job_id) {
+    // Native jobs reserve their active lease before prompt/base-image work.
+    // A concurrent UI poll must not kill that still-running start request.
+    if (isNativeVideoKind(kind) && decision !== "timeout") {
+      return { ok: true, generation: row, previewUrl: null, attached: false, safeError: null };
+    }
     const failed = await ports.updateGeneration(ownerId, generationId, { status: "failed", error_code: "provider_timeout" }, ["queued"]);
     const finalRow = failed ?? row;
     return { ok: true, generation: finalRow, previewUrl: null, attached: false, safeError: videoJobSafeError("provider_timeout") };
@@ -535,7 +559,12 @@ export async function advanceVideoGeneration(
     return { ok: true, generation: failed ?? claimed, previewUrl: null, attached: false, safeError: videoJobSafeError("storage_failure") };
   }
 
-  const completed = await ports.updateGeneration(
+  const completed = ports.completeGeneration
+    ? await ports.completeGeneration(ownerId, generationId, {
+        storagePath: stored.storagePath, byteSize: media.bytes.length,
+        durationSeconds: inspection.durationSeconds, displayName: `MARA video · ${String(claimed.prompt).slice(0, 60)}`,
+      }).catch(() => null)
+    : await ports.updateGeneration(
     ownerId,
     generationId,
     {
@@ -555,6 +584,10 @@ export async function advanceVideoGeneration(
   );
   if (!completed) {
     await ports.removeAbandonedObject(ownerId, stored.storagePath).catch(() => undefined);
+    if (ports.completeGeneration) {
+      const failed = await ports.updateGeneration(ownerId, generationId, { status: "failed", error_code: "db_failure" }, ["processing"]);
+      return { ok: true, generation: failed ?? claimed, previewUrl: null, attached: false, safeError: videoJobSafeError("db_failure") };
+    }
     return { ok: true, generation: claimed, previewUrl: null, attached: false, safeError: videoJobSafeError("db_failure") };
   }
 
@@ -570,14 +603,15 @@ function isRetryableProviderError(error: MediaError): boolean {
   return error.code === "rate_limited" || error.code === "unavailable";
 }
 
-function validateGeneratedVideo(bytes: Uint8Array, kind: "reel" | "story"): string | null {
+export function validateGeneratedVideo(bytes: Uint8Array, kind: VideoKind): string | null {
   const detected = detectReelAsset(bytes);
   if (!detected || detected.kind !== "video" || detected.mimeType !== "video/mp4") return "signature";
   if (!bytes.length || bytes.length > GENERATED_VIDEO_MAX_BYTES) return "size";
+  if (isNativeVideoKind(kind) && bytes.length > 20 * 1024 * 1024) return "size";
   const inspection = inspectVideoBytes(bytes);
   if (!inspection) return "structure";
   if (!aspectMatches(inspection.width, inspection.height, "9:16")) return "aspect";
-  const bounds = kind === "reel" ? { min: 4, max: 15 } : { min: 3, max: 30 };
+  const bounds = kind === "story" ? { min: 3, max: 30 } : { min: 4, max: 15 };
   if (!durationMatches(inspection.durationSeconds, bounds.min, bounds.max)) return "duration";
   return null;
 }

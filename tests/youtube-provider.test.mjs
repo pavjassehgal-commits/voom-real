@@ -1048,6 +1048,19 @@ test("the happy path publishes ONLY with YouTube's own processed evidence, in th
   assert.equal(ports.failures.length, 0);
 });
 
+for (const disclosed of [true, false]) test(`generated Shorts forwards the owner's synthetic-media answer (${disclosed}) without changing audience/privacy`, async () => {
+  let metadata;
+  const ports = makePorts({
+    loadDraft: async () => ({ status: "approved", containsSyntheticMedia: disclosed }),
+    initiateSession: async (input) => { metadata = input.metadata; return SESSION_URL; },
+  });
+  const result = await flowMod.runYouTubePublishFlow(baseItem({ privacyStatus: "private", madeForKids: false }), ports);
+  assert.equal(result.outcome, "published");
+  assert.equal(metadata.status.containsSyntheticMedia, disclosed);
+  assert.equal(metadata.status.privacyStatus, "private");
+  assert.equal(metadata.status.selfDeclaredMadeForKids, false);
+});
+
 test("a completion with uploadStatus 'uploaded' is provider ACCEPTANCE — the flow polls and reports processing, never published", async () => {
   let polls = 0;
   const ports = makePorts({
@@ -1464,7 +1477,7 @@ test("migrations 0047-0051 apply cleanly and retain their required ordering", as
   assert.deepEqual(applied.filter((name) => ordered.includes(name)), ordered, "provider migrations remain ordered through 0051");
   assert.ok(applied.indexOf("0055_trend_intelligence.sql") > applied.indexOf("0051_ai_request_rate_limits.sql"), "Trend Intelligence follows 0051");
   assert.ok(applied.indexOf("0061_ai_usage_cost_tracking.sql") > applied.indexOf("0059_automation_emergency_pause.sql"));
-  assert.equal(applied[applied.length - 1], "0062_linkedin_personal.sql", "LinkedIn follows the existing provider, automation and credit migrations");
+  assert.equal(applied[applied.length - 1], "0063_native_plan_video_generation.sql", "native generation follows the existing provider, automation and credit migrations");
   const tables = await all(
     "select table_name from information_schema.tables where table_schema = 'public' and table_name like 'youtube_%' order by table_name",
   );
