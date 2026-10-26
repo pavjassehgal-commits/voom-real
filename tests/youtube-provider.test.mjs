@@ -1463,7 +1463,8 @@ test("migrations 0047-0051 apply cleanly and retain their required ordering", as
   const ordered = ["0047_youtube_provider.sql", "0048_youtube_oauth_state_acl.sql", "0049_tiktok_provider.sql", "0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql"];
   assert.deepEqual(applied.filter((name) => ordered.includes(name)), ordered, "provider migrations remain ordered through 0051");
   assert.ok(applied.indexOf("0055_trend_intelligence.sql") > applied.indexOf("0051_ai_request_rate_limits.sql"), "Trend Intelligence follows 0051");
-  assert.equal(applied[applied.length - 1], "0061_ai_usage_cost_tracking.sql", "AI usage tracking 0061 follows Trend Intelligence 0055-0058 and automation safety 0059");
+  assert.ok(applied.indexOf("0061_ai_usage_cost_tracking.sql") > applied.indexOf("0059_automation_emergency_pause.sql"));
+  assert.equal(applied[applied.length - 1], "0062_linkedin_personal.sql", "LinkedIn follows the existing provider, automation and credit migrations");
   const tables = await all(
     "select table_name from information_schema.tables where table_schema = 'public' and table_name like 'youtube_%' order by table_name",
   );

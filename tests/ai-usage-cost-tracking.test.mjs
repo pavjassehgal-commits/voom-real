@@ -133,7 +133,8 @@ test("0061 applies to a fresh database without changing existing credit ledger r
 
     await applyPending();
 
-    assert.equal(applied.at(-1), "0061_ai_usage_cost_tracking.sql");
+    assert.ok(applied.includes("0061_ai_usage_cost_tracking.sql"));
+    assert.equal(applied.at(-1), "0062_linkedin_personal.sql");
     const after = await db.query(`
       select generation_id, media_type, credits, source, status
       from public.voom_credit_ledger

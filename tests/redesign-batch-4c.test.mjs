@@ -6,13 +6,15 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 // What a screen shows or does, without the comments that explain what it leaves out.
 const code = async (path) => (await read(path)).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
 
-test("Channels reads every real connection and offers only the four supported channels", async () => {
+test("Channels reads every real connection, including manual LinkedIn text publishing", async () => {
   const page = await code("app/app/(shell)/connections/page.tsx");
-  for (const reader of ["getInstagramConnection", "getTikTokConnection", "getYouTubeConnection", "getResendAvailability"]) assert.match(page, new RegExp(reader));
+  for (const reader of ["getInstagramConnection", "getTikTokConnection", "getYouTubeConnection", "getLinkedInConnection", "getResendAvailability"]) assert.match(page, new RegExp(reader));
   assert.match(page, /scopes\.includes\("video\.publish"\)/, "TikTok counts as connected only with the granted publish scope");
   assert.match(page, /scopes\.includes\(YOUTUBE_UPLOAD_SCOPE\)/, "YouTube counts as connected only with the granted upload scope");
-  for (const href of ["/app/instagram", "/app/tiktok", "/app/youtube", "/app/settings#email"]) assert.match(page, new RegExp(`"${href}"`), `account actions go to ${href}`);
-  assert.doesNotMatch(page, /Facebook|LinkedIn|Pinterest|WhatsApp|Threads|Google Business|Notify me|Connect X/, "no unsupported channel or dead control");
+  for (const href of ["/app/instagram", "/app/tiktok", "/app/youtube", "/app/linkedin", "/app/settings#email"]) assert.match(page, new RegExp(`"${href}"`), `account actions go to ${href}`);
+  assert.match(page, /Personal profile · text posts/);
+  assert.match(page, /explicit review and approval/);
+  assert.doesNotMatch(page, /Facebook|Pinterest|WhatsApp|Threads|Google Business|Notify me|Connect X/, "no unsupported channel or dead control");
   assert.doesNotMatch(page, /\.(insert|update|upsert|delete)\(/, "the page only reads");
 });
 
