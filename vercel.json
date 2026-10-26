@@ -2,7 +2,8 @@
   "git": {
     "deploymentEnabled": {
       "codex/linkedin-production-release": false,
-      "codex/linkedin-marketing-plan": false
+      "codex/linkedin-marketing-plan": false,
+      "codex/marketing-plan-action-handoff": false
     }
   },
   "crons": [
