@@ -10,6 +10,9 @@ const { consumeLinkedInState, getLinkedInConnection } = await import('../lib/lin
 const { sameOrigin, draftChange } = await import('../lib/linkedin/http.ts');
 const { runLinkedInPublishing } = await import('../lib/linkedin/publish-worker.ts');
 const { readLinkedInConfig } = await import('../lib/linkedin/config.ts');
+const { isLinkedInOneShotStaging } = await import('../lib/linkedin/config.ts');
+const { runLinkedInOneShot } = await import('../lib/linkedin/one-shot.ts');
+const { handleLinkedInOneShot } = await import('../lib/linkedin/one-shot-http.ts');
 
 const OWNER='11111111-1111-4111-8111-111111111111';
 const OTHER='22222222-2222-4222-8222-222222222222';
@@ -48,24 +51,36 @@ async function finish(row,outcome,ref=null) {return (await query('select finish_
 
 // Narrow PostgREST-shaped bridge for the real worker. SQL and fake provider
 // response meet end-to-end without network access or environment credentials.
-function workerDb() {
+function workerDb(hooks={}) {
   const rpcs={claim_linkedin_jobs:['p_limit'],start_linkedin_submission:['p_id','p_owner','p_claim'],finish_linkedin_job:['p_id','p_owner','p_claim','p_outcome','p_ref']};
   return {
     async rpc(name,args) {
+      hooks.rpcCalls?.push(name);
+      if(name==='start_linkedin_submission')await hooks.beforeStart?.();
+      if(name==='finish_linkedin_job'&&hooks.failFinish)throw new Error('synthetic completion failure');
       assert.ok(rpcs[name]);const params=rpcs[name].map(key=>args[key]);
       const placeholders=params.map((_,index)=>`$${index+1}`).join(',');
       const rows=await query(name==='claim_linkedin_jobs'?`select * from ${name}(${placeholders})`:`select ${name}(${placeholders}) as value`,params);
       return {data:name==='claim_linkedin_jobs'?rows:rows[0].value,error:null};
     },
     from(table) {
-      assert.ok(['linkedin_connections','linkedin_connection_secrets'].includes(table));
-      return {select(columns){
-        assert.match(columns,/^[a-z_,]+$/);const filters=[];
-        const chain={eq(column,value){assert.match(column,/^[a-z_]+$/);filters.push([column,value]);return chain;},async maybeSingle(){
-          const rows=await query(`select ${columns} from ${table} where ${filters.map(([key],i)=>`${key}=$${i+1}`).join(' and ')}`,filters.map(([,value])=>value));
+      assert.ok(['linkedin_connections','linkedin_connection_secrets','linkedin_publish_queue','mara_drafts'].includes(table));
+      const builder=(columns,updates=null)=>{
+        const filters=[];
+        const add=(op)=>(column,value)=>{assert.match(column,/^[a-z_]+$/);filters.push([column,op,value]);return chain;};
+        const chain={eq:add('='),lte:add('<='),lt:add('<'),select(value){columns=value;return chain;},async maybeSingle(){
+          assert.match(columns,/^[a-z_,]+$/);
+          if(updates)await hooks.beforeClaim?.();
+          const params=updates?Object.values(updates):[];
+          const where=filters.map(([key,op,value])=>{params.push(value);return `${key}${op}$${params.length}`;}).join(' and ');
+          const sql=updates?`update ${table} set ${Object.keys(updates).map((key,i)=>{assert.match(key,/^[a-z_]+$/);return `${key}=$${i+1}`;}).join(',')} where ${where} returning ${columns}`
+            :`select ${columns} from ${table} where ${where}`;
+          const rows=await query(sql,params);
+          assert.ok(rows.length<=1,'owner/draft claim must never affect multiple rows');
           return {data:rows[0]??null,error:null};
         }};return chain;
-      }};
+      };
+      return {select:columns=>builder(columns),update:updates=>builder(null,updates)};
     },
   };
 }
@@ -351,4 +366,180 @@ test('connection view never queries secrets and expired status is truthful',asyn
   const select=[];const dbFake={from(table){assert.equal(table,'linkedin_connections');return {select(value){select.push(value);return {eq(){return {maybeSingle:async()=>({data:{id:DRAFT,member_sub:'member_A',display_name:'Test',scopes:SCOPES,status:'connected',token_expires_at:'2000-01-01T00:00:00Z'},error:null})}}}}};}};
   const result=await getLinkedInConnection(dbFake,OWNER,true);assert.equal(result.connected,false);assert.equal(result.status,'expired');
   assert.ok(!select.join().includes('encrypted'));
+});
+
+const OTHER_DRAFT='44444444-4444-4444-8444-444444444444';
+const OWN_OTHER_DRAFT='55555555-5555-4555-8555-555555555555';
+async function singleFixture(t) {
+  const {connection,conv}=await fixture(t);
+  const [business]=await query('insert into businesses(owner_user_id) values($1) returning id',[OTHER]);
+  const otherConnection=await connect(OTHER,business.id,'member_B');
+  const [otherConv]=await query('insert into mara_conversations(owner_user_id) values($1) returning id',[OTHER]);
+  for(const [id,owner,conversation] of [[OTHER_DRAFT,OTHER,otherConv.id],[OWN_OTHER_DRAFT,OWNER,conv.id]]){
+    await query("insert into mara_drafts(id,owner_user_id,conversation_id,kind,channel,title,content,social_channel,social_format) values($1,$2,$3,'linkedin_text','LinkedIn','Unrelated post','Do not publish this','linkedin','text')",[id,owner,conversation]);
+    await query('select approve_linkedin_draft($1,$2,1,$3,$4,now())',[owner,id,owner===OWNER?connection:otherConnection,owner===OWNER?'member_A':'member_B']);
+  }
+  await approve(connection);
+  const [job]=await query('select * from linkedin_publish_queue where draft_id=$1',[DRAFT]);
+  const [draft]=await query('select * from mara_drafts where id=$1',[DRAFT]);
+  const input={queueId:job.id,version:Number(draft.content_version),connectionId:connection,memberSub:'member_A',confirmed:true,visibility:'PUBLIC'};
+  const untouched=await query('select * from linkedin_publish_queue where draft_id<>$1 order by id',[DRAFT]);
+  return {job,draft,input,untouched};
+}
+async function assertOthersUnchanged(f) {
+  assert.deepEqual(await query('select * from linkedin_publish_queue where draft_id<>$1 order by id',[DRAFT]),f.untouched);
+}
+const neverPublish={async publishText(){throw new Error('must not call provider');}};
+
+test('one-shot is fail-closed outside the exact isolated Preview configuration',()=>{
+  const env={VERCEL_ENV:'preview',VERCEL_GIT_COMMIT_REF:'linkedin-staging',NEXT_PUBLIC_SUPABASE_URL:'https://qcdpegwjofrqnfudyrqq.supabase.co',NEXT_PUBLIC_SITE_URL:'https://voom-real-git-linkedin-staging-pavjassehgal-commits.vercel.app',LINKEDIN_REDIRECT_URI:'https://voom-real-git-linkedin-staging-pavjassehgal-commits.vercel.app/api/integrations/linkedin/callback'};
+  assert.equal(isLinkedInOneShotStaging(env),true);
+  for(const key of Object.keys(env)){
+    assert.equal(isLinkedInOneShotStaging({...env,[key]:undefined}),false);
+    assert.equal(isLinkedInOneShotStaging({...env,[key]:'unexpected'}),false);
+  }
+  assert.equal(isLinkedInOneShotStaging({...env,VERCEL_ENV:'production'}),false);
+  assert.equal(isLinkedInOneShotStaging({...env,VERCEL_GIT_COMMIT_REF:'tiktok-sandbox'}),false);
+});
+test('manual HTTP boundary requires staging, POST, authentication, same origin and fresh public-post confirmation',async()=>{
+  const input={queueId:DRAFT,version:2,connectionId:DRAFT,memberSub:'member_A',confirmed:true,visibility:'PUBLIC'};
+  const cases=[
+    {enabled:false,expected:404},{method:'GET',expected:405},{owner:null,expected:401},
+    {origin:null,expected:403},{origin:'https://evil.example',expected:403},
+    {patch:{confirmed:false},expected:400},{patch:{confirmed:undefined},expected:400},
+    {patch:{visibility:'PRIVATE'},expected:400},{patch:{ownerId:OTHER},expected:400},
+    {patch:{queueId:'invalid'},expected:400},{id:'invalid',expected:400},
+  ];
+  for(const row of cases){
+    let calls=0;const method=row.method??'POST';
+    const request=new Request('https://example.test/api/integrations/linkedin/drafts/'+DRAFT+'/publish',{
+      method,headers:{'Content-Type':'application/json',...(row.origin===null?{}:{origin:row.origin??'https://example.test'})},
+      ...(method==='POST'?{body:JSON.stringify({...input,...row.patch})}:{}),
+    });
+    const response=await handleLinkedInOneShot(request,row.id??DRAFT,{enabled:row.enabled??true,
+      owner:async()=>Object.hasOwn(row,'owner')?row.owner:OWNER,publish:async()=>{calls++;return 'published';}});
+    assert.equal(response.status,row.expected,JSON.stringify(row));assert.equal(calls,0);
+    assert.equal(response.headers.get('Cache-Control'),'no-store');
+  }
+  let used;
+  const response=await handleLinkedInOneShot(new Request('https://example.test/api',{method:'POST',headers:{origin:'https://example.test'},body:JSON.stringify(input)}),DRAFT,
+    {enabled:true,owner:async()=>OWNER,publish:async(...args)=>{used=args;return 'published';}});
+  assert.equal(response.status,200);assert.equal(used[0],OWNER);assert.equal(used[1],DRAFT);
+});
+test('one-shot publishes exactly the selected owner-approved post, leaving two other due jobs untouched',async(t)=>{
+  const f=await singleFixture(t);const sends=[];const rpcCalls=[];
+  const client={async publishText(token,member,text){sends.push({token,member,text});return 'urn:li:share:123';}};
+  const result=await runLinkedInOneShot(OWNER,DRAFT,f.input,{db:workerDb({rpcCalls}),config,client});
+  assert.equal(result,'published');assert.deepEqual(sends,[{token:'test-access-token',member:'member_A',text:'Original text'}]);
+  assert.deepEqual(rpcCalls,['start_linkedin_submission','finish_linkedin_job']);
+  assert.equal((await query('select status from linkedin_publish_queue where id=$1',[f.job.id]))[0].status,'published');
+  assert.equal(await runLinkedInOneShot(OWNER,DRAFT,f.input,{db:workerDb(),config,client}),'not_claimed');
+  assert.equal(sends.length,1);await assertOthersUnchanged(f);
+});
+for(const [label,patch] of [['stale version',{version:999}],['wrong queue',{queueId:OTHER_DRAFT}],['wrong connection',{connectionId:OTHER_DRAFT}],['wrong member',{memberSub:'member_B'}],['missing consent',{confirmed:false}],['wrong visibility',{visibility:'PRIVATE'}]]) {
+  test(`one-shot rejects ${label} without claiming or publishing any post`,async(t)=>{
+    const f=await singleFixture(t);const before=await query('select * from linkedin_publish_queue order by id');
+    assert.equal(await runLinkedInOneShot(OWNER,DRAFT,{...f.input,...patch},{db:workerDb(),config,client:neverPublish}),'not_claimed');
+    assert.deepEqual(await query('select * from linkedin_publish_queue order by id'),before);
+  });
+}
+test('cross-owner and mismatched draft requests never select or modify another job',async(t)=>{
+  const f=await singleFixture(t);const before=await query('select * from linkedin_publish_queue order by id');
+  for(const [owner,draft] of [[OTHER,DRAFT],[OWNER,OTHER_DRAFT],[OWNER,OWN_OTHER_DRAFT]])
+    assert.equal(await runLinkedInOneShot(owner,draft,f.input,{db:workerDb(),config,client:neverPublish}),'not_claimed');
+  assert.deepEqual(await query('select * from linkedin_publish_queue order by id'),before);
+});
+for(const state of ['draft','rejected'])test(`a ${state} cannot be manually published`,async(t)=>{
+  const f=await singleFixture(t);await query('update mara_drafts set status=$1 where id=$2',[state,DRAFT]);
+  const before=await query('select * from linkedin_publish_queue order by id');
+  assert.equal(await runLinkedInOneShot(OWNER,DRAFT,f.input,{db:workerDb(),config,client:neverPublish}),'not_claimed');
+  assert.deepEqual(await query('select * from linkedin_publish_queue order by id'),before);
+});
+test('manual publishing rejects automatic approval origin and a future schedule or retry backoff',async(t)=>{
+  const f=await singleFixture(t);
+  await query("update mara_drafts set approval_origin='autopilot' where id=$1",[DRAFT]);
+  assert.equal(await runLinkedInOneShot(OWNER,DRAFT,f.input,{db:workerDb(),config,client:neverPublish}),'not_claimed');
+  await query("update mara_drafts set approval_origin='user' where id=$1",[DRAFT]);
+  for(const column of ['scheduled_at','next_attempt_at']){
+    await query(`update linkedin_publish_queue set ${column}=now()+interval '1 hour' where id=$1`,[f.job.id]);
+    assert.equal(await runLinkedInOneShot(OWNER,DRAFT,f.input,{db:workerDb(),config,client:neverPublish}),'not_claimed');
+    await query(`update linkedin_publish_queue set ${column}=$1 where id=$2`,[f.job[column],f.job.id]);
+  }
+  await assertOthersUnchanged(f);
+});
+test('concurrent clicks have one CAS winner and one provider submission',async(t)=>{
+  const f=await singleFixture(t);let sends=0;
+  const client={async publishText(){sends++;return 'urn:li:share:123';}};
+  const results=await Promise.all([1,2].map(()=>runLinkedInOneShot(OWNER,DRAFT,f.input,{db:workerDb(),config,client})));
+  assert.deepEqual(results.sort(),['not_claimed','published']);assert.equal(sends,1);await assertOthersUnchanged(f);
+});
+test('a batch-worker race cannot let the one-shot reclaim the target or touch other jobs',async(t)=>{
+  const f=await singleFixture(t);
+  const bridge=workerDb({beforeClaim:async()=>{await query("update linkedin_publish_queue set status='claimed',attempts=attempts+1,claim_token=gen_random_uuid(),claimed_at=now() where id=$1",[f.job.id]);}});
+  assert.equal(await runLinkedInOneShot(OWNER,DRAFT,f.input,{db:bridge,config,client:neverPublish}),'not_claimed');
+  await assertOthersUnchanged(f);
+});
+test('an edit between reading and claiming is blocked by the final existing SQL approval gate',async(t)=>{
+  const f=await singleFixture(t);
+  const bridge=workerDb({beforeClaim:async()=>{
+    await query('select edit_linkedin_draft($1,$2,$3,$4,null)',[OWNER,DRAFT,f.input.version,'Changed after confirmation']);
+    const [changed]=await query('select content_version from mara_drafts where id=$1',[DRAFT]);
+    await query("select approve_linkedin_draft($1,$2,$3,$4,'member_A',now())",[OWNER,DRAFT,changed.content_version,f.input.connectionId]);
+  }});
+  assert.equal(await runLinkedInOneShot(OWNER,DRAFT,f.input,{db:bridge,config,client:neverPublish}),'not_claimed');
+  await assertOthersUnchanged(f);
+});
+test('final account and token checks still block a connection change after the targeted claim',async(t)=>{
+  const f=await singleFixture(t);
+  const bridge=workerDb({beforeStart:async()=>{await query("update linkedin_connections set status='permission_required' where id=$1",[f.input.connectionId]);}});
+  assert.equal(await runLinkedInOneShot(OWNER,DRAFT,f.input,{db:bridge,config,client:neverPublish}),'blocked');
+  assert.equal((await query('select status from linkedin_publish_queue where id=$1',[f.job.id]))[0].status,'permission_required');
+  await assertOthersUnchanged(f);
+});
+for(const [category,expected] of [['rate_limited','scheduled'],['reconnect','permission_required'],['uncertain','uncertain'],['rejected','failed']]) {
+  test(`one-shot records ${category} for only its target and never performs an automatic retry`,async(t)=>{
+    const f=await singleFixture(t);let calls=0;
+    const client={async publishText(){calls++;throw new LinkedInError(category);}};
+    assert.equal(await runLinkedInOneShot(OWNER,DRAFT,f.input,{db:workerDb(),config,client}),category);
+    assert.equal((await query('select status from linkedin_publish_queue where id=$1',[f.job.id]))[0].status,expected);
+    assert.equal(await runLinkedInOneShot(OWNER,DRAFT,f.input,{db:workerDb(),config,client}),'not_claimed');
+    assert.equal(calls,1);await assertOthersUnchanged(f);
+  });
+}
+test('failed completion write never causes one-shot resubmission or changes another queue row',async(t)=>{
+  const f=await singleFixture(t);let calls=0;
+  const client={async publishText(){calls++;return 'urn:li:share:123';}};
+  await assert.rejects(runLinkedInOneShot(OWNER,DRAFT,f.input,{db:workerDb({failFinish:true}),config,client}));
+  assert.equal(await runLinkedInOneShot(OWNER,DRAFT,f.input,{db:workerDb(),config,client}),'not_claimed');
+  assert.equal(calls,1);await assertOthersUnchanged(f);
+});
+test('one-shot never recovers or modifies unrelated stale claims or submissions',async(t)=>{
+  const f=await singleFixture(t);
+  await query("update linkedin_publish_queue set status=case when owner_user_id=$1 then 'claimed' else 'submitting' end,claimed_at=now()-interval '1 hour',claim_token=gen_random_uuid(),attempts=1 where draft_id<>$2",[OWNER,DRAFT]);
+  f.untouched=await query('select * from linkedin_publish_queue where draft_id<>$1 order by id',[DRAFT]);
+  assert.equal(await runLinkedInOneShot(OWNER,DRAFT,f.input,{db:workerDb(),config,client:{async publishText(){return 'urn:li:share:123';}}}),'published');
+  await assertOthersUnchanged(f);
+});
+test('attempt limit prevents any new targeted claim',async(t)=>{
+  const f=await singleFixture(t);await query('update linkedin_publish_queue set attempts=5 where id=$1',[f.job.id]);
+  const before=await query('select * from linkedin_publish_queue order by id');
+  assert.equal(await runLinkedInOneShot(OWNER,DRAFT,f.input,{db:workerDb(),config,client:neverPublish}),'not_claimed');
+  assert.deepEqual(await query('select * from linkedin_publish_queue order by id'),before);
+});
+for(const reason of ['expired','missing encrypted credential','invalid encrypted credential']) {
+  test(`one-shot ${reason} prevents a provider request and changes only the selected job`,async(t)=>{
+    const f=await singleFixture(t);
+    if(reason==='expired')await query("update linkedin_connections set token_expires_at=now()-interval '1 minute' where id=$1",[f.input.connectionId]);
+    else if(reason==='missing encrypted credential')await query('delete from linkedin_connection_secrets where connection_id=$1',[f.input.connectionId]);
+    else await query("update linkedin_connection_secrets set encrypted_access_token='v1:invalid' where connection_id=$1",[f.input.connectionId]);
+    const outcome=await runLinkedInOneShot(OWNER,DRAFT,f.input,{db:workerDb(),config,client:neverPublish});
+    assert.equal(outcome,reason==='missing encrypted credential'?'unavailable':'reconnect');await assertOthersUnchanged(f);
+  });
+}
+test('new route is staging-only and session-owned, with no GET, cron-secret fallback or batch claim',async()=>{
+  const route=await read('app/api/integrations/linkedin/drafts/[id]/publish/route.ts');
+  assert.match(route,/isLinkedInOneShotStaging\(\)/);assert.match(route,/getCurrentUser\(\)/);
+  assert.match(route,/export async function POST/);assert.doesNotMatch(route,/export.*GET|CRON_SECRET/);
+  assert.doesNotMatch(await read('lib/linkedin/one-shot.ts'),/\.rpc\("claim_linkedin_jobs"/);
+  assert.deepEqual(JSON.parse(await read('vercel.json')).crons,[]);
 });

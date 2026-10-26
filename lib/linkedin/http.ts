@@ -10,6 +10,10 @@ export function json(body: unknown, status = 200) {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
 export const draftInput = z.object({ id: UUID, text: z.string().trim().min(1).max(3000) }).strict();
+export const oneShotInput = z.object({
+  queueId: UUID, version: z.number().int().positive().safe(), connectionId: UUID,
+  memberSub: z.string().min(1).max(200), confirmed: z.literal(true), visibility: z.literal("PUBLIC"),
+}).strict();
 export const draftChange = z.discriminatedUnion("action", [
   z.object({ action: z.enum(["save","reject"]), version: z.number().int().positive().safe(),
     text: z.string().trim().min(1).max(3000), scheduledAt: z.string().datetime({offset:true}).nullable() }).strict(),

@@ -12,7 +12,7 @@ export async function GET() {
     const [drafts,queue] = await Promise.all([
       admin.from("mara_drafts").select("id,title,content,status,content_version,proposed_publish_at")
         .eq("owner_user_id",user.id).eq("kind","linkedin_text").order("created_at",{ascending:false}).limit(50),
-      admin.from("linkedin_publish_queue").select("draft_id,status,scheduled_at,provider_ref,failure_code,attempts")
+      admin.from("linkedin_publish_queue").select("id,draft_id,approved_content_version,status,scheduled_at,next_attempt_at,provider_ref,failure_code,attempts")
         .eq("owner_user_id",user.id).order("created_at",{ascending:false}).limit(100),
     ]);
     if (drafts.error || queue.error) throw new Error();

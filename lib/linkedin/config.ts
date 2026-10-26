@@ -22,3 +22,13 @@ export function readLinkedInConfig(): LinkedInConfig | null {
   });
   return result.success ? result.data : null;
 }
+
+// Temporary first-post control: fail closed outside the isolated deployment.
+// This does not enable a scheduler or relax the normal publishing safeguards.
+export function isLinkedInOneShotStaging(env: Readonly<Record<string, string | undefined>> = process.env): boolean {
+  const origin = "https://voom-real-git-linkedin-staging-pavjassehgal-commits.vercel.app";
+  return env.VERCEL_ENV === "preview" && env.VERCEL_GIT_COMMIT_REF === "linkedin-staging"
+    && env.NEXT_PUBLIC_SUPABASE_URL === "https://qcdpegwjofrqnfudyrqq.supabase.co"
+    && env.NEXT_PUBLIC_SITE_URL === origin
+    && env.LINKEDIN_REDIRECT_URI === `${origin}/api/integrations/linkedin/callback`;
+}

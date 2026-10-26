@@ -5,7 +5,7 @@ import { BTN, PageHeader, StatusChip } from "@/components/voom/redesign/ui";
 import type { LinkedInConnectionView } from "@/lib/linkedin/data";
 
 type Draft = {id:string;content:string;status:string;content_version:number;proposed_publish_at:string|null};
-type Queue = {draft_id:string;status:string;scheduled_at:string;provider_ref:string|null;failure_code:string|null;attempts:number};
+type Queue = {id:string;draft_id:string;approved_content_version:number;status:string;scheduled_at:string;next_attempt_at:string;provider_ref:string|null;failure_code:string|null;attempts:number};
 export const LINKEDIN_STATUS_LABELS: Record<string,string> = {
   scheduled:"Scheduled",claimed:"Preparing submission",submitting:"Submitting to LinkedIn",published:"Published",
   failed:"Failed",permission_required:"Reconnect required",cancelled:"Cancelled",uncertain:"Check LinkedIn — result unknown",
@@ -23,6 +23,8 @@ export function LinkedInWorkspace() {
   const [loading,setLoading] = useState(true);
   const [error,setError] = useState("");
   const [notice,setNotice] = useState("");
+  const [oneShotAvailable,setOneShotAvailable] = useState(false);
+  const [checkedAt,setCheckedAt] = useState(0);
   const creationId = useRef<string|null>(null);
 
   const load = useCallback(async () => {
@@ -30,6 +32,7 @@ export function LinkedInWorkspace() {
     const body = await status.json();
     if (!status.ok) throw new Error(body.error || "LinkedIn status could not be loaded.");
     setConnection(body.connection);
+    setOneShotAvailable(body.oneShotPublishingAvailable === true);
     setConfirmed(false);
     // Unconfigured installations remain safe and useful: show setup required,
     // rather than treating missing credentials/schema as a working connection.
@@ -37,7 +40,7 @@ export function LinkedInWorkspace() {
     const response = await fetch("/api/integrations/linkedin/drafts",{cache:"no-store"});
     const rows = await response.json();
     if (!response.ok) throw new Error(rows.error || "Drafts could not be loaded.");
-    setDrafts(rows.drafts); setQueue(rows.queue);
+    setDrafts(rows.drafts); setQueue(rows.queue); setCheckedAt(Date.now());
     return rows.drafts as Draft[];
   },[]);
   useEffect(()=>{
@@ -78,6 +81,14 @@ export function LinkedInWorkspace() {
   const unavailable=loading?"Loading LinkedIn…":!connection?.configured?"LinkedIn setup is required before connecting or publishing."
     :!connection.connected?"Connect or reconnect LinkedIn before approving a post.":locked?"This post is already claimed, submitted, published or awaiting verification. It cannot safely be resent."
     :!saved?"Save your text, then review and approve the saved version.":!confirmed?"Confirm the account, text and send time below.":"";
+  const oneShotUnavailable=loading?"Loading the approved post…":!connection?.connected?"Connect LinkedIn first."
+    :!selected||!saved||selected.status!=="approved"||Number(job?.approved_content_version)!==Number(selected.content_version)
+      ?"Save and explicitly approve this version first."
+    :schedule?"Approve any changed send time before publishing."
+    :job?.status!=="scheduled"?"This post is not eligible for a new submission. Claimed, published and unknown results cannot be resent."
+    :job.attempts>=5?"This post has reached its attempt limit."
+    :!(Date.parse(job.scheduled_at)<=checkedAt)||!(Date.parse(job.next_attempt_at)<=checkedAt)
+      ?"Its approved send time or retry wait has not arrived. Refresh after that time.":"";
 
   return <div className="min-w-0">
     <PageHeader title="LinkedIn" subtitle="Connect your personal profile, review your text, and explicitly approve each post. Company Pages and media posts are not available yet." />
@@ -136,9 +147,28 @@ export function LinkedInWorkspace() {
           const result=await request(`drafts/${selected.id}`,"PATCH",{action:"approve",version:Number(selected.content_version),confirmed:true,
             connectionId:connection.id,memberSub:connection.memberSub,scheduledAt:schedule?new Date(schedule).toISOString():null});
           setNotice(result.message);setConfirmed(false);const updated=await load();setSelected(updated?.find(d=>d.id===selected.id)??null);
-        })}>{busy?"Working…":schedule?"Approve and schedule":"Approve and post now"}</button>
+        })}>{busy?"Working…":schedule?"Approve and schedule":oneShotAvailable?"Approve for manual posting":"Approve and post now"}</button>
         {unavailable&&<p className="mt-2 text-sm text-text-2" role="status">{unavailable}</p>}
         {selected?.status==="rejected"&&<p className="mt-2 text-sm text-text-2">Save a revised draft before approving again.</p>}
+        {oneShotAvailable&&<div className="mt-5 rounded-xl border border-line p-4" aria-label="One-post staging test">
+          <h3 className="font-semibold">One-post staging test</h3>
+          <p className="my-2 text-sm text-text-2">Automatic LinkedIn workers remain off. Approval only queues your post. This separate action publishes only the selected approved post, publicly on your personal profile, after a final confirmation.</p>
+          <button className={BTN.primary} disabled={busy||Boolean(oneShotUnavailable)} onClick={()=>{
+            if(!selected||!job||!connection?.id||!connection.memberSub||oneShotUnavailable)return;
+            const target=selected;
+            if(!window.confirm(`Publish this ONE approved post PUBLICLY on ${connection.displayName??"your connected LinkedIn profile"} now?\n\n${target.content}\n\nNo other drafts or jobs will be processed. Cancel if you are not ready for a real public post.`))return;
+            void act(async()=>{
+              try {
+                const result=await request(`drafts/${target.id}/publish`,"POST",{queueId:job.id,version:Number(target.content_version),
+                  connectionId:connection.id,memberSub:connection.memberSub,confirmed:true,visibility:"PUBLIC"});
+                setNotice(result.message);
+              } finally {
+                const updated=await load();setSelected(updated?.find(d=>d.id===target.id)??null);
+              }
+            });
+          }}>Publish this one approved post</button>
+          {oneShotUnavailable&&<p className="mt-2 text-sm text-text-2" role="status">{oneShotUnavailable}</p>}
+        </div>}
       </section>
       <section className="voom-card min-w-0 p-5" aria-label="LinkedIn drafts and publishing queue">
         <h2 className="mb-3 text-lg font-semibold">Your drafts and publishing queue</h2>

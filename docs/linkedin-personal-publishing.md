@@ -98,3 +98,29 @@ before applying it. Do not use a generic Preview that inherits production secret
 
 Company Pages remain Phase 2: Community Management access, appropriate Page roles,
 organization scopes, business verification and LinkedIn's separate review process.
+
+## Isolated staging one-post control
+
+The `linkedin-staging` Preview has a separate **Publish this one approved post**
+action. It is unavailable unless the server confirms Preview, that exact branch,
+the staging Supabase URL and the staging site/callback URLs. No new environment
+variables, database migrations, cron registrations or provider permissions are
+needed. The existing batch worker remains unchanged and unscheduled.
+
+Save text, explicitly approve the saved version, and then use the separate manual
+button. Its final confirmation displays the exact text and personal profile and
+warns that the post will be public. Cancelling the dialog sends no request.
+
+The authenticated, same-origin POST targets one draft and one queue row, requires
+fresh explicit confirmation and the expected version/account, and conditionally
+claims only that owner's matching, due, scheduled row. Concurrent clicks cannot
+claim it twice. It does not call `claim_linkedin_jobs`, sweep stale claims, or
+touch other jobs. Publishing reuses token decryption, the final SQL consent gate,
+the existing provider client, and durable result recording. A retry after a 429
+or preflight failure requires waiting for backoff and another explicit manual
+confirmation; uncertain/published/in-flight jobs cannot be resent. No automatic
+retry loop runs from this action. If a process dies after claiming, this control
+does not automatically recover that claim or another owner's jobs.
+
+Do not use the batch cron endpoint for the first one-post test. Deployment and
+verification do not authorize publishing a test post.
