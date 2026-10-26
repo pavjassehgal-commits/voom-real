@@ -38,6 +38,8 @@ import {
   type PostView,
 } from "@/lib/post/server-data";
 import { mediaOutcomeMessage, produceWorkflowMedia } from "./media";
+import { isPostDraftKind } from "@/lib/post/core";
+import { parseWorkflowSlotIdentity } from "./channel-planner";
 
 export type ActionResult = { ok: true; message: string } | { ok: false; error: string };
 
@@ -49,13 +51,26 @@ async function context() {
   return { userId: user.id, admin: createAdminClient() };
 }
 
-/** Loads an owned workflow draft (source_plan_item_key = local slot date). */
+/**
+ * Resolve the exact owned Instagram recommendation, never another item on its
+ * date. Composite keys are the immutable channel/format assignment; legacy
+ * date-only keys use the stored Instagram kind. Native TikTok, YouTube and
+ * LinkedIn actions remain in their own editors, with their own consent gates.
+ */
 async function loadOwnedDraft(admin: AdminClient, ownerId: string, draftId: string) {
   if (!UUID_RE.test(draftId)) return null;
-  const { data } = await admin.from("mara_drafts")
-    .select("id,kind,channel,title,content,proposed_publish_at,status,media_brief,conversation_id,source_plan_item_key")
+  const { data, error } = await admin.from("mara_drafts")
+    .select("id,kind,channel,social_channel,social_format,title,content,proposed_publish_at,status,media_brief,conversation_id,source_plan_item_key")
     .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
-  if (!data || !/^\d{4}-\d{2}-\d{2}$/.test(String(data.source_plan_item_key ?? ""))) return null;
+  if (error || !data || !isPostDraftKind(data.kind)) return null;
+  const identity = parseWorkflowSlotIdentity(data.source_plan_item_key);
+  const format = draftContentType(data);
+  if (!identity) return null;
+  if (!identity.legacy && (identity.channel !== "instagram" || identity.format !== format)) return null;
+  // Missing social columns are valid on old rows. Conflicting persisted
+  // columns must never turn another platform/format into an Instagram post.
+  if (data.social_channel != null && data.social_channel !== "instagram") return null;
+  if (data.social_format != null && data.social_format !== format) return null;
   return data as Record<string, unknown>;
 }
 
