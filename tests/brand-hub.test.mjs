@@ -41,13 +41,13 @@ const { BrandHub } = await importApp("components/voom/brand/BrandHub.tsx");
 test("every brand-kit field belongs to exactly one section, and the core fields map to businesses columns", () => {
   const owned = sections.BRAND_SECTIONS.flatMap((section) => section.ownsKeys);
   assert.equal(new Set(owned).size, owned.length, "no field is owned twice");
-  assert.deepEqual(sections.BRAND_SECTIONS.map((section) => section.id), ["basics", "brief", "offerings", "audience", "voice", "avoid", "facts", "operate"]);
+  assert.deepEqual(sections.BRAND_SECTIONS.map((section) => section.id), ["basics", "brief", "offerings", "audience", "voice", "avoid", "facts", "assets", "operate"], "slice 5 added the images section before operations");
   const byId = Object.fromEntries(sections.BRAND_SECTIONS.map((section) => [section.id, section]));
   assert.deepEqual(byId.basics.businessColumns, ["brand_name", "brand_description", "industry"]);
   assert.deepEqual(byId.audience.businessColumns, ["target_customer", "main_goal"]);
   assert.deepEqual(byId.voice.businessColumns, ["brand_personality"]);
   assert.deepEqual(byId.operate.businessColumns, ["content_frequency", "preferred_channels", "automation_level"]);
-  for (const kitOnly of ["brief", "offerings", "avoid", "facts"]) assert.deepEqual(byId[kitOnly].businessColumns, [], `${kitOnly} is kit-only`);
+  for (const kitOnly of ["brief", "offerings", "avoid", "facts", "assets"]) assert.deepEqual(byId[kitOnly].businessColumns, [], `${kitOnly} is kit-only`);
   assert.equal(byId.operate.hubOnly, true, "onboarding's last screen shows the brand, not operations");
   assert.equal(sections.AVOID_RULES.length, 6);
 });
@@ -80,7 +80,7 @@ test("section validation cleans lists, caps lengths, and refuses unknown section
   const big = sections.validateBrandSection("offerings", { offerings: Array.from({ length: 30 }, (_, i) => `item ${i}`) });
   assert.equal(big.answers.offerings.length, 20, "capped");
 
-  assert.deepEqual(sections.validateBrandSection("assets", {}), { ok: false, error: "That section does not exist." });
+  assert.deepEqual(sections.validateBrandSection("gallery", {}), { ok: false, error: "That section does not exist." });
   assert.equal(sections.validateBrandSection("operate", { automation: "turbo" }).ok, false);
   assert.equal(sections.validateBrandSection("facts", { facts: "not a list" }).ok, false);
   assert.equal(sections.validateBrandSection("basics", { name: "x", extra: 1 }).ok, false, "unknown keys are refused");
@@ -121,7 +121,7 @@ test("the page's values come from the newest kit and fall back to businesses for
   assert.deepEqual(nothing.operate, { pace: "", channels: [] }, "an unknown automation value is left unset, never guessed");
 
   const view = read_.brandKitVersionView({ version: 2, answers: "garbage", brief: null, source: "brand_hub", change_summary: null, changed_keys: ["audience"], created_at: "2026-10-23T10:00:00.000Z" });
-  assert.deepEqual(view, { version: 2, answers: {}, brief: "", source: "brand_hub", changeSummary: "", changedKeys: ["audience"], createdAt: "2026-10-23T10:00:00.000Z" });
+  assert.deepEqual(view, { version: 2, answers: {}, brief: "", assets: [], source: "brand_hub", changeSummary: "", changedKeys: ["audience"], createdAt: "2026-10-23T10:00:00.000Z" });
 });
 
 /* ── 3. The save action ──────────────────────────────────────────────────── */
@@ -224,7 +224,7 @@ test("the hub shows every section as plain text, the banner, and the history wit
   assert.match(html, /v3<\/span>.*What we avoid.*23 Oct 2026 · Brand page/s);
   assert.match(html, /v2<\/span>.*Brand Brief.*22 Oct 2026/s);
   assert.match(html, /v1<\/span>.*No field changed.*21 Oct 2026 · Onboarding/s);
-  assert.equal((html.match(/data-brand-section=/g) ?? []).length, 8);
+  assert.equal((html.match(/data-brand-section=/g) ?? []).length, 9, "eight sections plus the images section (slice 5)");
   assert.doesNotMatch(html, /Looks right/);
 });
 

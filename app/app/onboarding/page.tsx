@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { OnboardingWizard } from "@/components/voom/onboarding/OnboardingWizard";
+import { isAiVisionConfigured } from "@/lib/ai";
 import { getBusinessRecord } from "@/lib/voom/server-data";
 
 export default async function OnboardingPage() {
@@ -8,5 +9,5 @@ export default async function OnboardingPage() {
     redirect("/app");
   }
 
-  return <OnboardingWizard />;
+  return <OnboardingWizard visionEnabled={isAiVisionConfigured()} />;
 }

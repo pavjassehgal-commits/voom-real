@@ -205,9 +205,23 @@ prop that hides History and the gallery in onboarding.
    description text is never sent twice. Not built: the "from your website" badge (slice 7)
    and the generic `unconfirmed` key list (the facts list covers the only unconfirmed data
    that exists). Tests: `tests/brand-extract.test.mjs`.
-5. **Assets.** Screen 2 uploads (logo, products, past posts with the disclaimer), bucket writes,
-   product descriptions, past-post chips, colours from the logo, logo and colours synced to the
-   email brand. Tests: upload limits, path ownership, colour computation on a fixture.
+5. **Assets. BUILT 2026-10-26, with vision.** Onboarding screen 2 "Give MARA your brand"
+   (website, 1 logo, up to 10 product photos, up to 5 past posts with the disclaimer) and a
+   hub-only Brand page section "Logo, products and past posts", one shared editor
+   (`components/voom/brand/BrandAssetsEditor.tsx`). Files: JPEG/PNG/WebP by magic bytes, 10 MB,
+   stored unchanged at `<owner>/<kind>/<uuid>.<ext>` in `brand-kit`; references in the kit's
+   `assets` column, colours in `answers.colours`; versions carry images forward unless a save
+   owns them; images removed on the Brand page are deleted from storage on Save. Colours are
+   computed by code from the logo (`lib/brand/image.ts`). Added beyond the original plan:
+   **vision** (Gurnoor, 2026-10-26): an optional image model (`AI_VISION_*`) fills the one-line
+   description, and for past posts style chips from a fixed list plus a "look" line, marked
+   "MARA's guess" (`lib/brand/vision.ts`, 40 readings per user per hour). The text model and the
+   image generator never see the files; prompts get only `brandKit.visualStyle` text. Logo and
+   colours fill the email brand only where it is empty (`lib/brand/email-sync.ts`). Images only
+   (no short videos as past posts: the bucket takes images). Not built: Reel video plans
+   reading the kit (slice 9), clean-up of uploads from an onboarding never finished, the
+   design's per-image "what is this" filled by the text model (replaced by vision). Tests:
+   `tests/brand-assets.test.mjs`.
 6. **Voice samples.** Three captions on screen 6 and "write 3 new samples" in the hub.
 7. **Website reading** with every guard above. Tests: private-address refusal incl. on redirect,
    robots.txt, size and time caps, page selection, snapshot stored unconfirmed.

@@ -1,4 +1,5 @@
 import type { AudienceEligibilityPreview } from "@/lib/contacts/types";
+import type { BrandAsset, BrandColours } from "@/lib/brand/assets";
 
 export type { AudienceEligibilityPreview } from "@/lib/contacts/types";
 
@@ -42,6 +43,12 @@ export interface OnboardingAnswers {
   fromMara: BrandLearnedKey[];
   /** Facts MARA found that the owner has not ticked. Stored aside, never used in captions. */
   factsUnconfirmed: string[];
+  /** Slice 5: images uploaded on "Give MARA your brand" (stored in the private bucket, saved with the kit at Finish). */
+  assets: BrandAsset[];
+  /** Slice 5: the two brand colours, computed from the logo or picked; null until a logo or a pick. */
+  colours: BrandColours | null;
+  /** Slice 5: one-hour preview links for the uploads, by path. Screen-only, never saved. */
+  assetPreviews: Record<string, string>;
 }
 
 /** The kit answer keys MARA's reading can fill (slice 4). `facts` means the unconfirmed list. */
@@ -73,6 +80,10 @@ export interface OnboardingKitInput {
   fromDescription?: string[];
   /** Slice 4: facts MARA found that the owner did not confirm. Never read by generation. */
   factsUnconfirmed?: string[];
+  /** Slice 5: the uploaded logo, product photos and past posts (references only). Omitted when none. */
+  assets?: BrandAsset[];
+  /** Slice 5: the two brand colours (computed from the logo, or picked). Omitted when none. */
+  colours?: BrandColours;
 }
 
 export interface Toast {

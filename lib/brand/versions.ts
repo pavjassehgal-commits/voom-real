@@ -11,6 +11,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { BRAND_KIT_TABLE } from "./context";
+import type { BrandAsset } from "./assets";
 import type { BusinessProfileInput, OnboardingInput } from "@/lib/voom/types";
 
 export type BrandKitSource = "onboarding" | "brand_hub" | "extraction";
@@ -21,6 +22,8 @@ export interface BrandKitVersionInput {
   answers: Record<string, unknown>;
   /** Omit to keep the previous brief; null or "" clears it. */
   brief?: string | null;
+  /** Slice 5: omit to keep the previous asset list; an array replaces it in full (same rule as every field). */
+  assets?: BrandAsset[];
   changeSummary?: string;
   changedKeys?: string[];
 }
@@ -74,6 +77,8 @@ export function brandKitAnswersFromOnboarding(input: OnboardingInput): Record<st
     ...(kit.factsUnconfirmed?.length ? { facts_unconfirmed: kit.factsUnconfirmed } : {}),
     ...(Object.keys(provenance).length ? { provenance } : {}),
     ...(kit.wantedAutomation ? { wanted_automation: kit.wantedAutomation } : {}),
+    // Slice 5: the logo colours, only when there are some (a skipped screen carries the old ones forward).
+    ...(kit.colours ? { colours: kit.colours } : {}),
   };
 }
 
@@ -118,7 +123,7 @@ export async function appendBrandKitVersion(
 ): Promise<number | null> {
   try {
     const { data: newest, error: readError } = await db.from(BRAND_KIT_TABLE)
-      .select("version,answers,brief").eq("owner_user_id", ownerId)
+      .select("version,answers,brief,assets").eq("owner_user_id", ownerId)
       .order("version", { ascending: false }).limit(1).maybeSingle();
     if (readError) throw new Error(readError.message);
     const current = typeof newest?.version === "number" ? newest.version : 0;
@@ -127,14 +132,21 @@ export async function appendBrandKitVersion(
       newest ? { answers: (newest.answers ?? {}) as Record<string, unknown>, brief: typeof newest.brief === "string" ? newest.brief : null } : null,
       input,
     );
+    // Assets follow the same rule as every field: replaced in full when the
+    // save owns them, otherwise carried over untouched.
+    const previousAssets = Array.isArray(newest?.assets) ? (newest.assets as unknown[]) : [];
+    const assets = input.assets ?? previousAssets;
+    const changedKeys = [...merged.changedKeys];
+    if (input.assets !== undefined && JSON.stringify(previousAssets) !== JSON.stringify(input.assets)) changedKeys.push("assets");
     const { error } = await db.from(BRAND_KIT_TABLE).insert({
       owner_user_id: ownerId,
       version,
       answers: merged.answers,
       brief: merged.brief,
+      assets,
       source: input.source,
       change_summary: input.changeSummary?.slice(0, 300) ?? null,
-      changed_keys: input.changedKeys ?? merged.changedKeys,
+      changed_keys: input.changedKeys ?? changedKeys,
     });
     if (error) throw new Error(error.message);
     return version;

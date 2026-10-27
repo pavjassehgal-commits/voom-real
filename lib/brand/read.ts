@@ -6,6 +6,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { BRAND_KIT_TABLE } from "./context";
+import { cleanBrandAssets } from "./assets";
 import type { BrandKitVersionView } from "./sections";
 
 export const BRAND_HISTORY_LIMIT = 20;
@@ -16,6 +17,7 @@ export function brandKitVersionView(row: Record<string, unknown>): BrandKitVersi
     version: typeof row.version === "number" ? row.version : Number(row.version ?? 0),
     answers,
     brief: typeof row.brief === "string" ? row.brief : "",
+    assets: cleanBrandAssets(row.assets ?? []) ?? [],
     source: typeof row.source === "string" ? row.source : "",
     changeSummary: typeof row.change_summary === "string" ? row.change_summary : "",
     changedKeys: Array.isArray(row.changed_keys) ? row.changed_keys.map(String) : [],
@@ -27,7 +29,7 @@ export function brandKitVersionView(row: Record<string, unknown>): BrandKitVersi
 export async function loadBrandKitHistory(db: SupabaseClient, ownerId: string, limit = BRAND_HISTORY_LIMIT): Promise<BrandKitVersionView[]> {
   try {
     const { data, error } = await db.from(BRAND_KIT_TABLE)
-      .select("version,answers,brief,source,change_summary,changed_keys,created_at")
+      .select("version,answers,brief,assets,source,change_summary,changed_keys,created_at")
       .eq("owner_user_id", ownerId)
       .order("version", { ascending: false })
       .limit(limit);

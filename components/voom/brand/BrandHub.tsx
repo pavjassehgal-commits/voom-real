@@ -9,11 +9,13 @@
  * component as the last wizard screen (slice 3): it hides History and the
  * operating section and offers "Looks right" instead.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { Icon } from "@/components/voom/icons";
 import { AutomationMode } from "@/components/voom/operating/AutomationMode";
 import { Btn, Card, Chip, Field, Input, Tag, Textarea } from "@/components/voom/ui/primitives";
+import { BrandAssetsEditor } from "@/components/voom/brand/BrandAssetsEditor";
 import { saveBrandSection } from "@/lib/brand/actions";
+import { coloursAfterLogo, describeBrandAssets, withAddedAsset, withAssetText, withoutAsset, type BrandAsset } from "@/lib/brand/assets";
 import {
   answerKeyLabel, AVOID_RULES, BRAND_SECTIONS, brandSectionMeta, validateBrandSection,
   type BrandKitVersionView, type BrandSectionId, type BrandSectionValues,
@@ -38,6 +40,10 @@ export interface BrandHubProps {
    */
   persist?: "server" | "local";
   onLocalSave?: (id: BrandSectionId, values: BrandSectionValues[BrandSectionId]) => void;
+  /** Slice 5: one-hour preview links for the saved images, by path (signed on the server). */
+  assetUrls?: Record<string, string>;
+  /** Slice 5: true when MARA's image reading is configured (AI_VISION_*). */
+  visionEnabled?: boolean;
 }
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -107,10 +113,11 @@ function Pick({ options, value, onChange, disabled }: { options: readonly string
   );
 }
 
-export function BrandHub({ mode, initialValues, history, plan, automation, onDone, persist = "server", onLocalSave }: BrandHubProps) {
+export function BrandHub({ mode, initialValues, history, plan, automation, onDone, persist = "server", onLocalSave, assetUrls, visionEnabled = false }: BrandHubProps) {
   const [values, setValues] = useState<BrandSectionValues>(initialValues);
   const [editing, setEditing] = useState<BrandSectionId | null>(null);
   const [draft, setDraft] = useState<BrandSectionValues[BrandSectionId] | null>(null);
+  const [previews, setPreviews] = useState<Record<string, string>>(assetUrls ?? {});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -130,7 +137,7 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
         if (!result.ok) return;
         setValues((prev) => ({ ...prev, operate: { ...prev.operate, automation: next } }));
         setVersions((prev) => [{
-          version: result.version, answers: { automation: next }, brief: "", source: "brand_hub",
+          version: result.version, answers: { automation: next }, brief: "", assets: prev[0]?.assets ?? [], source: "brand_hub",
           changeSummary: "What MARA may do updated", changedKeys: ["automation"], createdAt: new Date().toISOString(),
         }, ...prev]);
       });
@@ -147,6 +154,14 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
   }
 
   function cancelEdit() {
+    // Images uploaded during a cancelled edit were never saved: delete them.
+    if (editing === "assets" && draft) {
+      const saved = new Set(values.assets.assets.map((asset) => asset.path));
+      for (const asset of (draft as BrandSectionValues["assets"]).assets) {
+        if (saved.has(asset.path)) continue;
+        void fetch("/api/brand/assets", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: asset.path }) }).catch(() => null);
+      }
+    }
     setEditing(null);
     setDraft(null);
     setError("");
@@ -200,6 +215,7 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
         version: result.version,
         answers: editing === "brief" ? {} : answersFor(editing, saved),
         brief: editing === "brief" ? (saved as BrandSectionValues["brief"]).brief : prev[0]?.brief ?? "",
+        assets: editing === "assets" ? (saved as BrandSectionValues["assets"]).assets : prev[0]?.assets ?? [],
         source: "brand_hub",
         changeSummary: `${brandSectionMeta(editing).title} updated`,
         changedKeys: result.changedKeys,
@@ -247,9 +263,21 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
               )}
             </div>
             {isEditing && draft ? (
-              <SectionEditor id={section.id} draft={draft} onChange={setDraft} disabled={busy} />
+              section.id === "assets" ? (
+                <AssetsSectionEditor
+                  draft={draft as BrandSectionValues["assets"]}
+                  updateDraft={setDraft}
+                  savedPaths={new Set(values.assets.assets.map((asset) => asset.path))}
+                  previews={previews}
+                  setPreviews={setPreviews}
+                  visionEnabled={visionEnabled}
+                  disabled={busy}
+                />
+              ) : (
+                <SectionEditor id={section.id} draft={draft} onChange={setDraft} disabled={busy} />
+              )
             ) : (
-              <SectionView id={section.id} values={values} plan={plan} automation={automation} mode={mode} onConfirmFact={oneTapConfirm} />
+              <SectionView id={section.id} values={values} plan={plan} automation={automation} mode={mode} onConfirmFact={oneTapConfirm} previews={previews} />
             )}
           </Card>
           </section>
@@ -288,8 +316,8 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
                         {entry.changedKeys.map((key) => (
                           <div key={key}>
                             <div className="font-semibold text-text-2">{answerKeyLabel(key)}</div>
-                            <div className="text-text-3">Before: <span className="text-text">{describeValue(key === "brief" ? previous?.brief : previous?.answers[key])}</span></div>
-                            <div className="text-text-3">After: <span className="text-text">{describeValue(key === "brief" ? entry.brief : entry.answers[key])}</span></div>
+                            <div className="text-text-3">Before: <span className="text-text">{key === "assets" ? describeBrandAssets(previous?.assets) : describeValue(key === "brief" ? previous?.brief : previous?.answers[key])}</span></div>
+                            <div className="text-text-3">After: <span className="text-text">{key === "assets" ? describeBrandAssets(entry.assets) : describeValue(key === "brief" ? entry.brief : entry.answers[key])}</span></div>
                           </div>
                         ))}
                       </div>
@@ -334,12 +362,95 @@ function answersFor(id: BrandSectionId, saved: BrandSectionValues[BrandSectionId
       return { facts_confirmed: v.facts, facts_unconfirmed: v.unconfirmed };
     }
     case "operate": return { ...(saved as BrandSectionValues["operate"]) };
+    case "assets": return { colours: (saved as BrandSectionValues["assets"]).colours };
     default: return {};
   }
 }
 
-function SectionView({ id, values, plan, automation, mode, onConfirmFact }: { id: BrandSectionId; values: BrandSectionValues; plan: PlanId; automation: AutomationModeValue; mode: "hub" | "onboarding"; onConfirmFact?: (fact: string) => void }) {
+/** The images section in edit mode: every change goes through functional updates, so out-of-order uploads never clash. */
+function AssetsSectionEditor({ draft, updateDraft, savedPaths, previews, setPreviews, visionEnabled, disabled }: {
+  draft: BrandSectionValues["assets"];
+  updateDraft: Dispatch<SetStateAction<BrandSectionValues[BrandSectionId] | null>>;
+  savedPaths: ReadonlySet<string>;
+  previews: Record<string, string>;
+  setPreviews: Dispatch<SetStateAction<Record<string, string>>>;
+  visionEnabled: boolean;
+  disabled: boolean;
+}) {
+  const update = (fn: (prev: BrandSectionValues["assets"]) => BrandSectionValues["assets"]) =>
+    updateDraft((prev) => (prev ? fn(prev as BrandSectionValues["assets"]) : prev));
+  return (
+    <BrandAssetsEditor
+      assets={draft.assets}
+      colours={draft.colours}
+      previews={previews}
+      visionEnabled={visionEnabled}
+      disabled={disabled}
+      savedPaths={savedPaths}
+      onAdd={(asset: BrandAsset, previewUrl, computed) => {
+        if (previewUrl) setPreviews((prev) => ({ ...prev, [asset.path]: previewUrl }));
+        update((prev) => ({ assets: withAddedAsset(prev.assets, asset), colours: asset.kind === "logo" ? coloursAfterLogo(prev.colours, computed) : prev.colours }));
+      }}
+      onText={(path, text, by) => update((prev) => ({ ...prev, assets: withAssetText(prev.assets, path, text, by) }))}
+      onRemove={(path) => update((prev) => ({ ...prev, assets: withoutAsset(prev.assets, path) }))}
+      onColours={(colours) => update((prev) => ({ ...prev, colours }))}
+    />
+  );
+}
+
+function AssetThumb({ url, label }: { url?: string; label: string }) {
+  return url
+    ? <div role="img" aria-label={label} className="h-16 w-16 flex-none rounded-xl border border-line bg-surface-2 bg-cover bg-center" style={{ backgroundImage: `url("${url}")` }} />
+    : <div aria-label={label} className="grid h-16 w-16 flex-none place-items-center rounded-xl border border-line bg-surface-2 text-text-3"><Icon name="img" size={16} /></div>;
+}
+
+function SectionView({ id, values, plan, automation, mode, onConfirmFact, previews }: { id: BrandSectionId; values: BrandSectionValues; plan: PlanId; automation: AutomationModeValue; mode: "hub" | "onboarding"; onConfirmFact?: (fact: string) => void; previews?: Record<string, string> }) {
   switch (id) {
+    case "assets": {
+      const { assets, colours } = values.assets;
+      if (!assets.length && !colours) {
+        return <p className="text-[13.5px] text-text-3">No images yet. Add your logo, product photos and posts you&apos;re proud of; MARA keeps your look from them.</p>;
+      }
+      const groups: { kind: BrandAsset["kind"]; title: string }[] = [
+        { kind: "logo", title: "Logo" },
+        { kind: "product", title: "Products" },
+        { kind: "past_post", title: "Past posts" },
+      ];
+      return (
+        <div className="space-y-3">
+          {colours ? (
+            <div className="flex flex-wrap items-center gap-2 text-[13px]" data-brand-colours>
+              <span className="font-semibold text-text-2">Brand colours</span>
+              {[colours.primary, colours.secondary].filter(Boolean).map((colour) => (
+                <span key={colour} className="flex items-center gap-1.5"><span className="h-4 w-4 rounded-full border border-line" style={{ background: colour ?? undefined }} /><span className="font-mono text-text-3">{colour}</span></span>
+              ))}
+              <Tag tone={colours.source === "logo" ? "t-brand" : "t-grey"}>{colours.source === "logo" ? "Computed from your logo" : "Picked by you"}</Tag>
+            </div>
+          ) : null}
+          {groups.map(({ kind, title }) => {
+            const items = assets.filter((asset) => asset.kind === kind);
+            if (!items.length) return null;
+            return (
+              <div key={kind}>
+                <div className="mb-1.5 text-[12px] font-semibold text-text-2">{title}</div>
+                <ul className="space-y-2">
+                  {items.map((asset) => (
+                    <li key={asset.path} className="flex gap-3" data-asset={asset.kind}>
+                      <AssetThumb url={previews?.[asset.path]} label={asset.description || title} />
+                      <div className="min-w-0 text-[13.5px]">
+                        <p>{asset.description || <span className="text-text-3">No description yet.</span>}{asset.describedBy === "mara" ? <Tag tone="t-brand" className="ml-1.5">MARA&apos;s guess</Tag> : null}</p>
+                        {asset.chips.length ? <div className="mt-1 flex flex-wrap gap-1">{asset.chips.map((chip) => <Tag key={chip} tone="t-grey">{chip}</Tag>)}</div> : null}
+                        {asset.look ? <p className="mt-1 text-[12.5px] text-text-3">{asset.look}</p> : null}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
     case "basics":
       return (
         <div className="space-y-2">

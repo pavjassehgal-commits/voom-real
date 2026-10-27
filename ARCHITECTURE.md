@@ -27,7 +27,7 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 | Database + auth + storage | Supabase. Packages `@supabase/ssr`, `@supabase/supabase-js` |
 | Validation | zod |
 | Images | sharp (inspect/resize), image overlays |
-| Tests | Node's built-in test runner: `npm test` runs `tests/*.test.mjs` (113 files, 1,734 tests; 4 are deliberately skipped in `voom-plans-credits-v1` with notes pointing to their replacements). Some use PGlite (an in-memory Postgres) to test SQL; 25 layout tests render pages in a real headless Chrome (found at `/Applications/Google Chrome.app`, or `VOOM_CHROMIUM_PATH`). Baseline counts live in `docs/baseline.md`. |
+| Tests | Node's built-in test runner: `npm test` runs `tests/*.test.mjs` (114 files, 1,751 tests; 4 are deliberately skipped in `voom-plans-credits-v1` with notes pointing to their replacements). Some use PGlite (an in-memory Postgres) to test SQL; 25 layout tests render pages in a real headless Chrome (found at `/Applications/Google Chrome.app`, or `VOOM_CHROMIUM_PATH`). Baseline counts live in `docs/baseline.md`. |
 | Hosting | Vercel (`vercel.json` has 2 daily crons) |
 
 ## Folder map
@@ -53,8 +53,8 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 |---|---|
 | `lib/voom/` | Core app: types, client state store (`store.tsx`), onboarding questions (`onboardingData.ts`), saving onboarding/settings (`mutations.ts`), "who is logged in" (`server-data.ts` → `getCurrentUser`), timezone, cadence, schedule guards |
 | `lib/voom/workflow/` | The rolling 7-day marketing plan: builds slots, assigns channels, asks MARA to fill them, moves items through plan → draft → approval → schedule |
-| `lib/brand/` | Brand Kit v2 (migration 0059): `context.ts` is the ONE reader generation uses (`loadBrandContext()` = core fields from `businesses` + the newest `brand_kits` row's brief, offerings, avoid rules, banned words, facts, notes, voice samples; fails open to "no kit"); `versions.ts` appends a kit version on every onboarding/Settings/Brand Hub save, carrying the previous version forward and replacing only the fields that save owns; `sections.ts` defines the Brand Hub sections and which fields and `businesses` columns each owns; `actions.ts` is the hub's save action; `read.ts` loads the version history; `extract.ts` + `extract-actions.ts` are the one AI read of the onboarding description (strict schema over our own option lists, never stored) |
-| `lib/ai/` | Connection to the AI text model (any OpenAI-compatible API; default Groq) |
+| `lib/brand/` | Brand Kit v2 (migration 0059): `context.ts` is the ONE reader generation uses (`loadBrandContext()` = core fields from `businesses` + the newest `brand_kits` row's brief, offerings, avoid rules, banned words, facts, notes, voice samples; fails open to "no kit"); `versions.ts` appends a kit version on every onboarding/Settings/Brand Hub save, carrying the previous version forward and replacing only the fields that save owns; `sections.ts` defines the Brand Hub sections and which fields and `businesses` columns each owns; `actions.ts` is the hub's save action; `read.ts` loads the version history; `extract.ts` + `extract-actions.ts` are the one AI read of the onboarding description (strict schema over our own option lists, never stored); slice 5 images: `assets.ts` (reference rules, caps, path ownership, list edits, the text-only visual style), `asset-storage.ts` (private `brand-kit` bucket, service role, one-hour signed previews), `image.ts` (logo colours from pixels, small JPEG for vision, with sharp), `vision.ts` (one image-reading call), `email-sync.ts` (logo and colours fill the email brand only where empty). Routes: `app/api/brand/assets` (upload, remove unsaved) and `app/api/brand/assets/describe` |
+| `lib/ai/` | Connection to the AI text model (any OpenAI-compatible API; default Groq), plus the optional image-reading model (`AI_VISION_*`, off until `AI_VISION_MODEL` is set; Groq, OpenRouter or any OpenAI-compatible vision model) |
 | `lib/mara/` | MARA's brain: chat prompt, tools, Reel production, video generation and polling, paid-media spending rules, Autopilot safety |
 | `lib/media/` | Image/video generation providers, checking uploaded files, overlays |
 | `lib/post/` | Post Studio: drafts, copy prompts (`prompt.ts`), brand context loader for posts (`server-data.ts`), assets |
@@ -96,10 +96,15 @@ link goes to `/reset-password?error=link_invalid`, which offers a new one. The e
 link expiry are Supabase dashboard settings, not code: see `handover/production-setup.md`.
 Missing today: 2FA.
 
-**Onboarding.** `components/voom/onboarding/OnboardingWizard.tsx` (10 screens, one topic each,
+**Onboarding.** `components/voom/onboarding/OnboardingWizard.tsx` (11 screens, one topic each,
 five required answers, per-screen Skip; option lists in `lib/voom/onboardingData.ts`; the
 Brand Brief screen is the Brand Hub component in local mode; `AnalyzingScreen.tsx` is the
-"we're setting things up" screen shown at the end). "Send to MARA" on the description screen
+"we're setting things up" screen shown at the end). Screen 2, "Give MARA your brand", takes
+the website, a logo, up to 10 product photos and up to 5 past posts
+(`components/voom/brand/BrandAssetsEditor.tsx`, shared with the Brand page): each file uploads
+at once to the private `brand-kit` bucket, a logo gets two colours computed from its pixels,
+and when image reading is configured MARA fills one line per image (marked as her guess).
+"Send to MARA" on the description screen
 calls `extractBrandDescription` (`lib/brand/extract-actions.ts`, one structured AI read via
 `lib/brand/extract.ts`, 12 s wait, 10 reads per user per hour): what she found is prefilled
 into the screen that asks for it, marked as her guess, and facts wait under Facts on the
@@ -109,8 +114,10 @@ Brand Brief screen until confirmed; a failed read falls back to the keyword gues
 only to the email brand table; the automation level is saved as the real mode the plan allows)
 and appends `brand_kits` version 1 with the brief, offerings, rules, banned words, notes,
 confirmed facts, plus `facts_unconfirmed` (facts MARA found that were not ticked; never read
-by generation) and `provenance` (which saved values are MARA's reading, accepted unchanged)
-(best-effort). Design and remaining slices: `docs/brand-kit-v2-design.md`.
+by generation), `provenance` (which saved values are MARA's reading, accepted unchanged),
+the image references (`assets` column) and `colours` (best-effort). The logo and colours then
+fill the email brand only where Settings → Email identity is still empty. Design and remaining
+slices: `docs/brand-kit-v2-design.md`.
 
 **Plan → content → approval → publish.**
 1. Daily cron `/api/cron/weekly-plans` or the "Build plan" button (`/api/plan`) runs `lib/voom/workflow/service.ts`.
@@ -122,8 +129,11 @@ by generation) and `provenance` (which saved values are MARA's reading, accepted
 **AI generation.** Copy: `lib/ai` with strict JSON output validated by zod. Post Studio (copy,
 Story, import suggestions) and the weekly plan read the brand through `lib/brand/context.ts`;
 when the account has a Brand Kit with content, the prompt payload gains a `brandKit` block and
-the system prompt a BRAND KIT rules section, otherwise both are exactly as before. Images:
-`lib/media/provider.ts` (text prompt only today). Videos: `lib/mara/video-*` with a polling worker
+the system prompt a BRAND KIT rules section, otherwise both are exactly as before. With brand
+images or colours the block also carries `visualStyle` (palette, logo, product and past-post
+descriptions as text, never files) and one extra rule tells MARA to fit every visual prompt to
+it. Images: `lib/media/provider.ts` (text prompt only today; the image model never sees the
+owner's files). Reel video plans (`lib/mara/video-ports.ts`) do not read the brand kit yet. Videos: `lib/mara/video-*` with a polling worker
 every 2 min. Credits are reserved first by `lib/billing/entitlement-guard.ts`.
 
 **Analytics.** `/api/cron/instagram-performance` (every 6 h) stores snapshots →
@@ -152,6 +162,7 @@ All keys go in `.env.local` (copy from `.env.example`). Never commit real values
 `NEXT_PUBLIC_` is visible in the browser; everything else is server-only.
 
 ## Not built yet
-2FA · LinkedIn · Stripe billing · onboarding's upload and sample-caption screens, brand asset
-uploads, website reading and Instagram import (`docs/brand-kit-v2-design.md`, slices 5–8) ·
-reference images in image generation.
+2FA · LinkedIn · Stripe billing · onboarding's sample-caption screen, website reading and
+Instagram import (`docs/brand-kit-v2-design.md`, slices 6–8) · the brand kit in Reel video
+plans (slice 9) · reference images in image generation · clean-up of brand images uploaded
+during an onboarding that was never finished.

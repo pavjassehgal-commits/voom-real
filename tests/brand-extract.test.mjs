@@ -193,10 +193,11 @@ test("a successful read returns MARA's guesses and consumes the brand_extract bu
 
 /* ── 5. The wizard ───────────────────────────────────────────────────────── */
 
-test("still ten screens: the read prefills the screen that asks, so each answer is confirmed exactly once", async () => {
-  assert.deepEqual(data.OB_STEPS, ["Your name", "Your brand", "The basics", "Audience & goal", "Your voice", "What to avoid", "Pace", "Working style", "Brand Brief", "Your channels"]);
-  assert.equal(wizard.LAST_STEP, 9);
-  assert.deepEqual([...wizard.SKIPPABLE_STEPS], [4, 5, 6, 8, 9]);
+test("no confirmation screen: the read prefills the screen that asks, so each answer is confirmed exactly once", async () => {
+  // Slice 5 added the images screen at index 1; there is still no separate "what I learned" screen.
+  assert.deepEqual(data.OB_STEPS, ["Your name", "Logo & photos", "Your brand", "The basics", "Audience & goal", "Your voice", "What to avoid", "Pace", "Working style", "Brand Brief", "Your channels"]);
+  assert.equal(wizard.LAST_STEP, 10);
+  assert.deepEqual([...wizard.SKIPPABLE_STEPS], [1, 5, 6, 7, 9, 10]);
   assert.equal(wizard.EXTRACTION_WAIT_MS, 12_000);
 
   const source = await read("components/voom/onboarding/OnboardingWizard.tsx");

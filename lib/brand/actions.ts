@@ -10,8 +10,12 @@
  */
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/utils/supabase/server";
+import { createAdminClient } from "@/utils/supabase/admin";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { appendBrandKitVersion } from "./versions";
+import { isOwnBrandAssetPath, type BrandAsset } from "./assets";
+import { loadNewestBrandAssets, removeBrandAssetObjects } from "./asset-storage";
+import { syncBrandToEmail } from "./email-sync";
 import { brandSectionMeta, validateBrandSection, answerKeyLabel, type BrandSectionId, type BrandSectionValues } from "./sections";
 
 export type SaveBrandSectionResult =
@@ -26,7 +30,13 @@ export async function saveBrandSection(sectionId: string, raw: unknown): Promise
   if (!validated.ok) return validated;
   const meta = brandSectionMeta(validated.id);
 
+  // Slice 5: every image must sit in this owner's own folder of the bucket.
+  if (validated.assets && validated.assets.some((asset) => !isOwnBrandAssetPath(user.id, asset.path, asset.kind))) {
+    return { ok: false, error: "One of those images is not in your brand kit. Remove it and try again." };
+  }
+
   const supabase = await createClient();
+  const previousAssets = validated.assets ? await loadNewestBrandAssets(supabase, user.id) : [];
 
   if (Object.keys(validated.business).length > 0) {
     const { error } = await supabase.from("businesses").update(validated.business).eq("owner_user_id", user.id);
@@ -41,15 +51,34 @@ export async function saveBrandSection(sectionId: string, raw: unknown): Promise
     source: "brand_hub",
     answers: validated.answers,
     ...(validated.brief !== undefined ? { brief: validated.brief } : {}),
+    ...(validated.assets ? { assets: validated.assets } : {}),
     changeSummary,
   });
   if (version === null) {
     return { ok: false, error: "Voom couldn't record that change. Apply the latest Supabase migration (0059), then try again." };
   }
 
+  if (validated.assets) await afterAssetsSaved(user.id, previousAssets, validated.assets, validated.values as BrandSectionValues["assets"]);
+
   // The keys this save owns are what the history line names; the exact
   // changed set is recorded on the row by appendBrandKitVersion.
   const changedKeys = [...meta.ownsKeys];
   revalidatePath("/app", "layout");
   return { ok: true, version, changedKeys, values: validated.values, changeSummary: `${changedKeys.map(answerKeyLabel).join(", ")} saved` };
+}
+
+/**
+ * After an images save: files the owner removed are deleted from storage (a
+ * removed image is gone, not hidden), and the logo and colours fill the email
+ * brand where it is still empty. Both best-effort: the version is saved.
+ */
+async function afterAssetsSaved(ownerId: string, previous: BrandAsset[], next: BrandAsset[], values: BrandSectionValues["assets"]): Promise<void> {
+  let admin: ReturnType<typeof createAdminClient>;
+  try { admin = createAdminClient(); } catch { return; }
+  const kept = new Set(next.map((asset) => asset.path));
+  const removed = previous.map((asset) => asset.path).filter((path) => !kept.has(path));
+  if (removed.length) await removeBrandAssetObjects(admin, ownerId, removed);
+  const { data: business } = await admin.from("businesses").select("brand_name").eq("owner_user_id", ownerId).maybeSingle()
+    .then((result) => result, () => ({ data: null }));
+  await syncBrandToEmail(admin, ownerId, { assets: next, colours: values.colours, brandName: String((business as { brand_name?: string } | null)?.brand_name ?? "") });
 }

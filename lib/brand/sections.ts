@@ -8,8 +8,9 @@
  * forward. Pure and dependency-light so the Node suite tests it directly.
  */
 import { z } from "zod";
+import { cleanBrandAssets, cleanBrandColours, type BrandAsset } from "./assets";
 
-export const BRAND_SECTION_IDS = ["basics", "brief", "offerings", "audience", "voice", "avoid", "facts", "operate"] as const;
+export const BRAND_SECTION_IDS = ["basics", "brief", "offerings", "audience", "voice", "avoid", "facts", "assets", "operate"] as const;
 export type BrandSectionId = (typeof BRAND_SECTION_IDS)[number];
 
 /** The six "What you DON'T want" cards from the design. */
@@ -42,6 +43,9 @@ export const BRAND_SECTIONS: readonly BrandSectionMeta[] = [
   { id: "voice", title: "How we sound", intro: "Your personality, plus captions that sound like you and captions that don't.", ownsKeys: ["personality", "voice_samples"], businessColumns: ["brand_personality"] },
   { id: "avoid", title: "What we avoid", intro: "Hard rules, banned words and anything specific MARA should know.", ownsKeys: ["avoid", "notes"], businessColumns: [] },
   { id: "facts", title: "Facts MARA may state", intro: "The only specific facts (years, awards, numbers, places) MARA is allowed to say.", ownsKeys: ["facts_confirmed", "facts_unconfirmed"], businessColumns: [] },
+  // `assets` is the kit's own column (references to images), not an answers key; `colours` is.
+  // Hub only: in onboarding the images have their own screen, so they are confirmed once, there.
+  { id: "assets", title: "Logo, products and past posts", intro: "The images MARA keeps your look from: your logo and its colours, what you sell, and posts you're proud of.", ownsKeys: ["assets", "colours"], businessColumns: [], hubOnly: true },
   { id: "operate", title: "What MARA may do", intro: "How often she posts, how much she does on her own, and where.", ownsKeys: ["pace", "channels", "automation"], businessColumns: ["content_frequency", "preferred_channels", "automation_level"], hubOnly: true },
 ];
 
@@ -68,6 +72,15 @@ const SCHEMAS = {
   avoid: z.object({ rules: lines(20, 200), words: lines(50, 60), notes: z.string().trim().max(800).default("") }).strict(),
   /** `unconfirmed`: facts MARA found in the description that the owner has not confirmed (slice 4). Never read by generation. */
   facts: z.object({ facts: lines(20, 200), unconfirmed: lines(20, 200).default([]) }).strict(),
+  /** Slice 5: image references and the two colours. A malformed reference refuses the whole save. */
+  assets: z.object({ assets: z.array(z.unknown()).default([]), colours: z.unknown().optional() }).strict().transform((v, ctx) => {
+    const assets = cleanBrandAssets(v.assets);
+    if (!assets) {
+      ctx.addIssue({ code: "custom", message: "invalid_assets" });
+      return z.NEVER;
+    }
+    return { assets, colours: cleanBrandColours(v.colours) };
+  }),
   operate: z.object({
     pace: z.string().trim().max(80).default(""),
     channels: lines(10, 40),
@@ -85,6 +98,8 @@ export type ValidatedSection =
       answers: Record<string, unknown>;
       /** Present only for the brief section (undefined = keep the previous brief). */
       brief?: string;
+      /** Present only for the assets section: the full new image list (the kit's `assets` column). */
+      assets?: BrandAsset[];
       /** `businesses` columns to update (dual write); empty for kit-only sections. */
       business: Record<string, unknown>;
       /** The cleaned values, for the client to show after saving. */
@@ -146,6 +161,10 @@ export function validateBrandSection(id: unknown, raw: unknown): ValidatedSectio
       const cleaned = { facts: v.facts, unconfirmed };
       return { ok: true, id: sectionId, values: cleaned, answers: { facts_confirmed: v.facts, facts_unconfirmed: unconfirmed }, business: {} };
     }
+    case "assets": {
+      const v = values as BrandSectionValues["assets"];
+      return { ok: true, id: sectionId, values, answers: { colours: v.colours }, assets: v.assets, business: {} };
+    }
     case "operate": {
       const v = values as BrandSectionValues["operate"];
       const answers: Record<string, unknown> = { pace: v.pace, channels: v.channels };
@@ -164,6 +183,8 @@ export interface BrandKitVersionView {
   version: number;
   answers: Record<string, unknown>;
   brief: string;
+  /** Slice 5: the image references of this version. */
+  assets: BrandAsset[];
   source: string;
   changeSummary: string;
   changedKeys: string[];
@@ -198,7 +219,7 @@ function obj(value: unknown): Record<string, unknown> {
  * the `businesses` row for the core fields (accounts from before Brand Kit v2
  * have a business row and no kit, and must see their real values).
  */
-export function brandHubValues(business: BrandBusinessCore | null, kit: Pick<BrandKitVersionView, "answers" | "brief"> | null): BrandSectionValues {
+export function brandHubValues(business: BrandBusinessCore | null, kit: (Pick<BrandKitVersionView, "answers" | "brief"> & { assets?: unknown }) | null): BrandSectionValues {
   const a = kit?.answers ?? {};
   const has = (key: string) => key in a && a[key] !== undefined && a[key] !== null;
   const avoid = obj(a.avoid);
@@ -224,6 +245,7 @@ export function brandHubValues(business: BrandBusinessCore | null, kit: Pick<Bra
     },
     avoid: { rules: list(avoid.rules), words: list(avoid.words), notes: str(a.notes) },
     facts: { facts: list(a.facts_confirmed), unconfirmed: list(a.facts_unconfirmed) },
+    assets: { assets: cleanBrandAssets(kit?.assets ?? []) ?? [], colours: cleanBrandColours(a.colours) },
     operate: {
       pace: has("pace") ? str(a.pace) : str(business?.content_frequency),
       channels: has("channels") ? list(a.channels) : list(business?.preferred_channels),
@@ -248,6 +270,8 @@ export const ANSWER_KEY_LABELS: Record<string, string> = {
   facts_confirmed: "Facts",
   facts_unconfirmed: "Facts needing confirmation",
   provenance: "Where answers came from",
+  assets: "Images",
+  colours: "Brand colours",
   pace: "Posting pace",
   channels: "Channels",
   automation: "Automation level",

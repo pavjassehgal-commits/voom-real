@@ -7,6 +7,8 @@ import { getCurrentUser } from "./server-data";
 import { normalizeMediaSpendSettings, type MediaSpendSettings } from "@/lib/mara/media-spend";
 import { normalizeWebsiteUrl, WEBSITE_NOT_SAVED_NOTICE } from "./website";
 import { appendBrandKitVersion, brandKitAnswersFromOnboarding, brandKitAnswersFromProfile } from "@/lib/brand/versions";
+import { cleanBrandAssets, cleanBrandColours, isOwnBrandAssetPath } from "@/lib/brand/assets";
+import { syncBrandToEmail } from "@/lib/brand/email-sync";
 import type { BusinessProfileInput, OnboardingInput } from "./types";
 
 /** `notice` is a non-fatal message worth showing (the save itself succeeded). */
@@ -52,22 +54,40 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
   );
   if (businessError) return { ok: false, error: saveError(businessError) };
 
+  // Slice 5: uploads are references the server re-checks: well-formed,
+  // capped, and inside this user's own folder. Anything else is dropped.
+  const assets = (cleanBrandAssets(input.kit?.assets ?? []) ?? []).filter((asset) => isOwnBrandAssetPath(user.id, asset.path, asset.kind));
+  const colours = cleanBrandColours(input.kit?.colours);
+  const checked: OnboardingInput = input.kit ? { ...input, kit: { ...input.kit, assets, colours: colours ?? undefined } } : input;
+
   // Brand Kit v2 dual write (migration 0059): the answers, including the
   // kit-only screens (rules, banned words, notes, facts, offerings, brief),
   // become brand kit version 1 (or the next version after a restart).
   // Best-effort: the businesses row above is what today's generation reads
-  // for the core fields.
+  // for the core fields. A run with no uploads carries the previous images over.
   await appendBrandKitVersion(supabase, user.id, {
     source: "onboarding",
-    answers: brandKitAnswersFromOnboarding(input),
+    answers: brandKitAnswersFromOnboarding(checked),
     ...(input.kit ? { brief: input.kit.brief } : {}),
+    ...(assets.length ? { assets } : {}),
     changeSummary: "Onboarding completed",
   });
 
   const websiteSaved = await saveOnboardingWebsite(user.id, input.website);
+  // After the website: both go through upsert_email_brand, which keeps what it is not sent.
+  if (assets.length || colours) await syncOnboardingBrandToEmail(user.id, { assets, colours, brandName: input.brandName });
 
   revalidatePath("/app", "layout");
   return websiteSaved ? { ok: true } : { ok: true, notice: WEBSITE_NOT_SAVED_NOTICE };
+}
+
+/** Logo and colours fill the email brand where it is still empty (best-effort; never fails onboarding). */
+async function syncOnboardingBrandToEmail(ownerId: string, input: Parameters<typeof syncBrandToEmail>[2]): Promise<void> {
+  try {
+    await syncBrandToEmail(createAdminClient(), ownerId, input);
+  } catch {
+    console.error("[brand-assets] email sync skipped: service role not configured");
+  }
 }
 
 /**

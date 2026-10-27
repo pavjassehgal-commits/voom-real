@@ -17,6 +17,10 @@ export const AI_RATE_LIMITS = {
   reel_produce: { limit: 20, windowSeconds: 3600 },
   /** Onboarding "Send to MARA": one read per attempt, so a handful an hour is plenty. */
   brand_extract: { limit: 10, windowSeconds: 3600 },
+  /** Brand kit uploads (slice 5). Not an AI call; caps storage churn from repeated upload-and-remove. */
+  brand_asset_upload: { limit: 60, windowSeconds: 3600 },
+  /** MARA looking at one brand image (slice 5): one call per image, a full onboarding is 16 at most. */
+  brand_vision: { limit: 40, windowSeconds: 3600 },
 } as const;
 
 export type AiRateLimitBucket = keyof typeof AI_RATE_LIMITS;

@@ -34,6 +34,7 @@ import { normalizeMediaSpendSettings, type MediaSpendSettings } from "@/lib/mara
 import { brandFromBusiness, deriveHandle, type Brand } from "./brand-state";
 import { AUTOMATION_MODE_EVENT, storedAutomationMode, type AutomationModeValue } from "./automation";
 import { canUseAutomationMode } from "@/lib/billing/plans";
+import { coloursAfterLogo, withAddedAsset, withAssetText, withoutAsset, type BrandAsset, type BrandAssetText } from "@/lib/brand/assets";
 import { DEFAULT_FREQ } from "./onboardingData";
 import { applyThemeToDocument, initialTheme, persistTheme, readStoredTheme, subscribeToTheme, themeSnapshot, type ThemeValue } from "./theme";
 
@@ -93,6 +94,9 @@ function emptyOnboard(): OnboardingAnswers {
     learnedNote: "",
     fromMara: [],
     factsUnconfirmed: [],
+    assets: [],
+    colours: null,
+    assetPreviews: {},
   };
 }
 
@@ -212,6 +216,14 @@ interface VoomActions {
    */
   applyLearned: (learned: BrandLearned, forDescription: string) => void;
   markLearnedFailed: (forDescription: string) => void;
+  /**
+   * Slice 5: the "Give MARA your brand" uploads. Applied as functional
+   * updates so uploads and MARA's readings that finish out of order never
+   * overwrite each other.
+   */
+  addOnboardAsset: (asset: BrandAsset, previewUrl: string | null, computed: { primary: string | null; secondary: string | null } | null) => void;
+  setOnboardAssetText: (path: string, text: BrandAssetText, by: "mara" | "owner") => void;
+  removeOnboardAsset: (path: string) => void;
   finishOnboarding: (skipped: boolean) => Promise<boolean>;
   restartOnboarding: () => Promise<void>;
 }
@@ -445,6 +457,29 @@ export function VoomProvider({
     setState((s) => ({ ...s, onboard: { ...s.onboard, learned: null, learnedFor: forDescription.trim(), learnedNote: "failed" } }));
   }, []);
 
+  const addOnboardAsset = useCallback<VoomActions["addOnboardAsset"]>((asset, previewUrl, computed) => {
+    setState((s) => {
+      const o = s.onboard;
+      return {
+        ...s,
+        onboard: {
+          ...o,
+          assets: withAddedAsset(o.assets, asset),
+          assetPreviews: previewUrl ? { ...o.assetPreviews, [asset.path]: previewUrl } : o.assetPreviews,
+          colours: asset.kind === "logo" ? coloursAfterLogo(o.colours, computed) : o.colours,
+        },
+      };
+    });
+  }, []);
+
+  const setOnboardAssetText = useCallback<VoomActions["setOnboardAssetText"]>((path, text, by) => {
+    setState((s) => ({ ...s, onboard: { ...s.onboard, assets: withAssetText(s.onboard.assets, path, text, by) } }));
+  }, []);
+
+  const removeOnboardAsset = useCallback<VoomActions["removeOnboardAsset"]>((path) => {
+    setState((s) => ({ ...s, onboard: { ...s.onboard, assets: withoutAsset(s.onboard.assets, path) } }));
+  }, []);
+
   const finishOnboarding = useCallback<VoomActions["finishOnboarding"]>(
     async (skipped) => {
       const o = state.onboard;
@@ -483,6 +518,9 @@ export function VoomProvider({
           // found that the owner did not tick (kept aside, never used).
           ...(o.fromMara.length ? { fromDescription: o.fromMara } : {}),
           ...(o.factsUnconfirmed.length ? { factsUnconfirmed: o.factsUnconfirmed } : {}),
+          // Slice 5: image references and colours, only when there are some.
+          ...(o.assets.length ? { assets: o.assets } : {}),
+          ...(o.colours ? { colours: o.colours } : {}),
         },
       };
 
@@ -547,6 +585,9 @@ export function VoomProvider({
       setOnboardStep,
       applyLearned,
       markLearnedFailed,
+      addOnboardAsset,
+      setOnboardAssetText,
+      removeOnboardAsset,
       finishOnboarding,
       restartOnboarding,
     }),
@@ -567,6 +608,9 @@ export function VoomProvider({
       setOnboardStep,
       applyLearned,
       markLearnedFailed,
+      addOnboardAsset,
+      setOnboardAssetText,
+      removeOnboardAsset,
       finishOnboarding,
       restartOnboarding,
     ],

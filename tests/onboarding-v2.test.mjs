@@ -42,14 +42,15 @@ const { Providers } = await importApp("app/app/Providers.tsx");
 
 /* ── 1. Screens and rules ────────────────────────────────────────────────── */
 
-test("ten screens, five required answers, Skip only where a default is safe, no global Skip", async () => {
-  assert.deepEqual(data.OB_STEPS, ["Your name", "Your brand", "The basics", "Audience & goal", "Your voice", "What to avoid", "Pace", "Working style", "Brand Brief", "Your channels"]);
-  assert.equal(wizard.LAST_STEP, 9);
-  assert.deepEqual([...wizard.SKIPPABLE_STEPS], [4, 5, 6, 8, 9], "voice, avoid, pace, brief and channels can be skipped");
+test("eleven screens, five required answers, Skip only where a default is safe, no global Skip", async () => {
+  // Slice 5 added "Give MARA your brand" (logo and photos) as screen 2; tests/brand-assets.test.mjs covers it.
+  assert.deepEqual(data.OB_STEPS, ["Your name", "Logo & photos", "Your brand", "The basics", "Audience & goal", "Your voice", "What to avoid", "Pace", "Working style", "Brand Brief", "Your channels"]);
+  assert.equal(wizard.LAST_STEP, 10);
+  assert.deepEqual([...wizard.SKIPPABLE_STEPS], [1, 5, 6, 7, 9, 10], "images, voice, avoid, pace, brief and channels can be skipped");
 
   const empty = { displayName: "", desc: "", industry: "", goal: "", auto: "" };
   const full = { displayName: "Alex", desc: "We roast our own beans near the marina.", industry: "Restaurant / Café", goal: "More walk-in customers", auto: "assisted" };
-  const required = [0, 1, 2, 3, 7].map((step) => wizard.stepBlocker(step, empty));
+  const required = [0, 2, 3, 4, 8].map((step) => wizard.stepBlocker(step, empty));
   assert.deepEqual(required, [
     "Tell MARA what to call you",
     "Tell MARA a little more — a sentence or two",
@@ -57,9 +58,9 @@ test("ten screens, five required answers, Skip only where a default is safe, no 
     "Choose your main marketing goal",
     "Choose how much MARA should do",
   ]);
-  for (const step of [4, 5, 6, 8, 9]) assert.equal(wizard.stepBlocker(step, empty), null, `screen ${step + 1} never blocks`);
-  for (let step = 0; step <= 9; step += 1) assert.equal(wizard.stepBlocker(step, full), null);
-  assert.equal(wizard.stepBlocker(1, { ...full, desc: "Four words only here" }), "Tell MARA a little more — a sentence or two");
+  for (const step of [1, 5, 6, 7, 9, 10]) assert.equal(wizard.stepBlocker(step, empty), null, `screen ${step + 1} never blocks`);
+  for (let step = 0; step <= 10; step += 1) assert.equal(wizard.stepBlocker(step, full), null);
+  assert.equal(wizard.stepBlocker(2, { ...full, desc: "Four words only here" }), "Tell MARA a little more — a sentence or two");
 
   const source = await read("components/voom/onboarding/OnboardingWizard.tsx");
   assert.doesNotMatch(source, /finish\(true\)/, "the global Skip (finish as skipped) is gone");
@@ -162,7 +163,7 @@ test("a new account's wizard renders its first screen with progress and no globa
     h(Providers, { initialDisplayName: null, initialEmail: "new@example.com", initialBusiness: null }, h(wizard.OnboardingWizard)),
   );
   assert.match(html, /What should MARA call you\?/);
-  assert.match(html, /Step 1 of 10/);
+  assert.match(html, /Step 1 of 11/);
   assert.doesNotMatch(html, />Skip</, "no header Skip button");
   assert.doesNotMatch(html, /Skip this step/, "the name screen cannot be skipped");
   assert.match(html, /Continue/);

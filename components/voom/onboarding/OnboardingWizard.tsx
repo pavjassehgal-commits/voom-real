@@ -1,13 +1,18 @@
 "use client";
 
 /**
- * Onboarding, Brand Kit v2 (docs/brand-kit-v2-design.md, slices 3 and 4).
+ * Onboarding, Brand Kit v2 (docs/brand-kit-v2-design.md, slices 3 to 5).
  *
- * Ten screens, one topic each, with a per-screen Skip where the answer has a
- * safe default and no global Skip. Five answers are required: your name, the
+ * Eleven screens, one topic each, with a per-screen Skip where the answer has
+ * a safe default and no global Skip. Five answers are required: your name, the
  * description, the kind of business, the main goal and the automation level.
  * Everything is kept in the store until "Finish setup", which writes the
  * `businesses` row and brand kit version 1 in one go (lib/voom/mutations.ts).
+ *
+ * Screen 2, "Give MARA your brand" (slice 5): website, logo, product photos
+ * and past posts, all optional. Files upload at once to the private bucket;
+ * when image reading is configured MARA fills a line per image, marked as her
+ * guess. The references are saved with the kit at Finish.
  *
  * "Send to MARA" on the description screen makes ONE structured AI read
  * (lib/brand/extract.ts). Every guess is prefilled into the screen that asks
@@ -17,10 +22,11 @@
  * fails, is slow or finds nothing, the keyword guess picks the category as
  * before and the basics screen says so.
  *
- * Still to come: uploads (slice 5) and sample captions (slice 6).
+ * Still to come: sample captions (slice 6).
  */
 import { useEffect, useMemo, useState } from "react";
 import { useVoomActions, useVoomState } from "@/lib/voom/store";
+import { BrandAssetsEditor } from "@/components/voom/brand/BrandAssetsEditor";
 import { detectIndustry } from "@/lib/voom/demoData";
 import { brandLearnedIsEmpty } from "@/lib/brand/extract";
 import { extractBrandDescription, type ExtractBrandResult } from "@/lib/brand/extract-actions";
@@ -45,12 +51,12 @@ import Logo from "@/app/components/Logo";
 export const LAST_STEP = OB_STEPS.length - 1;
 
 /** Screen indices that other code refers to. */
-const STEP_DESCRIBE = 1;
-const STEP_BASICS = 2;
-const STEP_BRIEF = 8;
+const STEP_DESCRIBE = 2;
+const STEP_BASICS = 3;
+const STEP_BRIEF = 9;
 
 /** Screens whose answer has a safe default. Everything else must be answered. */
-export const SKIPPABLE_STEPS: readonly number[] = [4, 5, 6, 8, 9];
+export const SKIPPABLE_STEPS: readonly number[] = [1, 5, 6, 7, 9, 10];
 
 /** How long "Send to MARA" waits for the read before carrying on without it. */
 export const EXTRACTION_WAIT_MS = 12_000;
@@ -58,14 +64,14 @@ export const EXTRACTION_WAIT_MS = 12_000;
 /** The five required answers, by screen. Returns the message to show, or null when the screen may continue. */
 export function stepBlocker(step: number, onboard: { displayName: string; desc: string; industry: string; goal: string; auto: string }): string | null {
   if (step === 0 && !onboard.displayName.trim()) return "Tell MARA what to call you";
-  if (step === 1 && onboard.desc.trim().split(/\s+/).filter(Boolean).length < 5) return "Tell MARA a little more — a sentence or two";
-  if (step === 2 && !onboard.industry) return "Pick the kind of business";
-  if (step === 3 && !onboard.goal) return "Choose your main marketing goal";
-  if (step === 7 && !onboard.auto) return "Choose how much MARA should do";
+  if (step === 2 && onboard.desc.trim().split(/\s+/).filter(Boolean).length < 5) return "Tell MARA a little more — a sentence or two";
+  if (step === 3 && !onboard.industry) return "Pick the kind of business";
+  if (step === 4 && !onboard.goal) return "Choose your main marketing goal";
+  if (step === 8 && !onboard.auto) return "Choose how much MARA should do";
   return null;
 }
 
-export function OnboardingWizard() {
+export function OnboardingWizard({ visionEnabled = false }: { visionEnabled?: boolean } = {}) {
   const { onboard, onboardStep, igConnected, onboardSaving, onboardError } = useVoomState();
   const { setOnboardField, setOnboardStep, applyLearned, markLearnedFailed, finishOnboarding, toast, goTo } = useVoomActions();
   const [analyzing, setAnalyzing] = useState(false);
@@ -172,15 +178,16 @@ export function OnboardingWizard() {
             </div>
           )}
           {st === 0 && <StepName />}
-          {st === 1 && <StepDescribe words={words} reading={reading} />}
-          {st === 2 && <StepBasics />}
-          {st === 3 && <StepAudienceGoal />}
-          {st === 4 && <StepVoice />}
-          {st === 5 && <StepAvoid />}
-          {st === 6 && <StepPace />}
-          {st === 7 && <StepAutomation />}
-          {st === 8 && <StepBrief />}
-          {st === 9 && <StepChannels igConnected={igConnected} />}
+          {st === 1 && <StepAssets visionEnabled={visionEnabled} />}
+          {st === 2 && <StepDescribe words={words} reading={reading} />}
+          {st === 3 && <StepBasics />}
+          {st === 4 && <StepAudienceGoal />}
+          {st === 5 && <StepVoice />}
+          {st === 6 && <StepAvoid />}
+          {st === 7 && <StepPace />}
+          {st === 8 && <StepAutomation />}
+          {st === 9 && <StepBrief />}
+          {st === 10 && <StepChannels igConnected={igConnected} />}
         </div>
       </div>
 
@@ -339,6 +346,50 @@ function IndustryPicks() {
   );
 }
 
+/**
+ * "Give MARA your brand" (slice 5). Everything optional. The website keeps its
+ * one real use (the email link, saved through the email brand at Finish).
+ */
+function StepAssets({ visionEnabled }: { visionEnabled: boolean }) {
+  const { onboard } = useVoomState();
+  const { setOnboardField, addOnboardAsset, setOnboardAssetText, removeOnboardAsset } = useVoomActions();
+  return (
+    <div>
+      <Title sub="Anything here saves you typing later. All optional: skip it and add images on your Brand page any time.">Give MARA your brand</Title>
+      <label className="mb-5 mt-4 block">
+        <span className="mb-1.5 block text-[12.5px] font-semibold text-text-2">
+          Website <span className="text-text-3">(optional)</span>
+        </span>
+        <input
+          className="h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px]"
+          placeholder="https://yourbusiness.ae"
+          inputMode="url"
+          value={onboard.site}
+          onChange={(e) => setOnboardField("site", e.target.value)}
+        />
+        <span className="mt-1.5 block text-xs text-text-3">
+          Used in your marketing emails as the website link and default button destination. Change it any time in Settings → Email identity.
+        </span>
+      </label>
+      <BrandAssetsEditor
+        assets={onboard.assets}
+        colours={onboard.colours}
+        previews={onboard.assetPreviews}
+        visionEnabled={visionEnabled}
+        onAdd={addOnboardAsset}
+        onText={setOnboardAssetText}
+        onRemove={removeOnboardAsset}
+        onColours={(colours) => setOnboardField("colours", colours)}
+      />
+      {onboard.assets.some((asset) => asset.kind === "logo") || onboard.colours ? (
+        <p className="mt-3 text-[12px] text-text-3">
+          Your logo and colours also go to your marketing emails, unless you already set them in Settings → Email identity.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function StepBasics() {
   const { onboard } = useVoomState();
   const { setOnboardField } = useVoomActions();
@@ -372,21 +423,6 @@ function StepBasics() {
             value={onboard.name}
             onChange={(e) => setOnboardField("name", e.target.value)}
           />
-        </label>
-        <label className="min-w-[200px] flex-1">
-          <span className="mb-1.5 block text-[12.5px] font-semibold text-text-2">
-            Website <span className="text-text-3">(optional)</span>
-          </span>
-          <input
-            className="h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px]"
-            placeholder="https://yourbusiness.ae"
-            inputMode="url"
-            value={onboard.site}
-            onChange={(e) => setOnboardField("site", e.target.value)}
-          />
-          <span className="mt-1.5 block text-xs text-text-3">
-            Used in your marketing emails as the website link and default button destination. Change it any time in Settings → Email identity.
-          </span>
         </label>
       </div>
       <QBlock title="What kind of business is this?" help={guessed ? GUESS_HELP : "Pick the closest match."}>
@@ -549,6 +585,8 @@ function StepBrief() {
     voice: { personality: onboard.tone, liked: [], disliked: [] },
     avoid: { rules: onboard.rules, words: onboard.words, notes: onboard.notes },
     facts: { facts: onboard.facts, unconfirmed: onboard.factsUnconfirmed },
+    // Not shown here (hub only): the images were confirmed on screen 2.
+    assets: { assets: onboard.assets, colours: onboard.colours },
     operate: { pace: onboard.freq, channels: onboard.channels, ...(onboard.auto === "manual" || onboard.auto === "assisted" || onboard.auto === "autopilot" ? { automation: onboard.auto } : {}) },
   }), [onboard]);
   const drafted = onboard.fromMara.includes("brief") || onboard.fromMara.includes("offerings");

@@ -74,6 +74,7 @@ export const AUTOMATION_CHOICES: { value: "manual" | "assisted" | "autopilot"; e
 
 export const OB_STEPS = [
   "Your name",
+  "Logo & photos",
   "Your brand",
   "The basics",
   "Audience & goal",

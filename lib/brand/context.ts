@@ -14,6 +14,7 @@
  * stop a plan or a post from being written.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { brandVisualStyle, cleanBrandAssets, cleanBrandColours, type BrandVisualStyle } from "./assets";
 
 export const BRAND_KIT_TABLE = "brand_kits";
 
@@ -35,6 +36,8 @@ export interface BrandKitExtras {
   notes: string;
   /** Captions the owner marked "sounds like us" / "not us". */
   voiceSamples: { liked: string[]; disliked: string[] };
+  /** Slice 5: colours, logo, product and past-post descriptions as text; null when the kit has no images or colours. */
+  visualStyle: BrandVisualStyle | null;
 }
 
 export const EMPTY_BRAND_KIT: BrandKitExtras = Object.freeze({
@@ -46,6 +49,7 @@ export const EMPTY_BRAND_KIT: BrandKitExtras = Object.freeze({
   facts: [],
   notes: "",
   voiceSamples: { liked: [], disliked: [] },
+  visualStyle: null,
 }) as BrandKitExtras;
 
 /** Caps applied before anything reaches a prompt. */
@@ -78,6 +82,7 @@ export interface BrandKitRow {
   version?: unknown;
   brief?: unknown;
   answers?: unknown;
+  assets?: unknown;
 }
 
 /** Pure mapping from a kit row (or none) to the prompt extras. */
@@ -105,6 +110,8 @@ export function brandKitExtrasFromRow(row: BrandKitRow | null | undefined): Bran
       liked: cleanList(voice.liked, LIMITS.voiceSamples, LIMITS.voiceSample),
       disliked: cleanList(voice.disliked, LIMITS.voiceSamples, LIMITS.voiceSample),
     },
+    // Slice 5: text only (colours and descriptions). Paths and sizes never reach a prompt.
+    visualStyle: brandVisualStyle(cleanBrandAssets(row.assets ?? []) ?? [], cleanBrandColours(answers.colours)),
   };
 }
 
@@ -113,7 +120,8 @@ export function brandKitHasContent(kit: BrandKitExtras | null | undefined): bool
   if (!kit) return false;
   return Boolean(
     kit.brief || kit.offerings.length || kit.avoidRules.length || kit.bannedWords.length
-    || kit.facts.length || kit.notes || kit.voiceSamples.liked.length || kit.voiceSamples.disliked.length,
+    || kit.facts.length || kit.notes || kit.voiceSamples.liked.length || kit.voiceSamples.disliked.length
+    || kit.visualStyle,
   );
 }
 
@@ -125,7 +133,7 @@ export function brandKitHasContent(kit: BrandKitExtras | null | undefined): bool
 export async function loadBrandKit(db: SupabaseClient, ownerId: string): Promise<BrandKitExtras> {
   try {
     const { data, error } = await db.from(BRAND_KIT_TABLE)
-      .select("version,brief,answers")
+      .select("version,brief,answers,assets")
       .eq("owner_user_id", ownerId)
       .order("version", { ascending: false })
       .limit(1)
@@ -200,6 +208,8 @@ export function brandKitPromptContext(kit: BrandKitExtras | null | undefined) {
     factsYouMayState: kit.facts,
     ownerNotes: kit.notes,
     voiceSamples: { soundsLikeUs: kit.voiceSamples.liked, notUs: kit.voiceSamples.disliked },
+    // Only when there is one, so kits without images keep exactly the same payload.
+    ...(kit.visualStyle ? { visualStyle: kit.visualStyle } : {}),
   };
 }
 
@@ -218,10 +228,17 @@ export const BRAND_KIT_RULES = [
   "brandKit.ownerNotes are the owner's own instructions and take priority over general style advice.",
 ] as const;
 
+/**
+ * Slice 5: added ONLY when the kit carries a visual style, so prompts for
+ * kits without images stay byte-for-byte what they were.
+ */
+export const BRAND_KIT_VISUAL_RULE = "brandKit.visualStyle describes the owner's real look: palette (colours computed from their logo or picked by them), what their logo and products look like, and the style of past posts they are proud of. Every visualPrompt you write must fit it: use the palette, show products as described, follow the past-post style tags and looks. It is a description, not a file: still never ask for the logo, readable text or watermarks inside an image.";
+
 export function withBrandKitRules(systemPrompt: string, kit: BrandKitPromptContext | null | undefined): string {
   if (!kit) return systemPrompt;
+  const rules = "visualStyle" in kit && kit.visualStyle ? [...BRAND_KIT_RULES, BRAND_KIT_VISUAL_RULE] : BRAND_KIT_RULES;
   return `${systemPrompt}
 
 BRAND KIT
-${BRAND_KIT_RULES.map((rule) => `- ${rule}`).join("\n")}`;
+${rules.map((rule) => `- ${rule}`).join("\n")}`;
 }
