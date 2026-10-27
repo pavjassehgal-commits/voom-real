@@ -4,7 +4,8 @@
       "codex/linkedin-production-release": false,
       "codex/linkedin-marketing-plan": false,
       "codex/marketing-plan-action-handoff": false,
-      "codex/native-plan-video-generation": false
+      "codex/native-plan-video-generation": false,
+      "codex/youtube-owner-refresh-diagnostic": false
     }
   },
   "crons": [
