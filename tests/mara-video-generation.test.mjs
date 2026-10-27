@@ -16,6 +16,7 @@ import test from "node:test";
 
 const gen = await import("../lib/mara/video-generation.ts");
 const job = await import("../lib/mara/video-job.ts");
+const { MediaError } = await import("../lib/media/types.ts");
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -245,6 +246,34 @@ test("generated-image-to-video: base frame is validated, stored, and persisted o
   assert.equal(state.row.attempt_count, 1);
   assert.ok(calls.lastJobInput.referenceImage, "the validated base frame seeds the video job");
   assert.equal(calls.lastJobInput.referenceImage.mimeType, "image/png");
+});
+
+for (const providerName of ["magic-hour", "openrouter"]) {
+  for (const uploadedImage of [false, true]) test(`Instagram ${providerName}: ${uploadedImage ? "uploaded" : "generated"} image still seeds one video with one settlement`, async () => {
+    const { ports, state, calls } = fakePorts();
+    let reserves = 0, refunds = 0, settlements = 0;
+    ports.reserveCredits = async () => { reserves++; return { ok: true }; };
+    ports.refundCredits = async () => { refunds++; };
+    ports.settleCredits = async () => { settlements++; };
+    const result = await gen.startVideoGeneration(ports, startInput({
+      providerName, supportsTextToVideo: true,
+      sourceAsset: uploadedImage ? { storagePath: "owner-1/uploads/a.png", assetId: "asset-1" } : null,
+    }));
+    assert.equal(result.ok, true);
+    assert.equal(state.row.generation_mode, uploadedImage ? "image_to_video" : "generated_image_to_video");
+    assert.equal(calls.baseImage, uploadedImage ? 0 : 1);
+    assert.equal(calls.uploadBase, uploadedImage ? 0 : 1);
+    assert.ok(calls.lastJobInput.referenceImage);
+    assert.equal(calls.createJob, 1);assert.equal(reserves, 1);assert.equal(settlements, 1);assert.equal(refunds, 0);
+  });
+}
+test("Instagram Magic Hour image unavailability still fails and refunds without a text fallback", async () => {
+  const { ports, calls } = fakePorts({ baseImageThrows: new MediaError("unavailable") });
+  let refunds = 0;
+  ports.refundCredits = async () => { refunds++; };
+  const result = await gen.startVideoGeneration(ports, startInput({ supportsTextToVideo: true }));
+  assert.equal(result.ok, false);assert.equal(result.code, "provider_failed");
+  assert.equal(calls.createJob, 0);assert.equal(refunds, 1);
 });
 
 test("a base frame that is not 9:16 is rejected before any video job", async () => {

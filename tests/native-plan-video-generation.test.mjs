@@ -11,6 +11,7 @@ const {advanceVideoGeneration,validateGeneratedVideo}=await import('../lib/mara/
 const {runVideoGenerationPoller}=await import('../lib/mara/video-poller.ts');
 const {updateSocialDraft}=await import('../lib/social/server-drafts.ts');
 const {MediaError}=await import('../lib/media/types.ts');
+const {getVideoConfig}=await import('../lib/media/video-config.ts');
 const {removePostAssetObject,putPostAsset}=await import('../lib/post/server-data.ts');
 const OWNER='11111111-1111-4111-8111-111111111111', OTHER='22222222-2222-4222-8222-222222222222';
 const TIKTOK='33333333-3333-4333-8333-333333333333', SHORT='44444444-4444-4444-8444-444444444444';
@@ -21,7 +22,7 @@ let db;
 before(async()=>{({db}=await createSupabaseLite());});
 after(()=>db?.close());
 const query=async(sql,args=[]) => (await db.query(sql,args)).rows;
-async function fixture(t,{plan='pro',legacy=false}={}) {
+async function fixture(t,{plan='pro',legacy=false,videoConfig=null,imageError=null}={}) {
   await db.exec('begin');t.after(()=>db.exec('rollback'));
   await query('insert into auth.users(id) values($1),($2)',[OWNER,OTHER]);
   const [business]=await query("insert into businesses(owner_user_id,plan,automation_level) values($1,$2,'manual') returning id",[OWNER,plan]);
@@ -31,23 +32,93 @@ async function fixture(t,{plan='pro',legacy=false}={}) {
     await query("insert into mara_drafts(id,owner_user_id,conversation_id,kind,channel,title,content,content_meta,source_plan_id,source_plan_item_key,social_channel,social_format,proposed_publish_at) values($1,$2,$3,$4,$5,'Original title','Original caption #original',$6,$7,$8,$5,$9,'2099-01-01T12:00:00Z')",[id,OWNER,conv.id,kind,channel,JSON.stringify(META),marketing.id,legacy&&id===SHORT?'2099-01-01':`2099-01-01|${kind}`,format]);
     await query("insert into post_draft_assets(owner_user_id,draft_id,storage_path,display_name,mime_type,byte_size,origin,status) values($1,$2,$3,'Existing upload','video/mp4',100,'uploaded_existing','uploaded')",[OWNER,id,`${OWNER}/uploads/${id}.mp4`]);
   }
-  const admin=nativeVideoDb(db),calls={plan:0,submit:0,poll:0};let output={kind:'pending'},submitError=false,planError=false;
-  const ports=buildVideoGenerationPorts({admin,provider:{name:'magic-hour',createVideoJob:async()=>{calls.submit++;if(submitError)throw new MediaError('rejected');return {providerJobId:'fake-job'};},pollVideoJob:async()=>{calls.poll++;return output;}},
-    imageProvider:{name:'fake',generateImage:async()=>{throw new Error('unexpected image provider');}},brand:{name:'Synthetic',description:'test',industry:'test',targetCustomer:'test',mainGoal:'test',brandPersonality:'test'},plan:null});
+  const admin=nativeVideoDb(db),calls={plan:0,submit:0,poll:0,image:0};let output={kind:'pending'},submitError=null,planError=false;
+  const ports=buildVideoGenerationPorts({admin,provider:{name:videoConfig?.provider??'magic-hour',createVideoJob:async input=>{calls.submit++;calls.referenceImage=input.referenceImage;if(submitError)throw submitError;return {providerJobId:'fake-job'};},pollVideoJob:async()=>{calls.poll++;return output;}},
+    imageProvider:{name:'fake',generateImage:async()=>{calls.image++;throw imageError??new Error('unexpected image provider');}},brand:{name:'Synthetic',description:'test',industry:'test',targetCustomer:'test',mainGoal:'test',brandPersonality:'test'},plan:null});
   const clock=Date.now()+121_000;ports.now=()=>clock;
   ports.planMedia=async input=>{calls.plan++;calls.planInput=input;if(planError)throw new Error('fake planning failure');return {concept:'Original concept',visualPrompt:'Vertical scene',motionDirection:'Slow pan',durationSeconds:6,overlayJson:null,cta:'Original CTA'};};
-  const service={admin,ownerId:OWNER,ports,videoConfig:{provider:'magic-hour',model:'fake-model',supportsImageToVideo:false,durationSeconds:6}};
+  const service={admin,ownerId:OWNER,ports,videoConfig:videoConfig??{provider:'magic-hour',model:'fake-model',supportsImageToVideo:false,durationSeconds:6}};
   const start=(id=TIKTOK,token=randomUUID(),owner=OWNER)=>startNativePlanVideo(admin,owner,id,token,{buildService:async()=>service});
   const advance=(id,kind)=>advanceVideoGeneration(nativeVideoPorts(admin,ports,id),OWNER,id,kind);
-  return {admin,ports,service,calls,start,advance,setOutput:value=>{output=value;},failSubmit:()=>{submitError=true;},failPlan:()=>{planError=true;}};
+  return {admin,ports,service,calls,start,advance,setOutput:value=>{output=value;},failSubmit:(error=new MediaError('rejected'))=>{submitError=error;},failPlan:()=>{planError=true;}};
 }
 const draft=async id=>(await query('select * from mara_drafts where id=$1',[id]))[0];
 const asset=async id=>(await query('select * from post_draft_assets where draft_id=$1',[id]))[0];
 const ledger=()=>query('select generation_id,credits,status from voom_credit_ledger order by generation_id');
+const openRouterConfig=()=>getVideoConfig({VIDEO_PROVIDER:'openrouter',OPENROUTER_API_KEY:'synthetic-no-network'});
 async function rejectSql(sql,args,pattern) {
   await db.exec('savepoint expected_failure');
   try {await assert.rejects(query(sql,args),pattern);}finally{await db.exec('rollback to savepoint expected_failure; release savepoint expected_failure');}
 }
+
+for(const [id,kind] of [[TIKTOK,'tiktok_video'],[SHORT,'youtube_short']]) {
+  for(const imageError of [new Error('image_provider_not_configured'),new MediaError('not_configured'),new MediaError('unavailable'),new MediaError('rate_limited')]) {
+    test(`${kind}: ${imageError.message} falls back without the premature HTTP 503/refund`,async t=>{
+      const f=await fixture(t,{videoConfig:openRouterConfig(),imageError}),before=await draft(id),token=randomUUID();
+      let refunds=0,settlements=0;
+      const refund=f.ports.refundCredits,settle=f.ports.settleCredits,create=f.ports.createVideoJob;
+      f.ports.refundCredits=async(...args)=>{refunds++;return refund(...args);};
+      f.ports.settleCredits=async(...args)=>{settlements++;return settle(...args);};
+      f.ports.createVideoJob=async input=>{
+        assert.equal(refunds,0);
+        assert.deepEqual((await ledger()).map(r=>[r.credits,r.status]),[[40,'reserved']]);
+        return create(input);
+      };
+      const started=await f.start(id,token);
+      assert.equal(started.status,202,JSON.stringify(started));
+      assert.equal(f.calls.image,1);assert.equal(f.calls.submit,1);assert.equal(f.calls.referenceImage,null);
+      const [job]=await query('select generation_mode from mara_media_generations where id=$1',[started.generation.id]);
+      assert.equal(job.generation_mode,'text_to_video');
+      assert.deepEqual((await ledger()).map(r=>[r.credits,r.status]),[[40,'settled']]);
+      f.setOutput({kind:'complete',media:{bytes:mp4(),mimeType:'video/mp4',extension:'mp4'}});
+      assert.equal((await f.advance(started.generation.id,kind)).attached,true);
+      assert.equal((await asset(id)).storage_path,`${OWNER}/native-video/${id}/${started.generation.id}.mp4`);
+      const after=await draft(id);
+      for(const key of ['content','title','proposed_publish_at','source_plan_item_key'])assert.deepEqual(after[key],before[key]);
+      assert.equal(after.status,'draft');assert.equal(after.approved_content_version,null);
+      for(const table of ['tiktok_publish_queue','youtube_publish_queue'])assert.equal((await query(`select count(*)::int as n from ${table}`))[0].n,0);
+      await f.advance(started.generation.id,kind);await f.start(id,token);
+      assert.equal(f.calls.submit,1);assert.equal(refunds,0);assert.equal(settlements,1);assert.equal((await ledger()).length,1);
+    });
+  }
+}
+for(const supportsTextToVideo of [false,undefined])test(`image-required or unknown model (${supportsTextToVideo}) fails safely and refunds once`,async t=>{
+  const f=await fixture(t,{videoConfig:{...openRouterConfig(),supportsTextToVideo},imageError:new Error('image_provider_not_configured')}),before=await asset(TIKTOK),token=randomUUID();
+  const failed=await f.start(TIKTOK,token);
+  assert.equal(failed.status,503);assert.match(failed.error,/base visual/);assert.equal(f.calls.submit,0);
+  assert.deepEqual((await ledger()).map(r=>[r.credits,r.status]),[[40,'refunded']]);assert.deepEqual(await asset(TIKTOK),before);
+  await f.start(TIKTOK,token);assert.equal(f.calls.image,1);assert.equal((await ledger()).length,1);
+});
+for(const imageError of [new MediaError('rejected'),new MediaError('malformed_response'),new MediaError('insufficient_credits')])test(`image ${imageError.code} never bypasses rejection or budget with text fallback`,async t=>{
+  const f=await fixture(t,{videoConfig:openRouterConfig(),imageError});
+  assert.equal((await f.start()).status,503);assert.equal(f.calls.submit,0);
+  assert.deepEqual((await ledger()).map(r=>[r.credits,r.status]),[[40,'refunded']]);
+});
+for(const code of ['unavailable','malformed_response'])test(`text fallback with uncertain video ${code} holds 40 credits and blocks all resubmissions`,async t=>{
+  const f=await fixture(t,{videoConfig:openRouterConfig(),imageError:new Error('image_provider_not_configured')}),token=randomUUID();
+  f.failSubmit(new MediaError(code));
+  const failed=await f.start(TIKTOK,token);assert.equal(failed.status,503);assert.match(failed.generation.safeError,/Credits remain reserved/);
+  assert.equal((await f.start(TIKTOK,token)).status,409);assert.equal((await f.start()).status,409);
+  assert.equal(f.calls.submit,1);assert.equal(f.calls.image,1);
+  assert.deepEqual((await ledger()).map(r=>[r.credits,r.status]),[[40,'reserved']]);
+});
+for(const code of ['rejected','unsupported_input'])test(`text fallback with a definite video ${code} refunds exactly once without replacing existing media`,async t=>{
+  const f=await fixture(t,{videoConfig:openRouterConfig(),imageError:new Error('image_provider_not_configured')}),token=randomUUID(),before=await asset(TIKTOK);
+  let refunds=0;const refund=f.ports.refundCredits;
+  f.ports.refundCredits=async(...args)=>{refunds++;return refund(...args);};
+  f.failSubmit(new MediaError(code));const failed=await f.start(TIKTOK,token);
+  assert.equal(failed.status,503);assert.equal(f.calls.submit,1);assert.deepEqual(await asset(TIKTOK),before);
+  await f.start(TIKTOK,token);assert.equal(f.calls.submit,1);
+  assert.equal(refunds,1);
+  assert.deepEqual((await ledger()).map(r=>[r.credits,r.status]),[[40,'refunded']]);
+});
+test('concurrent text fallbacks share the native lease and never submit or settle twice',async t=>{
+  const f=await fixture(t,{videoConfig:openRouterConfig(),imageError:new Error('image_provider_not_configured')}),token=randomUUID();
+  const results=await Promise.all([f.start(TIKTOK,token),f.start(TIKTOK,token),f.start(TIKTOK)]);
+  assert.ok(results.some(r=>r.status===202),JSON.stringify(results));
+  assert.equal(f.calls.image,1);assert.equal(f.calls.submit,1);
+  assert.equal((await ledger()).filter(r=>r.status!=='refunded').reduce((n,r)=>n+r.credits,0),40);
+});
 
 test('0063 installs only service-only RPCs and one guard; credit/storage RLS is retained',async()=>{
   const rows=await query("select p.proname,has_function_privilege('authenticated',p.oid,'execute') as browser,has_function_privilege('service_role',p.oid,'execute') as server,p.prosecdef from pg_proc p where p.proname in ('begin_native_video_generation','complete_native_video_generation','lock_native_video_draft','guard_native_video_generation_approval')");

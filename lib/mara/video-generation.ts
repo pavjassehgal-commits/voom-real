@@ -126,6 +126,8 @@ export interface StartInput {
   providerName: string;
   providerModel?: string | null;
   supportsImageToVideo: boolean;
+  /** Optional image failure may fall back only when text input is explicitly supported. */
+  supportsTextToVideo?: boolean;
   estimatedCostUsd: number | null;
   monthlySpendLimitUsd: number | null;
   source?: "user_request" | "assisted" | "autopilot";
@@ -235,8 +237,13 @@ export async function startVideoGeneration(ports: VideoGenerationPorts, input: S
     try {
       base = await ports.generateBaseImage({ prompt: basePrompt, aspectRatio: "9:16" });
     } catch (reason) {
-      if (ports.refundCredits) await ports.refundCredits(input.ownerId, generationId).catch(() => undefined);
-      if (input.providerName !== "openrouter" || !(reason instanceof Error) || reason.message !== "image_provider_not_configured") {
+      const imageUnavailable = reason instanceof Error && reason.message === "image_provider_not_configured"
+        || reason instanceof MediaError && ["not_configured", "unavailable", "rate_limited"].includes(reason.code);
+      // An optional base image is not a terminal video failure. Refunding here
+      // releases the native job's early lease before text-to-video can submit.
+      // Keep existing non-OpenRouter image workflows and explicit rejections intact.
+      if (input.providerName !== "openrouter" || input.supportsTextToVideo !== true || !imageUnavailable) {
+        if (ports.refundCredits) await ports.refundCredits(input.ownerId, generationId).catch(() => undefined);
         return { ok: false, status: 503, code: "provider_failed", errorCode: "unavailable", message: "MARA couldn't create the base visual for the video. Nothing was generated." };
       }
     }
