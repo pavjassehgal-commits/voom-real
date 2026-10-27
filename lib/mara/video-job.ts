@@ -202,6 +202,8 @@ export function videoJobSafeError(code: string | null): string | null {
       return "Voom couldn't store that video safely. Your previous asset is unchanged.";
     case "db_failure":
       return "Voom couldn't update that generation safely. Nothing changed.";
+    case "submission_uncertain":
+      return "The provider may have accepted this video. Credits remain reserved and another submission is blocked until this attempt is reconciled. Your previous asset is unchanged.";
     default:
       return "Generation couldn't finish. Your previous asset is unchanged.";
   }

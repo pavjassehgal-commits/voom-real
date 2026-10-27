@@ -853,7 +853,7 @@ test("migration 0046 backfills Instagram rows and keeps every channel on one cal
   );
 
   const applied = await applyPending();
-  assert.equal(applied[applied.length - 1], "0062_linkedin_personal.sql", "0062 follows the existing migrations without replacing them");
+  assert.equal(applied[applied.length - 1], "0063_native_plan_video_generation.sql", "native generation follows the existing migrations without replacing them");
 
   const legacy = await one(
     "select social_channel, social_format from public.mara_drafts where title = 'Legacy Reel'",

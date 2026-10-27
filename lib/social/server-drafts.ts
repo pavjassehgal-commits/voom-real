@@ -90,6 +90,8 @@ export interface SocialDraftView {
   madeForKids: boolean | null;
   /** Explicit privacy choice, or null when not yet declared. */
   privacy: "public" | "private" | "unlisted" | null;
+  containsSyntheticMedia?: boolean | null;
+  maraGeneratedVideo?: boolean;
   /**
    * Explicit TikTok privacy choice (TikTok's own four values), or null when
    * not yet declared. TikTok has NO default privacy level, so null is a real,
@@ -391,6 +393,8 @@ function toSocialDraftView(row: Record<string, unknown>, asset: Record<string, u
     providerRef: typeof row.provider_ref === "string" && row.provider_ref ? row.provider_ref : null,
     madeForKids,
     privacy,
+    containsSyntheticMedia: typeof meta.containsSyntheticMedia === "boolean" ? meta.containsSyntheticMedia : null,
+    maraGeneratedVideo: meta.maraGeneratedVideo === true,
     tiktokPrivacy,
     // Sanitized: the fingerprint and the TikTok account id stay on the server.
     tiktokPost: consent ? {
@@ -454,6 +458,7 @@ export interface UpdateSocialDraftInput {
   /** Explicit YouTube declarations (policy-sensitive; never defaulted here). */
   madeForKids?: boolean | null;
   privacy?: "public" | "private" | "unlisted" | null;
+  containsSyntheticMedia?: boolean | null;
   /** Explicit TikTok privacy declaration (policy-sensitive; never defaulted here). */
   tiktokPrivacy?: string | null;
   /**
@@ -549,6 +554,10 @@ export async function updateSocialDraft(
   // to undeclared (which parks the queue row visibly — never a silent guess).
   const madeForKids = input.madeForKids !== undefined ? input.madeForKids : existing.madeForKids;
   const privacy = input.privacy !== undefined ? input.privacy : existing.privacy;
+  const containsSyntheticMedia = input.containsSyntheticMedia !== undefined ? input.containsSyntheticMedia : existing.containsSyntheticMedia;
+  if (status === "approved" && existing.channel === "youtube" && existing.maraGeneratedVideo && typeof containsSyntheticMedia !== "boolean") {
+    throw new Error("youtube_synthetic_declaration_required");
+  }
   let tiktokPrivacy = input.tiktokPrivacy !== undefined
     ? (isTikTokPrivacy(input.tiktokPrivacy) ? input.tiktokPrivacy : null)
     : existing.tiktokPrivacy;
@@ -564,6 +573,7 @@ export async function updateSocialDraft(
     || (description || null) !== (existing.description || null)
     || madeForKids !== existing.madeForKids
     || privacy !== existing.privacy
+    || containsSyntheticMedia !== existing.containsSyntheticMedia
     || (input.tiktokPostConsent ? input.tiktokPostConsent.settings.privacy : tiktokPrivacy) !== existing.tiktokPrivacy;
   const scheduleChanged = scheduledAt !== existing.scheduledAt;
   const wasApproved = existing.status === "approved";
@@ -574,16 +584,16 @@ export async function updateSocialDraft(
   // TikTok consent covers exactly what the owner reviewed. A new consent
   // replaces it; un-approving, or changing the caption, title or privacy
   // afterwards withdraws it, so the worker cannot send what was not confirmed.
+  const { data: raw, error: rawError } = await admin.from("mara_drafts").select("content_meta")
+    .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
+  if (rawError) throw new Error("social_draft_read_failed");
+  const rawMeta = raw?.content_meta && typeof raw.content_meta === "object" ? raw.content_meta as Record<string, unknown> : {};
   let tiktokPost: TikTokPostConsent | null = null;
   if (existing.channel === "tiktok") {
     if (input.tiktokPostConsent) {
       tiktokPost = input.tiktokPostConsent;
       tiktokPrivacy = tiktokPost.settings.privacy;
     } else {
-      const { data: raw, error: rawError } = await admin.from("mara_drafts").select("content_meta")
-        .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
-      if (rawError) throw new Error("social_draft_read_failed");
-      const rawMeta = raw?.content_meta && typeof raw.content_meta === "object" ? raw.content_meta as Record<string, unknown> : {};
       const stored = parseTikTokPostConsent(rawMeta.tiktokPost);
       const withdrawn = status !== "approved"
         || title !== existing.title
@@ -594,6 +604,7 @@ export async function updateSocialDraft(
   }
 
   const meta: Record<string, unknown> = {
+    ...rawMeta,
     ...(description ? { description } : {}),
     ...(concept ? { concept } : {}),
     script,
@@ -602,6 +613,16 @@ export async function updateSocialDraft(
     ...(tiktokPrivacy ? { tiktokPrivacy } : {}),
     ...(tiktokPost ? { tiktokPost } : {}),
   };
+  // Preserve the plan's hashtags, script and generation provenance while
+  // retaining explicit declaration clearing and TikTok consent withdrawal.
+  if (!description) delete meta.description;
+  if (!concept) delete meta.concept;
+  if (typeof madeForKids !== "boolean") delete meta.madeForKids;
+  if (!privacy) delete meta.privacy;
+  if (!tiktokPrivacy) delete meta.tiktokPrivacy;
+  if (!tiktokPost) delete meta.tiktokPost;
+  if (typeof containsSyntheticMedia === "boolean") meta.containsSyntheticMedia = containsSyntheticMedia;
+  else delete meta.containsSyntheticMedia;
 
   const needsQueueCancellation = status !== "approved" || !scheduledAt;
   const previouslyConfirmedCancellation = options.queueCancellationConfirmed === true

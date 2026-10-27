@@ -303,6 +303,50 @@ function NativeSocialPlanItemCard({ item, onChanged }: {
 }) {
   const { open } = useModal();
   const identity = channelIdentity(item.channel);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const requestToken = useRef<string | null>(null);
+  const generationInFlight = useRef(false);
+  const eligible = item.channel === "tiktok" && item.format === "video" || item.channel === "youtube" && item.format === "short";
+  const generating = item.mediaStatus === "queued" || item.mediaStatus === "generating" || item.mediaStatus === "processing";
+  const providerOwned = ["posting", "uploading", "provider_processing", "published"].includes(item.queueStatus ?? "");
+
+  useEffect(() => {
+    if (!eligible || !generating) return;
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      try {
+        await fetch(`/api/social-drafts/${item.draftId}/generation`, { cache: "no-store" });
+        const response = await fetch("/api/plan", { cache: "no-store" });
+        const body = await response.json() as { snapshot?: WorkflowSnapshot };
+        if (!cancelled && body.snapshot) onChanged(body.snapshot);
+      } catch { /* durable media worker continues independently */ }
+    }, 8000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [eligible, generating, item.draftId, onChanged]);
+
+  async function generate() {
+    if (generationInFlight.current) return;
+    generationInFlight.current = true;
+    setBusy(true); setNotice(""); setError("");
+    // Retain the same click identity after a network-ambiguous result.
+    requestToken.current ??= window.crypto.randomUUID();
+    try {
+      const response = await fetch(`/api/social-drafts/${item.draftId}/generation`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: requestToken.current }),
+      });
+      const body = await response.json() as { error?: string; message?: string; generation?: { status: string } | null };
+      if (!response.ok) {
+        if (response.status < 500 || body.generation?.status === "failed") requestToken.current = null;
+        throw new Error(body.error ?? "MARA couldn't start that video. Retry the same request.");
+      }
+      requestToken.current = null;
+      setNotice(body.message ?? "Video generation started. Nothing was approved or queued.");
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Voom couldn't confirm generation. Retry the same request."); }
+    finally { generationInFlight.current = false; setBusy(false); }
+  }
 
   async function refresh() {
     const response = await fetch("/api/plan", { cache: "no-store" });
@@ -333,6 +377,10 @@ function NativeSocialPlanItemCard({ item, onChanged }: {
             <ProgressDots className="mt-2" steps={readinessSteps(item)} />
           </div>
           <div className="flex min-w-0 flex-wrap items-center gap-2 lg:justify-end">
+            {eligible && <Btn variant="primary" size="sm" disabled={busy || generating || providerOwned || item.failedStage === "rejected" || item.status === "published" || item.canGenerateNativeVideo === false}
+              onClick={() => void generate()}><Icon name="spark" size={13} />
+              {busy ? "Starting…" : generating ? "MARA is generating…" : item.hasMedia || item.mediaStatus === "failed" ? "Generate a new video · 40 credits" : "Generate with MARA · 40 credits"}
+            </Btn>}
             {item.channel === "linkedin" ? <Link href={`/app/linkedin?draft=${encodeURIComponent(item.draftId)}`} className="inline-flex items-center rounded-xl border border-line px-3 py-2 text-sm font-semibold text-text">
               Review LinkedIn draft
             </Link> : <Btn variant="outline" size="sm" onClick={() => open(<SocialEditorModal draftId={item.draftId} onChanged={() => void refresh()} />)}>
@@ -342,6 +390,14 @@ function NativeSocialPlanItemCard({ item, onChanged }: {
         </div>
 
         {item.failureMessage && item.status === "failed" && <p role="alert" className="rounded-xl border border-red/35 bg-red/10 px-3 py-2 text-[12px] text-red">{item.failureMessage}</p>}
+        {error && <p role="alert" className="text-[12px] text-red">{error}</p>}
+        {eligible && item.mediaGenerationError && <p role="alert" className="text-[12px] text-red">{item.mediaGenerationError}</p>}
+        {notice && <p role="status" className="text-[12px] text-text-2">{notice}</p>}
+        {eligible && <p className="text-[12px] text-text-3">Pro/Max · 40 credits per new generation. Replacing a video withdraws old approval. Review the generated clip and platform disclosures before publishing.</p>}
+        {eligible && item.canGenerateNativeVideo === false && <p className="text-[12px] text-amber">Upgrade to Pro or Max to generate videos with MARA.</p>}
+        {eligible && providerOwned && <p className="text-[12px] text-amber">This post is already with the platform or published; its media cannot be replaced.</p>}
+        {eligible && item.mediaPreviewUrl && <video controls playsInline preload="metadata" src={item.mediaPreviewUrl}
+          className="max-h-64 w-full rounded-xl bg-surface-2" aria-label={`${identity.label} video preview`} />}
 
         <Disclosure summary="Details and draft content">
           <div className="space-y-1.5 text-[12.5px] leading-relaxed text-text-2">

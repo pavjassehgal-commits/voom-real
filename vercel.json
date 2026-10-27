@@ -3,7 +3,8 @@
     "deploymentEnabled": {
       "codex/linkedin-production-release": false,
       "codex/linkedin-marketing-plan": false,
-      "codex/marketing-plan-action-handoff": false
+      "codex/marketing-plan-action-handoff": false,
+      "codex/native-plan-video-generation": false
     }
   },
   "crons": [

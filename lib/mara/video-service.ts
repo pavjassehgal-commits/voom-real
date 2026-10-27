@@ -163,7 +163,7 @@ export async function enforceVideoJobHardTimeout(
   return { enforced: false, row: current ?? row };
 }
 
-export type StartJobInput = Omit<StartInput, "ownerId" | "providerName" | "supportsImageToVideo" | "estimatedCostUsd" | "monthlySpendLimitUsd">;
+export type StartJobInput = Omit<StartInput, "ownerId" | "providerName" | "supportsImageToVideo" | "supportsTextToVideo" | "estimatedCostUsd" | "monthlySpendLimitUsd">;
 
 export async function startVideoJob(service: VideoService, input: StartJobInput & { durationTarget: number }): Promise<StartResult & { view: ClientGenerationView | null }> {
   const { durationTarget, ...rest } = input;
@@ -173,6 +173,7 @@ export async function startVideoJob(service: VideoService, input: StartJobInput 
     providerName: service.videoConfig.provider,
     providerModel: service.videoConfig.model,
     supportsImageToVideo: service.videoConfig.supportsImageToVideo,
+    supportsTextToVideo: service.videoConfig.supportsTextToVideo,
     estimatedCostUsd: estimatedCostUsdForDuration(service.videoConfig.durationSeconds ?? durationTarget),
     monthlySpendLimitUsd: monthlySpendLimitUsd(),
     source: input.source ?? "user_request",
