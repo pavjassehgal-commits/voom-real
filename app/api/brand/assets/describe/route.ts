@@ -49,7 +49,8 @@ export async function POST(request: Request) {
     return Response.json({ ok: true, reading });
   } catch (error) {
     const code = error instanceof AiError ? error.code : "unknown";
-    console.error("[brand-vision] failed", { code, kind: input.kind });
+    // The message carries the provider's HTTP status or stage (never a key or the image), so a bad key reads as "HTTP 401" here.
+    console.error("[brand-vision] failed", { code, kind: input.kind, message: error instanceof Error ? error.message : String(error) });
     return Response.json({ ok: false, reason: code === "rate_limited" ? "rate_limited" : code === "not_configured" ? "not_configured" : "unavailable" });
   }
 }

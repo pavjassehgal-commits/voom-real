@@ -21,6 +21,8 @@ export const AI_RATE_LIMITS = {
   brand_asset_upload: { limit: 60, windowSeconds: 3600 },
   /** MARA looking at one brand image (slice 5): one call per image, a full onboarding is 16 at most. */
   brand_vision: { limit: 40, windowSeconds: 3600 },
+  /** MARA writing three sample captions (slice 6): once per voice screen plus "Try 3 more". */
+  brand_voice: { limit: 20, windowSeconds: 3600 },
 } as const;
 
 export type AiRateLimitBucket = keyof typeof AI_RATE_LIMITS;

@@ -7,14 +7,17 @@
  * into fields in place, Save appends a kit version through the carry-forward
  * rule (only that section's fields change). `mode="onboarding"` is the same
  * component as the last wizard screen (slice 3): it hides History and the
- * operating section and offers "Looks right" instead.
+ * operating section and offers "Looks right" instead. "How we sound" can ask
+ * MARA for three sample captions to sort (slice 6, `VoiceSamplesWriter`).
  */
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { Icon } from "@/components/voom/icons";
 import { AutomationMode } from "@/components/voom/operating/AutomationMode";
 import { Btn, Card, Chip, Field, Input, Tag, Textarea } from "@/components/voom/ui/primitives";
 import { BrandAssetsEditor } from "@/components/voom/brand/BrandAssetsEditor";
+import { requestVoiceSamples, sortSample, VoiceSampleCards, voiceSamplesMessage, WritingSamplesPanel, type SampleVerdict } from "@/components/voom/brand/VoiceSamples";
 import { saveBrandSection } from "@/lib/brand/actions";
+import { VOICE_SAMPLES_PER_LIST, voiceSnapshotFromSections } from "@/lib/brand/voice";
 import { coloursAfterLogo, describeBrandAssets, withAddedAsset, withAssetText, withoutAsset, type BrandAsset } from "@/lib/brand/assets";
 import {
   answerKeyLabel, AVOID_RULES, BRAND_SECTIONS, brandSectionMeta, validateBrandSection,
@@ -65,11 +68,20 @@ function formatDate(iso: string): string {
  * every keystroke would swallow separators as they are typed.
  */
 function ListText({ items, separator, rows, disabled, onChange }: { items: string[]; separator: "line" | "comma"; rows?: number; disabled?: boolean; onChange: (next: string[]) => void }) {
+  const join = (list: string[]) => list.join(separator === "line" ? "\n" : ", ");
   const [text, setText] = useState(items.join(separator === "line" ? "\n" : ", "));
   const parse = (value: string) => (separator === "line" ? value.split("\n") : value.split(",")).map((part) => part.trim()).filter(Boolean);
+  // A list changed from outside the box (slice 6: a tapped sample caption) replaces the text; the box's own typing never does.
+  const [emitted, setEmitted] = useState(join(items));
+  if (join(items) !== emitted) {
+    setEmitted(join(items));
+    setText(join(items));
+  }
   const handle = (value: string) => {
     setText(value);
-    onChange(parse(value));
+    const next = parse(value);
+    setEmitted(join(next));
+    onChange(next);
   };
   return separator === "line"
     ? <Textarea rows={rows ?? 4} value={text} disabled={disabled} onChange={(e) => handle(e.target.value)} />
@@ -274,7 +286,7 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
                   disabled={busy}
                 />
               ) : (
-                <SectionEditor id={section.id} draft={draft} onChange={setDraft} disabled={busy} />
+                <SectionEditor id={section.id} draft={draft} onChange={setDraft} disabled={busy} values={values} />
               )
             ) : (
               <SectionView id={section.id} values={values} plan={plan} automation={automation} mode={mode} onConfirmFact={oneTapConfirm} previews={previews} />
@@ -531,7 +543,57 @@ function SectionView({ id, values, plan, automation, mode, onConfirmFact, previe
   }
 }
 
-function SectionEditor({ id, draft, onChange, disabled }: { id: BrandSectionId; draft: BrandSectionValues[BrandSectionId]; onChange: (next: BrandSectionValues[BrandSectionId]) => void; disabled: boolean }) {
+/**
+ * "Write 3 new samples" (slice 6) inside the How we sound editor: MARA writes
+ * from the saved sections plus this draft; a tap adds the caption to the
+ * draft's list, and the section's Save records it like any typed sample.
+ */
+function VoiceSamplesWriter({ values, draft, disabled, onChange }: { values: BrandSectionValues; draft: BrandSectionValues["voice"]; disabled: boolean; onChange: (next: BrandSectionValues["voice"]) => void }) {
+  const [samples, setSamples] = useState<string[]>([]);
+  const [writing, setWriting] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function write() {
+    if (writing) return;
+    setWriting(true);
+    setMessage("");
+    const result = await requestVoiceSamples(voiceSnapshotFromSections({ ...values, voice: draft }));
+    setWriting(false);
+    if (result.ok) {
+      setSamples(result.samples);
+    } else {
+      setSamples([]);
+      setMessage(voiceSamplesMessage(result.reason));
+    }
+  }
+
+  function sort(sample: string, verdict: SampleVerdict) {
+    const next = sortSample({ liked: draft.liked, disliked: draft.disliked }, sample, verdict);
+    if (!next) {
+      setMessage(`Up to ${VOICE_SAMPLES_PER_LIST} per list. Remove one below first.`);
+      return;
+    }
+    setMessage("");
+    onChange({ ...draft, ...next });
+  }
+
+  return (
+    <div className="rounded-xl border border-line p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-[12.5px] font-semibold text-text-2">Samples from MARA</div>
+          <p className="text-[12px] text-text-3">She writes three from your Brand page; tap the ones that sound like you. Save keeps your picks.</p>
+        </div>
+        <Btn variant="outline" size="sm" disabled={disabled || writing} onClick={() => void write()}>{writing ? "Writing…" : samples.length ? "Try 3 more" : "Write 3 new samples"}</Btn>
+      </div>
+      {writing ? <div className="mt-3"><WritingSamplesPanel /></div> : null}
+      {!writing && samples.length ? <div className="mt-3"><VoiceSampleCards samples={samples} liked={draft.liked} disliked={draft.disliked} disabled={disabled} onSort={sort} /></div> : null}
+      {message ? <p role="status" className="mt-2 text-[12.5px] text-text-2">{message}</p> : null}
+    </div>
+  );
+}
+
+function SectionEditor({ id, draft, onChange, disabled, values }: { id: BrandSectionId; draft: BrandSectionValues[BrandSectionId]; onChange: (next: BrandSectionValues[BrandSectionId]) => void; disabled: boolean; values?: BrandSectionValues }) {
   switch (id) {
     case "basics": {
       const d = draft as BrandSectionValues["basics"];
@@ -570,6 +632,7 @@ function SectionEditor({ id, draft, onChange, disabled }: { id: BrandSectionId; 
       return (
         <div className="space-y-3">
           <div><div className="mb-1.5 text-[12.5px] font-semibold text-text-2">Personality</div><Toggle options={OB_TONE} selected={d.personality} disabled={disabled} onChange={(personality) => onChange({ ...d, personality })} /></div>
+          {values ? <VoiceSamplesWriter values={values} draft={d} disabled={disabled} onChange={onChange} /> : null}
           <Field label="Sounds like us" hint="Captions you'd be happy to post, one per line, up to 5."><ListText items={d.liked} separator="line" rows={3} disabled={disabled} onChange={(liked) => onChange({ ...d, liked })} /></Field>
           <Field label="Not us" hint="Captions you'd never post, one per line, up to 5."><ListText items={d.disliked} separator="line" rows={3} disabled={disabled} onChange={(disliked) => onChange({ ...d, disliked })} /></Field>
         </div>

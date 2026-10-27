@@ -97,6 +97,11 @@ function emptyOnboard(): OnboardingAnswers {
     assets: [],
     colours: null,
     assetPreviews: {},
+    liked: [],
+    disliked: [],
+    samples: [],
+    samplesFor: "",
+    samplesNote: "",
   };
 }
 
@@ -521,6 +526,8 @@ export function VoomProvider({
           // Slice 5: image references and colours, only when there are some.
           ...(o.assets.length ? { assets: o.assets } : {}),
           ...(o.colours ? { colours: o.colours } : {}),
+          // Slice 6: the sample captions sorted on the voice screen, only when there are some.
+          ...(o.liked.length || o.disliked.length ? { voiceSamples: { liked: o.liked, disliked: o.disliked } } : {}),
         },
       };
 

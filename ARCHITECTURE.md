@@ -53,7 +53,7 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 |---|---|
 | `lib/voom/` | Core app: types, client state store (`store.tsx`), onboarding questions (`onboardingData.ts`), saving onboarding/settings (`mutations.ts`), "who is logged in" (`server-data.ts` → `getCurrentUser`), timezone, cadence, schedule guards |
 | `lib/voom/workflow/` | The rolling 7-day marketing plan: builds slots, assigns channels, asks MARA to fill them, moves items through plan → draft → approval → schedule |
-| `lib/brand/` | Brand Kit v2 (migration 0059): `context.ts` is the ONE reader generation uses (`loadBrandContext()` = core fields from `businesses` + the newest `brand_kits` row's brief, offerings, avoid rules, banned words, facts, notes, voice samples; fails open to "no kit"); `versions.ts` appends a kit version on every onboarding/Settings/Brand Hub save, carrying the previous version forward and replacing only the fields that save owns; `sections.ts` defines the Brand Hub sections and which fields and `businesses` columns each owns; `actions.ts` is the hub's save action; `read.ts` loads the version history; `extract.ts` + `extract-actions.ts` are the one AI read of the onboarding description (strict schema over our own option lists, never stored); slice 5 images: `assets.ts` (reference rules, caps, path ownership, list edits, the text-only visual style), `asset-storage.ts` (private `brand-kit` bucket, service role, one-hour signed previews), `image.ts` (logo colours from pixels, small JPEG for vision, with sharp), `vision.ts` (one image-reading call), `email-sync.ts` (logo and colours fill the email brand only where empty). Routes: `app/api/brand/assets` (upload, remove unsaved) and `app/api/brand/assets/describe` |
+| `lib/brand/` | Brand Kit v2 (migration 0059): `context.ts` is the ONE reader generation uses (`loadBrandContext()` = core fields from `businesses` + the newest `brand_kits` row's brief, offerings, avoid rules, banned words, facts, notes, voice samples; fails open to "no kit"); `versions.ts` appends a kit version on every onboarding/Settings/Brand Hub save, carrying the previous version forward and replacing only the fields that save owns; `sections.ts` defines the Brand Hub sections and which fields and `businesses` columns each owns; `actions.ts` is the hub's save action; `read.ts` loads the version history; `extract.ts` + `extract-actions.ts` are the one AI read of the onboarding description (strict schema over our own option lists, never stored); slice 5 images: `assets.ts` (reference rules, caps, path ownership, list edits, the text-only visual style), `asset-storage.ts` (private `brand-kit` bucket, service role, one-hour signed previews), `image.ts` (logo colours from pixels, small JPEG for vision, with sharp), `vision.ts` (one image-reading call), `email-sync.ts` (logo and colours fill the email brand only where empty); slice 6 voice samples: `voice.ts` (one text-model call that writes three sample captions from a snapshot of the answers, and drops any using a banned word or copying a sorted sample) + `voice-actions.ts` (the server action, 20 per user per hour, stores nothing). Routes: `app/api/brand/assets` (upload, remove unsaved) and `app/api/brand/assets/describe` |
 | `lib/ai/` | Connection to the AI text model (any OpenAI-compatible API; default Groq), plus the optional image-reading model (`AI_VISION_*`, off until `AI_VISION_MODEL` is set; Groq, OpenRouter or any OpenAI-compatible vision model) |
 | `lib/mara/` | MARA's brain: chat prompt, tools, Reel production, video generation and polling, paid-media spending rules, Autopilot safety |
 | `lib/media/` | Image/video generation providers, checking uploaded files, overlays |
@@ -109,7 +109,11 @@ calls `extractBrandDescription` (`lib/brand/extract-actions.ts`, one structured 
 `lib/brand/extract.ts`, 12 s wait, 10 reads per user per hour): what she found is prefilled
 into the screen that asks for it, marked as her guess, and facts wait under Facts on the
 Brand Brief screen until confirmed; a failed read falls back to the keyword guess
-(`detectIndustry`) for the category as before. Finish →
+(`detectIndustry`) for the category as before. The voice screen (slice 6) asks MARA for three
+sample captions when it opens (`lib/brand/voice-actions.ts`, 8 s wait, the same answers never
+asked twice); the owner taps "Sounds like us" / "Not us" (`components/voom/brand/VoiceSamples.tsx`,
+shared with the Brand page's "Write 3 new samples") and only tapped captions are saved as the
+kit's `voice_samples`. Finish →
 `saveOnboarding` in `lib/voom/mutations.ts` → writes `profiles` and `businesses` (website goes
 only to the email brand table; the automation level is saved as the real mode the plan allows)
 and appends `brand_kits` version 1 with the brief, offerings, rules, banned words, notes,
@@ -162,7 +166,7 @@ All keys go in `.env.local` (copy from `.env.example`). Never commit real values
 `NEXT_PUBLIC_` is visible in the browser; everything else is server-only.
 
 ## Not built yet
-2FA · LinkedIn · Stripe billing · onboarding's sample-caption screen, website reading and
-Instagram import (`docs/brand-kit-v2-design.md`, slices 6–8) · the brand kit in Reel video
+2FA · LinkedIn · Stripe billing · website reading and Instagram import
+(`docs/brand-kit-v2-design.md`, slices 7–8) · the brand kit in Reel video
 plans (slice 9) · reference images in image generation · clean-up of brand images uploaded
 during an onboarding that was never finished.

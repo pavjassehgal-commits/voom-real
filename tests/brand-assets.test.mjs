@@ -460,7 +460,7 @@ test("the Brand page images save refuses foreign paths, deletes removed files an
   const admin = fakeAdmin({ emailBrand: { logo_asset_id: "set", primary_color: "#000000", secondary_color: "#FFFFFF" } });
   const result = await saveBrandSection("assets", { assets: [product], colours: { primary: "#C81E28", secondary: null, source: "owner" } });
   assert.equal(result.ok, true);
-  assert.deepEqual(result.changedKeys, ["assets", "colours"]);
+  assert.deepEqual(result.changedKeys, ["colours", "assets"], "the keys that really changed, in the order the row records them (2026-10-27)");
   assert.deepEqual(calls.kitInserts[0].assets, [product]);
   assert.deepEqual(calls.kitInserts[0].answers.colours, { primary: "#C81E28", secondary: null, source: "owner" });
   assert.equal(calls.kitInserts[0].brief, "B.", "the brief carries forward");

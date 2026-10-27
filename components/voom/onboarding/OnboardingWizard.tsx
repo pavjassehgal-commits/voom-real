@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Onboarding, Brand Kit v2 (docs/brand-kit-v2-design.md, slices 3 to 5).
+ * Onboarding, Brand Kit v2 (docs/brand-kit-v2-design.md, slices 3 to 6).
  *
  * Eleven screens, one topic each, with a per-screen Skip where the answer has
  * a safe default and no global Skip. Five answers are required: your name, the
@@ -22,14 +22,18 @@
  * fails, is slow or finds nothing, the keyword guess picks the category as
  * before and the basics screen says so.
  *
- * Still to come: sample captions (slice 6).
+ * "How you sound" (slice 6): after the personality chips, MARA writes three
+ * captions from everything so far (lib/brand/voice.ts, 8 s wait); the owner
+ * taps "Sounds like us" / "Not us" and only those are saved as voice samples.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useVoomActions, useVoomState } from "@/lib/voom/store";
 import { BrandAssetsEditor } from "@/components/voom/brand/BrandAssetsEditor";
 import { detectIndustry } from "@/lib/voom/demoData";
 import { brandLearnedIsEmpty } from "@/lib/brand/extract";
 import { extractBrandDescription, type ExtractBrandResult } from "@/lib/brand/extract-actions";
+import { VOICE_SAMPLES_PER_LIST, voiceSnapshotFromSections, voiceSnapshotKey } from "@/lib/brand/voice";
+import { requestVoiceSamples, sortSample, VoiceSampleCards, WritingSamplesPanel, type SampleVerdict } from "@/components/voom/brand/VoiceSamples";
 import {
   AUTOMATION_CHOICES,
   OB_STEPS,
@@ -448,15 +452,87 @@ function StepAudienceGoal() {
   );
 }
 
+/**
+ * "How you sound" (slice 6): the personality chips, then three captions MARA
+ * wrote from everything so far. One write per set of answers: opening the
+ * screen again with the same answers shows the same captions (or the recorded
+ * failure); "Try 3 more" always writes again. A failed or slow write leaves
+ * the chips alone and says the samples will be on the Brand page.
+ */
 function StepVoice() {
   const { onboard } = useVoomState();
-  const { toggleOnboardArray } = useVoomActions();
+  const { toggleOnboardArray, setOnboardField, toast } = useVoomActions();
+  const [writing, setWriting] = useState(false);
+  // In flight, as a ref: a second call while one is running (StrictMode runs effects twice) must not spend a second read.
+  const inFlight = useRef(false);
+  const snapshot = useMemo(() => voiceSnapshotFromSections({
+    basics: { name: onboard.name, description: onboard.desc, category: onboard.industry },
+    brief: { brief: onboard.brief },
+    offerings: { offerings: onboard.offerings },
+    audience: { audience: onboard.customer, goal: onboard.goal },
+    voice: { personality: onboard.tone, liked: onboard.liked, disliked: onboard.disliked },
+    avoid: { rules: onboard.rules, words: onboard.words, notes: onboard.notes },
+    facts: { facts: onboard.facts, unconfirmed: onboard.factsUnconfirmed },
+  }), [onboard]);
+  const key = voiceSnapshotKey(snapshot);
+  const current = onboard.samplesFor === key && (onboard.samples.length > 0 || onboard.samplesNote !== "");
+
+  async function write() {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setWriting(true);
+    const result = await requestVoiceSamples(snapshot);
+    inFlight.current = false;
+    setWriting(false);
+    setOnboardField("samplesFor", key);
+    if (result.ok) {
+      setOnboardField("samples", result.samples);
+      setOnboardField("samplesNote", "");
+    } else {
+      setOnboardField("samples", []);
+      setOnboardField("samplesNote", result.reason === "not_configured" ? "off" : "failed");
+    }
+  }
+
+  // The write starts when the screen opens, unless these answers already have their captions.
+  useEffect(() => {
+    if (!current) void write();
+    // Only on opening the screen: later changes wait for "Try 3 more".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function sort(sample: string, verdict: SampleVerdict) {
+    const next = sortSample({ liked: onboard.liked, disliked: onboard.disliked }, sample, verdict);
+    if (!next) {
+      toast(`Up to ${VOICE_SAMPLES_PER_LIST} per list`, "err");
+      return;
+    }
+    setOnboardField("liked", next.liked);
+    setOnboardField("disliked", next.disliked);
+  }
+
   return (
     <div>
       <Title sub="These shape the words MARA chooses. Skip it and she keeps a neutral tone until you tell her otherwise.">How you sound</Title>
       <QBlock title="What is your brand personality?" help={onboard.fromMara.includes("personality") ? `${GUESS_HELP} Up to three.` : "Choose up to three."}>
         <ToneChips selected={onboard.tone} onToggle={(t) => toggleOnboardArray("tone", t, 3)} />
       </QBlock>
+      {writing ? (
+        <WritingSamplesPanel />
+      ) : onboard.samples.length ? (
+        <QBlock title="Three captions MARA wrote from what she knows so far" help="Tap what sounds like you and what doesn't. Nothing is used unless you say so.">
+          <VoiceSampleCards samples={onboard.samples} liked={onboard.liked} disliked={onboard.disliked} onSort={sort} />
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[12px] text-text-3">Kept so far: {onboard.liked.length} sound like you · {onboard.disliked.length} not you</span>
+            <Btn variant="ghost" size="sm" onClick={() => void write()}>Try 3 more</Btn>
+          </div>
+        </QBlock>
+      ) : onboard.samplesNote === "failed" ? (
+        <div className="rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">
+          I couldn&apos;t write sample captions just now. I&apos;ll show you samples on your Brand page.
+          <Btn variant="ghost" size="sm" className="ml-2" onClick={() => void write()}>Try again</Btn>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -582,7 +658,7 @@ function StepBrief() {
     brief: { brief: onboard.brief },
     offerings: { offerings: onboard.offerings },
     audience: { audience: onboard.customer, goal: onboard.goal },
-    voice: { personality: onboard.tone, liked: [], disliked: [] },
+    voice: { personality: onboard.tone, liked: onboard.liked, disliked: onboard.disliked },
     avoid: { rules: onboard.rules, words: onboard.words, notes: onboard.notes },
     facts: { facts: onboard.facts, unconfirmed: onboard.factsUnconfirmed },
     // Not shown here (hub only): the images were confirmed on screen 2.
@@ -608,7 +684,13 @@ function StepBrief() {
         setOnboardField("goal", v.goal);
         return;
       }
-      case "voice": setOnboardField("tone", (saved as BrandSectionValues["voice"]).personality); return;
+      case "voice": {
+        const v = saved as BrandSectionValues["voice"];
+        setOnboardField("tone", v.personality);
+        setOnboardField("liked", v.liked);
+        setOnboardField("disliked", v.disliked);
+        return;
+      }
       case "avoid": {
         const v = saved as BrandSectionValues["avoid"];
         setOnboardField("rules", v.rules);

@@ -39,7 +39,7 @@ same change.
 | 3b | **Here's what I learned.** "From your description, website and posts. Correct anything wrong, confirm what's right." Cards with Confirm / Edit: Name · Category · What you offer · Who it's for · How you sound · Facts you claim. Unconfirmed facts are never used in captions. If extraction isn't finished: "Still reading your site. I'll put this on your Brand page." | no | description, website, uploads |
 | 4 | **The basics.** Business name + category tiles as today, prefilled and marked "from your website". | category yes | extraction |
 | 5 | **Who you serve, and why.** Audience chips + goal tiles as today; suggested chips highlighted "MARA's guess". | goal yes | extraction |
-| 6 | **How you sound.** Personality chips as today, then three captions MARA wrote from what she knows so far, each with "Sounds like us" / "Not us". If the AI call fails or takes over 8 s: chips only, "I'll show you samples on your Brand page." | no | extraction |
+| 6 | **How you sound.** Personality chips as today, then three captions MARA wrote from what she knows so far, each with "Sounds like us" / "Not us" (built, slice 6). If the AI call fails or takes over 8 s: chips only, "I'll show you samples on your Brand page." | no | extraction |
 | 7 | **What you DON'T want.** Six tappable cards: Not salesy · No "buy now" or discount shouting · No stock-photo people · No AI-looking faces · No meme or trend-chasing · No invented or unprovable claims. Then "Words, topics or emoji to ban" (free text) and "Anything specific MARA should know or do?" | no | nothing |
 | 8 | **How often should MARA post?** Pace tiles as today, "2–3 times a week" preselected so Skip is safe. (Budget question removed.) | no | default |
 | 9 | **How much should MARA do.** Three cards: Manual · Assisted (recommended) · Autopilot, each with the plan it needs. Saves `manual` / `assisted` / `autopilot`. A choice above the account's plan saves the allowed mode and keeps the wanted one in the kit (`wanted_automation`) for the upgrade prompt. (Permission question removed.) | yes | nothing |
@@ -179,8 +179,8 @@ prop that hides History and the gallery in onboarding.
 2. **Brand Hub page. BUILT 2026-10-23.** `/app/brand`, "Brand" in the Primary nav, eight
    sections editable in place (`lib/brand/sections.ts` owns the field lists), History with
    before/after, `saveBrandSection` action, onboarding mode ready for slice 3. Tests:
-   `tests/brand-hub.test.mjs`. Not yet: the asset gallery (slice 5), "write 3 new samples"
-   (slice 6), the "needs confirmation" badge (slice 4), replacing the Settings form (slice 3).
+   `tests/brand-hub.test.mjs`. Later slices added the asset gallery (slice 5), "write 3 new
+   samples" (slice 6), the "needs confirmation" badge (slice 4), replacing the Settings form (slice 3).
 3. **Onboarding pass A. BUILT 2026-10-24.** Ten screens (the design's 1, 3a, 4, 5, 6 chips
    only, 7, 8, 9, 10a, 10b), per-screen Skip, five required answers, automation saves the real
    value within the plan (`wanted_automation` kept), Brand Hub component in local-persist mode
@@ -222,7 +222,16 @@ prop that hides History and the gallery in onboarding.
    reading the kit (slice 9), clean-up of uploads from an onboarding never finished, the
    design's per-image "what is this" filled by the text model (replaced by vision). Tests:
    `tests/brand-assets.test.mjs`.
-6. **Voice samples.** Three captions on screen 6 and "write 3 new samples" in the hub.
+6. **Voice samples. BUILT 2026-10-27.** The voice screen writes three captions when it opens
+   (`lib/brand/voice.ts`, one structured call from a snapshot of every answer so far, including
+   the rules, banned words and confirmed facts; `lib/brand/voice-actions.ts`, 20 writes per user
+   per hour; 8 s wait), each with "Sounds like us" / "Not us"; only tapped captions are saved,
+   as the kit's `voice_samples`, which generation already read since slice 1. "Try 3 more"
+   writes again; the same answers never ask twice; a failed or slow write leaves the chips and
+   says "I'll show you samples on your Brand page." The Brand page's How we sound editor has
+   "Write 3 new samples" with the same cards (`components/voom/brand/VoiceSamples.tsx`). Code
+   drops any caption using a banned word or copying a sorted sample; an unconfirmed fact is
+   never sent. Tests: `tests/brand-voice.test.mjs`.
 7. **Website reading** with every guard above. Tests: private-address refusal incl. on redirect,
    robots.txt, size and time caps, page selection, snapshot stored unconfirmed.
 8. **Instagram import** after connect. Tests: official client only, 25-post cap, no fetch

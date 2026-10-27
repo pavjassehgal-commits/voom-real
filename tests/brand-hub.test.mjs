@@ -149,6 +149,15 @@ function fakeDb({ newestRow = null, insertError = null, updateError = null, logg
   return calls;
 }
 
+test("a save that changes nothing names no field: the history line matches what the row records (fix 2026-10-27)", async () => {
+  const calls = fakeDb({ newestRow: { version: 3, answers: KIT.answers, brief: KIT.brief } });
+  const result = await saveBrandSection("offerings", { offerings: ["Single-origin espresso"] });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.changedKeys, [], "the action no longer claims every field the section owns");
+  assert.equal(result.changeSummary, "What we offer saved without changes");
+  assert.deepEqual(calls.kitInserts[0].changed_keys, [], "the same set the row records");
+});
+
 test("saving a section updates only its businesses columns and appends a version that carries the rest forward", async () => {
   const calls = fakeDb({ newestRow: { version: 3, answers: KIT.answers, brief: KIT.brief } });
   const result = await saveBrandSection("audience", { audience: ["Tourists & visitors"], goal: "More online sales" });

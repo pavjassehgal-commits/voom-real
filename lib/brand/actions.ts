@@ -47,24 +47,24 @@ export async function saveBrandSection(sectionId: string, raw: unknown): Promise
   }
 
   const changeSummary = `${meta.title} updated`;
-  const version = await appendBrandKitVersion(supabase, user.id, {
+  const appended = await appendBrandKitVersion(supabase, user.id, {
     source: "brand_hub",
     answers: validated.answers,
     ...(validated.brief !== undefined ? { brief: validated.brief } : {}),
     ...(validated.assets ? { assets: validated.assets } : {}),
     changeSummary,
   });
-  if (version === null) {
+  if (appended === null) {
     return { ok: false, error: "Voom couldn't record that change. Apply the latest Supabase migration (0059), then try again." };
   }
 
   if (validated.assets) await afterAssetsSaved(user.id, previousAssets, validated.assets, validated.values as BrandSectionValues["assets"]);
 
-  // The keys this save owns are what the history line names; the exact
-  // changed set is recorded on the row by appendBrandKitVersion.
-  const changedKeys = [...meta.ownsKeys];
+  // The history line names the keys that really changed, the same set the
+  // row records, so a save that changed nothing in a field does not claim it.
+  const { version, changedKeys } = appended;
   revalidatePath("/app", "layout");
-  return { ok: true, version, changedKeys, values: validated.values, changeSummary: `${changedKeys.map(answerKeyLabel).join(", ")} saved` };
+  return { ok: true, version, changedKeys, values: validated.values, changeSummary: changedKeys.length ? `${changedKeys.map(answerKeyLabel).join(", ")} saved` : `${meta.title} saved without changes` };
 }
 
 /**

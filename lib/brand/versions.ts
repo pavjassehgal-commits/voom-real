@@ -79,7 +79,17 @@ export function brandKitAnswersFromOnboarding(input: OnboardingInput): Record<st
     ...(kit.wantedAutomation ? { wanted_automation: kit.wantedAutomation } : {}),
     // Slice 5: the logo colours, only when there are some (a skipped screen carries the old ones forward).
     ...(kit.colours ? { colours: kit.colours } : {}),
+    // Slice 6: the sorted sample captions, only when there are some (same reason).
+    ...(kit.voiceSamples && (kit.voiceSamples.liked.length || kit.voiceSamples.disliked.length)
+      ? { voice_samples: { liked: cleanSamples(kit.voiceSamples.liked), disliked: cleanSamples(kit.voiceSamples.disliked) } }
+      : {}),
   };
+}
+
+/** Up to five short captions per list, the same cap as the Brand page editor and the reader. */
+function cleanSamples(items: unknown): string[] {
+  if (!Array.isArray(items)) return [];
+  return [...new Set(items.filter((item): item is string => typeof item === "string").map((item) => item.trim().slice(0, 600)).filter(Boolean))].slice(0, 5);
 }
 
 /** A kit version's editable content, as stored. */
@@ -115,12 +125,12 @@ export function mergeBrandKitVersion(
   return { answers, brief, changedKeys };
 }
 
-/** Inserts the next version for the owner. Returns the version number, or null when it failed. */
+/** Inserts the next version for the owner. Returns the version number and the keys that really changed, or null when it failed. */
 export async function appendBrandKitVersion(
   db: SupabaseClient,
   ownerId: string,
   input: BrandKitVersionInput,
-): Promise<number | null> {
+): Promise<{ version: number; changedKeys: string[] } | null> {
   try {
     const { data: newest, error: readError } = await db.from(BRAND_KIT_TABLE)
       .select("version,answers,brief,assets").eq("owner_user_id", ownerId)
@@ -149,7 +159,7 @@ export async function appendBrandKitVersion(
       changed_keys: input.changedKeys ?? changedKeys,
     });
     if (error) throw new Error(error.message);
-    return version;
+    return { version, changedKeys: input.changedKeys ?? changedKeys };
   } catch (reason) {
     console.error("[brand-kit] version insert failed", reason instanceof Error ? reason.message : String(reason));
     return null;

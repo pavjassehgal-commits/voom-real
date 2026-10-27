@@ -49,6 +49,18 @@ export interface OnboardingAnswers {
   colours: BrandColours | null;
   /** Slice 5: one-hour preview links for the uploads, by path. Screen-only, never saved. */
   assetPreviews: Record<string, string>;
+  /** Slice 6: the sample captions the owner sorted on the voice screen ("Sounds like us" / "Not us"). Saved as the kit's voice samples. */
+  liked: string[];
+  disliked: string[];
+  /**
+   * Slice 6: the captions MARA wrote for the voice screen (screen-only, not
+   * saved), the answers they were written from (`samplesFor`, so going back
+   * to the screen does not call the AI again for the same answers) and
+   * "failed" / "off" when the write did not work or no text model is set up.
+   */
+  samples: string[];
+  samplesFor: string;
+  samplesNote: "" | "failed" | "off";
 }
 
 /** The kit answer keys MARA's reading can fill (slice 4). `facts` means the unconfirmed list. */
@@ -84,6 +96,8 @@ export interface OnboardingKitInput {
   assets?: BrandAsset[];
   /** Slice 5: the two brand colours (computed from the logo, or picked). Omitted when none. */
   colours?: BrandColours;
+  /** Slice 6: the sample captions sorted on the voice screen. Omitted when none were sorted. */
+  voiceSamples?: { liked: string[]; disliked: string[] };
 }
 
 export interface Toast {
