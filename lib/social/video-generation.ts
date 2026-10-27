@@ -93,8 +93,15 @@ export function nativeVideoPorts(admin: AdminClient, base: VideoGenerationPorts,
         p_owner: ownerId, p_generation: id, p_path: input.storagePath, p_bytes: input.byteSize,
         p_duration: input.durationSeconds, p_name: input.displayName,
       });
-      if (result.error || result.data !== true) return null;
-      return base.findGeneration(ownerId, id);
+      // A transport/database error may hide a committed attachment. Only an
+      // explicit false is a definite refusal; uncertainty must not clean up.
+      if (result.error || typeof result.data !== "boolean") throw new Error("native_video_completion_uncertain");
+      if (result.data === false) return null;
+      const completed = await base.findGeneration(ownerId, id);
+      if (completed?.status !== "completed" || completed.storage_path !== input.storagePath) {
+        throw new Error("native_video_completion_uncertain");
+      }
+      return completed;
     },
     removeAbandonedObject: (ownerId, path) => removePostAssetObject(admin, ownerId, path),
   };

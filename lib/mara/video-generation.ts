@@ -101,7 +101,7 @@ export interface VideoGenerationPorts {
   recordUsageAttempt?(attempt: ProviderUsageAttempt): Promise<void>;
   /** Native-only atomic job claim before paid planning/base-image work. */
   prepareGeneration?(input: { ownerId: string; draftId: string; generationId: string; idempotencyKey: string }): Promise<boolean>;
-  /** Native-only atomic asset link + completion, reusing the existing tables. */
+  /** Native-only atomic completion. Null = definite refusal; throws = unknown outcome. */
   completeGeneration?(ownerId: string, generationId: string, input: { storagePath: string; byteSize: number; durationSeconds: number; displayName: string }): Promise<VideoJobRow | null>;
 }
 
@@ -559,11 +559,12 @@ export async function advanceVideoGeneration(
     return { ok: true, generation: failed ?? claimed, previewUrl: null, attached: false, safeError: videoJobSafeError("storage_failure") };
   }
 
+  let completionUncertain = false;
   const completed = ports.completeGeneration
     ? await ports.completeGeneration(ownerId, generationId, {
         storagePath: stored.storagePath, byteSize: media.bytes.length,
         durationSeconds: inspection.durationSeconds, displayName: `MARA video · ${String(claimed.prompt).slice(0, 60)}`,
-      }).catch(() => null)
+      }).catch(() => { completionUncertain = true; return null; })
     : await ports.updateGeneration(
     ownerId,
     generationId,
@@ -583,6 +584,13 @@ export async function advanceVideoGeneration(
     ["processing"],
   );
   if (!completed) {
+    // The RPC may still be committing, or its acknowledgement/readback may
+    // have been lost. Retain the MP4 and active job; a later poll reconciles
+    // the persisted state without another submission or credit reservation.
+    if (completionUncertain) {
+      return { ok: true, generation: claimed, previewUrl: null, attached: false,
+        safeError: "Voom couldn't confirm whether the video was saved. Its file has been kept safely; check this generation again before starting another." };
+    }
     await ports.removeAbandonedObject(ownerId, stored.storagePath).catch(() => undefined);
     if (ports.completeGeneration) {
       const failed = await ports.updateGeneration(ownerId, generationId, { status: "failed", error_code: "db_failure" }, ["processing"]);

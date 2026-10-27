@@ -661,8 +661,9 @@ export async function putPostAsset(
         logPostAssetStage("db_upsert", diagnostics);
       },
       removeUploaded: async () => {
-        // Never leave an orphan object behind if the link could not be written.
-        await admin.storage.from(POST_ASSET_BUCKET).remove([storagePath]);
+        // A failed write/read can hide an existing or committed attachment.
+        // Remove a genuine orphan only after successful reference checks.
+        await removePostAssetObject(admin, ownerId, storagePath);
       },
       row,
     });
@@ -697,13 +698,19 @@ export async function verifyPostAssetStored(
 }
 
 /**
- * Deletes a private object unless a media generation record still references
- * it, so the paid-generation audit trail never points at a missing file.
+ * Deletes only an owner-scoped object proven unreferenced by every media
+ * registry. A failed/unknown count is not evidence that the object is unused.
+ * Publishing jobs resolve their media through these asset/generation records.
  */
 export async function removePostAssetObject(admin: AdminClient, ownerId: string, storagePath: string): Promise<void> {
-  const { count } = await admin.from("mara_media_generations")
-    .select("id", { count: "exact", head: true }).eq("owner_user_id", ownerId).eq("storage_path", storagePath);
-  if ((count ?? 0) > 0) return;
+  if (!ownerId || !storagePath.startsWith(`${ownerId}/`) || storagePath.split("/").some(part => part === "." || part === "..")) return;
+  for (const table of ["mara_media_generations", POST_ASSET_TABLE, "reel_draft_assets", "instagram_media_assets"]) {
+    const { count, error } = await admin.from(table)
+      .select("id", { count: "exact", head: true }).eq("owner_user_id", ownerId).eq("storage_path", storagePath);
+    // Require an explicit successful, exact zero; null, missing or malformed
+    // counts (including timeouts/transport errors) must retain the object.
+    if (error !== null || count !== 0) return;
+  }
   await admin.storage.from(POST_ASSET_BUCKET).remove([storagePath]);
 }
 

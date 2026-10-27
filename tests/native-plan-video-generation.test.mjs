@@ -11,6 +11,7 @@ const {advanceVideoGeneration,validateGeneratedVideo}=await import('../lib/mara/
 const {runVideoGenerationPoller}=await import('../lib/mara/video-poller.ts');
 const {updateSocialDraft}=await import('../lib/social/server-drafts.ts');
 const {MediaError}=await import('../lib/media/types.ts');
+const {removePostAssetObject,putPostAsset}=await import('../lib/post/server-data.ts');
 const OWNER='11111111-1111-4111-8111-111111111111', OTHER='22222222-2222-4222-8222-222222222222';
 const TIKTOK='33333333-3333-4333-8333-333333333333', SHORT='44444444-4444-4444-8444-444444444444';
 const META={caption:'Keep caption',hashtags:['#original'],script:['Existing scene one','Existing scene two'],
@@ -83,6 +84,133 @@ test('same click, repeated starts and concurrent fresh clicks submit only once a
   assert.ok(results.some(r=>r.status===202),JSON.stringify(results));assert.equal(f.calls.submit,1);assert.equal(f.calls.plan,1);
   assert.equal((await ledger()).filter(r=>r.status!=='refunded').reduce((n,r)=>n+r.credits,0),40);
   const again=await f.start(TIKTOK,token);assert.ok([200,409].includes(again.status));assert.equal(f.calls.submit,1);
+});
+for(const [draftId,kind] of [[TIKTOK,'tiktok_video'],[SHORT,'youtube_short']])test(`${kind}: lost completion response plus failed reference lookup keeps the attached MP4 recoverable and charged only once`,async t=>{
+  const f=await fixture(t),token=randomUUID();
+  const started=await f.start(draftId,token),id=started.generation.id;
+  const path=`${OWNER}/native-video/${draftId}/${id}.mp4`;
+  const otherId=draftId===TIKTOK?SHORT:TIKTOK,otherAsset=await asset(otherId);
+  const rpc=f.admin.rpc.bind(f.admin),from=f.admin.from.bind(f.admin);
+  let failedLookups=0;
+  f.admin.rpc=async(name,args)=>{
+    const response=await rpc(name,args);
+    if(name==='complete_native_video_generation') {
+      assert.equal(response.data,true); // PostgreSQL committed; only the acknowledgement was lost.
+      return {data:null,error:{code:'08006',message:'synthetic lost completion response'}};
+    }
+    return response;
+  };
+  f.admin.from=table=>{
+    const chain=from(table),select=chain.select;
+    chain.select=(columns,options)=>{
+      select(columns,options);
+      if(table==='mara_media_generations'&&options?.head) {
+        chain.then=resolve=>{failedLookups++;return Promise.resolve(resolve({count:null,error:{code:'57014'}}));};
+      }
+      return chain;
+    };
+    return chain;
+  };
+  f.setOutput({kind:'completed',media:{bytes:mp4(),mimeType:'video/mp4',extension:'mp4'}});
+  await f.advance(id,kind);
+  assert.equal((await asset(draftId)).storage_path,path);
+  assert.equal((await query('select status from mara_media_generations where id=$1',[id]))[0].status,'completed');
+  assert.ok(f.admin.objects.has(path),'a lost acknowledgement must not delete an already attached MP4');
+  // Even a later cleanup attempt with an unavailable reference read must fail closed.
+  await removePostAssetObject(f.admin,OWNER,path);
+  assert.ok(failedLookups>0);assert.ok(f.admin.objects.has(path));
+  f.admin.from=from;f.admin.rpc=rpc;
+  const recovered=await f.advance(id,kind);
+  assert.equal(recovered.attached,true);assert.equal(recovered.generation.status,'completed');
+  assert.ok(recovered.previewUrl);assert.deepEqual(f.admin.objects.get(path),mp4());
+  assert.equal((await f.start(draftId,token)).generation.id,id);
+  assert.equal(f.calls.submit,1);assert.deepEqual((await ledger()).map(r=>[r.credits,r.status]),[[40,'settled']]);
+  assert.equal((await draft(draftId)).status,'draft');assert.deepEqual(await asset(otherId),otherAsset);
+});
+for(const outcome of ['error','missing response','readback failure'])test(`uncertain native completion (${outcome}) never authorizes deletion or a second paid job`,async t=>{
+  const f=await fixture(t),token=randomUUID(),started=await f.start(TIKTOK,token),id=started.generation.id;
+  const rpc=f.admin.rpc.bind(f.admin),read=f.ports.findGeneration;
+  let completionRequested=false,removed=0;
+  f.admin.rpc=async(name,args)=>{
+    if(name!=='complete_native_video_generation')return rpc(name,args);
+    completionRequested=true;
+    if(outcome==='readback failure')return rpc(name,args);
+    // No acknowledgement does not prove that the RPC failed to commit.
+    return outcome==='error'?{data:null,error:{code:'08006'}}:{data:null,error:null};
+  };
+  f.ports.findGeneration=async(...args)=>{
+    if(completionRequested&&outcome==='readback failure')throw new Error('synthetic readback outage');
+    return read(...args);
+  };
+  const storage=f.admin.storage.from.bind(f.admin.storage);
+  f.admin.storage.from=bucket=>({...storage(bucket),remove:async()=>{removed++;return {error:null};}});
+  f.setOutput({kind:'completed',media:{bytes:mp4(),mimeType:'video/mp4'}});
+  const result=await f.advance(id,'tiktok_video');
+  assert.equal(result.generation.status,'processing');assert.equal(removed,0);
+  assert.match(result.safeError,/couldn't confirm whether the video was saved/);
+  assert.ok(f.admin.objects.has(`${OWNER}/native-video/${TIKTOK}/${id}.mp4`));
+  f.admin.rpc=rpc;f.ports.findGeneration=read;
+  const retry=await f.start(TIKTOK,token);
+  assert.equal(retry.generation.id,id);assert.equal(f.calls.submit,1);
+  assert.deepEqual((await ledger()).map(r=>[r.credits,r.status]),[[40,'settled']]);
+});
+test('a definitely refused completion still removes its genuinely unreferenced output',async t=>{
+  const f=await fixture(t),started=await f.start(),id=started.generation.id;
+  const rpc=f.admin.rpc.bind(f.admin),before=await asset(TIKTOK);
+  f.admin.rpc=(name,args)=>name==='complete_native_video_generation'?Promise.resolve({data:false,error:null}):rpc(name,args);
+  f.setOutput({kind:'completed',media:{bytes:mp4(),mimeType:'video/mp4'}});
+  const done=await f.advance(id,'tiktok_video');
+  assert.equal(done.attached,false);assert.equal(done.generation.status,'failed');
+  assert.equal(f.admin.objects.has(`${OWNER}/native-video/${TIKTOK}/${id}.mp4`),false);
+  assert.deepEqual(await asset(TIKTOK),before);
+});
+for(const failure of ['none','upsert rejected','upsert acknowledgement lost','previous read failed'])test(`Instagram upload cleanup: ${failure}`,async t=>{
+  const f=await fixture(t);await query("update mara_drafts set kind='reel',social_channel='instagram',social_format='reel',channel='Instagram',source_plan_id=null,source_plan_item_key=null where id=$1",[TIKTOK]);
+  const before=await asset(TIKTOK);f.admin.objects.set(before.storage_path,mp4());
+  const input={bytes:mp4(),mimeType:'video/mp4',extension:'mp4',displayName:'Instagram reel',origin:'mara'};
+  const initial=await putPostAsset(f.admin,OWNER,TIKTOK,input);
+  await f.ports.removeAbandonedObject(OWNER,initial.previousStoragePath);
+  assert.equal(f.admin.objects.has(before.storage_path),false,'genuinely unused previous media is still cleaned up');
+  await f.ports.removeAbandonedObject(OWNER,initial.storagePath);
+  assert.ok(f.admin.objects.has(initial.storagePath),'current Instagram attachment is protected');
+  const from=f.admin.from.bind(f.admin);
+  f.admin.from=table=>{
+    const chain=from(table),upsert=chain.upsert,select=chain.select;
+    chain.upsert=(...args)=>{
+      upsert(...args);
+      const then=chain.then;
+      if(failure==='upsert rejected')chain.then=resolve=>Promise.resolve(resolve({data:null,error:{code:'08006'}}));
+      if(failure==='upsert acknowledgement lost')chain.then=resolve=>then(()=>resolve({data:null,error:{code:'08006'}}));
+      return chain;
+    };
+    chain.select=(...args)=>{
+      select(...args);
+      if(table==='post_draft_assets'&&args[0].includes('display_name')&&failure==='previous read failed') {
+        chain.then=resolve=>Promise.resolve(resolve({data:null,error:{code:'57014'}}));
+      }
+      return chain;
+    };
+    return chain;
+  };
+  const replacement={...input,bytes:mp4({seconds:7})};
+  if(failure==='none') {
+    const replaced=await putPostAsset(f.admin,OWNER,TIKTOK,replacement);
+    await f.ports.removeAbandonedObject(OWNER,replaced.previousStoragePath);
+    assert.equal(f.admin.objects.has(initial.storagePath),false);
+    assert.deepEqual(f.admin.objects.get(replaced.storagePath),replacement.bytes);
+  } else {
+    await assert.rejects(putPostAsset(f.admin,OWNER,TIKTOK,replacement));
+    const attached=await asset(TIKTOK);
+    assert.ok(f.admin.objects.has(attached.storage_path),'Instagram cannot lose a current/committed attachment on a failed request');
+    assert.equal(f.admin.objects.size,failure==='upsert acknowledgement lost'?2:1,'only truly unused output may be removed');
+    // Re-uploading identical bytes followed by a failed previous read must
+    // not delete the digest-addressed object that already belongs to the draft.
+    if(failure==='previous read failed') {
+      await assert.rejects(putPostAsset(f.admin,OWNER,TIKTOK,input));
+      assert.ok(f.admin.objects.has(initial.storagePath));
+    }
+  }
+  assert.equal((await ledger()).length,0);
 });
 test('poll during early planning lease cannot kill an in-flight start',async t=>{
   const f=await fixture(t);const original=f.ports.planMedia;

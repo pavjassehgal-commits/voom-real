@@ -34,7 +34,7 @@ export function nativeVideoDb(db) {
     },
     from(table) {
       ident(table);
-      let columns = '*', patch = null, insert = null, deleting = false, limit = '', order = '', single = false, count = false;
+      let columns = '*', patch = null, insert = null, conflict = null, deleting = false, limit = '', order = '', single = false, count = false;
       const filters = [], values = [];
       const bind = value => { values.push(value); return `$${values.length}`; };
       const chain = {
@@ -50,6 +50,7 @@ export function nativeVideoDb(db) {
         limit(number) { assert.ok(Number.isInteger(number)); limit = ` limit ${number}`; return chain; },
         update(row) { patch = row; return chain; },
         insert(row) { insert = row; return chain; },
+        upsert(row, options) { insert = row; conflict = options.onConflict.split(',').map(ident); return chain; },
         delete() { deleting = true; return chain; },
         maybeSingle() { single = true; return chain; },
         async then(resolve, reject) {
@@ -59,7 +60,8 @@ export function nativeVideoDb(db) {
             if (deleting) {
               sql = `delete from ${table}${filters.length ? ` where ${filters.join(' and ')}` : ''} returning ${columns}`;
             } else if (insert) {
-              sql = `insert into ${table} (${Object.keys(insert).map(ident).join(',')}) values (${Object.values(insert).map(bind).join(',')}) returning ${columns}`;
+              const update = conflict ? ` on conflict (${conflict.join(',')}) do update set ${Object.keys(insert).map(key => `${ident(key)}=excluded.${ident(key)}`).join(',')}` : '';
+              sql = `insert into ${table} (${Object.keys(insert).map(ident).join(',')}) values (${Object.values(insert).map(bind).join(',')})${update} returning ${columns}`;
             } else if (patch) {
               const assignments = Object.entries(patch).map(([key, value]) => `${ident(key)}=${bind(value && typeof value === 'object' ? JSON.stringify(value) : value)}`).join(',');
               sql = `update ${table} set ${assignments}${filters.length ? ` where ${filters.join(' and ')}` : ''} returning ${columns}`;
