@@ -71,6 +71,19 @@ export function requireYouTubeConfig(): YouTubeConfig {
   return config;
 }
 
+export const YOUTUBE_CALLBACK_PATH = "/api/integrations/youtube/callback";
+
+/** OAuth must return to the host that owns the session and state cookies. */
+export function requireYouTubeOAuthConfig(requestUrl: string): YouTubeConfig {
+  const config = requireYouTubeConfig();
+  const callback = new URL(config.redirectUri);
+  if (callback.origin !== new URL(requestUrl).origin || callback.pathname !== YOUTUBE_CALLBACK_PATH
+    || callback.search || callback.hash || callback.username || callback.password) {
+    throw new YouTubeConfigurationError();
+  }
+  return config;
+}
+
 export class YouTubeConfigurationError extends Error {
   constructor() { super("youtube_not_configured"); }
 }
