@@ -390,7 +390,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                 <div className="mt-3.5">
                   <h3 className="mb-1.5 text-xs font-semibold text-text-2">Source</h3>
                   <p className="mb-1.5 text-[11px] leading-relaxed text-text-3">
-                    Existing content is a photo you already shot: MARA can then suggest a caption, CTA and timing for it.
+                    Existing content is a photo you already shot: MARA can then suggest a caption, CTA and timing for it. When image reading is on, she first looks at a small copy of the photo, sent once to Voom&apos;s AI provider.
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     <Chip active={source === "own_asset"} disabled={busy !== null} onClick={() => void chooseSource("own_asset")}>
@@ -460,11 +460,13 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                       setError("");
                       setNotice("");
                       try {
-                        const response = await fetch(`${endpoint}/suggest`, { method: "POST" });
+                        const response = await fetch(`${endpoint}/suggest`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ brief: mediaBrief }) });
                         const body = (await response.json()) as {
-                          suggestion?: { caption: string; cta: string; hashtags: string[]; suggestedPublishAt: string | null };
+                          suggestion?: { caption: string; cta: string; hashtags: string[]; suggestedPublishAt: string | null; timingReason?: string };
                           error?: string;
                           disclosure?: string;
+                          /** Slice 5b: what the vision model saw in the photo, when it looked. */
+                          visualDescription?: string;
                         };
                         if (!response.ok || !body.suggestion) throw new Error(body.error ?? "MARA couldn't suggest copy.");
                         setCaption(body.suggestion.caption);
@@ -475,7 +477,8 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                           setDate(isoToLocalDate(when, DEFAULT_TIMEZONE));
                           setTime(toTimeInput(when));
                         }
-                        setNotice(body.disclosure ?? "MARA suggested copy. Review it before saving.");
+                        // The timing reason also carries MARA's note when the purpose and the photo do not fit.
+                        setNotice(`${body.disclosure ?? "MARA suggested copy. Review it before saving."}${body.visualDescription ? ` MARA saw: ${body.visualDescription}` : ""}${body.suggestion.timingReason ? ` Timing: ${body.suggestion.timingReason}` : ""}`);
                       } catch (reason) {
                         setError(reason instanceof Error ? reason.message : "MARA couldn't suggest copy.");
                       } finally {
@@ -525,7 +528,8 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
 
               {post.origin === "existing_content" && !isStory ? (
                 <p className="mt-3 rounded-xl bg-surface-2 px-3 py-2.5 text-[11.5px] leading-relaxed text-text-3">
-                  MARA has not seen this file. Suggestions come from the file name, file type and your brand and plan context only.
+                  {mediaBrief.trim() ? "" : "Tell MARA what this post is for first; she writes a much better caption with it. "}
+                  Suggestions come from your brand and plan context plus, when image reading is on, one look at a small copy of a photo. Videos are never looked at. The note after each suggestion says what MARA saw, if anything.
                 </p>
               ) : null}
 
@@ -541,9 +545,15 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
             </div>
 
             <div>
-              <Field label="What should MARA create?" hint="Your direction for MARA. Saved with the draft so it survives reloads and regenerations. Max 800 characters.">
-                <Textarea rows={3} maxLength={800} value={mediaBrief} onChange={(event) => setMediaBrief(event.target.value)} placeholder="e.g. Summer swimwear flat lay on sand, bright and family-friendly" />
-              </Field>
+              {post.origin === "existing_content" && !isStory ? (
+                <Field label="What is this post for?" hint="The caption serves this. Saved with the draft. Max 800 characters.">
+                  <Textarea rows={3} maxLength={800} value={mediaBrief} onChange={(event) => setMediaBrief(event.target.value)} placeholder="e.g. Introducing our new sandwich to Gurgaon, or a weekend brunch reminder" />
+                </Field>
+              ) : (
+                <Field label="What should MARA create?" hint="Your direction for MARA. Saved with the draft so it survives reloads and regenerations. Max 800 characters.">
+                  <Textarea rows={3} maxLength={800} value={mediaBrief} onChange={(event) => setMediaBrief(event.target.value)} placeholder="e.g. Summer swimwear flat lay on sand, bright and family-friendly" />
+                </Field>
+              )}
               <Field label="Title / concept">
                 <Input value={concept} maxLength={160} onChange={(event) => setConcept(event.target.value)} />
               </Field>

@@ -414,15 +414,18 @@ test("existing image becomes an Instagram Post and existing video becomes a Reel
   assert.match(modal, /create\("instagram_post", "mara"\)/);
 });
 
-test("existing-content suggestions are metadata-only and disclose that MARA did not watch", async () => {
+test("existing-content suggestions disclose exactly what MARA saw: a photo through one vision look (slice 5b), a video never", async () => {
   const route = await read("app/api/posts/[id]/suggest/route.ts");
   assert.match(route, /buildExistingContentPayload/);
-  assert.match(route, /inspectedVisual: false/);
-  assert.match(route, /disclosure: EXISTING_CONTENT_DISCLOSURE/);
+  assert.match(route, /const seen = assetKind === "image" \? await lookAtPostImage\(/, "only a photo is ever looked at");
+  assert.match(route, /inspectedVisual: Boolean\(seen\)/);
+  assert.match(route, /disclosure: seen \? EXISTING_CONTENT_SEEN_DISCLOSURE : EXISTING_CONTENT_DISCLOSURE/);
   assert.match(route, /postAssetKindForMime\(post\.visual\.mimeType\)/);
-  assert.doesNotMatch(route, /bytes|arrayBuffer|base64|createMediaProvider|getMediaConfig/);
+  // The bytes go to the vision model's small copy only; the text model and the image generator never see them.
+  assert.doesNotMatch(route, /createMediaProvider|getMediaConfig/);
+  assert.match(route, /describePostImage\(provider, \{ jpeg, hint: postVisionHint\(brand\) \}\)/);
   const editor = await read("components/voom/modals/PostEditorModal.tsx");
-  assert.match(editor, /MARA has not seen this file/);
+  assert.match(editor, /MARA saw: /);
 });
 
 // ---------------------------------------------------------------------------

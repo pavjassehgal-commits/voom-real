@@ -224,6 +224,11 @@ prop that hides History and the gallery in onboarding.
    replaced, uploads from a run never finished) are swept after Finish and after a Brand page
    images save; removing the logo drops the colours computed from it; an onboarding that
    replaces the images owns the colours too. Tests: `tests/brand-assets.test.mjs`.
+   **5b, BUILT 2026-10-28:** Post Studio's caption suggestion for an uploaded photo first looks
+   at a small copy with the vision model and a brand hint (name, kind, offerings, product photo
+   descriptions), then writes for that reading next to the brand context; the editor shows
+   "MARA saw: …". Videos and accounts without vision keep the metadata-only path. Nothing is
+   stored. Tests: `tests/post-vision.test.mjs`.
 6. **Voice samples. BUILT 2026-10-27.** The voice screen writes three captions when it opens
    (`lib/brand/voice.ts`, one structured call from a snapshot of every answer so far, including
    the rules, banned words and confirmed facts; `lib/brand/voice-actions.ts`, 20 writes per user

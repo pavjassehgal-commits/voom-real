@@ -23,6 +23,8 @@ export const AI_RATE_LIMITS = {
   brand_vision: { limit: 40, windowSeconds: 3600 },
   /** MARA writing three sample captions (slice 6): once per voice screen plus "Try 3 more". */
   brand_voice: { limit: 20, windowSeconds: 3600 },
+  /** MARA looking at an uploaded post photo before suggesting its caption (slice 5b). */
+  post_vision: { limit: 40, windowSeconds: 3600 },
 } as const;
 
 export type AiRateLimitBucket = keyof typeof AI_RATE_LIMITS;

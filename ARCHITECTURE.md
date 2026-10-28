@@ -57,7 +57,7 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 | `lib/ai/` | Connection to the AI text model (any OpenAI-compatible API; default Groq), plus the optional image-reading model (`AI_VISION_*`, off until `AI_VISION_MODEL` is set; Groq, OpenRouter or any OpenAI-compatible vision model) |
 | `lib/mara/` | MARA's brain: chat prompt, tools, Reel production, video generation and polling, paid-media spending rules, Autopilot safety |
 | `lib/media/` | Image/video generation providers, checking uploaded files, overlays |
-| `lib/post/` | Post Studio: drafts, copy prompts (`prompt.ts`), brand context loader for posts (`server-data.ts`), assets |
+| `lib/post/` | Post Studio: drafts, copy prompts (`prompt.ts`), brand context loader for posts (`server-data.ts`), assets, and `vision.ts` (slice 5b: one look at an uploaded photo with a brand hint before MARA suggests its caption) |
 | `lib/social/` | Shared channel layer: channel list (`channels.ts`), connection status, readiness, publishing state |
 | `lib/instagram/`, `lib/tiktok/`, `lib/youtube/` | One folder per platform: OAuth connect, encrypted tokens, publish queue, publish worker, reconcile, insights |
 | `lib/performance/` | Reads results (Instagram insights), ranks what worked, feeds hints into the next plan (`plan-context.ts`) |
@@ -136,8 +136,13 @@ when the account has a Brand Kit with content, the prompt payload gains a `brand
 the system prompt a BRAND KIT rules section, otherwise both are exactly as before. With brand
 images or colours the block also carries `visualStyle` (palette, logo, product and past-post
 descriptions as text, never files) and one extra rule tells MARA to fit every visual prompt to
-it. Images: `lib/media/provider.ts` (text prompt only today; the image model never sees the
-owner's files). Reel video plans (`lib/mara/video-ports.ts`) do not read the brand kit yet. Videos: `lib/mara/video-*` with a polling worker
+it. Caption suggestions for an uploaded photo ("Existing content", `POST /api/posts/[id]/suggest`):
+when the vision model is configured, MARA first looks at a small JPEG copy of the photo with a
+brand hint (name, kind, offerings, product photo descriptions; `lib/post/vision.ts`, 40 looks
+per user per hour) and the text model writes for that reading next to the brand context; the
+response returns what she saw. Videos, vision off, or a failed look: metadata only, as before,
+and the response says MARA has not seen the file. Images: `lib/media/provider.ts` (text prompt
+only today; the image model never sees the owner's files). Reel video plans (`lib/mara/video-ports.ts`) do not read the brand kit yet. Videos: `lib/mara/video-*` with a polling worker
 every 2 min. Credits are reserved first by `lib/billing/entitlement-guard.ts`.
 
 **Analytics.** `/api/cron/instagram-performance` (every 6 h) stores snapshots →

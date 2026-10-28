@@ -3,9 +3,13 @@
  *
  * Truthfulness rules enforced here:
  *  - MARA writes copy from TEXT ONLY: the business profile, the active
- *    marketing plan, and (for existing content) the file's metadata.
- *  - No image or video bytes are ever sent to a provider. There is no vision
- *    call in Post Studio, so MARA never claims to have looked at a visual.
+ *    marketing plan, and (for existing content) the file's metadata, plus,
+ *    since slice 5b, the one-paragraph reading the vision model made of an
+ *    uploaded photo (lib/post/vision.ts). That reading is the only thing the
+ *    text model knows about the picture, and the prompt says so.
+ *  - No image or video bytes ever reach the TEXT model. The vision call sends
+ *    a small JPEG copy of a photo once; videos are never looked at, and the
+ *    unseen prompt still says MARA has not seen the file.
  *  - Generated visuals are described as generated from a text prompt.
  */
 import { z } from "zod";
@@ -143,6 +147,10 @@ export const POST_SUGGESTION_SYSTEM_PROMPT = `You are MARA, Voom's practical AI 
 Return JSON only, with exactly these keys:
 {"caption":"string","cta":"string","hashtags":["string"],"suggestedPublishAt":"ISO-8601 or null","timingReason":"string"}
 
+What a caption is for:
+- postPurpose is the owner's own line on why they are posting this. The caption's job is that purpose, in the brand's voice. When postPurpose is null, choose the purpose from the business's main goal and the marketing plan (for example "more online sales" means an invitation to order, "more walk-ins" means a reason to visit) and write for it.
+- A caption is never a description of the file. Lead with why the reader should care, then the specifics.
+
 Critical honesty rule:
 - You have NOT seen the photo or video. There is no vision model in this flow. You are given only the file name, file type, file size, the brand profile and the active marketing plan.
 - Write copy that fits the brand and the marketing context, and keep it generic enough to be true for the imported file. Do NOT describe what is in the image or video. Do NOT claim you analysed, inspected, viewed, or understood the visual.
@@ -217,8 +225,9 @@ export function buildPostContextPayload(input: {
 }
 
 /**
- * Metadata-only description of an imported file. This is the ONLY information
- * about the visual that reaches the provider — never its bytes.
+ * Description of an imported file for the TEXT model: its metadata, plus,
+ * when the vision model looked at a photo (slice 5b), the one paragraph it
+ * wrote. Never the bytes.
  */
 export function buildExistingContentPayload(input: {
   displayName: string;
@@ -228,16 +237,27 @@ export function buildExistingContentPayload(input: {
   brand: PostBrandContext;
   plan: PostPlanContext | null;
   nowIso: string;
+  /** What the vision model saw in the photo, or null/absent when nothing looked at it. */
+  visual?: { description: string } | null;
+  /** The owner's own line on what this post is for ("What is this post for?"), or empty. */
+  brief?: string | null;
 }) {
+  const seen = input.visual?.description.trim().slice(0, 400) || "";
+  const purpose = (input.brief ?? "").trim().slice(0, 800);
   const payload = {
+    // The owner's purpose for the post comes first: it is what the caption serves.
+    postPurpose: purpose || null,
     importedFile: {
       name: input.displayName.slice(0, 180),
       type: input.assetKind === "video" ? "video" : "image",
       mimeType: input.mimeType,
       sizeBytes: input.byteSize,
+      ...(seen ? { whatMaraSaw: seen } : {}),
     },
-    maraHasSeenTheFile: false,
-    note: "MARA cannot see this file. Use only the metadata above plus the business and plan context. Do not describe the visual.",
+    maraHasSeenTheFile: Boolean(seen),
+    note: seen
+      ? "MARA looked at a small copy of this image once; importedFile.whatMaraSaw is everything she saw. Write for that picture, in the brand's voice, and state nothing about the image beyond that description."
+      : "MARA cannot see this file. Use only the metadata above plus the business and plan context. Do not describe the visual.",
     currentTime: input.nowIso,
     business: {
       name: input.brand.brandName.slice(0, 160),
@@ -260,3 +280,30 @@ export function buildExistingContentPayload(input: {
  */
 export const EXISTING_CONTENT_DISCLOSURE =
   "MARA has not seen this file. These suggestions are based on the file name, file type and your brand and plan context only.";
+
+/** The disclosure when the vision model looked at the photo (slice 5b). */
+export const EXISTING_CONTENT_SEEN_DISCLOSURE =
+  "MARA looked at a small copy of this image once to write these. Check that what she saw matches the photo before you save.";
+
+/**
+ * The suggestion prompt when MARA has a reading of the photo (slice 5b). Same
+ * rules as the unseen prompt, with the honesty rule turned around: she knows
+ * the picture only through that one description and may state nothing beyond it.
+ */
+export const POST_SUGGESTION_SEEN_SYSTEM_PROMPT = `You are MARA, Voom's practical AI marketing manager. The user has imported a photo they already own, and you looked at a small copy of it once.
+
+Return JSON only, with exactly these keys:
+{"caption":"string","cta":"string","hashtags":["string"],"suggestedPublishAt":"ISO-8601 or null","timingReason":"string"}
+
+What a caption is for:
+- postPurpose is the owner's own line on why they are posting this photo. The caption's job is that purpose, in the brand's voice; the photo supplies the specifics. When postPurpose is null, choose the purpose from the business's main goal and the marketing plan (for example "more online sales" means an invitation to order, "more walk-ins" means a reason to visit) and write for it.
+- A caption is never a description of the photo. Lead with why the reader should care, then use what the photo shows to make it concrete. Never list what is in the picture.
+- When postPurpose and the photo clearly do not match (the purpose names a product the photo does not show), follow the purpose for what the post is about and the photo for what is shown, invent nothing to bridge them, and say in timingReason that the photo may not fit the purpose.
+
+Critical honesty rule:
+- Everything you know about the photo is importedFile.whatMaraSaw, written from that one look. Do NOT state anything about the image that is not in that description, and never claim to have examined it closely.
+- Where the description names one of the business's products, use that name; where it does not, do not guess which product it is.
+- Fit the brand: its description, personality and, when given, the Brand Kit rules, so the caption and the picture never contradict each other.
+- Do not invent prices, discounts, offers, opening hours, locations, links, awards, reviews, or statistics that are not in the supplied context.
+- suggestedPublishAt must be a real future ISO-8601 timestamp based on the current time and the business's stated content frequency, or null if you cannot justify one.
+- timingReason: one short sentence explaining the suggested slot from the supplied context only.`;

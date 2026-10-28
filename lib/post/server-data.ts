@@ -125,6 +125,23 @@ async function loadAssetRow(admin: AdminClient, ownerId: string, draftId: string
   return (data as Record<string, unknown> | null) ?? null;
 }
 
+/**
+ * The stored bytes of the owner's visual for a draft (slice 5b: the vision
+ * model's small copy is made from these). Null when there is no stored
+ * visual or the download fails; the path itself never leaves the server.
+ */
+export async function readPostAssetObject(admin: AdminClient, ownerId: string, draftId: string): Promise<Uint8Array | null> {
+  const asset = await loadAssetRow(admin, ownerId, draftId);
+  if (asset?.status !== "uploaded" || typeof asset.storage_path !== "string") return null;
+  try {
+    const { data, error } = await admin.storage.from(POST_ASSET_BUCKET).download(asset.storage_path);
+    if (error || !data) return null;
+    return new Uint8Array(await data.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
 /** Owner-scoped read of one post plus its private visual. */
 export async function getPostDraft(admin: AdminClient, ownerId: string, draftId: string): Promise<PostView | null> {
   const { data: draft } = await admin.from("mara_drafts").select(DRAFT_COLUMNS)

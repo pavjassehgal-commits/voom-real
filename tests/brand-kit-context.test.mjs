@@ -284,7 +284,7 @@ test("Post Studio routes and the weekly plan wire the kit into their prompts", a
   assert.match(generate, /withBrandKitRules\(STORY_VISUAL_SYSTEM_PROMPT, brandKit\)/);
   assert.match(generate, /withBrandKitRules\(POST_COPY_SYSTEM_PROMPT, brandKit\)/);
   const suggest = await read("app/api/posts/[id]/suggest/route.ts");
-  assert.match(suggest, /withBrandKitRules\(POST_SUGGESTION_SYSTEM_PROMPT, brand\.brandKit\)/);
+  assert.match(suggest, /withBrandKitRules\(seen \? POST_SUGGESTION_SEEN_SYSTEM_PROMPT : POST_SUGGESTION_SYSTEM_PROMPT, brand\.brandKit\)/, "both the seen and unseen prompts carry the kit rules (slice 5b)");
   const serverData = await read("lib/post/server-data.ts");
   assert.match(serverData, /const context = await loadBrandContext\(admin, ownerId\)/, "Post Studio reads through the one brand reader");
   assert.match(serverData, /brandKit: brandKitPromptContext\(context\.kit\)/, "the loader builds the prompt block once");
