@@ -14,7 +14,7 @@ import { createAdminClient } from "@/utils/supabase/admin";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { appendBrandKitVersion } from "./versions";
 import { isOwnBrandAssetPath, type BrandAsset } from "./assets";
-import { loadNewestBrandAssets, removeBrandAssetObjects } from "./asset-storage";
+import { loadNewestBrandAssets, removeBrandAssetObjects, removeUnreferencedBrandAssets } from "./asset-storage";
 import { syncBrandToEmail } from "./email-sync";
 import { brandSectionMeta, validateBrandSection, answerKeyLabel, type BrandSectionId, type BrandSectionValues } from "./sections";
 
@@ -78,6 +78,8 @@ async function afterAssetsSaved(ownerId: string, previous: BrandAsset[], next: B
   const kept = new Set(next.map((asset) => asset.path));
   const removed = previous.map((asset) => asset.path).filter((path) => !kept.has(path));
   if (removed.length) await removeBrandAssetObjects(admin, ownerId, removed);
+  // Also any file nothing references any more (leftovers of an onboarding never finished).
+  await removeUnreferencedBrandAssets(admin, ownerId, [...kept]);
   const { data: business } = await admin.from("businesses").select("brand_name").eq("owner_user_id", ownerId).maybeSingle()
     .then((result) => result, () => ({ data: null }));
   await syncBrandToEmail(admin, ownerId, { assets: next, colours: values.colours, brandName: String((business as { brand_name?: string } | null)?.brand_name ?? "") });

@@ -34,7 +34,7 @@ import { normalizeMediaSpendSettings, type MediaSpendSettings } from "@/lib/mara
 import { brandFromBusiness, deriveHandle, type Brand } from "./brand-state";
 import { AUTOMATION_MODE_EVENT, storedAutomationMode, type AutomationModeValue } from "./automation";
 import { canUseAutomationMode } from "@/lib/billing/plans";
-import { coloursAfterLogo, withAddedAsset, withAssetText, withoutAsset, type BrandAsset, type BrandAssetText } from "@/lib/brand/assets";
+import { coloursAfterLogo, coloursAfterLogoRemoved, withAddedAsset, withAssetText, withoutAsset, type BrandAsset, type BrandAssetText } from "@/lib/brand/assets";
 import { DEFAULT_FREQ } from "./onboardingData";
 import { applyThemeToDocument, initialTheme, persistTheme, readStoredTheme, subscribeToTheme, themeSnapshot, type ThemeValue } from "./theme";
 
@@ -482,7 +482,11 @@ export function VoomProvider({
   }, []);
 
   const removeOnboardAsset = useCallback<VoomActions["removeOnboardAsset"]>((path) => {
-    setState((s) => ({ ...s, onboard: { ...s.onboard, assets: withoutAsset(s.onboard.assets, path) } }));
+    setState((s) => {
+      const o = s.onboard;
+      const wasLogo = o.assets.some((asset) => asset.path === path && asset.kind === "logo");
+      return { ...s, onboard: { ...o, assets: withoutAsset(o.assets, path), colours: wasLogo ? coloursAfterLogoRemoved(o.colours) : o.colours } };
+    });
   }, []);
 
   const finishOnboarding = useCallback<VoomActions["finishOnboarding"]>(

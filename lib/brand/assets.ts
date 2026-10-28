@@ -203,6 +203,11 @@ export function coloursAfterLogo(current: BrandColours | null, computed: { prima
   return { primary: computed.primary, secondary: computed.secondary, source: "logo" };
 }
 
+/** After the logo is removed: colours computed from it go; colours the owner picked stay. */
+export function coloursAfterLogoRemoved(current: BrandColours | null): BrandColours | null {
+  return current?.source === "logo" ? null : current;
+}
+
 /** Plain-language count for history lines and summaries ("1 logo, 2 products"). */
 export function describeBrandAssets(assets: readonly BrandAsset[] | null | undefined): string {
   const list = assets ?? [];

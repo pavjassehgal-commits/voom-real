@@ -10,7 +10,7 @@ import "server-only";
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { BRAND_KIT_TABLE } from "./context";
-import { BRAND_KIT_BUCKET, cleanBrandAssets, isOwnBrandAssetPath, type BrandAsset } from "./assets";
+import { BRAND_ASSET_KINDS, BRAND_KIT_BUCKET, cleanBrandAssets, isOwnBrandAssetPath, type BrandAsset } from "./assets";
 
 export const BRAND_ASSET_PREVIEW_TTL_SECONDS = 3600;
 
@@ -40,6 +40,36 @@ export async function removeBrandAssetObjects(admin: SupabaseClient, ownerId: st
   } catch {
     console.error("[brand-assets] remove failed", { count: own.length });
   }
+}
+
+/**
+ * Deletes every file in the owner's three folders that the newest kit version
+ * does not reference (`keep`): the previous set after a restarted onboarding
+ * replaced it, and uploads from an onboarding that was never finished.
+ * Best-effort: a listing failure leaves the folder alone and is logged.
+ */
+export async function removeUnreferencedBrandAssets(admin: SupabaseClient, ownerId: string, keep: readonly string[]): Promise<void> {
+  const kept = new Set(keep);
+  const orphans: string[] = [];
+  for (const kind of BRAND_ASSET_KINDS) {
+    const folder = `${ownerId}/${kind}`;
+    try {
+      const { data, error } = await admin.storage.from(BRAND_KIT_BUCKET).list(folder, { limit: 1000 });
+      if (error || !Array.isArray(data)) {
+        console.error("[brand-assets] sweep listing failed", { kind });
+        continue;
+      }
+      for (const entry of data) {
+        const name = (entry as { name?: unknown })?.name;
+        if (typeof name !== "string") continue;
+        const path = `${folder}/${name}`;
+        if (!kept.has(path) && isOwnBrandAssetPath(ownerId, path, kind)) orphans.push(path);
+      }
+    } catch {
+      console.error("[brand-assets] sweep listing failed", { kind });
+    }
+  }
+  if (orphans.length) await removeBrandAssetObjects(admin, ownerId, orphans);
 }
 
 /** One-hour preview links for the owner's own paths. Missing objects are simply left out. */

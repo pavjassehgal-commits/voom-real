@@ -77,8 +77,10 @@ export function brandKitAnswersFromOnboarding(input: OnboardingInput): Record<st
     ...(kit.factsUnconfirmed?.length ? { facts_unconfirmed: kit.factsUnconfirmed } : {}),
     ...(Object.keys(provenance).length ? { provenance } : {}),
     ...(kit.wantedAutomation ? { wanted_automation: kit.wantedAutomation } : {}),
-    // Slice 5: the logo colours, only when there are some (a skipped screen carries the old ones forward).
-    ...(kit.colours ? { colours: kit.colours } : {}),
+    // Slice 5: the logo colours. A run that replaces the images owns the colours
+    // too (a new logo brings new ones; no logo clears the computed ones); a run
+    // with no uploads carries both the old images and the old colours forward.
+    ...(kit.assets?.length ? { colours: kit.colours ?? null } : kit.colours ? { colours: kit.colours } : {}),
     // Slice 6: the sorted sample captions, only when there are some (same reason).
     ...(kit.voiceSamples && (kit.voiceSamples.liked.length || kit.voiceSamples.disliked.length)
       ? { voice_samples: { liked: cleanSamples(kit.voiceSamples.liked), disliked: cleanSamples(kit.voiceSamples.disliked) } }

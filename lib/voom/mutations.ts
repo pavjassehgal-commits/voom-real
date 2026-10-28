@@ -9,6 +9,7 @@ import { normalizeWebsiteUrl, WEBSITE_NOT_SAVED_NOTICE } from "./website";
 import { appendBrandKitVersion, brandKitAnswersFromOnboarding, brandKitAnswersFromProfile } from "@/lib/brand/versions";
 import { cleanBrandAssets, cleanBrandColours, isOwnBrandAssetPath } from "@/lib/brand/assets";
 import { syncBrandToEmail } from "@/lib/brand/email-sync";
+import { loadNewestBrandAssets, removeUnreferencedBrandAssets } from "@/lib/brand/asset-storage";
 import type { BusinessProfileInput, OnboardingInput } from "./types";
 
 /** `notice` is a non-fatal message worth showing (the save itself succeeded). */
@@ -65,13 +66,18 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
   // become brand kit version 1 (or the next version after a restart).
   // Best-effort: the businesses row above is what today's generation reads
   // for the core fields. A run with no uploads carries the previous images over.
-  await appendBrandKitVersion(supabase, user.id, {
+  const previousAssets = await loadNewestBrandAssets(supabase, user.id);
+  const appended = await appendBrandKitVersion(supabase, user.id, {
     source: "onboarding",
     answers: brandKitAnswersFromOnboarding(checked),
     ...(input.kit ? { brief: input.kit.brief } : {}),
     ...(assets.length ? { assets } : {}),
     changeSummary: "Onboarding completed",
   });
+  // Files the newest version no longer references are deleted: the set this
+  // run replaced, and uploads from a run that was never finished. Only once
+  // the version is really saved, so a failed insert never strands a row.
+  if (appended) await sweepOnboardingBrandAssets(user.id, (assets.length ? assets : previousAssets).map((asset) => asset.path));
 
   const websiteSaved = await saveOnboardingWebsite(user.id, input.website);
   // After the website: both go through upsert_email_brand, which keeps what it is not sent.
@@ -79,6 +85,15 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
 
   revalidatePath("/app", "layout");
   return websiteSaved ? { ok: true } : { ok: true, notice: WEBSITE_NOT_SAVED_NOTICE };
+}
+
+/** Deletes the owner's brand images that the saved kit does not reference (best-effort; never fails onboarding). */
+async function sweepOnboardingBrandAssets(ownerId: string, keep: readonly string[]): Promise<void> {
+  try {
+    await removeUnreferencedBrandAssets(createAdminClient(), ownerId, keep);
+  } catch {
+    console.error("[brand-assets] sweep skipped: service role not configured");
+  }
 }
 
 /** Logo and colours fill the email brand where it is still empty (best-effort; never fails onboarding). */

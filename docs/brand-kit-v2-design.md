@@ -219,9 +219,11 @@ prop that hides History and the gallery in onboarding.
    image generator never see the files; prompts get only `brandKit.visualStyle` text. Logo and
    colours fill the email brand only where it is empty (`lib/brand/email-sync.ts`). Images only
    (no short videos as past posts: the bucket takes images). Not built: Reel video plans
-   reading the kit (slice 9), clean-up of uploads from an onboarding never finished, the
-   design's per-image "what is this" filled by the text model (replaced by vision). Tests:
-   `tests/brand-assets.test.mjs`.
+   reading the kit (slice 9), the design's per-image "what is this" filled by the text model
+   (replaced by vision). Fixed 2026-10-28: leftover files (the set a restarted onboarding
+   replaced, uploads from a run never finished) are swept after Finish and after a Brand page
+   images save; removing the logo drops the colours computed from it; an onboarding that
+   replaces the images owns the colours too. Tests: `tests/brand-assets.test.mjs`.
 6. **Voice samples. BUILT 2026-10-27.** The voice screen writes three captions when it opens
    (`lib/brand/voice.ts`, one structured call from a snapshot of every answer so far, including
    the rules, banned words and confirmed facts; `lib/brand/voice-actions.ts`, 20 writes per user

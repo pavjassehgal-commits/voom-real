@@ -58,6 +58,7 @@ const versions = await importApp("lib/brand/versions.ts");
 const context = await importApp("lib/brand/context.ts");
 const sections = await importApp("lib/brand/sections.ts");
 const emailSync = await importApp("lib/brand/email-sync.ts");
+const storage = await importApp("lib/brand/asset-storage.ts");
 const uploadRoute = await importApp("app/api/brand/assets/route.ts");
 const describeRoute = await importApp("app/api/brand/assets/describe/route.ts");
 const { saveOnboarding } = await importApp("lib/voom/mutations.ts");
@@ -122,7 +123,8 @@ function fakeAdmin({ rateOk = true, newestAssets = [], emailBrand = null } = {})
         return {
           upload: async (path, bytes, options) => { objects.set(`${bucket}/${path}`, bytes); calls.uploads.push({ bucket, path, contentType: options?.contentType }); return { data: { path }, error: null }; },
           download: async (path) => { calls.downloads.push({ bucket, path }); const b = objects.get(`${bucket}/${path}`); return b ? { data: new Blob([b]), error: null } : { data: null, error: { message: "not found" } }; },
-          remove: async (paths) => { calls.removes.push({ bucket, paths }); return { data: [], error: null }; },
+          remove: async (paths) => { calls.removes.push({ bucket, paths }); for (const p of paths) objects.delete(`${bucket}/${p}`); return { data: [], error: null }; },
+          list: async (prefix) => ({ data: [...objects.keys()].filter((key) => key.startsWith(`${bucket}/${prefix}/`)).map((key) => ({ name: key.slice(`${bucket}/${prefix}/`.length) })), error: null }),
           createSignedUrls: async (paths) => ({ data: paths.map((p) => ({ path: p, signedUrl: `https://signed.example/${p}?token=t`, error: null })), error: null }),
         };
       },
@@ -438,6 +440,76 @@ test("Finish saves only the owner's own images, and fills the email brand only w
   assert.equal(admin.calls.rpcs.some((call) => call.name === "upsert_email_brand"), false);
 });
 
+/* ── 8b. Leftover files and colours without a logo (fixes 2026-10-28) ───── */
+
+test("the sweep deletes only the owner's files that the kit does not reference", async () => {
+  const keep = asset("logo", 1);
+  const orphanProduct = asset("product", 2);
+  const orphanPost = asset("past_post", 3);
+  const { admin, calls, objects } = fakeAdmin();
+  for (const a of [keep, orphanProduct, orphanPost]) objects.set(`brand-kit/${a.path}`, new Uint8Array([1]));
+  objects.set(`brand-kit/${OTHER}/logo/${uuid(4)}.png`, new Uint8Array([1]));
+  objects.set(`brand-kit/${OWNER}/logo/notes.txt`, new Uint8Array([1]));
+  await storage.removeUnreferencedBrandAssets(admin, OWNER, [keep.path]);
+  assert.deepEqual(calls.removes, [{ bucket: "brand-kit", paths: [orphanProduct.path, orphanPost.path] }], "the kept file, another owner's folder and a file that is not an image path are left alone");
+  assert.ok(objects.has(`brand-kit/${keep.path}`));
+  assert.ok(objects.has(`brand-kit/${OTHER}/logo/${uuid(4)}.png`));
+
+  // Nothing to delete: no remove call at all.
+  const quiet = fakeAdmin();
+  quiet.objects.set(`brand-kit/${keep.path}`, new Uint8Array([1]));
+  await storage.removeUnreferencedBrandAssets(quiet.admin, OWNER, [keep.path]);
+  assert.deepEqual(quiet.calls.removes, []);
+});
+
+test("Finish deletes the images a restarted onboarding replaced and any abandoned upload; a run with no uploads keeps everything", async () => {
+  const oldLogo = asset("logo", 1);
+  const newLogo = asset("logo", 5);
+  const abandoned = asset("product", 6);
+  let calls = fakeUserDb({ version: 1, answers: { colours: { primary: "#111111", secondary: null, source: "logo" } }, brief: null, assets: [oldLogo] });
+  let admin = fakeAdmin();
+  for (const a of [oldLogo, newLogo, abandoned]) admin.objects.set(`brand-kit/${a.path}`, await logoPng());
+  assert.deepEqual(await saveOnboarding(onboardingInput({ assets: [newLogo] })), { ok: true });
+  assert.deepEqual(calls.kitInserts[0].assets, [newLogo]);
+  assert.equal(calls.kitInserts[0].answers.colours, null, "a replaced logo with no computed colours clears the old logo's colours");
+  const swept = admin.calls.removes.flatMap((call) => call.paths).sort();
+  assert.deepEqual(swept, [oldLogo.path, abandoned.path].sort(), "the replaced logo and the abandoned upload are deleted");
+  assert.ok(admin.objects.has(`brand-kit/${newLogo.path}`), "the new logo stays");
+
+  // No uploads: the old images carry forward and nothing is deleted.
+  calls = fakeUserDb({ version: 1, answers: {}, brief: null, assets: [oldLogo] });
+  admin = fakeAdmin();
+  admin.objects.set(`brand-kit/${oldLogo.path}`, await logoPng());
+  await saveOnboarding(onboardingInput({}));
+  assert.deepEqual(calls.kitInserts[0].assets, [oldLogo]);
+  assert.deepEqual(admin.calls.removes, []);
+  assert.equal("colours" in calls.kitInserts[0].answers, false, "no uploads: colours carry forward too");
+
+  const source = await read("lib/voom/mutations.ts");
+  assert.match(source, /if \(appended\) await sweepOnboardingBrandAssets/, "the sweep runs only once the version is really saved");
+});
+
+test("removing the logo drops the colours computed from it and keeps colours the owner picked", async () => {
+  assert.equal(assets.coloursAfterLogoRemoved({ primary: "#111111", secondary: "#222222", source: "logo" }), null);
+  const picked = { primary: "#111111", secondary: null, source: "owner" };
+  assert.deepEqual(assets.coloursAfterLogoRemoved(picked), picked);
+  assert.equal(assets.coloursAfterLogoRemoved(null), null);
+
+  const store = await read("lib/voom/store.tsx");
+  assert.match(store, /const wasLogo = o\.assets\.some\(\(asset\) => asset\.path === path && asset\.kind === "logo"\);\s*return \{ \.\.\.s, onboard: \{ \.\.\.o, assets: withoutAsset\(o\.assets, path\), colours: wasLogo \? coloursAfterLogoRemoved\(o\.colours\) : o\.colours \} \};/, "onboarding");
+  const hub = await read("components/voom/brand/BrandHub.tsx");
+  assert.match(hub, /colours: wasLogo \? coloursAfterLogoRemoved\(prev\.colours\) : prev\.colours/, "Brand page");
+
+  // The version rule: a run that replaces the images owns the colours too.
+  const base = onboardingInput({});
+  const withLogo = versions.brandKitAnswersFromOnboarding({ ...base, kit: { ...base.kit, assets: [asset("logo", 1)], colours: { primary: "#111111", secondary: null, source: "logo" } } });
+  assert.deepEqual(withLogo.colours, { primary: "#111111", secondary: null, source: "logo" });
+  const productsOnly = versions.brandKitAnswersFromOnboarding({ ...base, kit: { ...base.kit, assets: [asset("product", 2)] } });
+  assert.equal(productsOnly.colours, null, "images replaced, no logo: the old computed colours clear");
+  const nothing = versions.brandKitAnswersFromOnboarding(base);
+  assert.equal("colours" in nothing, false, "no uploads: carried forward");
+});
+
 test("the email fill is best-effort: a failure never fails the save", async () => {
   const { admin } = fakeAdmin();
   admin.from = () => { const q = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: null, error: { message: "no table" } }) }; return q; };
@@ -458,6 +530,8 @@ test("the Brand page images save refuses foreign paths, deletes removed files an
 
   const calls = fakeUserDb({ version: 3, answers: { name: "Bean & Co." }, brief: "B.", assets: [logo, product] });
   const admin = fakeAdmin({ emailBrand: { logo_asset_id: "set", primary_color: "#000000", secondary_color: "#FFFFFF" } });
+  const abandoned = asset("past_post", 7);
+  for (const a of [logo, product, abandoned]) admin.objects.set(`brand-kit/${a.path}`, new Uint8Array([1]));
   const result = await saveBrandSection("assets", { assets: [product], colours: { primary: "#C81E28", secondary: null, source: "owner" } });
   assert.equal(result.ok, true);
   assert.deepEqual(result.changedKeys, ["colours", "assets"], "the keys that really changed, in the order the row records them (2026-10-27)");
@@ -465,7 +539,8 @@ test("the Brand page images save refuses foreign paths, deletes removed files an
   assert.deepEqual(calls.kitInserts[0].answers.colours, { primary: "#C81E28", secondary: null, source: "owner" });
   assert.equal(calls.kitInserts[0].brief, "B.", "the brief carries forward");
   assert.deepEqual(calls.businessUpdates, [], "images never touch businesses");
-  assert.deepEqual(admin.calls.removes, [{ bucket: "brand-kit", paths: [logo.path] }], "the removed logo file is deleted");
+  assert.deepEqual(admin.calls.removes, [{ bucket: "brand-kit", paths: [logo.path] }, { bucket: "brand-kit", paths: [abandoned.path] }], "the removed logo file is deleted, then the sweep takes an abandoned upload (2026-10-28)");
+  assert.ok(admin.objects.has(`brand-kit/${product.path}`), "the kept image stays");
   assert.equal(admin.calls.rpcs.some((call) => call.name === "upsert_email_brand"), false, "email identity already complete: untouched");
 
   assert.deepEqual(sections.validateBrandSection("assets", { assets: [{ path: "x" }] }), { ok: false, error: "Some of those values are not valid. Shorten or remove them and try again." });

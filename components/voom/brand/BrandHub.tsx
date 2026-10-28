@@ -18,7 +18,7 @@ import { BrandAssetsEditor } from "@/components/voom/brand/BrandAssetsEditor";
 import { requestVoiceSamples, sortSample, VoiceSampleCards, voiceSamplesMessage, WritingSamplesPanel, type SampleVerdict } from "@/components/voom/brand/VoiceSamples";
 import { saveBrandSection } from "@/lib/brand/actions";
 import { VOICE_SAMPLES_PER_LIST, voiceSnapshotFromSections } from "@/lib/brand/voice";
-import { coloursAfterLogo, describeBrandAssets, withAddedAsset, withAssetText, withoutAsset, type BrandAsset } from "@/lib/brand/assets";
+import { coloursAfterLogo, coloursAfterLogoRemoved, describeBrandAssets, withAddedAsset, withAssetText, withoutAsset, type BrandAsset } from "@/lib/brand/assets";
 import {
   answerKeyLabel, AVOID_RULES, BRAND_SECTIONS, brandSectionMeta, validateBrandSection,
   type BrandKitVersionView, type BrandSectionId, type BrandSectionValues,
@@ -404,7 +404,10 @@ function AssetsSectionEditor({ draft, updateDraft, savedPaths, previews, setPrev
         update((prev) => ({ assets: withAddedAsset(prev.assets, asset), colours: asset.kind === "logo" ? coloursAfterLogo(prev.colours, computed) : prev.colours }));
       }}
       onText={(path, text, by) => update((prev) => ({ ...prev, assets: withAssetText(prev.assets, path, text, by) }))}
-      onRemove={(path) => update((prev) => ({ ...prev, assets: withoutAsset(prev.assets, path) }))}
+      onRemove={(path) => update((prev) => {
+        const wasLogo = prev.assets.some((asset) => asset.path === path && asset.kind === "logo");
+        return { assets: withoutAsset(prev.assets, path), colours: wasLogo ? coloursAfterLogoRemoved(prev.colours) : prev.colours };
+      })}
       onColours={(colours) => update((prev) => ({ ...prev, colours }))}
     />
   );
