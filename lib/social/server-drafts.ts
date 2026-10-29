@@ -113,7 +113,7 @@ export interface SocialDraftView {
   queueStatus: string | null;
   /** The queue's truthful failure message, when it carries one. */
   queueFailureMessage: string | null;
-  asset: { displayName: string; mimeType: string } | null;
+  asset: { displayName: string; mimeType: string; previewUrl?: string | null } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -258,7 +258,7 @@ export async function getSocialDraft(
   const row = data as Record<string, unknown>;
   if (!isSocialVideoDraftKind(row.kind)) return null;
   const { data: asset, error: assetError } = await admin.from("post_draft_assets")
-    .select("display_name,mime_type").eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
+    .select("display_name,mime_type,storage_path,status").eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
   if (assetError) throw new Error("social_draft_asset_read_failed");
   const channel = kindPair(row.kind as SocialVideoDraftKind).channel;
   const queue = channel === "youtube"
@@ -266,7 +266,16 @@ export async function getSocialDraft(
     : channel === "tiktok"
       ? await getTikTokQueueItemForDraft(admin, ownerId, draftId)
       : null;
-  return toSocialDraftView(row, (asset as Record<string, unknown> | null) ?? null, queue);
+  const view = toSocialDraftView(row, (asset as Record<string, unknown> | null) ?? null, queue);
+  // Only an authenticated owner's YouTube editor receives a short-lived
+  // private preview. Never return a raw storage path or sign another owner.
+  if (channel === "youtube" && view.asset && asset?.status === "uploaded"
+    && typeof asset.storage_path === "string" && asset.storage_path.startsWith(`${ownerId}/`)
+    && !asset.storage_path.includes("..")) {
+    const signed = await admin.storage.from("mara-media").createSignedUrl(asset.storage_path, 900).catch(() => null);
+    view.asset.previewUrl = signed?.data?.signedUrl ?? null;
+  }
+  return view;
 }
 
 /**

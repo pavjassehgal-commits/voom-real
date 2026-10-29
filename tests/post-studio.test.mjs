@@ -279,9 +279,9 @@ test("0021 is marked already-applied; 0018-0020 are untouched and 0022-0028 stay
   // are the production-hardening release and are the only migrations after 0049.
   // Trend Intelligence (0055-0058) and the reviewed automation safety boundary
   // (0059), AI usage (0061), LinkedIn (0062) and native plan video generation
-  // (0063) follow; 0052-0054 remain reserved for the Admin Panel release.
-  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql"], "only reviewed post-0049 migrations are present");
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 63), "no unreviewed migration beyond 0063 may exist");
+  // (0063) and native YouTube uploads (0064) follow; 0052-0054 remain reserved.
+  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql"], "only reviewed post-0049 migrations are present");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 64), "no unreviewed migration beyond 0064 may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],
@@ -558,9 +558,15 @@ test("no test executes a provider, so no real paid generation runs in the suite"
   const files = (await readdir(new URL("tests/", root))).filter((name) => name.endsWith(".test.mjs"));
   for (const name of files) {
     const source = await read(`tests/${name}`);
-    // Routes and providers are only ever read as text; the suite never imports
-    // a route module or a provider, and never sets provider credentials.
-    assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media"|api\/posts|generate\/route)/, `${name} must not import a provider or route`);
+    // The upload route's behavioural suite substitutes auth/storage and
+    // rejects external HTTP; all other Post Studio suites remain source-only.
+    if (name === "youtube-native-upload.test.mjs") {
+      assert.match(source, /registerHooks/);
+      assert.match(source, /globalThis\.fetch=async\(\)=>\{throw new Error\('External HTTP forbidden/);
+      assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media"|generate\/route)/);
+    } else {
+      assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media"|api\/posts|generate\/route)/, `${name} must not import a provider or route`);
+    }
     // A provider credential may only ever be set to an obvious decoy (the
     // secret-exclusivity tests plant look-alikes to prove they are ignored),
     // and never to something a provider could accept.

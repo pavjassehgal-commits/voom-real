@@ -255,9 +255,9 @@ test("0021 matches production and 0022-0028 migrations stay scoped", async () =>
   // 0050 (approval-state write lockdown) and 0051 (AI request rate limits)
   // are the production-hardening release and are the only migrations after 0049.
   // Reviewed Trend/automation/AI usage migrations, LinkedIn (0062), and native
-  // plan video generation (0063); 0052-0054 remain reserved for Admin.
-  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql"], "only reviewed post-0049 migrations are present");
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 63), "no unreviewed migration beyond 0063 may exist");
+  // plan video generation (0063), native uploads (0064); 0052-0054 reserved.
+  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql"], "only reviewed post-0049 migrations are present");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 64), "no unreviewed migration beyond 0064 may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],

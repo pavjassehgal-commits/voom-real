@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getCurrentUser } from "@/lib/voom/server-data";
-import { allowedAssetKindsFor, isPostDraftKind, isPostOrigin, postAssetKindForMime, type PostOrigin } from "@/lib/post/core";
-import { POST_ASSET_MAX_BYTES, describeAllowedKinds, detectPostAsset, safePostAssetName } from "@/lib/post/asset";
+import { allowedAssetKindsFor, isPostDraftKind, isPostOrigin, postAssetKindForMime, type PostAssetKind, type PostOrigin } from "@/lib/post/core";
+import { POST_ASSET_MAX_BYTES, YOUTUBE_UPLOAD_MAX_BYTES, describeAllowedKinds, detectPostAsset, safePostAssetName } from "@/lib/post/asset";
 import {
   deletePostAsset,
   getPostDraftForIngestion,
@@ -21,6 +21,8 @@ import {
   statusForIngestionCode,
 } from "@/lib/media/ingestion-error";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { getSocialDraft } from "@/lib/social/server-drafts";
+import { inspectVideoBytes } from "@/lib/media/media-inspect";
 
 export const runtime = "nodejs";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -35,6 +37,12 @@ function requestContext(request: Request) {
 
 function failureFor(reason: unknown, fallbackStage: "draft_read" | "storage_upload" | "db_upsert" | "stored") {
   return reason instanceof IngestionFailure ? reason : new IngestionFailure("db_failure", fallbackStage);
+}
+
+function youtubeAttachmentUnconfirmed(requestId: string) {
+  // A lost response can hide a committed link. Do not falsely promise that
+  // nothing changed or invite a different replacement before owner review.
+  return ingestionError("action_required", "Voom couldn't confirm the video attachment. Reload this draft first: the video may already be stored safely. Nothing was published.", 503, requestId);
 }
 
 function diagnostics(requestId: string, file: File, detected: { kind: "image" | "video"; mimeType: string; extension: string }): PostAssetIngestionDiagnostics {
@@ -112,14 +120,28 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return ingestionError("ownership_failure", "Voom couldn't access that draft safely. Please retry.", 404, requestId);
   }
   logIngestionStage("draft_read", { requestId, fileSize: file.size, kind: detected.kind, mimeType: detected.mimeType, extension: detected.extension });
-  if (!isPostDraftKind(post.kind)) return ingestionError("invalid_file", "That content type is not available.", 400, requestId);
+  const youtube = post.kind === "youtube_video" || post.kind === "youtube_short";
+  if (!isPostDraftKind(post.kind) && !youtube) return ingestionError("invalid_file", "That content type is not available.", 400, requestId);
+  if (youtube) {
+    if (file.size > YOUTUBE_UPLOAD_MAX_BYTES) return ingestionError("file_too_large", "Choose one YouTube MP4 up to 4 MB.", 413, requestId);
+    const video = detected.mimeType === "video/mp4" && /\.mp4$/i.test(file.name) ? inspectVideoBytes(bytes) : null;
+    if (!video) return ingestionError("invalid_video", "Choose a valid MP4 video with a video track and duration.", 400, requestId);
+    if (post.kind === "youtube_short" && (video.width > video.height || video.durationSeconds > 180)) {
+      return ingestionError("invalid_video", "A YouTube Short must be square or vertical and at most three minutes.", 400, requestId);
+    }
+    const draft = await getSocialDraft(admin, user.id, id).catch(() => null);
+    if (!draft) return ingestionError("db_failure", "Voom couldn't confirm that draft.", 503, requestId);
+    if (["uploading", "provider_processing", "published"].includes(draft.queueStatus ?? "")) {
+      return ingestionError("action_required", "YouTube is already processing this post. Its video cannot be replaced.", 409, requestId);
+    }
+  }
 
   // Imported Reels and explicit existing-content uploads persist as
   // uploaded_existing; own-asset / MARA Post uploads persist as uploaded_asset.
   const origin: PostOrigin = rawOrigin === "existing_content" || post.kind === "reel" ? "existing_content" : "own_asset";
   if (!isPostOrigin(origin)) return ingestionError("invalid_file", "Choose a valid source for this file.", 400, requestId);
 
-  const allowed = allowedAssetKindsFor(post.kind);
+  const allowed: PostAssetKind[] = youtube ? ["video"] : allowedAssetKindsFor(post.kind);
   const assetKind = postAssetKindForMime(detected.mimeType);
   if (!assetKind || !allowed.includes(assetKind)) {
     const label = post.kind === "reel" ? "Reel" : post.kind === "story" ? "Instagram Story" : "Instagram Post";
@@ -139,6 +161,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       extension: detected.extension,
       displayName: safePostAssetName(file.name),
       origin,
+      ...(youtube ? { contentVersion: post.contentVersion } : {}),
     }, diagnostic);
     await verifyPostAssetStored(admin, user.id, id, stored.storagePath, diagnostic);
   } catch (reason) {
@@ -146,6 +169,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     // The helper logs its precise stage. This fallback log also covers an
     // unexpected SDK failure without serializing the caught error.
     logIngestionStage(failure.stage, { ...diagnostic, code: failure.code });
+    if (youtube && failure.stage !== "storage_upload") return youtubeAttachmentUnconfirmed(requestId);
     return ingestionFailureResponse(failure, requestId, statusForIngestionCode(failure.code));
   }
 
@@ -157,16 +181,23 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   // A late-arriving visual can complete an already-approved, already-scheduled
   // post, so the auto-publish queue is re-synced here too.
-  await syncPostToCalendar(admin, user.id, id).catch(() => null);
+  if (!youtube) await syncPostToCalendar(admin, user.id, id).catch(() => null);
 
   try {
     const updated = await getPostDraftForIngestion(admin, user.id, id, "stored");
     if (!updated) {
       const failure = new IngestionFailure("ownership_failure", "stored");
       logIngestionStage("stored", { ...diagnostic, code: failure.code });
+      if (youtube) return youtubeAttachmentUnconfirmed(requestId);
       return ingestionFailureResponse(failure, requestId);
     }
     logIngestionStage("stored", diagnostic);
+    if (youtube) {
+      const draft = await getSocialDraft(admin, user.id, id);
+      if (!draft) throw new IngestionFailure("db_failure", "stored");
+      return Response.json({ draft, requestId, message: "Your MP4 is stored privately in Voom. Review and approve it separately; nothing was queued or published." },
+        { headers: { "X-Request-Id": requestId, "Cache-Control": "no-store" } });
+    }
     return Response.json({
       post: updated,
       requestId,
@@ -177,6 +208,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   } catch (reason) {
     const failure = failureFor(reason, "stored");
     logIngestionStage(failure.stage, { ...diagnostic, code: failure.code });
+    if (youtube) return youtubeAttachmentUnconfirmed(requestId);
     return ingestionFailureResponse(failure, requestId);
   }
 }
@@ -189,6 +221,10 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   if (!UUID_RE.test(id)) return ingestionError("not_found", "That post was not found.", 404, requestId);
   const admin = createAdminClient();
   try {
+    const draft = await getPostDraftForIngestion(admin, user.id, id);
+    if (draft?.kind === "youtube_video" || draft?.kind === "youtube_short") {
+      return ingestionError("action_required", "Use Upload video to replace this YouTube video's media safely.", 409, requestId);
+    }
     const storagePath = await deletePostAsset(admin, user.id, id);
     if (storagePath) await removePostAssetObject(admin, user.id, storagePath);
     const post = await getPostDraftForIngestion(admin, user.id, id, "stored");
