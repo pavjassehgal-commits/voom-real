@@ -219,9 +219,9 @@ test("MARA's reading never overwrites what the owner typed; the owner's edit alw
   assert.equal(assets.withoutAsset(list, list[0].path).length, 0);
 
   const computed = { primary: "#C81E28", secondary: "#143CC8" };
-  assert.deepEqual(assets.coloursAfterLogo(null, computed), { ...computed, source: "logo" });
+  assert.deepEqual(assets.coloursAfterLogo(null, computed), { ...computed, source: "logo", found: { logo: computed } }, "a logo's colours are used and kept as the logo palette (slice 7)");
   const picked = { primary: "#000000", secondary: null, source: "owner" };
-  assert.equal(assets.coloursAfterLogo(picked, computed), picked, "colours the owner picked are never replaced");
+  assert.deepEqual(assets.coloursAfterLogo(picked, computed), { ...picked, found: { logo: computed } }, "colours the owner picked are never replaced; the logo palette is still kept to choose");
 });
 
 /* ── 4. Colours by code ──────────────────────────────────────────────────── */
@@ -560,7 +560,8 @@ test("prompts gain a visual style only when the kit has images or colours, and n
   };
   const kit = context.brandKitExtrasFromRow(row);
   assert.deepEqual(kit.visualStyle, {
-    palette: ["#C81E28", "#143CC8"],
+    // Slice 7: the dominant colour is named, so image prompts lead with it.
+    palette: { dominant: "#C81E28", supporting: "#143CC8", source: "computed from the logo" },
     logo: "Bean above the words Bean & Co.",
     products: ["Iced latte in a tall glass"],
     pastPosts: { styleTags: ["Warm tones", "Product close-up"], looks: ["Soft morning light"], subjects: ["Pour-over"] },
@@ -594,11 +595,12 @@ test("the images editor shows the past-post disclaimer, and the privacy note onl
 
 test("onboarding has the images screen second, with the website; the Brand page shows the gallery, onboarding's brief screen does not", async () => {
   const wizard = await read("components/voom/onboarding/OnboardingWizard.tsx");
-  assert.match(wizard, /\{st === 1 && <StepAssets visionEnabled=\{visionEnabled\} \/>\}/);
+  assert.match(wizard, /\{st === 1 && <StepAssets visionEnabled=\{visionEnabled\} onRead=/, "screen 2, with the website read button (slice 7)");
   assert.match(wizard, /Give MARA your brand/);
   const basics = wizard.slice(wizard.indexOf("function StepBasics"), wizard.indexOf("function StepAudienceGoal"));
   assert.doesNotMatch(basics, /onboard\.site/, "the website moved to the images screen");
-  assert.match(wizard, /Used in your marketing emails as the website link/);
+  assert.match(wizard, /MARA reads your public pages once, to understand what the business is and how it looks\. Give it when you first set up, or again when the business or the site has changed\./, "slice 7: what the website is for and when to give it");
+  assert.match(wizard, /the website link in your marketing emails/);
   const page = await read("app/app/onboarding/page.tsx");
   assert.match(page, /visionEnabled=\{isAiVisionConfigured\(\)\}/);
   const brandPage = await read("app/app/(shell)/brand/page.tsx");

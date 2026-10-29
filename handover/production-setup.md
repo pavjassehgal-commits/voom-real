@@ -179,7 +179,7 @@ Words used below:
   - Site and Supabase: `NEXT_PUBLIC_SITE_URL`, the three Supabase values from A3.
   - Jobs: `CRON_SECRET` from A7.
   - AI text (`AI_*`), images/video (`MEDIA_*`, `OPENROUTER_API_KEY`, `VIDEO_*`).
-  - Optional image reading for brand images (`AI_VISION_MODEL`, plus `AI_VISION_PROVIDER` / `AI_VISION_API_KEY` when it is not the text provider). Off when unset; owners then type a line per image.
+  - Optional image reading for brand images (`AI_VISION_MODEL`, plus `AI_VISION_PROVIDER` / `AI_VISION_API_KEY` when it is not the text provider). Off when unset; owners then type a line per image. With it on, onboarding's website read also takes one screenshot of the homepage with a headless browser (`@sparticuz/chromium` + `puppeteer-core`, shipped in the repo's dependencies, nothing to install). That function needs memory: if the Vercel logs show the screenshot failing with an out-of-memory or "browser closed" message, raise the function memory for the app (Settings → Functions, 1024 MB or more). The text read works without the browser.
   - Instagram (`META_*`, `INSTAGRAM_TOKEN_ENCRYPTION_KEY`), YouTube (`GOOGLE_*`, `YOUTUBE_*`),
     TikTok (`TIKTOK_*`).
   - Campaign email (`EMAIL_*`), including `EMAIL_UNSUBSCRIBE_SECRET`.

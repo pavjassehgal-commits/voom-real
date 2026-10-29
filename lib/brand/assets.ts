@@ -67,12 +67,32 @@ export interface BrandAsset {
   describedBy: "mara" | "owner" | "";
 }
 
-/** Two colours, computed from the logo or picked by the owner. */
-export interface BrandColours {
+/** A pair of colours as found in one place (the logo's pixels, the website's look). */
+export interface BrandPalette {
   primary: string | null;
   secondary: string | null;
-  source: "logo" | "owner";
 }
+
+export type BrandColourSource = "logo" | "website" | "owner";
+
+/**
+ * The colours MARA uses: `primary` is the dominant colour (what images lead
+ * with), `secondary` supports it. `source` says where the pair in use came
+ * from. Since slice 7 the palettes FOUND per source are kept side by side in
+ * `found` and never overwrite each other: a logo's computed colours and the
+ * website's colours can both exist, and the owner chooses which one MARA
+ * uses (or picks by hand, source "owner").
+ */
+export interface BrandColours extends BrandPalette {
+  source: BrandColourSource;
+  found?: { logo?: BrandPalette; website?: BrandPalette };
+}
+
+export const BRAND_COLOUR_SOURCE_LABELS: Record<BrandColourSource, string> = {
+  logo: "Computed from your logo",
+  website: "From your website",
+  owner: "Picked by you",
+};
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const PATH_RE = new RegExp(`^(${UUID})/(logo|product|past_post)/(${UUID})\\.(jpg|png|webp)$`, "i");
@@ -146,14 +166,33 @@ export function cleanBrandAssets(raw: unknown): BrandAsset[] | null {
   return out;
 }
 
-/** Validates the colour pair. Anything that is not #RRGGBB becomes null. */
-export function cleanBrandColours(raw: unknown): BrandColours | null {
+function cleanPalette(raw: unknown): BrandPalette | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const value = raw as Record<string, unknown>;
   const primary = isBrandColour(value.primary) ? value.primary.toUpperCase() : null;
   const secondary = isBrandColour(value.secondary) ? value.secondary.toUpperCase() : null;
   if (!primary && !secondary) return null;
-  return { primary, secondary, source: value.source === "owner" ? "owner" : "logo" };
+  return { primary, secondary };
+}
+
+const hasColour = (palette: BrandPalette | null | undefined): palette is BrandPalette => Boolean(palette && (palette.primary || palette.secondary));
+
+/**
+ * Validates the colours. Anything that is not #RRGGBB becomes null; a found
+ * palette with no colour is dropped; null when nothing is left at all (no
+ * pair in use and nothing found).
+ */
+export function cleanBrandColours(raw: unknown): BrandColours | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const value = raw as Record<string, unknown>;
+  const inUse = cleanPalette(value) ?? { primary: null, secondary: null };
+  const foundRaw = value.found && typeof value.found === "object" && !Array.isArray(value.found) ? (value.found as Record<string, unknown>) : {};
+  const logo = cleanPalette(foundRaw.logo);
+  const website = cleanPalette(foundRaw.website);
+  const found = { ...(logo ? { logo } : {}), ...(website ? { website } : {}) };
+  if (!hasColour(inUse) && !logo && !website) return null;
+  const source: BrandColourSource = value.source === "owner" || value.source === "website" ? value.source : "logo";
+  return { ...inUse, source, ...(Object.keys(found).length ? { found } : {}) };
 }
 
 /* ── List edits shared by the onboarding screen and the Brand page ───────── */
@@ -196,16 +235,84 @@ export function withAssetText(list: readonly BrandAsset[], path: string, text: B
   });
 }
 
-/** Colours computed from a new logo replace earlier computed ones, never colours the owner picked. */
-export function coloursAfterLogo(current: BrandColours | null, computed: { primary: string | null; secondary: string | null } | null): BrandColours | null {
-  if (current?.source === "owner") return current;
-  if (!computed || (!computed.primary && !computed.secondary)) return current;
-  return { primary: computed.primary, secondary: computed.secondary, source: "logo" };
+/* ── Colour rules (slice 5, reworked in slice 7 to keep a palette per source) ── */
+
+function withFound(current: BrandColours | null, found: NonNullable<BrandColours["found"]>): NonNullable<BrandColours["found"]> {
+  return { ...(current?.found ?? {}), ...found };
 }
 
-/** After the logo is removed: colours computed from it go; colours the owner picked stay. */
+/** Drops empty found entries; null when nothing is left anywhere. */
+function settle(colours: BrandColours): BrandColours | null {
+  const found = { ...(hasColour(colours.found?.logo) ? { logo: colours.found!.logo! } : {}), ...(hasColour(colours.found?.website) ? { website: colours.found!.website! } : {}) };
+  if (!hasColour(colours) && !Object.keys(found).length) return null;
+  return { primary: colours.primary, secondary: colours.secondary, source: colours.source, ...(Object.keys(found).length ? { found } : {}) };
+}
+
+/** True when the pair in use may be replaced by a newly found palette: nothing in use yet, or not the owner's own pick. */
+function inUseIsReplaceable(current: BrandColours | null): boolean {
+  return !current || !hasColour(current) || current.source !== "owner";
+}
+
+/**
+ * A new logo's computed colours become the logo palette (replacing an earlier
+ * logo palette only). They are used when the pair in use is replaceable: the
+ * logo wins over the website by default, never over the owner's own pick.
+ */
+export function coloursAfterLogo(current: BrandColours | null, computed: BrandPalette | null): BrandColours | null {
+  if (!hasColour(computed)) return current;
+  const logo = { primary: computed.primary, secondary: computed.secondary };
+  const found = withFound(current, { logo });
+  if (!inUseIsReplaceable(current)) return settle({ ...current!, found });
+  return settle({ ...logo, source: "logo", found });
+}
+
+/**
+ * The website's colours become the website palette (replacing an earlier
+ * website palette only). They are used only when nothing is in use yet or the
+ * website's earlier palette was: a logo's colours and the owner's pick both win.
+ */
+export function coloursAfterWebsite(current: BrandColours | null, palette: BrandPalette | null): BrandColours | null {
+  if (!hasColour(palette)) return current;
+  const website = { primary: palette.primary, secondary: palette.secondary };
+  const found = withFound(current, { website });
+  const useIt = !current || !hasColour(current) || current.source === "website";
+  if (!useIt) return settle({ ...current!, found });
+  return settle({ ...website, source: "website", found });
+}
+
+/** After the logo is removed: its palette goes; if it was in use, the website's palette takes over, else nothing is in use. The owner's pick stays. */
 export function coloursAfterLogoRemoved(current: BrandColours | null): BrandColours | null {
-  return current?.source === "logo" ? null : current;
+  if (!current) return null;
+  const found = { ...(current.found ?? {}) };
+  delete found.logo;
+  if (current.source !== "logo") return settle({ ...current, found });
+  if (hasColour(found.website)) return settle({ ...found.website!, source: "website", found });
+  return settle({ primary: null, secondary: null, source: "logo", found });
+}
+
+/** The owner chooses one of the found palettes as the pair MARA uses. */
+export function chooseFoundPalette(current: BrandColours | null, which: "logo" | "website"): BrandColours | null {
+  const palette = current?.found?.[which];
+  if (!hasColour(palette)) return current;
+  return settle({ ...palette, source: which, found: current!.found! });
+}
+
+/** Swaps which colour is dominant. The source stays: the colours are still the logo's or the website's, in the owner's order. */
+export function swapBrandColours(current: BrandColours | null): BrandColours | null {
+  if (!current) return null;
+  return settle({ ...current, primary: current.secondary, secondary: current.primary });
+}
+
+/** The owner types one colour by hand: the pair becomes their own pick; found palettes stay available. */
+export function pickBrandColour(current: BrandColours | null, which: "primary" | "secondary", value: string): BrandColours | null {
+  if (!isBrandColour(value)) return current;
+  return settle({ primary: current?.primary ?? null, secondary: current?.secondary ?? null, [which]: value.toUpperCase(), source: "owner", ...(current?.found ? { found: current.found } : {}) });
+}
+
+/** Clears the pair in use (MARA uses no colours); found palettes stay available to use again. */
+export function clearBrandColours(current: BrandColours | null): BrandColours | null {
+  if (!current) return null;
+  return settle({ primary: null, secondary: null, source: "owner", ...(current.found ? { found: current.found } : {}) });
 }
 
 /** Plain-language count for history lines and summaries ("1 logo, 2 products"). */
@@ -224,8 +331,22 @@ export function describeBrandAssets(assets: readonly BrandAsset[] | null | undef
  * The text-only visual style a prompt may carry, or null when there is
  * nothing to say. Paths, sizes and file names never leave the server.
  */
-export function brandVisualStyle(assets: readonly BrandAsset[], colours: BrandColours | null) {
-  const palette = [colours?.primary, colours?.secondary].filter((c): c is string => Boolean(c));
+/** What the homepage screenshot told MARA about the site's look (slice 7). Text only. */
+export interface WebsiteLookNote {
+  look: string;
+  styleTags: string[];
+}
+
+export function brandVisualStyle(assets: readonly BrandAsset[], colours: BrandColours | null, website: WebsiteLookNote | null = null) {
+  // The dominant colour is named, not just listed: image prompts lead with it.
+  const palette = colours && (colours.primary || colours.secondary)
+    ? {
+        dominant: colours.primary ?? colours.secondary!,
+        ...(colours.primary && colours.secondary ? { supporting: colours.secondary } : {}),
+        source: colours.source === "logo" ? "computed from the logo" : colours.source === "website" ? "the website's colours" : "picked by the owner",
+      }
+    : null;
+  const siteLook = website && (website.look || website.styleTags.length) ? { ...(website.look ? { look: website.look } : {}), ...(website.styleTags.length ? { styleTags: website.styleTags } : {}) } : null;
   const logo = assets.find((asset) => asset.kind === "logo")?.description ?? "";
   const products = assets.filter((asset) => asset.kind === "product" && asset.description).map((asset) => asset.description);
   const posts = assets.filter((asset) => asset.kind === "past_post");
@@ -234,9 +355,10 @@ export function brandVisualStyle(assets: readonly BrandAsset[], colours: BrandCo
   for (const post of posts) for (const chip of post.chips) tally.set(chip, (tally.get(chip) ?? 0) + 1);
   const styleTags = [...tally.entries()].sort((a, b) => b[1] - a[1]).map(([chip]) => chip).slice(0, 6);
   const pastPostSubjects = posts.map((asset) => asset.description).filter(Boolean);
-  if (!palette.length && !logo && !products.length && !looks.length && !styleTags.length && !pastPostSubjects.length) return null;
+  if (!palette && !siteLook && !logo && !products.length && !looks.length && !styleTags.length && !pastPostSubjects.length) return null;
   return {
-    ...(palette.length ? { palette } : {}),
+    ...(palette ? { palette } : {}),
+    ...(siteLook ? { website: siteLook } : {}),
     ...(logo ? { logo } : {}),
     ...(products.length ? { products } : {}),
     ...(looks.length || styleTags.length || pastPostSubjects.length

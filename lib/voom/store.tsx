@@ -26,6 +26,7 @@ import type {
   BusinessProfileInput,
   BusinessRecord,
   OnboardingAnswers,
+  OnboardingWebsiteRead,
   OnboardingInput,
   Toast,
 } from "./types";
@@ -34,7 +35,7 @@ import { normalizeMediaSpendSettings, type MediaSpendSettings } from "@/lib/mara
 import { brandFromBusiness, deriveHandle, type Brand } from "./brand-state";
 import { AUTOMATION_MODE_EVENT, storedAutomationMode, type AutomationModeValue } from "./automation";
 import { canUseAutomationMode } from "@/lib/billing/plans";
-import { coloursAfterLogo, coloursAfterLogoRemoved, withAddedAsset, withAssetText, withoutAsset, type BrandAsset, type BrandAssetText } from "@/lib/brand/assets";
+import { coloursAfterLogo, coloursAfterLogoRemoved, coloursAfterWebsite, withAddedAsset, withAssetText, withoutAsset, type BrandAsset, type BrandAssetText, type BrandPalette } from "@/lib/brand/assets";
 import { DEFAULT_FREQ } from "./onboardingData";
 import { applyThemeToDocument, initialTheme, persistTheme, readStoredTheme, subscribeToTheme, themeSnapshot, type ThemeValue } from "./theme";
 
@@ -102,7 +103,14 @@ function emptyOnboard(): OnboardingAnswers {
     samples: [],
     samplesFor: "",
     samplesNote: "",
+    website: emptyWebsiteRead(),
+    learnedWith: "",
+    descFromWebsite: false,
   };
+}
+
+export function emptyWebsiteRead(): OnboardingWebsiteRead {
+  return { url: "", status: "", reason: "", text: "", pageTitles: [], fetchedAt: "", look: null, lookStatus: "" };
 }
 
 /**
@@ -229,6 +237,16 @@ interface VoomActions {
   addOnboardAsset: (asset: BrandAsset, previewUrl: string | null, computed: { primary: string | null; secondary: string | null } | null) => void;
   setOnboardAssetText: (path: string, text: BrandAssetText, by: "mara" | "owner") => void;
   removeOnboardAsset: (path: string) => void;
+  /**
+   * Slice 7: the website read's outcome. Applied as a functional update so a
+   * read finishing after other edits never overwrites them; the site's
+   * colours become the website palette (used only when nothing else is).
+   */
+  applyWebsiteRead: (read: OnboardingWebsiteRead, palette: BrandPalette | null) => void;
+  /** Slice 7: the homepage look, which lands after the text; merged into the read without touching its status. */
+  applyWebsiteLook: (url: string, look: OnboardingWebsiteRead["look"], lookStatus: OnboardingWebsiteRead["lookStatus"], palette: BrandPalette | null) => void;
+  /** Slice 7: the description box takes the website's draft only while it is empty. */
+  applyWebsiteDescriptionDraft: (draft: string) => void;
   finishOnboarding: (skipped: boolean) => Promise<boolean>;
   restartOnboarding: () => Promise<void>;
 }
@@ -405,7 +423,8 @@ export function VoomProvider({
   );
 
   const setOnboardField = useCallback<VoomActions["setOnboardField"]>((key, value) => {
-    setState((s) => ({ ...s, onboard: { ...withoutMaraClaim(s.onboard, key), [key]: value } }));
+    // Typing in the description box replaces the website's draft with the owner's own words.
+    setState((s) => ({ ...s, onboard: { ...withoutMaraClaim(s.onboard, key), [key]: value, ...(key === "desc" ? { descFromWebsite: false } : {}) } }));
   }, []);
 
   const toggleOnboardArray = useCallback<VoomActions["toggleOnboardArray"]>((key, value, max) => {
@@ -489,6 +508,33 @@ export function VoomProvider({
     });
   }, []);
 
+  const applyWebsiteRead = useCallback<VoomActions["applyWebsiteRead"]>((read, palette) => {
+    setState((s) => {
+      // A look that already landed for the same address is kept.
+      const previous = s.onboard.website;
+      const keepLook = previous.url === read.url && previous.lookStatus && !read.lookStatus;
+      const website = keepLook ? { ...read, look: previous.look, lookStatus: previous.lookStatus } : read;
+      return { ...s, onboard: { ...s.onboard, website, colours: palette ? coloursAfterWebsite(s.onboard.colours, palette) : s.onboard.colours } };
+    });
+  }, []);
+
+  const applyWebsiteLook = useCallback<VoomActions["applyWebsiteLook"]>((url, look, lookStatus, palette) => {
+    setState((s) => {
+      const current = s.onboard.website;
+      // The address changed meanwhile: this look is stale.
+      if (current.url !== url) return s;
+      return { ...s, onboard: { ...s.onboard, website: { ...current, look, lookStatus }, colours: palette ? coloursAfterWebsite(s.onboard.colours, palette) : s.onboard.colours } };
+    });
+  }, []);
+
+  const applyWebsiteDescriptionDraft = useCallback<VoomActions["applyWebsiteDescriptionDraft"]>((draft) => {
+    setState((s) => {
+      const o = s.onboard;
+      if (!draft.trim() || (o.desc.trim() && !o.descFromWebsite)) return s;
+      return { ...s, onboard: { ...o, desc: draft, descFromWebsite: true } };
+    });
+  }, []);
+
   const finishOnboarding = useCallback<VoomActions["finishOnboarding"]>(
     async (skipped) => {
       const o = state.onboard;
@@ -532,6 +578,11 @@ export function VoomProvider({
           ...(o.colours ? { colours: o.colours } : {}),
           // Slice 6: the sample captions sorted on the voice screen, only when there are some.
           ...(o.liked.length || o.disliked.length ? { voiceSamples: { liked: o.liked, disliked: o.disliked } } : {}),
+          // Slice 7: the website read's small record and which sources the guesses came from.
+          ...(o.website.status === "ready" || o.website.status === "empty"
+            ? { website: { url: o.website.url, status: o.website.status, fetchedAt: o.website.fetchedAt, pageTitles: o.website.pageTitles, ...(o.website.look ? { look: { look: o.website.look.look, styleTags: o.website.look.styleTags } } : {}) } }
+            : {}),
+          ...(o.learnedWith === "description+website" ? { readSource: "website" as const } : {}),
         },
       };
 
@@ -599,6 +650,9 @@ export function VoomProvider({
       addOnboardAsset,
       setOnboardAssetText,
       removeOnboardAsset,
+      applyWebsiteRead,
+      applyWebsiteLook,
+      applyWebsiteDescriptionDraft,
       finishOnboarding,
       restartOnboarding,
     }),
@@ -622,6 +676,9 @@ export function VoomProvider({
       addOnboardAsset,
       setOnboardAssetText,
       removeOnboardAsset,
+      applyWebsiteRead,
+      applyWebsiteLook,
+      applyWebsiteDescriptionDraft,
       finishOnboarding,
       restartOnboarding,
     ],

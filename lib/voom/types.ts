@@ -61,6 +61,28 @@ export interface OnboardingAnswers {
   samples: string[];
   samplesFor: string;
   samplesNote: "" | "failed" | "off";
+  /**
+   * Slice 7: the website read started when leaving "Give MARA your brand".
+   * `text` is the capped block the extraction gets (screen-only, never
+   * saved); `look` is what the homepage screenshot told MARA.
+   */
+  website: OnboardingWebsiteRead;
+  /** Which sources MARA's last read used ("" before any read). */
+  learnedWith: "" | "description" | "description+website";
+  /** True while the description box holds the draft taken from the website's own words; typing clears it. */
+  descFromWebsite: boolean;
+}
+
+export interface OnboardingWebsiteRead {
+  url: string;
+  status: "" | "reading" | "ready" | "empty" | "failed";
+  /** Plain reason when failed or empty. */
+  reason: string;
+  text: string;
+  pageTitles: string[];
+  fetchedAt: string;
+  look: { look: string; styleTags: string[]; subject: string } | null;
+  lookStatus: "" | "ready" | "off" | "failed";
 }
 
 /** The kit answer keys MARA's reading can fill (slice 4). `facts` means the unconfirmed list. */
@@ -98,6 +120,10 @@ export interface OnboardingKitInput {
   colours?: BrandColours;
   /** Slice 6: the sample captions sorted on the voice screen. Omitted when none were sorted. */
   voiceSamples?: { liked: string[]; disliked: string[] };
+  /** Slice 7: a small record of the website read (never the text or the image). Omitted when no site was read. */
+  website?: { url: string; status: "ready" | "empty"; fetchedAt: string; pageTitles: string[]; look?: { look: string; styleTags: string[] } };
+  /** Slice 7: what MARA's accepted guesses were read from; "description" when absent. */
+  readSource?: "description" | "website";
 }
 
 export interface Toast {

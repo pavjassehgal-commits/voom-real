@@ -30,6 +30,7 @@ const read = (path) => readFile(new URL(path, root), "utf8");
 const FAKE_AI = `
 export class AiError extends Error { constructor(code, message) { super(message ?? code); this.name = "AiError"; this.code = code; } }
 export function createAiProvider() { return globalThis.__VOOM_FAKE_AI__(); }
+export function createAiVisionProvider() { throw new AiError("not_configured"); }
 globalThis.__VOOM_FAKE_AI_ERROR__ = AiError;
 `;
 
@@ -204,8 +205,8 @@ test("no confirmation screen: the read prefills the screen that asks, so each an
   assert.doesNotMatch(source, /StepLearned|What MARA learned|Here&apos;s what I learned/, "no separate confirmation screen (Gurnoor, 2026-10-24: confirm once, where the question is)");
   assert.match(source, /Promise\.race<ExtractBrandResult>/, "the read is raced against the wait");
   assert.match(source, /setTimeout\(\(\) => resolve\(\{ ok: false, reason: "unavailable" \}\), EXTRACTION_WAIT_MS\)/);
-  assert.match(source, /markLearnedFailed\(desc\);\s*if \(!onboard\.industry\) \{\s*const detected = detectIndustry\(desc\)/, "a failed read falls back to the keyword guess");
-  assert.match(source, /onboard\.learnedFor === desc/, "the same text is never sent twice");
+  assert.match(source, /markLearnedFailed\(key\);\s*setOnboardField\("learnedWith", ""\);\s*if \(!now\.industry\) \{\s*const detected = detectIndustry\(desc\)/, "a failed read falls back to the keyword guess");
+  assert.match(source, /now\.learnedFor === key/, "the same text (and website read) is never sent twice (slice 7: the key carries the read's time)");
   assert.match(source, /MARA couldn&apos;t read your description just now/);
   assert.match(source, /reading \? "Reading…"/);
   assert.match(source, /MARA is reading your description…/, "a visible reading panel, not only the button label");
@@ -219,7 +220,7 @@ test("the store prefills only empty fields from the read and drops MARA's claim 
   const store = await read("lib/voom/store.tsx");
   assert.match(store, /const free = \(Array\.isArray\(current\) \? current\.length === 0 : current === ""\) \|\| o\.fromMara\.includes\(key\)/, "the owner's own words always win");
   assert.match(store, /next\.factsUnconfirmed = learned\.facts\.filter/, "facts are never prefilled as confirmed");
-  assert.match(store, /onboard: \{ \.\.\.withoutMaraClaim\(s\.onboard, key\), \[key\]: value \}/, "editing a field removes MARA's claim on it");
+  assert.match(store, /onboard: \{ \.\.\.withoutMaraClaim\(s\.onboard, key\), \[key\]: value, \.\.\.\(key === "desc" \? \{ descFromWebsite: false \} : \{\}\) \}/, "editing a field removes MARA's claim on it (and typing the description drops the website's draft, slice 7)");
   assert.match(store, /fromDescription: o\.fromMara/);
   assert.match(store, /factsUnconfirmed: o\.factsUnconfirmed/);
 });

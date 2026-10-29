@@ -34,6 +34,7 @@ const read = (path) => readFile(new URL(path, root), "utf8");
 const FAKE_AI = `
 export class AiError extends Error { constructor(code, message) { super(message ?? code); this.name = "AiError"; this.code = code; } }
 export function createAiProvider() { return globalThis.__VOOM_FAKE_AI__(); }
+export function createAiVisionProvider() { throw new AiError("not_configured"); }
 globalThis.__VOOM_FAKE_AI_ERROR__ = AiError;
 `;
 

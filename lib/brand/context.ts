@@ -14,7 +14,7 @@
  * stop a plan or a post from being written.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { brandVisualStyle, cleanBrandAssets, cleanBrandColours, type BrandVisualStyle } from "./assets";
+import { brandVisualStyle, cleanBrandAssets, cleanBrandColours, type BrandVisualStyle, type WebsiteLookNote } from "./assets";
 
 export const BRAND_KIT_TABLE = "brand_kits";
 
@@ -85,6 +85,16 @@ export interface BrandKitRow {
   assets?: unknown;
 }
 
+/** The website's look note stored under `answers.sources.website.look` (slice 7), or null. */
+export function websiteLookFromAnswers(answers: Record<string, unknown>): WebsiteLookNote | null {
+  const sources = answers.sources && typeof answers.sources === "object" && !Array.isArray(answers.sources) ? (answers.sources as Record<string, unknown>) : {};
+  const website = sources.website && typeof sources.website === "object" && !Array.isArray(sources.website) ? (sources.website as Record<string, unknown>) : {};
+  const look = website.look && typeof website.look === "object" && !Array.isArray(website.look) ? (website.look as Record<string, unknown>) : null;
+  if (!look) return null;
+  const note = { look: cleanText(look.look, 200), styleTags: cleanList(look.styleTags, 6, 40) };
+  return note.look || note.styleTags.length ? note : null;
+}
+
 /** Pure mapping from a kit row (or none) to the prompt extras. */
 export function brandKitExtrasFromRow(row: BrandKitRow | null | undefined): BrandKitExtras {
   if (!row || typeof row !== "object") return EMPTY_BRAND_KIT;
@@ -111,7 +121,8 @@ export function brandKitExtrasFromRow(row: BrandKitRow | null | undefined): Bran
       disliked: cleanList(voice.disliked, LIMITS.voiceSamples, LIMITS.voiceSample),
     },
     // Slice 5: text only (colours and descriptions). Paths and sizes never reach a prompt.
-    visualStyle: brandVisualStyle(cleanBrandAssets(row.assets ?? []) ?? [], cleanBrandColours(answers.colours)),
+    // Slice 7: plus the website's look from the homepage screenshot, when one was read.
+    visualStyle: brandVisualStyle(cleanBrandAssets(row.assets ?? []) ?? [], cleanBrandColours(answers.colours), websiteLookFromAnswers(answers)),
   };
 }
 
@@ -232,7 +243,7 @@ export const BRAND_KIT_RULES = [
  * Slice 5: added ONLY when the kit carries a visual style, so prompts for
  * kits without images stay byte-for-byte what they were.
  */
-export const BRAND_KIT_VISUAL_RULE = "brandKit.visualStyle describes the owner's real look: palette (colours computed from their logo or picked by them), what their logo and products look like, and the style of past posts they are proud of. Every visualPrompt you write must fit it: use the palette, show products as described, follow the past-post style tags and looks. It is a description, not a file: still never ask for the logo, readable text or watermarks inside an image.";
+export const BRAND_KIT_VISUAL_RULE = "brandKit.visualStyle describes the owner's real look: palette (palette.dominant is the colour to lead with, palette.supporting supports it; the source says whether it was computed from their logo, taken from their website or picked by them), website (how their own site looks: a look line and style tags), what their logo and products look like, and the style of past posts they are proud of. Every visualPrompt you write must fit it: lead with the dominant colour, show products as described, follow the website look and the past-post style tags and looks. It is a description, not a file: still never ask for the logo, readable text or watermarks inside an image.";
 
 export function withBrandKitRules(systemPrompt: string, kit: BrandKitPromptContext | null | undefined): string {
   if (!kit) return systemPrompt;

@@ -27,6 +27,11 @@ Environment: Node v26.0.0, npm 11.12.1, macOS.
   starting but no limit on the page measurements after that, so a stalled Chrome can hang
   `npm test` indefinitely (seen once on 2026-10-16; normal runs take ~95 s). If a run passes
   ~3 minutes, stop it and run it again.
+- One test is timing-sensitive under full-suite load: "loadPerformanceReport itself stays parallel
+  and dedupe-safe" in `tests/perf-regression.test.mjs` measures that two reads overlap in time and
+  has failed twice (2026-10-28 and 2026-10-29) in full runs on a busy machine, passing on its own
+  every time (three of three each time it was checked). A full run showing 10 failures with that
+  one extra is the flake, not a regression; run that file alone to confirm.
 - The 17 lint warnings are all pre-existing: unused variables (11), `<img>` instead of Next's
   `<Image>` (3), one `window.location.assign()` in `PostEditorModal.tsx`, and unused imports in
   two test files. New work must not add warnings; removing some is fine but not required.
@@ -52,3 +57,4 @@ Environment: Node v26.0.0, npm 11.12.1, macOS.
 | 2026-10-27 | 1749 / **9** / 4 | clean | 0 / 16 | Brand Kit v2 slice 6: MARA writes three sample captions to sort, on the voice screen and the Brand page (+10 tests); token cap raised after the browser check; History line now names only the fields that changed (+1 test, 1 assertion reordered). Same 9 parked trend failures. See DECISIONS 2026-10-27. |
 | 2026-10-28 | 1752 / **9** / 4 | clean | 0 / 16 | Brand images: leftover files swept after Finish and after a Brand page images save; colours go with the logo (+3 tests, 1 extended). Same 9 parked trend failures. See DECISIONS 2026-10-28. |
 | 2026-10-28 | 1761 / **9** / 4 | clean | 0 / 16 | Slice 5b: MARA looks at an uploaded photo, with a brand hint, before suggesting its caption, and the caption serves the owner's "What is this post for?" line (+9 tests; 2 existing assertions reworded for the seen path). Same 9 parked trend failures. See DECISIONS 2026-10-28 (slice 5b). |
+| 2026-10-29 | 1773 / **9** / 4 | clean | 0 / 16 | Brand Kit v2 slice 7: MARA reads the website in place from a "Read my website" button (text plus one homepage screenshot for the look, side by side), drafts the description with the text model, shows the read's state on screens 2 and 3 with "Try again" / "Back to the website", colours kept per source with the owner choosing which leads (+12 tests; 6 existing assertions reworded for the new colour shape, the website field's copy and the flow). Two new dependencies (`puppeteer-core`, `@sparticuz/chromium`). Same 9 parked trend failures. See DECISIONS 2026-10-28 (slice 7) and its 2026-10-29 notes. |

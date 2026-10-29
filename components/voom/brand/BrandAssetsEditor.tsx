@@ -19,7 +19,8 @@ import { useRef, useState } from "react";
 import { Icon } from "@/components/voom/icons";
 import { Btn, Chip, Input, Tag } from "@/components/voom/ui/primitives";
 import {
-  BRAND_ASSET_ACCEPT, BRAND_ASSET_LIMITS, PAST_POST_CHIPS, brandAssetCount, isBrandColour,
+  BRAND_ASSET_ACCEPT, BRAND_ASSET_LIMITS, BRAND_COLOUR_SOURCE_LABELS, PAST_POST_CHIPS, brandAssetCount,
+  clearBrandColours, pickBrandColour, swapBrandColours, chooseFoundPalette,
   type BrandAsset, type BrandAssetKind, type BrandAssetText, type BrandColours,
 } from "@/lib/brand/assets";
 
@@ -223,17 +224,36 @@ export function BrandAssetsEditor({ assets, colours, previews, visionEnabled, di
   );
 }
 
+/**
+ * The colours MARA uses (slice 7): every palette found (from the logo's
+ * pixels, from the website's look) is shown side by side with "Use these";
+ * the row in use names which one it is; Main is the dominant colour, Swap
+ * flips the two, and typing a colour makes the pair the owner's own pick.
+ */
 function ColourPicker({ colours, disabled, onColours }: { colours: BrandColours | null; disabled?: boolean; onColours: (colours: BrandColours | null) => void }) {
-  const pick = (which: "primary" | "secondary", value: string) => {
-    if (!isBrandColour(value)) return;
-    onColours({ primary: colours?.primary ?? null, secondary: colours?.secondary ?? null, [which]: value.toUpperCase(), source: "owner" });
-  };
+  const inUse = Boolean(colours && (colours.primary || colours.secondary));
+  const found = (["logo", "website"] as const).filter((which) => colours?.found?.[which]);
   return (
     <div className="mt-3 rounded-[14px] border border-line p-3" data-brand-colours>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[12.5px] font-semibold text-text-2">Brand colours</span>
-        {colours ? <Tag tone={colours.source === "logo" ? "t-brand" : "t-grey"}>{colours.source === "logo" ? "Computed from your logo" : "Picked by you"}</Tag> : null}
+        <span className="text-[12.5px] font-semibold text-text-2">Colours MARA uses</span>
+        {inUse && colours ? <Tag tone={colours.source === "owner" ? "t-grey" : "t-brand"}>{BRAND_COLOUR_SOURCE_LABELS[colours.source]}</Tag> : null}
       </div>
+      {found.length ? (
+        <ul className="mb-3 space-y-1.5" data-brand-palettes>
+          {found.map((which) => {
+            const palette = colours!.found![which]!;
+            const active = inUse && colours!.source === which && colours!.primary === palette.primary && colours!.secondary === palette.secondary;
+            return (
+              <li key={which} className="flex flex-wrap items-center gap-2 text-[12.5px]">
+                {[palette.primary, palette.secondary].filter(Boolean).map((hex) => <span key={hex} className="inline-block h-5 w-5 rounded-md border border-line" style={{ backgroundColor: hex! }} title={hex!} />)}
+                <span className="text-text-2">{BRAND_COLOUR_SOURCE_LABELS[which]}</span>
+                {active ? <Tag tone="t-green">In use</Tag> : <Btn variant="outline" size="sm" disabled={disabled} onClick={() => onColours(chooseFoundPalette(colours, which))}>Use these</Btn>}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
       <div className="flex flex-wrap items-center gap-4">
         {(["primary", "secondary"] as const).map((which) => (
           <label key={which} className="flex items-center gap-2 text-[13px]">
@@ -242,13 +262,15 @@ function ColourPicker({ colours, disabled, onColours }: { colours: BrandColours 
               className="h-9 w-12 cursor-pointer rounded-lg border border-line bg-surface-2"
               value={colours?.[which] ?? "#FFFFFF"}
               disabled={disabled}
-              onChange={(e) => pick(which, e.target.value)}
+              onChange={(e) => onColours(pickBrandColour(colours, which, e.target.value))}
             />
             <span>{which === "primary" ? "Main" : "Second"} <span className="font-mono text-text-3">{colours?.[which] ?? "not set"}</span></span>
           </label>
         ))}
-        {colours ? <Btn variant="ghost" size="sm" disabled={disabled} onClick={() => onColours(null)}>Clear colours</Btn> : null}
+        {inUse && colours?.primary && colours.secondary ? <Btn variant="ghost" size="sm" disabled={disabled} onClick={() => onColours(swapBrandColours(colours))}>Swap</Btn> : null}
+        {inUse ? <Btn variant="ghost" size="sm" disabled={disabled} onClick={() => onColours(clearBrandColours(colours))}>Clear colours</Btn> : null}
       </div>
+      <p className="mt-2 text-[11.5px] text-text-3">Main is the colour MARA leads with in images; Second supports it.</p>
     </div>
   );
 }

@@ -10,7 +10,8 @@
 import { AiError, createAiProvider } from "@/lib/ai";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { consumeAiRateLimit } from "@/lib/rate-limit";
-import { extractBrandFromDescription, type BrandLearned } from "./extract";
+import { z } from "zod";
+import { BRAND_EXTRACTION_WEBSITE_MAX, extractBrandFromDescription, type BrandLearned } from "./extract";
 
 export type ExtractBrandReason = "login" | "too_short" | "rate_limited" | "not_configured" | "unavailable";
 
@@ -18,17 +19,21 @@ export type ExtractBrandResult =
   | { ok: true; learned: BrandLearned }
   | { ok: false; reason: ExtractBrandReason };
 
-export async function extractBrandDescription(description: unknown): Promise<ExtractBrandResult> {
+/** Slice 7: the website text the wizard read (lib/brand/website-actions.ts), sent along with the description. */
+const websiteInput = z.object({ url: z.string().trim().max(500), text: z.string().max(BRAND_EXTRACTION_WEBSITE_MAX) }).strict();
+
+export async function extractBrandDescription(description: unknown, website: unknown = null): Promise<ExtractBrandResult> {
   const user = await getCurrentUser();
   if (!user) return { ok: false, reason: "login" };
 
   const text = typeof description === "string" ? description.trim() : "";
   if (text.split(/\s+/).filter(Boolean).length < 5) return { ok: false, reason: "too_short" };
+  const site = websiteInput.safeParse(website);
 
   if (!(await consumeAiRateLimit(user.id, "brand_extract"))) return { ok: false, reason: "rate_limited" };
 
   try {
-    const learned = await extractBrandFromDescription(createAiProvider(), text);
+    const learned = await extractBrandFromDescription(createAiProvider(), text, site.success && site.data.text.trim() ? site.data : null);
     return { ok: true, learned };
   } catch (error) {
     const code = error instanceof AiError ? error.code : "unknown";

@@ -335,7 +335,9 @@ test("brand colour has no consumer and is gone; the website field says only what
   assert.equal("color" in brandFromBusiness(businessRow()), false);
 
   assert.match(wizard, /Website <span className="text-text-3">\(optional\)<\/span>/);
-  assert.match(wizard, /marketing emails as the website link and default button destination/);
+  // Slice 7 gave the website a second real use (MARA reads it); the field says both, and nothing more.
+  assert.match(wizard, /MARA reads your public pages once, to understand what the business is and how it looks/);
+  assert.match(wizard, /the website link in your marketing emails/);
   assert.match(store, /website: skipped \? "" : o\.site/);
   assert.match(store, /if \(result\.notice\) toast\(result\.notice, "info"\)/);
 });

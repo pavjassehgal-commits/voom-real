@@ -53,7 +53,7 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 |---|---|
 | `lib/voom/` | Core app: types, client state store (`store.tsx`), onboarding questions (`onboardingData.ts`), saving onboarding/settings (`mutations.ts`), "who is logged in" (`server-data.ts` → `getCurrentUser`), timezone, cadence, schedule guards |
 | `lib/voom/workflow/` | The rolling 7-day marketing plan: builds slots, assigns channels, asks MARA to fill them, moves items through plan → draft → approval → schedule |
-| `lib/brand/` | Brand Kit v2 (migration 0059): `context.ts` is the ONE reader generation uses (`loadBrandContext()` = core fields from `businesses` + the newest `brand_kits` row's brief, offerings, avoid rules, banned words, facts, notes, voice samples; fails open to "no kit"); `versions.ts` appends a kit version on every onboarding/Settings/Brand Hub save, carrying the previous version forward and replacing only the fields that save owns; `sections.ts` defines the Brand Hub sections and which fields and `businesses` columns each owns; `actions.ts` is the hub's save action; `read.ts` loads the version history; `extract.ts` + `extract-actions.ts` are the one AI read of the onboarding description (strict schema over our own option lists, never stored); slice 5 images: `assets.ts` (reference rules, caps, path ownership, list edits, the text-only visual style), `asset-storage.ts` (private `brand-kit` bucket, service role, one-hour signed previews, and the sweep that deletes the owner's files the newest kit version no longer references, run after onboarding Finish and after a Brand page images save), `image.ts` (logo colours from pixels, small JPEG for vision, with sharp), `vision.ts` (one image-reading call), `email-sync.ts` (logo and colours fill the email brand only where empty); slice 6 voice samples: `voice.ts` (one text-model call that writes three sample captions from a snapshot of the answers, and drops any using a banned word or copying a sorted sample) + `voice-actions.ts` (the server action, 20 per user per hour, stores nothing). Routes: `app/api/brand/assets` (upload, remove unsaved) and `app/api/brand/assets/describe` |
+| `lib/brand/` | Brand Kit v2 (migration 0059): `context.ts` is the ONE reader generation uses (`loadBrandContext()` = core fields from `businesses` + the newest `brand_kits` row's brief, offerings, avoid rules, banned words, facts, notes, voice samples; fails open to "no kit"); `versions.ts` appends a kit version on every onboarding/Settings/Brand Hub save, carrying the previous version forward and replacing only the fields that save owns; `sections.ts` defines the Brand Hub sections and which fields and `businesses` columns each owns; `actions.ts` is the hub's save action; `read.ts` loads the version history; `extract.ts` + `extract-actions.ts` are the one AI read of the onboarding description (strict schema over our own option lists, never stored); slice 5 images: `assets.ts` (reference rules, caps, path ownership, list edits, the text-only visual style), `asset-storage.ts` (private `brand-kit` bucket, service role, one-hour signed previews, and the sweep that deletes the owner's files the newest kit version no longer references, run after onboarding Finish and after a Brand page images save), `image.ts` (logo colours from pixels, small JPEG for vision, with sharp), `vision.ts` (one image-reading call), `email-sync.ts` (logo and colours fill the email brand only where empty); slice 6 voice samples: `voice.ts` (one text-model call that writes three sample captions from a snapshot of the answers, and drops any using a banned word or copying a sorted sample) + `voice-actions.ts` (the server action, 20 per user per hour, stores nothing); slice 7 website: `website.ts` (address rules that refuse every non-public host, robots.txt, HTML to text, follow-up links, the capped text block, the homepage-look schema and prompt), `website-fetch.ts` (the guarded text fetch: every host checked, redirects re-checked, 10 s and 2 MB caps), `website-screenshot.ts` (headless Chromium through puppeteer-core, every request the page makes checked the same way), `website-actions.ts` (the two server actions, text and look, 10 per user per hour each, store nothing). Routes: `app/api/brand/assets` (upload, remove unsaved) and `app/api/brand/assets/describe` |
 | `lib/ai/` | Connection to the AI text model (any OpenAI-compatible API; default Groq), plus the optional image-reading model (`AI_VISION_*`, off until `AI_VISION_MODEL` is set; Groq, OpenRouter or any OpenAI-compatible vision model) |
 | `lib/mara/` | MARA's brain: chat prompt, tools, Reel production, video generation and polling, paid-media spending rules, Autopilot safety |
 | `lib/media/` | Image/video generation providers, checking uploaded files, overlays |
@@ -104,9 +104,19 @@ the website, a logo, up to 10 product photos and up to 5 past posts
 (`components/voom/brand/BrandAssetsEditor.tsx`, shared with the Brand page): each file uploads
 at once to the private `brand-kit` bucket, a logo gets two colours computed from its pixels,
 and when image reading is configured MARA fills one line per image (marked as her guess).
+A "Read my website" button next to the field (or Continue / Skip with an address not yet read)
+starts two server actions side by side in the background (slice 7, `lib/brand/website-actions.ts`):
+the site's text (homepage plus up to four same-site pages about, services, products, menu, shop or
+pricing), from which MARA's text model drafts the description into the empty box ("From your
+website"), and, with image reading on, one homepage screenshot the vision model turns into the
+site's look (two colours, a look line, style tags). Status shows under the field and above the
+description box; a failure offers "Try again" / "Try reading again" / "Back to the website". The site's colours
+become the "From your website" palette, kept beside the logo's and used only when nothing else is;
+the owner chooses which palette and which colour leads (`components/voom/brand/BrandAssetsEditor.tsx`).
 "Send to MARA" on the description screen
 calls `extractBrandDescription` (`lib/brand/extract-actions.ts`, one structured AI read via
-`lib/brand/extract.ts`, 12 s wait, 10 reads per user per hour): what she found is prefilled
+`lib/brand/extract.ts`, 12 s wait, 10 reads per user per hour; since slice 7 the site's text goes in
+the same call, the description winning on conflicts): what she found is prefilled
 into the screen that asks for it, marked as her guess, and facts wait under Facts on the
 Brand Brief screen until confirmed; a failed read falls back to the keyword guess
 (`detectIndustry`) for the category as before. The voice screen (slice 6) asks MARA for three
@@ -171,6 +181,6 @@ All keys go in `.env.local` (copy from `.env.example`). Never commit real values
 `NEXT_PUBLIC_` is visible in the browser; everything else is server-only.
 
 ## Not built yet
-2FA · LinkedIn · Stripe billing · website reading and Instagram import
-(`docs/brand-kit-v2-design.md`, slices 7–8) · the brand kit in Reel video
+2FA · LinkedIn · Stripe billing · Instagram import
+(`docs/brand-kit-v2-design.md`, slice 8) · the brand kit in Reel video
 plans (slice 9) · reference images in image generation.

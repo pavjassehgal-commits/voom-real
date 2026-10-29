@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Onboarding, Brand Kit v2 (docs/brand-kit-v2-design.md, slices 3 to 6).
+ * Onboarding, Brand Kit v2 (docs/brand-kit-v2-design.md, slices 3 to 7).
  *
  * Eleven screens, one topic each, with a per-screen Skip where the answer has
  * a safe default and no global Skip. Five answers are required: your name, the
@@ -25,6 +25,12 @@
  * "How you sound" (slice 6): after the personality chips, MARA writes three
  * captions from everything so far (lib/brand/voice.ts, 8 s wait); the owner
  * taps "Sounds like us" / "Not us" and only those are saved as voice samples.
+ *
+ * The website (slice 7): leaving screen 2 with an address starts a read in
+ * the background (lib/brand/website-actions.ts: the site's text plus one look
+ * at a homepage screenshot). "Send to MARA" waits for it briefly and sends
+ * the description and the site's text together; the site's colours become
+ * the website palette, used only when nothing else is.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVoomActions, useVoomState } from "@/lib/voom/store";
@@ -32,6 +38,10 @@ import { BrandAssetsEditor } from "@/components/voom/brand/BrandAssetsEditor";
 import { detectIndustry } from "@/lib/voom/demoData";
 import { brandLearnedIsEmpty } from "@/lib/brand/extract";
 import { extractBrandDescription, type ExtractBrandResult } from "@/lib/brand/extract-actions";
+import { checkWebsiteUrl, WEBSITE_READ_MESSAGES } from "@/lib/brand/website";
+import { readBrandWebsiteLook, readBrandWebsiteText } from "@/lib/brand/website-actions";
+import { emptyWebsiteRead } from "@/lib/voom/store";
+import type { OnboardingWebsiteRead } from "@/lib/voom/types";
 import { VOICE_SAMPLES_PER_LIST, voiceSnapshotFromSections, voiceSnapshotKey } from "@/lib/brand/voice";
 import { requestVoiceSamples, sortSample, VoiceSampleCards, WritingSamplesPanel, type SampleVerdict } from "@/components/voom/brand/VoiceSamples";
 import {
@@ -55,6 +65,7 @@ import Logo from "@/app/components/Logo";
 export const LAST_STEP = OB_STEPS.length - 1;
 
 /** Screen indices that other code refers to. */
+const STEP_ASSETS = 1;
 const STEP_DESCRIBE = 2;
 const STEP_BASICS = 3;
 const STEP_BRIEF = 9;
@@ -64,6 +75,10 @@ export const SKIPPABLE_STEPS: readonly number[] = [1, 5, 6, 7, 9, 10];
 
 /** How long "Send to MARA" waits for the read before carrying on without it. */
 export const EXTRACTION_WAIT_MS = 12_000;
+/** How long "Send to MARA" waits for a website read still running (slice 7) before reading the description alone. */
+export const WEBSITE_WAIT_MS = 20_000;
+/** What a website text read resolved to, handed straight to the reading screen. */
+type WebsiteOutcome = { status: "ready" | "failed" | "timeout"; reason: string };
 
 /** The five required answers, by screen. Returns the message to show, or null when the screen may continue. */
 export function stepBlocker(step: number, onboard: { displayName: string; desc: string; industry: string; goal: string; auto: string }): string | null {
@@ -77,36 +92,132 @@ export function stepBlocker(step: number, onboard: { displayName: string; desc: 
 
 export function OnboardingWizard({ visionEnabled = false }: { visionEnabled?: boolean } = {}) {
   const { onboard, onboardStep, igConnected, onboardSaving, onboardError } = useVoomState();
-  const { setOnboardField, setOnboardStep, applyLearned, markLearnedFailed, finishOnboarding, toast, goTo } = useVoomActions();
+  const { setOnboardField, setOnboardStep, applyLearned, markLearnedFailed, applyWebsiteRead, applyWebsiteLook, applyWebsiteDescriptionDraft, finishOnboarding, toast, goTo } = useVoomActions();
   const [analyzing, setAnalyzing] = useState(false);
   const [reading, setReading] = useState(false);
+  // The newest answers, for code that runs after an await.
+  const latest = useRef(onboard);
+  useEffect(() => { latest.current = onboard; });
+  // The website read in flight (slice 7), resolving to its outcome, so the reading
+  // screen and "Send to MARA" can wait for it. Its text is kept here too, because a
+  // store update is not visible to code that resumes right after the await.
+  const websiteRead = useRef<Promise<WebsiteOutcome> | null>(null);
+  const websiteText = useRef<{ url: string; text: string; fetchedAt: string } | null>(null);
 
   const st = onboardStep;
   const words = onboard.desc.trim().split(/\s+/).filter(Boolean).length;
 
   /**
-   * One AI read per description text. The same text is never sent twice
-   * (going back and forward reuses the result, or the recorded failure); a
-   * slow, failed or empty read falls back to the keyword category guess.
-   * Either way the next screen is the basics, prefilled where she could.
+   * Slice 7: reading the website starts when the owner leaves "Give MARA your
+   * brand" with an address typed, in the background. The same address is not
+   * read twice; a changed address is. The outcome lands in the store, and the
+   * site's colours become the website palette.
+   */
+  /**
+   * Starts the two reads side by side and returns the text read's promise
+   * (the look lands in the background). Null when nothing needs reading:
+   * no address, or the same address already read.
+   */
+  function startWebsiteRead(force = false): Promise<WebsiteOutcome> | null {
+    const typed = onboard.site.trim();
+    const check = typed ? checkWebsiteUrl(typed) : null;
+    if (!check) {
+      if (onboard.website.status) applyWebsiteRead(emptyWebsiteRead(), null);
+      return null;
+    }
+    const url = check.ok ? check.url.href : typed;
+    const current = onboard.website;
+    if (current.url === url && current.status === "reading" && websiteRead.current) return websiteRead.current;
+    if (!force && current.url === url && current.status === "ready") return null;
+    if (!check.ok) {
+      applyWebsiteRead({ ...emptyWebsiteRead(), url, status: "failed", reason: WEBSITE_READ_MESSAGES.refused }, null);
+      return null;
+    }
+    applyWebsiteRead({ ...emptyWebsiteRead(), url, status: "reading" }, null);
+    websiteText.current = null;
+    const failed = (reason: string): WebsiteOutcome => {
+      applyWebsiteRead({ ...emptyWebsiteRead(), url, status: "failed", reason }, null);
+      return { status: "failed", reason };
+    };
+    const text: Promise<WebsiteOutcome> = readBrandWebsiteText(url)
+      .then((result): WebsiteOutcome => {
+        if (!result.ok) {
+          return failed(result.reason === "login" ? "You're signed out. Log in again to read the site." : result.reason === "rate_limited" ? "MARA has read websites ten times for you in the last hour, which is the limit. Wait a while and try again, or write the description yourself." : WEBSITE_READ_MESSAGES[result.reason]);
+        }
+        websiteText.current = { url, text: result.text, fetchedAt: result.fetchedAt };
+        applyWebsiteRead({ url, status: "ready", reason: "", text: result.text, pageTitles: result.pageTitles, fetchedAt: result.fetchedAt, look: null, lookStatus: "" }, null);
+        // The site's own words fill the description box while it is still empty.
+        applyWebsiteDescriptionDraft(result.descriptionDraft);
+        return { status: "ready", reason: "" };
+      })
+      .catch(() => failed(WEBSITE_READ_MESSAGES.unreachable))
+      .finally(() => { websiteRead.current = null; });
+    websiteRead.current = text;
+    startWebsiteLook(url);
+    return text;
+  }
+
+  /** The homepage look on its own: started with every read, and again from "Try the look again". */
+  function startWebsiteLook(url: string) {
+    applyWebsiteLook(url, null, "", null);
+    void readBrandWebsiteLook(url)
+      .then((result) => {
+        if (!result.ok) {
+          applyWebsiteLook(url, null, result.reason === "off" ? "off" : "failed", null);
+          return;
+        }
+        applyWebsiteLook(url, { look: result.look.look, styleTags: result.look.styleTags, subject: result.look.subject }, "ready", { primary: result.look.primary, secondary: result.look.secondary });
+      })
+      .catch(() => applyWebsiteLook(url, null, "failed", null));
+  }
+
+  /**
+   * Leaving screen 2 (Continue or Skip): an address not yet read starts its
+   * read in the background, and the description screen shows the read's
+   * state (the draft arrives there; a failure offers "Try reading again" and
+   * "Back to the website"). Nothing holds the owner on a waiting screen.
+   */
+  function leaveAssets() {
+    startWebsiteRead();
+    setOnboardStep(STEP_DESCRIBE);
+  }
+
+  /**
+   * One AI read per description text (and website read). The same input is
+   * never sent twice (going back and forward reuses the result, or the
+   * recorded failure); a slow, failed or empty read falls back to the keyword
+   * category guess. Either way the next screen is the basics, prefilled
+   * where she could. A website read still running is given a short wait.
    */
   async function sendToMara() {
-    const desc = onboard.desc.trim();
-    if (onboard.learnedFor === desc && (onboard.learned || onboard.learnedNote === "failed")) {
+    setReading(true);
+    // A read still running (the owner came back and forward): the same wait as the reading screen's.
+    if (websiteRead.current) {
+      await Promise.race([websiteRead.current, new Promise((resolve) => setTimeout(resolve, WEBSITE_WAIT_MS))]);
+    }
+    const now = latest.current;
+    const desc = now.desc.trim();
+    // The text as the read handed it over (the store may lag by a render); only for the address still typed.
+    const read = websiteText.current && websiteText.current.url === now.website.url ? websiteText.current : now.website.status === "ready" && now.website.text ? { url: now.website.url, text: now.website.text, fetchedAt: now.website.fetchedAt } : null;
+    const site = read ? { url: read.url, text: read.text } : null;
+    const key = site ? `${desc}\n#website:${read!.fetchedAt}` : desc;
+    if (now.learnedFor === key && (now.learned || now.learnedNote === "failed")) {
+      setReading(false);
       setOnboardStep(STEP_BASICS);
       return;
     }
-    setReading(true);
     const result = await Promise.race<ExtractBrandResult>([
-      extractBrandDescription(desc).catch(() => ({ ok: false, reason: "unavailable" })),
+      extractBrandDescription(desc, site).catch(() => ({ ok: false, reason: "unavailable" })),
       new Promise((resolve) => setTimeout(() => resolve({ ok: false, reason: "unavailable" }), EXTRACTION_WAIT_MS)),
     ]);
     setReading(false);
     if (result.ok && !brandLearnedIsEmpty(result.learned)) {
-      applyLearned(result.learned, desc);
+      applyLearned(result.learned, key);
+      setOnboardField("learnedWith", site ? "description+website" : "description");
     } else {
-      markLearnedFailed(desc);
-      if (!onboard.industry) {
+      markLearnedFailed(key);
+      setOnboardField("learnedWith", "");
+      if (!now.industry) {
         const detected = detectIndustry(desc);
         if (detected) setOnboardField("industry", detected);
       }
@@ -118,6 +229,10 @@ export function OnboardingWizard({ visionEnabled = false }: { visionEnabled?: bo
     const blocker = stepBlocker(st, onboard);
     if (blocker) {
       toast(blocker, "err");
+      return;
+    }
+    if (st === STEP_ASSETS) {
+      leaveAssets();
       return;
     }
     if (st === STEP_DESCRIBE) {
@@ -141,6 +256,11 @@ export function OnboardingWizard({ visionEnabled = false }: { visionEnabled?: bo
 
   async function skip() {
     if (!SKIPPABLE_STEPS.includes(st)) return;
+    // Skipping the images screen with an address typed still reads the site: the field is optional, the read is free.
+    if (st === STEP_ASSETS) {
+      leaveAssets();
+      return;
+    }
     if (st < LAST_STEP) {
       setOnboardStep(st + 1);
       return;
@@ -182,8 +302,8 @@ export function OnboardingWizard({ visionEnabled = false }: { visionEnabled?: bo
             </div>
           )}
           {st === 0 && <StepName />}
-          {st === 1 && <StepAssets visionEnabled={visionEnabled} />}
-          {st === 2 && <StepDescribe words={words} reading={reading} />}
+          {st === 1 && <StepAssets visionEnabled={visionEnabled} onRead={() => { void startWebsiteRead(true); }} onRetryLook={() => startWebsiteLook(latest.current.website.url)} />}
+          {st === 2 && <StepDescribe words={words} reading={reading} onReadAgain={() => { void startWebsiteRead(true); }} onBackToWebsite={() => setOnboardStep(STEP_ASSETS)} />}
           {st === 3 && <StepBasics />}
           {st === 4 && <StepAudienceGoal />}
           {st === 5 && <StepVoice />}
@@ -196,7 +316,7 @@ export function OnboardingWizard({ visionEnabled = false }: { visionEnabled?: bo
       </div>
 
       <div className="sticky bottom-0 flex justify-between gap-3 border-t border-line bg-surface px-6 py-4">
-        <Btn variant="ghost" onClick={back} disabled={busy}>
+        <Btn variant="ghost" onClick={back} disabled={onboardSaving || reading}>
           <Icon name="back" size={16} /> Back
         </Btn>
         <div className="flex items-center gap-2">
@@ -212,6 +332,32 @@ export function OnboardingWizard({ visionEnabled = false }: { visionEnabled?: bo
       </div>
     </div>
   );
+}
+
+/** The website read's state under the field on screen 2 (slice 7). */
+function WebsiteReadStatus({ website, draftReady, onRetry, onRetryLook }: { website: OnboardingWebsiteRead; draftReady: boolean; onRetry: () => void; onRetryLook: () => void }) {
+  if (website.status === "reading") return <span role="status" className="mt-1.5 block text-xs text-text-2">MARA is reading your site… carry on with your images meanwhile.</span>;
+  if (website.status === "ready") {
+    const pages = website.pageTitles.length || 1;
+    return (
+      <span role="status" className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-text-2">
+        <span>Read {pages} page{pages === 1 ? "" : "s"}.{draftReady ? " Drafted your description for the next screen." : ""}</span>
+        {website.lookStatus === "ready" ? <span>Took one look at the homepage: its colours are under your logo.</span> : null}
+        {website.lookStatus === "" ? <span>Looking at the homepage for its colours…</span> : null}
+        {website.lookStatus === "failed" ? <><span className="text-amber-300">Couldn&apos;t take a look at the homepage for its colours.</span><Btn variant="ghost" size="sm" onClick={onRetryLook}>Try the look again</Btn></> : null}
+        {website.lookStatus === "off" ? <span>Image reading is off, so no colours from the site.</span> : null}
+      </span>
+    );
+  }
+  if (website.status === "failed") {
+    return (
+      <span role="alert" className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-amber-300">
+        {website.reason}
+        <Btn variant="ghost" size="sm" onClick={onRetry}>Try again</Btn>
+      </span>
+    );
+  }
+  return null;
 }
 
 function Title({ children, sub }: { children: string; sub: string }) {
@@ -253,12 +399,34 @@ function QBlock({ title, help, children }: { title: string; help?: string; child
   );
 }
 
-function StepDescribe({ words, reading }: { words: number; reading: boolean }) {
+function StepDescribe({ words, reading, onReadAgain, onBackToWebsite }: { words: number; reading: boolean; onReadAgain: () => void; onBackToWebsite: () => void }) {
   const { onboard } = useVoomState();
   const { setOnboardField } = useVoomActions();
+  const site = onboard.website;
   return (
     <div>
       <Title sub="Write it however you'd explain it to a customer. MARA reads this before she asks anything else.">Describe your brand in your own words.</Title>
+      {site.status === "reading" ? (
+        <p role="status" className="mb-2 rounded-xl border border-brand bg-[var(--brand-soft)] px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">
+          <b className="text-text">MARA is reading your website…</b> the draft will appear here while the box is still empty. Write your own meanwhile if you prefer.
+        </p>
+      ) : site.status === "failed" ? (
+        <div role="alert" className="mb-2 rounded-xl border border-amber/35 bg-amber/10 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">
+          <b className="text-text">I couldn&apos;t read your website.</b> {site.reason}
+          <span className="mt-2 flex flex-wrap gap-2">
+            <Btn variant="outline" size="sm" onClick={onReadAgain}>Try reading again</Btn>
+            <Btn variant="ghost" size="sm" onClick={onBackToWebsite}>Back to the website</Btn>
+          </span>
+        </div>
+      ) : onboard.descFromWebsite ? (
+        <p className="mb-2 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">
+          <b className="text-text">From your website.</b> Edit it or write your own.
+        </p>
+      ) : site.status === "ready" && !onboard.desc.trim() ? (
+        <p className="mb-2 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">
+          <b className="text-text">Your website was read,</b> but MARA could not write a draft from it. Write a few lines yourself.
+        </p>
+      ) : null}
       <Textarea
         rows={9}
         className="text-[15.5px] leading-[1.65]"
@@ -289,6 +457,8 @@ function StepDescribe({ words, reading }: { words: number; reading: boolean }) {
 
 /** The help line under a prefilled question. */
 const GUESS_HELP = "MARA's guess from your description is highlighted. Change it if she got it wrong.";
+const GUESS_HELP_WEBSITE = "MARA's guess from your description and website is highlighted. Change it if she got it wrong.";
+const guessHelp = (onboard: { learnedWith: string }) => (onboard.learnedWith === "description+website" ? GUESS_HELP_WEBSITE : GUESS_HELP);
 
 function AudienceChips({ selected, onToggle }: { selected: string[]; onToggle: (value: string) => void }) {
   return (
@@ -354,9 +524,15 @@ function IndustryPicks() {
  * "Give MARA your brand" (slice 5). Everything optional. The website keeps its
  * one real use (the email link, saved through the email brand at Finish).
  */
-function StepAssets({ visionEnabled }: { visionEnabled: boolean }) {
+function StepAssets({ visionEnabled, onRead, onRetryLook }: { visionEnabled: boolean; onRead: () => void; onRetryLook: () => void }) {
   const { onboard } = useVoomState();
   const { setOnboardField, addOnboardAsset, setOnboardAssetText, removeOnboardAsset } = useVoomActions();
+  const site = onboard.website;
+  const typed = onboard.site.trim();
+  const check = typed ? checkWebsiteUrl(typed) : null;
+  const readable = check?.ok === true;
+  const readingThis = site.status === "reading";
+  const readThis = site.status === "ready" && check?.ok === true && site.url === check.url.href;
   return (
     <div>
       <Title sub="Anything here saves you typing later. All optional: skip it and add images on your Brand page any time.">Give MARA your brand</Title>
@@ -364,16 +540,22 @@ function StepAssets({ visionEnabled }: { visionEnabled: boolean }) {
         <span className="mb-1.5 block text-[12.5px] font-semibold text-text-2">
           Website <span className="text-text-3">(optional)</span>
         </span>
-        <input
-          className="h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px]"
-          placeholder="https://yourbusiness.ae"
-          inputMode="url"
-          value={onboard.site}
-          onChange={(e) => setOnboardField("site", e.target.value)}
-        />
+        <div className="flex flex-wrap gap-2">
+          <input
+            className="h-[46px] min-w-[220px] flex-1 rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px]"
+            placeholder="https://yourbusiness.ae"
+            inputMode="url"
+            value={onboard.site}
+            onChange={(e) => setOnboardField("site", e.target.value)}
+          />
+          <Btn variant="outline" disabled={!readable || readingThis} onClick={onRead}>
+            {readingThis ? "Reading…" : readThis ? "Read again" : "Read my website"}
+          </Btn>
+        </div>
         <span className="mt-1.5 block text-xs text-text-3">
-          Used in your marketing emails as the website link and default button destination. Change it any time in Settings → Email identity.
+          MARA reads your public pages once, to understand what the business is and how it looks. Give it when you first set up, or again when the business or the site has changed. It is also the website link in your marketing emails (Settings → Email identity). Not read yet when you press Continue? She reads it in the background.
         </span>
+        <WebsiteReadStatus website={site} draftReady={onboard.descFromWebsite} onRetry={onRead} onRetryLook={onRetryLook} />
       </label>
       <BrandAssetsEditor
         assets={onboard.assets}
@@ -413,7 +595,11 @@ function StepBasics() {
           <div className="flex items-start gap-2.5">
             <Orb size="sm" className="mt-0.5" />
             <p className="text-[13.5px] leading-[1.6]">
-              I read your description and filled in what I could, here and on the next screens. My guesses are marked; change anything I got wrong.
+              {onboard.learnedWith === "description+website"
+                ? "I read your description and your website and filled in what I could, here and on the next screens. My guesses are marked; change anything I got wrong."
+                : "I read your description and filled in what I could, here and on the next screens. My guesses are marked; change anything I got wrong."}
+              {onboard.learnedWith !== "description+website" && (onboard.website.status === "failed" || onboard.website.status === "empty") ? ` I couldn't use your website: ${onboard.website.reason.replace(/, so MARA used your description only\.$/, ".")}` : ""}
+              {onboard.learnedWith !== "description+website" && onboard.website.status === "reading" ? " Your website is still being read; it was not ready in time, so I used your description." : ""}
             </p>
           </div>
         </div>
@@ -429,7 +615,7 @@ function StepBasics() {
           />
         </label>
       </div>
-      <QBlock title="What kind of business is this?" help={guessed ? GUESS_HELP : "Pick the closest match."}>
+      <QBlock title="What kind of business is this?" help={guessed ? guessHelp(onboard) : "Pick the closest match."}>
         <IndustryPicks />
       </QBlock>
     </div>
@@ -442,10 +628,10 @@ function StepAudienceGoal() {
   return (
     <div>
       <Title sub="MARA uses these to choose the angle for every post.">Who you serve, and why</Title>
-      <QBlock title="Who is your target customer?" help={onboard.fromMara.includes("audience") ? GUESS_HELP : "Choose all that apply. Leave it empty and MARA writes for a broad audience."}>
+      <QBlock title="Who is your target customer?" help={onboard.fromMara.includes("audience") ? guessHelp(onboard) : "Choose all that apply. Leave it empty and MARA writes for a broad audience."}>
         <AudienceChips selected={onboard.customer} onToggle={(c) => toggleOnboardArray("customer", c)} />
       </QBlock>
-      <QBlock title="What is your main marketing goal?" help={onboard.fromMara.includes("goal") ? GUESS_HELP : "Pick the one that matters most right now."}>
+      <QBlock title="What is your main marketing goal?" help={onboard.fromMara.includes("goal") ? guessHelp(onboard) : "Pick the one that matters most right now."}>
         <GoalPicks value={onboard.goal} onPick={(goal) => setOnboardField("goal", goal)} />
       </QBlock>
     </div>
@@ -514,7 +700,7 @@ function StepVoice() {
   return (
     <div>
       <Title sub="These shape the words MARA chooses. Skip it and she keeps a neutral tone until you tell her otherwise.">How you sound</Title>
-      <QBlock title="What is your brand personality?" help={onboard.fromMara.includes("personality") ? `${GUESS_HELP} Up to three.` : "Choose up to three."}>
+      <QBlock title="What is your brand personality?" help={onboard.fromMara.includes("personality") ? `${guessHelp(onboard)} Up to three.` : "Choose up to three."}>
         <ToneChips selected={onboard.tone} onToggle={(t) => toggleOnboardArray("tone", t, 3)} />
       </QBlock>
       {writing ? (

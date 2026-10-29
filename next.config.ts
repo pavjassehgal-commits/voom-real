@@ -23,6 +23,8 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // The headless browser for the website look (slice 7) ships its own binary: never bundled.
+  serverExternalPackages: ["puppeteer-core", "@sparticuz/chromium"],
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

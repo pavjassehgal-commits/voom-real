@@ -67,7 +67,19 @@ export function brandKitAnswersFromOnboarding(input: OnboardingInput): Record<st
   delete core.publishing_permission;
   const kit = input.kit;
   if (!kit) return core;
-  const provenance = Object.fromEntries((kit.fromDescription ?? []).map((key) => [key, "description"]));
+  // Slice 7: "website" when the read used the site too (the description still wins on conflicts).
+  const provenance = Object.fromEntries((kit.fromDescription ?? []).map((key) => [key, kit.readSource === "website" ? "website" : "description"]));
+  const website = kit.website && (kit.website.status === "ready" || kit.website.status === "empty")
+    ? {
+        url: String(kit.website.url).slice(0, 500),
+        status: kit.website.status,
+        fetchedAt: String(kit.website.fetchedAt).slice(0, 40),
+        pageTitles: cleanSamples(kit.website.pageTitles).map((t) => t.slice(0, 200)),
+        ...(kit.website.look && (kit.website.look.look || kit.website.look.styleTags?.length)
+          ? { look: { look: String(kit.website.look.look).slice(0, 200), styleTags: cleanSamples(kit.website.look.styleTags).slice(0, 6) } }
+          : {}),
+      }
+    : null;
   return {
     ...core,
     offerings: kit.offerings,
@@ -85,6 +97,8 @@ export function brandKitAnswersFromOnboarding(input: OnboardingInput): Record<st
     ...(kit.voiceSamples && (kit.voiceSamples.liked.length || kit.voiceSamples.disliked.length)
       ? { voice_samples: { liked: cleanSamples(kit.voiceSamples.liked), disliked: cleanSamples(kit.voiceSamples.disliked) } }
       : {}),
+    // Slice 7: the website read's small record (address, status, time, page titles, the look), only when a site was read.
+    ...(website ? { sources: { website } } : {}),
   };
 }
 

@@ -25,6 +25,9 @@ export const AI_RATE_LIMITS = {
   brand_voice: { limit: 20, windowSeconds: 3600 },
   /** MARA looking at an uploaded post photo before suggesting its caption (slice 5b). */
   post_vision: { limit: 40, windowSeconds: 3600 },
+  /** Reading a business's website in onboarding (slice 7): the text read and the homepage look are two calls; ten an hour leaves room for retries and a changed address. */
+  brand_website: { limit: 10, windowSeconds: 3600 },
+  brand_website_look: { limit: 10, windowSeconds: 3600 },
 } as const;
 
 export type AiRateLimitBucket = keyof typeof AI_RATE_LIMITS;

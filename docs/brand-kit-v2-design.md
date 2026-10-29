@@ -239,8 +239,29 @@ prop that hides History and the gallery in onboarding.
    "Write 3 new samples" with the same cards (`components/voom/brand/VoiceSamples.tsx`). Code
    drops any caption using a banned word or copying a sorted sample; an unconfirmed fact is
    never sent. Tests: `tests/brand-voice.test.mjs`.
-7. **Website reading** with every guard above. Tests: private-address refusal incl. on redirect,
-   robots.txt, size and time caps, page selection, snapshot stored unconfirmed.
+7. **Website reading. BUILT 2026-10-28, as agreed with Gurnoor that day.** Leaving screen 2
+   with an address starts the read in the background: the site's text with every guard above
+   (`lib/brand/website.ts`, `website-fetch.ts`) and, with the vision model on, ONE screenshot of
+   the top of the homepage (`website-screenshot.ts`, headless Chromium, every request checked
+   against the same public-address rule) that the vision model turns into the site's look: two
+   colours, a look line, style tags. The two reads are separate server actions started side
+   by side. A **"Read my website" button** next to the field reads in place while the owner keeps
+   uploading (status under the field; "Read again" after a success; "Try again" after a
+   failure); Continue or Skip with an address not yet read starts it in the background. MARA's
+   text model drafts the description from the site's text (what the business is, sells, is for;
+   a current offer in one sentence at most; no reviews or sales talk) into the empty box, marked
+   "From your website". The description screen shows the read's state above the box, with "Try
+   reading again" and "Back to the website" after a failure. "Send to MARA" then sends the
+   description and the site's text in the one extraction call (description wins).
+   The basics screen says which sources were used; provenance records "website"; the kit keeps a
+   small `sources.website` record (address, status, time, page titles, the look), never the text
+   or the image. **Dropped for good:** downloading the logo and product images from the site.
+   The owner uploads those on screen 2 and they are known to be current; a site's images are
+   not. **Colours per source:** the logo's computed colours and the website's colours are kept
+   side by side (`answers.colours.found`), never overwriting each other; the logo leads by
+   default, the owner's pick always wins, and the editor lets the owner choose the palette and
+   which colour is dominant (Main leads in images). Not built: screenshots of further screens or
+   pages, and reading again from the Brand page. Tests: `tests/brand-website.test.mjs`.
 8. **Instagram import** after connect. Tests: official client only, 25-post cap, no fetch
    without a connection.
 9. **Optional:** Reel/Story visuals, campaigns and the coordinator switch to `loadBrandContext()`.
