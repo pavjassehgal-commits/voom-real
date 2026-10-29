@@ -143,7 +143,7 @@ export async function getPostDraftForIngestion(
   ownerId: string,
   draftId: string,
   stage: IngestionStage = "draft_read",
-): Promise<PostView | null> {
+): Promise<PostView | { id: string; kind: "youtube_video" | "youtube_short"; contentVersion: number } | null> {
   const { data: draft, error: draftError } = await admin.from("mara_drafts").select(DRAFT_COLUMNS)
     .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
   if (draftError) throw new IngestionFailure("db_failure", stage);
@@ -152,6 +152,9 @@ export async function getPostDraftForIngestion(
   const { data: asset, error: assetError } = await admin.from(POST_ASSET_TABLE).select(ASSET_COLUMNS)
     .eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
   if (assetError) throw new IngestionFailure("db_failure", stage);
+  if (draft.kind === "youtube_video" || draft.kind === "youtube_short") {
+    return { id: String(draft.id), kind: draft.kind, contentVersion: Number(draft.content_version) };
+  }
   return toPostView(admin, ownerId, draft as Record<string, unknown>, (asset as Record<string, unknown> | null) ?? null);
 }
 
@@ -608,7 +611,7 @@ export async function putPostAsset(
   admin: AdminClient,
   ownerId: string,
   draftId: string,
-  input: { bytes: Uint8Array; mimeType: string; extension: string; displayName: string; origin: PostOrigin },
+  input: { bytes: Uint8Array; mimeType: string; extension: string; displayName: string; origin: PostOrigin; contentVersion?: number },
   diagnostics?: PostAssetIngestionDiagnostics,
 ): Promise<{ storagePath: string; previousStoragePath: string | null }> {
   // Ownership only. Uploading never depends on a format DB column — production
@@ -656,6 +659,15 @@ export async function putPostAsset(
         return typeof previous?.storage_path === "string" ? previous.storage_path : null;
       },
       upsert: async (assetRow) => {
+        if (draftRow.kind === "youtube_video" || draftRow.kind === "youtube_short") {
+          const { data, error } = await admin.rpc("attach_youtube_uploaded_video", {
+            p_owner: ownerId, p_draft: draftId, p_version: input.contentVersion,
+            p_path: assetRow.storage_path, p_name: assetRow.display_name, p_bytes: assetRow.byte_size,
+          });
+          if (error || data !== true) throw new Error("youtube_asset_link_failed");
+          logPostAssetStage("db_upsert", diagnostics);
+          return;
+        }
         const { error } = await admin.from(POST_ASSET_TABLE).upsert(assetRow, { onConflict: "owner_user_id,draft_id" });
         if (error) throw new Error("upsert");
         logPostAssetStage("db_upsert", diagnostics);
