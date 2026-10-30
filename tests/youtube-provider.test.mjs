@@ -1479,6 +1479,7 @@ test("migrations 0047-0051 apply cleanly and retain their required ordering", as
   assert.ok(applied.indexOf("0061_ai_usage_cost_tracking.sql") > applied.indexOf("0059_automation_emergency_pause.sql"));
   assert.ok(applied.indexOf("0063_native_plan_video_generation.sql") > applied.indexOf("0061_ai_usage_cost_tracking.sql"));
   assert.ok(applied.indexOf("0066_youtube_resumable_uploads.sql") > applied.indexOf("0064_youtube_uploaded_video.sql"), "direct native uploads follow the existing provider and attachment migrations");
+  assert.ok(applied.indexOf("0067_youtube_upload_cleanup_fairness.sql") > applied.indexOf("0066_youtube_resumable_uploads.sql"), "cleanup fairness follows the installed upload migration");
   const tables = await all(
     "select table_name from information_schema.tables where table_schema = 'public' and table_name like 'youtube_%' order by table_name",
   );

@@ -71,6 +71,7 @@ test("Production-compatible drift: other media keep their 4 MiB limit and the ch
   try {
     const before = await c.assets(), checksBefore = await c.sizeChecks();
     await c.local.db.exec(migrationSql("0066_youtube_resumable_uploads.sql"));
+    await c.local.db.exec(migrationSql("0067_youtube_upload_cleanup_fairness.sql"));
     const checks = await c.sizeChecks();
     assert.deepEqual(checks.map((r) => r.conname), ["post_draft_assets_size_prod"], "one size check, same name");
     assert.match(checks[0].def, /byte_size <= 4194304\)\) OR/, "generic limit stays 4 MiB");
@@ -108,6 +109,7 @@ test("Staging (0060): TikTok keeps 50 MB, other platforms keep 20 MB, YouTube na
     const before = await c.assets(), checksBefore = await c.sizeChecks();
     assert.deepEqual(checksBefore.map((r) => r.conname), ["post_draft_assets_byte_size_limit"]);
     await c.local.db.exec(migrationSql("0066_youtube_resumable_uploads.sql"));
+    await c.local.db.exec(migrationSql("0067_youtube_upload_cleanup_fairness.sql"));
     const checks = await c.sizeChecks();
     assert.deepEqual(checks.map((r) => r.conname), ["post_draft_assets_byte_size_limit"], "0060's name kept, so 0060's own rollback still finds it");
     assert.match(checks[0].def, /byte_size <= 52428800\)\) OR/, "generic limit stays 50 MB");
