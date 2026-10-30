@@ -1,5 +1,5 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
-import { normalizePostFormat, normalizeSchedule, postApprovalBlockers } from "@/lib/post/core";
+import { isSocialVideoDraftKind, normalizePostFormat, normalizeSchedule, postApprovalBlockers } from "@/lib/post/core";
 import { APPROVAL_CONTENT_CHANGED, approvePostDraft, getPostDraft, normalizeMediaBrief, rejectPostDraft, savePostDraft } from "@/lib/post/server-data";
 import { checkScheduleInstant } from "@/lib/voom/schedule-guard";
 import { createAdminClient } from "@/utils/supabase/admin";
@@ -31,6 +31,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   try { body = await request.json(); } catch { return Response.json({ error: "That request was not valid." }, { status: 400 }); }
 
   const admin = createAdminClient();
+  // TikTok/YouTube drafts share mara_drafts but are approved, scheduled and
+  // cancelled only through /api/social-drafts, never the Instagram post path.
+  const { data: row, error: kindError } = await admin.from("mara_drafts").select("kind")
+    .eq("owner_user_id", user.id).eq("id", id).maybeSingle();
+  if (kindError) return Response.json({ error: "Voom couldn't load that post. Please retry." }, { status: 503 });
+  if (row && isSocialVideoDraftKind(row.kind)) {
+    return Response.json({ error: "Open this video in its YouTube or TikTok editor to change it. Nothing was changed." }, { status: 409 });
+  }
   const action = typeof body.action === "string" ? body.action : "save";
 
   if (action === "approve") {

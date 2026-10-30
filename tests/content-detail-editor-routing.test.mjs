@@ -79,3 +79,17 @@ test("Create · Preview and Schedule (/app/studio/[id]) load social drafts befor
   assert.match(loader, /if \(!found\) return null/);
   for (const page of [preview, schedule]) assert.match(page, /loadCreateDraft\(createAdminClient\(\), user\.id, id\)/);
 });
+
+test("the Instagram post API refuses to approve, schedule, save or cancel a TikTok/YouTube draft", async () => {
+  const route = await read("app/api/posts/[id]/route.ts");
+  const patch = route.slice(route.indexOf("export async function PATCH"));
+  const guard = patch.indexOf("isSocialVideoDraftKind(row.kind)");
+  assert.ok(guard > 0, "PATCH checks the stored draft kind");
+  assert.match(patch, /select\("kind"\)\s*\.eq\("owner_user_id", user\.id\)\.eq\("id", id\)/);
+  assert.match(patch, /if \(kindError\) return Response\.json\([^)]*\{ status: 503 \}\)/, "an unreadable kind fails closed");
+  for (const action of ['action === "approve"', 'action === "reject"', "savePostDraft("]) {
+    assert.ok(patch.indexOf(action) > guard, `${action} runs only after the kind guard`);
+  }
+  assert.ok(isSocialVideoDraftKind("youtube_video") && isSocialVideoDraftKind("youtube_short") && isSocialVideoDraftKind("tiktok_video"));
+  for (const kind of ["instagram_post", "reel", "story"]) assert.equal(isSocialVideoDraftKind(kind), false, kind);
+});
