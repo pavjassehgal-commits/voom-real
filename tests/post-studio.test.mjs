@@ -279,9 +279,10 @@ test("0021 is marked already-applied; 0018-0020 are untouched and 0022-0028 stay
   // are the production-hardening release and are the only migrations after 0049.
   // Trend Intelligence (0055-0058) and the reviewed automation safety boundary
   // (0059), AI usage (0061), LinkedIn (0062) and native plan video generation
-  // (0063) and native YouTube uploads (0064) follow; 0052-0054 remain reserved.
-  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql"], "only reviewed post-0049 migrations are present");
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 64), "no unreviewed migration beyond 0064 may exist");
+  // (0063) and native YouTube uploads (0064) follow, then direct YouTube
+  // resumable uploads (0066); 0052-0054 and 0065 remain reserved.
+  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql", "0066_youtube_resumable_uploads.sql"], "only reviewed post-0049 migrations are present");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 66), "no unreviewed migration beyond 0066 may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],
@@ -563,6 +564,12 @@ test("no test executes a provider, so no real paid generation runs in the suite"
     if (name === "youtube-native-upload.test.mjs") {
       assert.match(source, /registerHooks/);
       assert.match(source, /globalThis\.fetch=async\(\)=>\{throw new Error\('External HTTP forbidden/);
+      assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media"|generate\/route)/);
+    } else if (name === "youtube-resumable-upload.test.mjs") {
+      // Same bar for the direct-upload route: auth/storage substituted, and
+      // its only HTTP target is the synthetic storage.invalid host.
+      assert.match(source, /registerHooks/);
+      assert.match(source, /globalThis\.fetch=async\(url,options\)=>\{\s*const u=new URL\(url\);assert\.equal\(u\.hostname,'storage\.invalid','No external\/provider calls allowed'\)/);
       assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media"|generate\/route)/);
     } else {
       assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media"|api\/posts|generate\/route)/, `${name} must not import a provider or route`);

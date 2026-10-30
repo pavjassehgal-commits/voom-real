@@ -1,5 +1,7 @@
 import { runYouTubeReconciliation } from "@/lib/youtube/reconcile";
 import { bearerMatches } from "@/utils/bearer-auth";
+import { createAdminClient } from "@/utils/supabase/admin";
+import { cleanupYouTubeUploads } from "@/lib/youtube/upload-server";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -27,7 +29,9 @@ export async function GET(request: Request) {
   }
   try {
     const result = await runYouTubeReconciliation();
-    return Response.json(result, { headers: { "Cache-Control": "no-store" } });
+    // A storage-cleanup outage must retain media, not interrupt publishing.
+    const uploadCleanup = await cleanupYouTubeUploads(createAdminClient()).catch(()=>({deferred:true}));
+    return Response.json({...result,uploadCleanup}, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return Response.json({ error: "YouTube reconciliation could not complete safely." }, { status: 503 });
   }

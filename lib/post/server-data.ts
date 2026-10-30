@@ -715,6 +715,9 @@ export async function verifyPostAssetStored(
  * Publishing jobs resolve their media through these asset/generation records.
  */
 export async function removePostAssetObject(admin: AdminClient, ownerId: string, storagePath: string): Promise<void> {
+  // Direct-upload capabilities can outlive cancellation. Only the durable
+  // YouTube upload cleaner may delete these immutable paths after its grace.
+  if (/^[a-f0-9-]{36}\/youtube-uploads\/[a-f0-9-]{36}\.mp4$/.test(storagePath)) return;
   if (!ownerId || !storagePath.startsWith(`${ownerId}/`) || storagePath.split("/").some(part => part === "." || part === "..")) return;
   for (const table of ["mara_media_generations", POST_ASSET_TABLE, "reel_draft_assets", "instagram_media_assets"]) {
     const { count, error } = await admin.from(table)
