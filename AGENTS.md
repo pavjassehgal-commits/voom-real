@@ -12,7 +12,8 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 These rules bind every AI coding tool used on this repo — Claude Code, Codex, Cursor or anything
 else — and every new session, with no other setup. (`CLAUDE.md` is only a pointer to this file.)
-Start every task by reading `ARCHITECTURE.md` and `DECISIONS.md`.
+Start every task by reading `ARCHITECTURE.md` and `DECISIONS.md`, then `handover/next-session.md`
+(where we are, what is next, what is open). Update that file at the end of every task.
 
 I'm Gurnoor. I own this product and I'm not a developer. I need to understand everything that
 changes so I can change it myself later.

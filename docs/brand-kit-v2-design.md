@@ -261,7 +261,10 @@ prop that hides History and the gallery in onboarding.
    side by side (`answers.colours.found`), never overwriting each other; the logo leads by
    default, the owner's pick always wins, and the editor lets the owner choose the palette and
    which colour is dominant (Main leads in images). Not built: screenshots of further screens or
-   pages, and reading again from the Brand page. Tests: `tests/brand-website.test.mjs`.
+   pages, and reading again from the Brand page. Planned fix, not an accepted limit: pin the
+   resolved address so a site cannot change its DNS answer between our check and the
+   connection; due before a public launch or before leaving Vercel (DECISIONS 2026-10-30).
+   Tests: `tests/brand-website.test.mjs`.
 8. **Instagram import** after connect. Tests: official client only, 25-post cap, no fetch
    without a connection.
 9. **Optional:** Reel/Story visuals, campaigns and the coordinator switch to `loadBrandContext()`.

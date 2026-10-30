@@ -24,6 +24,9 @@ If you ever find yourself editing code to make production work, stop: that is a 
 
 ## Where the other documents live
 
+- `next-session.md` (this folder): the status board for the next working session: where the
+  branch is, what is next in agreed order, open items with their triggers, environment facts,
+  and the checklist for pulling `main`. Updated at the end of every task.
 - `ARCHITECTURE.md` (repo root): how the app is built.
 - `DECISIONS.md` (repo root): why things are the way they are.
 - `docs/deploy-voom-today.md`: the original deploy runbook; `production-setup.md` here is the

@@ -45,7 +45,7 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 | `supabase/proposed/` | Mostly rollback scripts (how to undo migrations 0055–0058) plus copies of 0055–0057 that are identical to the applied ones, and two older trend-intelligence drafts that never became numbered migrations. Nothing here is waiting to be applied. |
 | `tests/` | Automated tests, one file per feature |
 | `docs/` | Deploy runbook, audits, trend-intelligence plans, `baseline.md` (test/type/lint counts), `brand-kit-v2-design.md` (the onboarding + Brand Hub redesign and its build order) |
-| `handover/` | For whoever sets up production: `production-setup.md` (every outside-the-code setting, why and how), `changes-log.md` (code changes that need a Supabase/Vercel/provider step) |
+| `handover/` | For whoever sets up production: `production-setup.md` (every outside-the-code setting, why and how), `changes-log.md` (code changes that need a Supabase/Vercel/provider step). Also `next-session.md`: the status board for the next working session (where we are, what is next, open items, the pull-from-main checklist), read at the start of every task and updated at the end |
 | `reference/Voomprot2.html` | Original design prototype. Look-and-feel reference only, not architecture |
 
 ## `lib/` by feature
