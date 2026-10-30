@@ -322,18 +322,70 @@ test("a network failure is unavailable, never an exposed token", async () => {
 // Worker route, schedule and secrecy guards.
 // ---------------------------------------------------------------------------
 
-test("the renewal route is CRON_SECRET-protected, returns counts only and is scheduled operator-side", async () => {
+const { handleInstagramTokenRenewalCron } = await import("../lib/instagram/token-renewal-cron.ts");
+const SECRET = "synthetic-cron-secret-value";
+const cronRequest = (header) => new Request("https://voom.today/api/cron/instagram-token-refresh", { headers: header ? { Authorization: header } : {} });
+const COUNTS = { lapsedMarkedExpired: 0, claimed: 1, renewed: 1, retrying: 0, reconnectRequired: 0, stale: 0, failed: 0, deferred: 0 };
+
+for (const environment of [undefined, "", "preview", "development", "Production"]) {
+  test(`the HTTP renewal worker refuses VERCEL_ENV=${JSON.stringify(environment)} even with a valid CRON_SECRET`, async () => {
+    let calls = 0;
+    const response = await handleInstagramTokenRenewalCron(cronRequest(`Bearer ${SECRET}`), { environment, secret: SECRET, run: async () => { calls++; return COUNTS; } });
+    assert.equal(response.status, 503);
+    assert.equal(calls, 0, "no admin client, claim or Meta call");
+    assert.equal(response.headers.get("Cache-Control"), "no-store");
+    assert.deepEqual(await response.json(), { error: "Instagram token renewal is disabled outside Production." });
+  });
+}
+
+test("in Production the worker still needs CRON_SECRET and the exact bearer", async () => {
+  let calls = 0;
+  const run = async () => { calls++; return COUNTS; };
+  assert.equal((await handleInstagramTokenRenewalCron(cronRequest(`Bearer ${SECRET}`), { environment: "production", secret: undefined, run })).status, 503);
+  for (const header of [undefined, "Bearer wrong", SECRET, `Basic ${SECRET}`, `Bearer ${SECRET}x`]) {
+    assert.equal((await handleInstagramTokenRenewalCron(cronRequest(header), { environment: "production", secret: SECRET, run })).status, 401, String(header));
+  }
+  assert.equal(calls, 0);
+});
+
+test("in Production an authorized call runs once and returns counts only", async () => {
+  let calls = 0;
+  const response = await handleInstagramTokenRenewalCron(cronRequest(`Bearer ${SECRET}`), { environment: "production", secret: SECRET, run: async () => { calls++; return COUNTS; } });
+  assert.equal(response.status, 200);
+  assert.equal(calls, 1);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.deepEqual(await response.json(), COUNTS);
+});
+
+test("in Production a missing Instagram config or a worker failure is a generic 503", async () => {
+  const unconfigured = await handleInstagramTokenRenewalCron(cronRequest(`Bearer ${SECRET}`), { environment: "production", secret: SECRET, run: async () => null });
+  assert.equal(unconfigured.status, 503);
+  const failed = await handleInstagramTokenRenewalCron(cronRequest(`Bearer ${SECRET}`), { environment: "production", secret: SECRET, run: async () => { throw new Error(`db ${OLD_TOKEN}`); } });
+  assert.equal(failed.status, 503);
+  assert.ok(!(await failed.text()).includes(OLD_TOKEN));
+});
+
+test("the route gates on VERCEL_ENV, builds the admin client only inside the authorized run, and stays off Vercel deployments for this branch", async () => {
   const [route, schedule, worker, vercel] = await Promise.all([
     read("app/api/cron/instagram-token-refresh/route.ts"),
     read("supabase/ops/schedule-workers.sql"),
     read("lib/instagram/token-renewal.ts"),
     read("vercel.json"),
   ]);
-  assert.match(route, /if \(!secret\) return Response\.json\([^)]*\{ status: 503 \}\)/);
-  assert.match(route, /if \(!bearerMatches\(request, secret\)\)/);
-  assert.ok(route.indexOf("bearerMatches") < route.indexOf("renewInstagramTokens({"), "auth before any work");
-  assert.match(route, /return Response\.json\(result,/);
+  assert.match(route, /environment: process\.env\.VERCEL_ENV,/);
+  assert.match(route, /secret: process\.env\.CRON_SECRET,/);
+  assert.ok(route.indexOf("run: async () =>") < route.indexOf("createAdminClient()"), "admin client only inside run");
+  assert.equal((route.match(/createAdminClient\(\)/g) ?? []).length, 1);
   assert.match(schedule, /'voom-instagram-token-refresh-6h'[\s\S]*cron\.schedule\('voom-instagram-token-refresh-6h', '41 \*\/6 \* \* \*', \$\$select voom_ops\.call_worker\('\/api\/cron\/instagram-token-refresh'\)\$\$\)/);
-  assert.ok(!vercel.includes("instagram-token-refresh"));
+  const config = JSON.parse(vercel);
+  assert.equal(config.git.deploymentEnabled["fix/instagram-token-renewal"], false, "no automatic Preview deployments that share the Production database");
+  assert.ok(!(config.crons ?? []).some((cron) => cron.path.includes("instagram-token-refresh")), "scheduled by Supabase Cron, not Vercel");
   assert.doesNotMatch(worker, /console\.|logPublishTimeline/, "the worker never logs");
+});
+
+test("staging can exercise the renewal module directly without the HTTP gate", async () => {
+  const { store, calls } = fakeStore([claimRow()]);
+  const outcome = await renewal.renewInstagramTokens({ store, keyRing: KEY, now: () => NOW, refresh: async () => { throw new InstagramTokenRefreshError("token_invalid"); } });
+  assert.equal(outcome.reconnectRequired, 1);
+  assert.equal(calls.fail[0].status, "expired");
 });

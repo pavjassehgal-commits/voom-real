@@ -68,6 +68,10 @@ test("every cron worker uses the constant-time Bearer check", async () => {
       assert.match(source, /from "@\/lib\/email-flows\/cron-auth"/, name);
       source += readFileSync(new URL("../lib/email-flows/cron-auth.ts", import.meta.url), "utf8");
     }
+    if (/handleInstagramTokenRenewalCron\(request,/.test(source)) {
+      assert.match(source, /from "@\/lib\/instagram\/token-renewal-cron"/, name);
+      source += readFileSync(new URL("../lib/instagram/token-renewal-cron.ts", import.meta.url), "utf8");
+    }
     assert.match(source, /bearerMatches\(request, secret\)/, name);
     assert.doesNotMatch(source, /headers\.get\("authorization"\)/, name);
   }
