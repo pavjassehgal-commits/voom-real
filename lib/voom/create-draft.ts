@@ -4,15 +4,20 @@ import { getPostDraft } from "@/lib/post/server-data";
 import { readSocialChannelReadiness } from "@/lib/social/readiness";
 import { getSocialDraft } from "@/lib/social/server-drafts";
 import type { createAdminClient } from "@/utils/supabase/admin";
+import { resolveContentDetail } from "./content-library-core";
 import type { CreateDraft } from "./create-readiness";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
 /** Loads one owner-scoped draft for the Create flow through the existing readers. */
 export async function loadCreateDraft(admin: AdminClient, ownerId: string, id: string): Promise<{ draft: CreateDraft; connected: boolean | null } | null> {
-  const post = await getPostDraft(admin, ownerId, id);
-  const social = post ? null : await getSocialDraft(admin, ownerId, id).catch(() => null);
-  if (!post && !social) return null;
+  // Social drafts first: the post reader would show a TikTok/YouTube draft as an Instagram post.
+  const found = await resolveContentDetail(id, {
+    social: (draftId) => getSocialDraft(admin, ownerId, draftId),
+    post: (draftId) => getPostDraft(admin, ownerId, draftId),
+  }).catch(() => null);
+  if (!found) return null;
+  const { post, social } = found;
   const readiness = await readSocialChannelReadiness(admin, ownerId).catch(() => []);
   const channel = post ? "instagram" : social!.channel;
   const connection = readiness.find((entry) => entry.channel === channel);

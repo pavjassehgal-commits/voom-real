@@ -67,3 +67,15 @@ test("the Content detail page routes through the resolver and the social editor"
   assert.match(actions, /editor === "social" \? <SocialEditorModal draftId=\{id\}/);
   assert.match(library, /export function fromSocial[\s\S]*?editor: "social"/);
 });
+
+test("Create · Preview and Schedule (/app/studio/[id]) load social drafts before the post reader", async () => {
+  const [loader, preview, schedule] = await Promise.all([
+    read("lib/voom/create-draft.ts"),
+    read("app/app/(shell)/studio/[id]/page.tsx"),
+    read("app/app/(shell)/studio/[id]/schedule/page.tsx"),
+  ]);
+  assert.match(loader, /resolveContentDetail\(id,/);
+  assert.doesNotMatch(loader, /const post = await getPostDraft\(/, "no post-first lookup");
+  assert.match(loader, /if \(!found\) return null/);
+  for (const page of [preview, schedule]) assert.match(page, /loadCreateDraft\(createAdminClient\(\), user\.id, id\)/);
+});
