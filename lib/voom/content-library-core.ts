@@ -74,3 +74,19 @@ export function filterContent(items: ContentItem[], options: {
     && (!query || `${item.title} ${item.excerpt} ${item.typeLabel}`.toLowerCase().includes(query)));
   return filtered.sort((a, b) => options.sort === "newest" ? b.sortAt.localeCompare(a.sortAt) : a.sortAt.localeCompare(b.sortAt));
 }
+
+/**
+ * Picks the record a Content detail page shows. TikTok/YouTube drafts live in
+ * mara_drafts beside Instagram posts and the Post Studio reader does not filter
+ * by kind, so the kind-checked social reader runs first. A failed social read
+ * rejects; it never falls back to the Instagram post editor.
+ */
+export async function resolveContentDetail<P, S>(
+  id: string,
+  readers: { social: (id: string) => Promise<S | null>; post: (id: string) => Promise<P | null> },
+): Promise<{ post: P; social: null } | { post: null; social: S } | null> {
+  const social = await readers.social(id);
+  if (social) return { post: null, social };
+  const post = await readers.post(id);
+  return post ? { post, social: null } : null;
+}

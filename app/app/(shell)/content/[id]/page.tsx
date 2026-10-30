@@ -9,6 +9,7 @@ import { getPostDraft } from "@/lib/post/server-data";
 import { readSocialChannelReadiness } from "@/lib/social/readiness";
 import { getSocialDraft } from "@/lib/social/server-drafts";
 import { fromPost, fromSocial } from "@/lib/voom/content-library";
+import { resolveContentDetail } from "@/lib/voom/content-library-core";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { compactNumber } from "@/lib/voom/today-metrics";
 import { createAdminClient } from "@/utils/supabase/admin";
@@ -35,9 +36,12 @@ export default async function ContentDetailPage({ params }: { params: Promise<{ 
   const admin = createAdminClient();
   const db = await createClient();
 
-  const post = await getPostDraft(admin, user.id, id);
-  const social = post ? null : await getSocialDraft(admin, user.id, id).catch(() => null);
-  if (!post && !social) notFound();
+  const found = await resolveContentDetail(id, {
+    social: (draftId) => getSocialDraft(admin, user.id, draftId),
+    post: (draftId) => getPostDraft(admin, user.id, draftId),
+  }).catch(() => null);
+  if (!found) notFound();
+  const { post, social } = found;
 
   const [queue, performance, readiness] = await Promise.all([
     post ? getQueueItemForDraft(admin, user.id, id).catch(() => null) : Promise.resolve(null),
