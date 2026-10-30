@@ -64,7 +64,8 @@ begin
     'voom-youtube-reconcile-10m',
     'voom-youtube-performance-1h',
     'voom-tiktok-publish-5m',
-    'voom-tiktok-reconcile-10m'
+    'voom-tiktok-reconcile-10m',
+    'voom-instagram-token-refresh-6h'
   ] loop
     if exists (select 1 from cron.job where jobname = v_name) then
       perform cron.unschedule(v_name);
@@ -91,6 +92,10 @@ select cron.schedule('voom-email-flows-15m',        '*/15 * * * *', $$select voo
 -- Read-only performance collectors.
 select cron.schedule('voom-instagram-performance-6h', '17 */6 * * *', $$select voom_ops.call_worker('/api/cron/instagram-performance')$$);
 select cron.schedule('voom-youtube-performance-1h',   '23 * * * *',   $$select voom_ops.call_worker('/api/cron/youtube-performance')$$);
+
+-- Instagram long-lived token renewal (migration 0068). Renews tokens with
+-- fewer than 30 days left; many retries fit inside that window.
+select cron.schedule('voom-instagram-token-refresh-6h', '41 */6 * * *', $$select voom_ops.call_worker('/api/cron/instagram-token-refresh')$$);
 
 -- Check:   select jobname, schedule, active from cron.job where jobname like 'voom-%' order by jobname;
 -- History: select j.jobname, d.status, d.start_time, d.return_message
