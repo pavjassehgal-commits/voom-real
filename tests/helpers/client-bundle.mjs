@@ -51,6 +51,15 @@ const STUBS = {
   `,
 };
 
+/**
+ * Packages whose package.json "browser" field swaps in a different build. The
+ * app's real bundler honours that field for client code; this resolver uses
+ * Node resolution, so it is told the browser entry explicitly.
+ */
+const BROWSER_BUILDS = {
+  "tus-js-client": "node_modules/tus-js-client/lib.es5/browser/index.js",
+};
+
 const SUFFIXES = ["", ".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".json", "/index.tsx", "/index.ts", "/index.js"];
 
 function resolveFile(base) {
@@ -133,6 +142,7 @@ export function buildClientBundle(entrySource) {
       if (!modules.has(id)) modules.set(id, { id, source: "module.exports = {};", dependencies: new Map(), directory: importerDirectory, stub: true });
       return modules.get(id);
     }
+    if (Object.hasOwn(BROWSER_BUILDS, specifier)) specifier = `@/${BROWSER_BUILDS[specifier]}`;
     const stub = STUBS[specifier];
     if (stub) {
       const id = `stub:${specifier}`;

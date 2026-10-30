@@ -15,8 +15,8 @@ import {
   type YouTubeQueueRow,
 } from "./publish-queue.ts";
 import { YOUTUBE_UPLOAD_BUDGET_MS, YOUTUBE_SIGNED_URL_TTL_SECONDS } from "./publishing.ts";
+import { youtubeMediaBucket } from "./upload-rules.ts";
 
-const ASSET_BUCKET = "mara-media";
 
 export interface YouTubePublishRunResult {
   claimed: number;
@@ -149,7 +149,7 @@ export function buildYouTubeFlowPorts(
   async function signedUrlFor(storagePath: string): Promise<string | null> {
     const cached = signedUrls.get(storagePath);
     if (cached) return cached;
-    const { data } = await db.storage.from(ASSET_BUCKET).createSignedUrl(storagePath, YOUTUBE_SIGNED_URL_TTL_SECONDS);
+    const { data } = await db.storage.from(youtubeMediaBucket(storagePath)).createSignedUrl(storagePath, YOUTUBE_SIGNED_URL_TTL_SECONDS);
     if (!data?.signedUrl) return null;
     signedUrls.set(storagePath, data.signedUrl);
     return data.signedUrl;
@@ -195,6 +195,9 @@ export function buildYouTubeFlowPorts(
       const url = await signedUrlFor(storagePath);
       if (!url) return null;
       const response = await fetch(url, { headers: { Range: `bytes=${start}-${end}` } });
+      if(youtubeMediaBucket(storagePath)!=="mara-media" && (response.status!==206 || !response.headers.get("content-range")?.startsWith(`bytes ${start}-${end}/`))) {
+        await response.body?.cancel();return null;
+      }
       if (!response.ok && response.status !== 206) return null;
       return response.body;
     },

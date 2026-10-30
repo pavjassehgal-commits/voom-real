@@ -5,8 +5,7 @@ import { Btn, Field, Input, Tag, Textarea } from "@/components/voom/ui/primitive
 import { ModalBody, ModalFoot, ModalHead, ModalShell } from "@/components/voom/ui/Modal";
 import { TikTokPostSheet } from "@/components/voom/modals/TikTokPostSheet";
 import { TIKTOK_PRIVACY_LABELS, isTikTokPrivacy } from "@/lib/tiktok/publishing";
-import { YOUTUBE_UPLOAD_MAX_BYTES } from "@/lib/post/asset";
-import { formatIngestionClientError } from "@/lib/media/ingestion-error";
+import { YouTubeVideoUpload } from "./YouTubeVideoUpload";
 
 /**
  * Multi-Social Core — the editor for ONE TikTok or YouTube draft.
@@ -140,31 +139,16 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
     if (await save()) setPosting(true);
   }
 
-  async function uploadVideo(file: File) {
-    if (!draft || draft.channel !== "youtube" || busy || uploading) return;
-    setError("");
-    setNotice("");
-    if (!/\.mp4$/i.test(file.name) || file.size < 1 || file.size > YOUTUBE_UPLOAD_MAX_BYTES) {
-      setError("Choose one MP4 video up to 4 MB.");
-      return;
-    }
-    setUploading(true);
+  async function refreshVideoPreview() {
     try {
-      const form = new FormData();
-      form.set("file", file);
-      const response = await fetch(`/api/posts/${draftId}/asset`, { method: "POST", body: form });
-      const body = await response.json() as { draft?: SocialDraft; error?: string; code?: string };
-      if (!response.ok || !body.draft) throw new Error(formatIngestionClientError(body, "Voom couldn't attach that video. Please retry."));
-      setDraft(body.draft);
-      setSynthetic(typeof body.draft.containsSyntheticMedia === "boolean" ? String(body.draft.containsSyntheticMedia) : "");
-      setNotice("Video stored privately. Review it and approve separately. Nothing was scheduled or published.");
-      onChanged?.();
-      window.dispatchEvent(new Event("voom:data-changed"));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Voom couldn't attach that video. Please retry.");
-    } finally {
-      setUploading(false);
-    }
+      const response=await fetch(`/api/social-drafts/${draftId}`,{cache:"no-store"});
+      const body=await response.json() as {draft?:SocialDraft};
+      if(!response.ok || body.draft?.id!==draftId || !body.draft.asset?.previewUrl)throw Error();
+      const asset=body.draft.asset;
+      // Refresh only the signed link. Never discard unsaved copy/settings.
+      setDraft(current=>current?.id===draftId?{...current,asset}:current);
+      setError("");
+    }catch{setError("Voom couldn't renew this private preview. Your stored video is unchanged.");}
   }
 
   if (!draft) {
@@ -235,17 +219,17 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
         </div>
 
         {draft.channel === "youtube" && <Field label="Upload video"
-          hint="MP4, up to 4 MB. Shorts must be square or vertical, up to three minutes. Uploading replaces the video and requires fresh approval; unsaved text edits stay in this editor. No AI credits are used.">
-          <input type="file" accept=".mp4,video/mp4" aria-label="Upload video" disabled={busy || uploading}
-            className="block w-full min-w-0 rounded-xl border border-line bg-surface p-2 text-sm"
-            onChange={(event) => {
-              const file = event.currentTarget.files?.[0];
-              event.currentTarget.value = "";
-              if (file) void uploadVideo(file);
-            }} />
-          {uploading && <p role="status" className="mt-2 text-sm text-text-2">Uploading video…</p>}
+          hint="Resumable private MP4 upload. Shorts must be square or vertical, up to three minutes. Validated replacement requires fresh approval; unsaved text edits stay here. Uploading alone does not stop existing approved work. No AI credits are used.">
+          <YouTubeVideoUpload key={draftId} draftId={draftId} disabled={busy} onBusy={setUploading} onAttached={value=>{
+            const updated=value as SocialDraft;
+            if(updated.id!==draftId)return;
+            setDraft(updated);setSynthetic(typeof updated.containsSyntheticMedia==="boolean"?String(updated.containsSyntheticMedia):"");
+            setError("");setNotice("Video stored privately. Review and approve separately.");onChanged?.();window.dispatchEvent(new Event("voom:data-changed"));
+          }}/>
           {draft.asset?.previewUrl && <video key={draft.asset.previewUrl} src={draft.asset.previewUrl} controls playsInline preload="metadata"
+            onError={()=>setError("Preview could not play. Refresh the private link; if needed, export the original as H.264 MP4. Your stored video is unchanged.")}
             aria-label="YouTube video preview" className="mt-3 max-h-72 w-full rounded-xl bg-black" />}
+          {draft.asset && <button type="button" disabled={busy || uploading} onClick={()=>void refreshVideoPreview()} className="mt-2 text-sm underline">Refresh private preview</button>}
         </Field>}
 
         <Field label="Title" hint={isYouTubeVideo ? "Search-friendly — front-load the topic." : "A short internal name."}>

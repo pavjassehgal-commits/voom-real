@@ -33,6 +33,7 @@
  */
 
 import "server-only";
+import { youtubeMediaBucket } from "../youtube/upload-rules.ts";
 
 import { ensureStudioConversation } from "@/lib/post/server-data";
 import { normalizeSchedule } from "@/lib/post/core";
@@ -272,7 +273,7 @@ export async function getSocialDraft(
   if (channel === "youtube" && view.asset && asset?.status === "uploaded"
     && typeof asset.storage_path === "string" && asset.storage_path.startsWith(`${ownerId}/`)
     && !asset.storage_path.includes("..")) {
-    const signed = await admin.storage.from("mara-media").createSignedUrl(asset.storage_path, 900).catch(() => null);
+    const signed = await admin.storage.from(youtubeMediaBucket(asset.storage_path)).createSignedUrl(asset.storage_path, 900).catch(() => null);
     view.asset.previewUrl = signed?.data?.signedUrl ?? null;
   }
   return view;

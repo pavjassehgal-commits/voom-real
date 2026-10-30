@@ -853,7 +853,9 @@ test("migration 0046 backfills Instagram rows and keeps every channel on one cal
   );
 
   const applied = await applyPending();
-  assert.equal(applied[applied.length - 1], "0064_youtube_uploaded_video.sql", "native uploads follow the existing migrations without replacing them");
+  assert.equal(applied[applied.length - 1], "0067_youtube_upload_cleanup_fairness.sql", "cleanup fairness follows direct uploads without rewriting installed migrations");
+  assert.ok(applied.includes("0066_youtube_resumable_uploads.sql"), "the installed direct-upload migration is retained");
+  assert.ok(applied.includes("0064_youtube_uploaded_video.sql"), "the original native-upload migration is retained");
 
   const legacy = await one(
     "select social_channel, social_format from public.mara_drafts where title = 'Legacy Reel'",

@@ -1478,12 +1478,13 @@ test("migrations 0047-0051 apply cleanly and retain their required ordering", as
   assert.ok(applied.indexOf("0055_trend_intelligence.sql") > applied.indexOf("0051_ai_request_rate_limits.sql"), "Trend Intelligence follows 0051");
   assert.ok(applied.indexOf("0061_ai_usage_cost_tracking.sql") > applied.indexOf("0059_automation_emergency_pause.sql"));
   assert.ok(applied.indexOf("0063_native_plan_video_generation.sql") > applied.indexOf("0061_ai_usage_cost_tracking.sql"));
-  assert.equal(applied[applied.length - 1], "0064_youtube_uploaded_video.sql", "native uploads follow the existing provider, automation, credit and generation migrations");
+  assert.ok(applied.indexOf("0066_youtube_resumable_uploads.sql") > applied.indexOf("0064_youtube_uploaded_video.sql"), "direct native uploads follow the existing provider and attachment migrations");
+  assert.ok(applied.indexOf("0067_youtube_upload_cleanup_fairness.sql") > applied.indexOf("0066_youtube_resumable_uploads.sql"), "cleanup fairness follows the installed upload migration");
   const tables = await all(
     "select table_name from information_schema.tables where table_schema = 'public' and table_name like 'youtube_%' order by table_name",
   );
   assert.deepEqual(tables.map((row) => row.table_name), [
-    "youtube_connection_secrets", "youtube_connections", "youtube_oauth_states", "youtube_performance_snapshots", "youtube_publish_queue",
+    "youtube_connection_secrets", "youtube_connections", "youtube_oauth_states", "youtube_performance_snapshots", "youtube_publish_queue", "youtube_upload_sessions",
   ]);
   for (const table of tables.map((row) => row.table_name)) {
     const rls = await one("select relrowsecurity from pg_class where oid = $1::regclass", [`public.${table}`]);
