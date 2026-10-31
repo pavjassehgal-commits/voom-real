@@ -21,7 +21,7 @@ import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { accountTimezone } from "@/lib/voom/timezone";
-import { normalizeAutomationMode, type AutomationModeValue } from "@/lib/voom/automation";
+import { confirmedAutomationMode, type AutomationModeValue } from "@/lib/voom/automation";
 import { buildFlowSkeleton, type FlowBrandContext } from "./skeleton";
 import {
   applyFlowIntelligence,
@@ -104,7 +104,7 @@ export async function createEmailFlow(
   input: CreateEmailFlowInput,
 ): Promise<CreateEmailFlowResult> {
   const createdBy = input.createdBy ?? "user";
-  const mode = normalizeAutomationMode(input.mode ?? "assisted");
+  const mode = confirmedAutomationMode(input.mode ?? "assisted");
 
   // The Coordinator never creates anything for a Manual account.
   if (createdBy === "coordinator" && !mayCoordinatorProposeFlow(mode)) {
@@ -279,7 +279,7 @@ export async function proposeEmailFlow(
     deps?: FlowIntelligenceDeps;
   },
 ): Promise<ProposeFlowOutcome> {
-  const mode = normalizeAutomationMode(input.mode ?? null);
+  const mode = confirmedAutomationMode(input.mode ?? null);
   if (!mayCoordinatorProposeFlow(mode)) {
     return { outcome: "not_permitted", reason: `automation_mode_${mode}` };
   }

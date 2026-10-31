@@ -165,9 +165,19 @@ function safetyAdmin(business) {
 
 test("authorization boundaries: a legacy or unset value can never pass an Autopilot or Assisted gate it did not choose", async () => {
   const max = (level) => safetyAdmin({ automation_level: level, automation_paused_at: null, plan: "max" });
-  await assert.rejects(safety.assertAutonomousWorkAllowed(max("MARA runs it end-to-end"), "o", "autopilot"), /automation_mode_changed/);
-  await assert.rejects(safety.assertAutonomousWorkAllowed(max(null), "o", "assisted"), /automation_mode_changed/);
-  await assert.rejects(safety.assertAutonomousWorkAllowed(max("I decide everything"), "o", "assisted"), /automation_mode_changed/);
+  await assert.rejects(safety.assertAutonomousWorkAllowed(max("MARA runs it end-to-end"), "o", "autopilot"), /automation_mode_unconfirmed/);
+  await assert.rejects(safety.assertAutonomousWorkAllowed(max(null), "o", "assisted"), /automation_mode_unconfirmed/);
+  await assert.rejects(safety.assertAutonomousWorkAllowed(max("I decide everything"), "o", "assisted"), /automation_mode_unconfirmed/);
+  // P2 (PR #103 review): an unconfirmed answer never passes the final check,
+  // even when it describes exactly the requested mode.
+  for (const label of Object.keys(LEGACY)) {
+    for (const required of ["manual", "assisted", "autopilot"]) {
+      await assert.rejects(safety.assertAutonomousWorkAllowed(max(label), "o", required), /automation_mode_unconfirmed/, `${label} as ${required}`);
+    }
+  }
+  for (const raw of [null, "", "nonsense"]) {
+    await assert.rejects(safety.assertAutonomousWorkAllowed(max(raw), "o", "manual"), /automation_mode_unconfirmed/);
+  }
   await safety.assertAutonomousWorkAllowed(max("autopilot"), "o", "autopilot");
   await safety.assertAutonomousWorkAllowed(max("assisted"), "o", "assisted");
   // Entitlement and pause still apply to confirmed values.
@@ -177,7 +187,7 @@ test("authorization boundaries: a legacy or unset value can never pass an Autopi
 
 test("the Marketing Plan read model and MARA's context use the same reading, never the raw answer", async () => {
   const readModel = await read("lib/voom/workflow/read.ts");
-  assert.match(readModel, /let mode = normalizeAutomationMode\(business\?\.automation_level\);/, "the plan's mode uses the shared normalizer");
+  assert.match(readModel, /const mode = effectiveAutomationMode\(business\?\.automation_level, planId\);/, "the plan shows the mode it can actually run with");
   assert.doesNotMatch(readModel, /: "assisted";/, "no private copy of the old unknown-means-Assisted rule");
   const { buildMaraSystemPrompt } = await import("../lib/mara/prompt.ts");
   const business = {
@@ -203,4 +213,40 @@ test("confirming through PATCH /api/automation-mode is owner-scoped, plan-checke
 test("this branch never auto-deploys a Production-connected Preview", async () => {
   const config = JSON.parse(await read("vercel.json"));
   assert.equal(config.git.deploymentEnabled["fix/automation-mode-normalization"], false);
+});
+
+
+test("Free/Pro/Max: the mode automation may run with is confirmed AND plan-capped; forged values never act above the plan", () => {
+  const expected = {
+    free: { manual: "manual", assisted: "manual", autopilot: "manual" },
+    pro: { manual: "manual", assisted: "assisted", autopilot: "assisted" },
+    max: { manual: "manual", assisted: "assisted", autopilot: "autopilot" },
+  };
+  for (const [plan, byMode] of Object.entries(expected)) {
+    for (const [stored, effective] of Object.entries(byMode)) {
+      assert.equal(safety.effectiveAutomationMode(stored, plan), effective, `${plan}/${stored}`);
+    }
+    for (const raw of [...Object.keys(LEGACY), null, "", "Autopilot", "auto"]) {
+      assert.equal(safety.effectiveAutomationMode(raw, plan), "manual", `${plan}: ${JSON.stringify(raw)} acts as Manual until confirmed`);
+    }
+  }
+  assert.equal(safety.effectiveAutomationMode("autopilot", null), "manual", "an unknown plan is Free");
+  for (const raw of [...Object.keys(LEGACY), null, "nonsense"]) assert.equal(automation.confirmedAutomationMode(raw), "manual");
+});
+
+test("every MARA automation entry point decides from the confirmed/effective mode, not the raw stored value", async () => {
+  const [state, coordinatorService, workflow, readModel, campaigns, flows] = await Promise.all([
+    read("lib/coordinator/state.ts"), read("lib/coordinator/service.ts"), read("lib/voom/workflow/service.ts"),
+    read("lib/voom/workflow/read.ts"), read("lib/campaign/server.ts"), read("lib/email-flows/create.ts"),
+  ]);
+  assert.match(state, /const mode = effectiveAutomationMode\(/);
+  assert.match(workflow, /const mode = effectiveAutomationMode\(business\.automation_level, planId\);/);
+  assert.match(readModel, /const mode = effectiveAutomationMode\(business\?\.automation_level, planId\);/);
+  assert.equal((campaigns.match(/confirmedAutomationMode\(input\.mode/g) ?? []).length, 3);
+  assert.equal((flows.match(/confirmedAutomationMode\(input\.mode/g) ?? []).length, 2);
+  for (const source of [state, workflow, readModel, campaigns, flows]) assert.doesNotMatch(source, /normalizeAutomationMode\(/, "display normalizer is not used to decide automation");
+  // The coordinator re-checks pause, confirmation and entitlement immediately before acting.
+  assert.match(coordinatorService, /await assertAutonomousWorkAllowed\(admin as AdminClient, ownerId, state\.mode\);/);
+  assert.match(coordinatorService, /!authorizationBlock &&\s*evaluation\.gaps\.length > 0/);
+  assert.match(coordinatorService, /!authorizationBlock &&\s*evaluation\.state\.emailState\.flowOpportunities\.length > 0/);
 });

@@ -58,7 +58,7 @@ registerHooks({
   },
 });
 
-const { saveBrandSettings, saveOnboarding } = await import("../lib/voom/mutations.ts");
+const { saveBrandSettings, saveOnboarding, saveMediaSpendSettings } = await import("../lib/voom/mutations.ts");
 const { brandFromBusiness, emptyBrand } = await import("../lib/voom/brand-state.ts");
 
 // A full business row with a distinct marker per persisted column.
@@ -120,7 +120,10 @@ function makeFakeDb(initialRow) {
             }
             return { error: null, data: { id: "row-1" } };
           },
-          update: async () => ({ error: null, data: [] }),
+          update: (patch) => {
+            const done = () => { if (table === "businesses") Object.assign(row, patch); return { error: null, data: [] }; };
+            return { eq: async () => done(), then: (resolve, reject) => Promise.resolve(done()).then(resolve, reject) };
+          },
           // Onboarding reads the account's plan before choosing a mode to save.
           select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: table === "businesses" ? { plan: row.plan ?? "free" } : null, error: fake.planReadError ?? null }) }) }),
         };
@@ -335,4 +338,18 @@ test("editing unrelated Settings never changes an existing canonical mode", asyn
     assert.equal("automation_level" in fake.calls.businessesUpsert[0], false);
     assert.equal(fake.row.automation_level, mode, `${mode} is unchanged`);
   }
+});
+
+
+test("automatic paid media can be switched on only on Max; off always works; an unreadable plan refuses", async () => {
+  for (const [plan, ok] of [["free", false], ["pro", false], ["max", true]]) {
+    makeFakeDb(businessRow({ plan }));
+    const on = await saveMediaSpendSettings({ allowAutomaticPaidMedia: true, monthlyMediaBudgetUsd: 25 });
+    assert.equal(on.ok, ok, `${plan} enabling`);
+    if (!ok) assert.match(on.error, /only available on the Max plan/);
+    assert.equal((await saveMediaSpendSettings({ allowAutomaticPaidMedia: false, monthlyMediaBudgetUsd: 25 })).ok, true, `${plan} disabling`);
+  }
+  const fake = makeFakeDb(businessRow({ plan: "max" }));
+  fake.planReadError = { code: "PGRST000", message: "unavailable" };
+  assert.equal((await saveMediaSpendSettings({ allowAutomaticPaidMedia: true, monthlyMediaBudgetUsd: 25 })).ok, false);
 });

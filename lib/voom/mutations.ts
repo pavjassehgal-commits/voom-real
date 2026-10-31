@@ -7,7 +7,7 @@ import { getCurrentUser } from "./server-data";
 import { normalizeMediaSpendSettings, type MediaSpendSettings } from "@/lib/mara/media-spend";
 import { normalizeWebsiteUrl, WEBSITE_NOT_SAVED_NOTICE } from "./website";
 import { onboardingAutomationMode } from "./automation";
-import { canUseAutomationMode, normalizePlan } from "@/lib/billing/plans";
+import { canGenerateAutomaticMedia, canUseAutomationMode, normalizePlan } from "@/lib/billing/plans";
 import type { BusinessProfileInput, OnboardingInput } from "./types";
 
 /** `notice` is a non-fatal message worth showing (the save itself succeeded). */
@@ -157,6 +157,16 @@ export async function saveMediaSpendSettings(input: MediaSpendSettings): Promise
     allow_automatic_paid_media: input.allowAutomaticPaidMedia,
     monthly_media_budget_usd: input.monthlyMediaBudgetUsd,
   });
+  // Turning automatic paid media ON is consent that only a plan with automatic
+  // media can use; it is refused elsewhere rather than stored dormant (where a
+  // later upgrade would activate it without a fresh choice). Turning it off is
+  // always allowed. Migration 0071 enforces the same rule in the database.
+  if (settings.allowAutomaticPaidMedia) {
+    const { data: current, error: planError } = await supabase.from("businesses").select("plan").eq("owner_user_id", user.id).maybeSingle();
+    if (planError || !canGenerateAutomaticMedia(normalizePlan((current as { plan?: string | null } | null)?.plan))) {
+      return { ok: false, error: "Automatic paid media is only available on the Max plan." };
+    }
+  }
   const { error } = await supabase
     .from("businesses")
     .update({

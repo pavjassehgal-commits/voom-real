@@ -79,6 +79,16 @@ export function normalizeAutomationMode(value: string | null | undefined): Autom
   return automationModeState(value).mode;
 }
 
+/**
+ * The mode a stored value may ACT with: a confirmed canonical value, otherwise
+ * Manual. Unconfirmed onboarding answers and unknown values never grant
+ * automation (they are still DISPLAYED through normalizeAutomationMode).
+ */
+export function confirmedAutomationMode(value: string | null | undefined): AutomationModeValue {
+  const state = automationModeState(value);
+  return state.kind === "saved" ? state.mode : "manual";
+}
+
 /** True only for an exact canonical value the owner chose — the gate for scheduled planning. */
 export function automationModeConfirmed(value: string | null | undefined): boolean {
   return automationModeState(value).kind === "saved";

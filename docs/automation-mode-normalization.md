@@ -30,18 +30,43 @@
 - **Settings** never writes the mode.
 - **Confirmation** happens on Automations and Today through
   `PATCH /api/automation-mode`, which checks the plan.
-- **Migration 0071** refuses browser-role writes of `automation_level` that
-  aren't NULL or a canonical mode the plan includes. Unchanged values pass, so
-  no existing row is rewritten. Server-side code isn't affected.
+- **Runtime authorization (final boundary).** Automation decides from the
+  *effective* mode (`effectiveAutomationMode`): only a confirmed canonical
+  value, capped at the plan. An unconfirmed answer, a missing value or a forged
+  or stale value acts as Manual, or as Assisted for Autopilot on Pro.
+  `assertAutonomousWorkAllowed` refuses any unconfirmed value
+  (`automation_mode_unconfirmed`). The coordinator re-checks pause,
+  confirmation and entitlement immediately before gap filling **and** email-flow
+  proposals. Campaign and email-flow decisions use `confirmedAutomationMode`.
+- **Automatic paid media consent.** It can be turned on only on a plan with
+  automatic media (Max), in the app and in the database. Turning it off is
+  always allowed.
+- **Migration 0071 (database guard).** It applies to browser-role writes only:
+  - `automation_level` may be set only to NULL, a canonical mode the plan
+    includes, or one of the four exact onboarding answers. The answers grant
+    nothing, and accepting them keeps today's Production onboarding working.
+  - `allow_automatic_paid_media` may be turned on only on Max.
+
+  Unchanged values pass, so no existing row is rewritten. Values forged before
+  the guard grant nothing because of the runtime rule above.
 - **No Production business is updated.** Existing answers stay stored until the
   owner confirms a mode.
 
 ## Release order (each step needs its own approval)
 
-1. Merge and deploy the code.
-2. **Then** apply `supabase/migrations/0071_automation_mode_entitlement_guard.sql`
-   (rollback: `supabase/rollbacks/0071_automation_mode_entitlement_guard.sql`).
-   Never apply it before the deploy. Today's Production onboarding stores raw
-   answer text through the user's session, and 0071 would refuse it, so new
-   signups would fail onboarding.
-3. This branch is opted out of automatic Vercel Preview deployments.
+No step leaves a window where unauthorized automation can run:
+
+1. Apply 0071 to staging and run the release-order acceptance there: today's
+   onboarding write, forged writes, a pre-guard forged row, and the coordinator.
+2. **Production Gate 0, read-only:** confirm 0071 is absent and count stored
+   values that exceed their plan (canonical mode or paid-media consent). If any
+   exist, they keep their old-code reach until the deploy, so report them before
+   continuing. No data is changed.
+3. Apply 0071 to Production. It's compatible with the onboarding code currently
+   live, and from then on no new forged value can be written.
+4. Merge and deploy the code. From this point any value that is stored but not
+   confirmed or not entitled grants nothing at runtime.
+5. Post-deploy read-only verification.
+
+Rollback: `supabase/rollbacks/0071_automation_mode_entitlement_guard.sql`.
+This branch is opted out of automatic Vercel Preview deployments.

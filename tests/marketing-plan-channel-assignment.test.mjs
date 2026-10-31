@@ -1972,3 +1972,56 @@ test("increased timeout on the real 0070 SQL: the lease runs ~334 s and a slow w
   assert.equal(drafts.length, 7);
   assert.equal(new Set(drafts.map((draft) => draft.source_plan_item_key)).size, 7);
 });
+
+// ── Authorization: forged and unconfirmed modes never act (PR #103 review) ──
+
+function subscribers(count) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `contact-${index}`, owner_id: OWNER, email: `subscriber${index}@example.com`, email_status: "subscribed",
+  }));
+}
+
+for (const [label, overrides] of [
+  ["a forged 'autopilot' on Free", { plan: "free", automation_level: "autopilot" }],
+  ["a forged 'assisted' on Free", { plan: "free", automation_level: "assisted" }],
+  ["an unconfirmed onboarding answer on Max", { plan: "max", automation_level: "MARA runs it end-to-end" }],
+  ["a paused Max Autopilot account", { plan: "max", automation_level: "autopilot", automation_paused_at: NOW.toISOString() }],
+]) {
+  test(`the coordinator proposes no email flow and plans nothing for ${label}`, async (t) => {
+    const network = installLocalAiFetch();
+    t.after(network.restore);
+    const seed = adminSeed({ preferredChannels: ["TikTok"], businessOverrides: overrides });
+    seed.contacts = subscribers(6);
+    const admin = createMemoryAdmin(seed);
+    const result = await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+    assert.ok(!result.actionsTaken.some((action) => action.type.startsWith("email_flow_")), "no email flow is proposed");
+    assert.ok(!result.actionsTaken.some((action) => action.type.startsWith("fill_calendar") || action.type.startsWith("gap_filling")), "no gap filling runs");
+    assert.equal(admin.tables.get("voom_email_flows").length, 0);
+    assert.equal(admin.tables.get("mara_drafts").length, 0);
+    assert.equal(network.requests.length, 0, "no AI generation");
+  });
+}
+
+test("a confirmed, entitled Assisted account still gets its email-flow proposal and gap filling", async (t) => {
+  const network = installLocalAiFetch();
+  t.after(network.restore);
+  const seed = adminSeed({ preferredChannels: ["TikTok"], businessOverrides: { plan: "pro", automation_level: "assisted" } });
+  seed.contacts = subscribers(6);
+  const admin = createMemoryAdmin(seed);
+  const result = await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+  assert.ok(result.actionsTaken.some((action) => action.type.startsWith("email_flow_")), "the proposal path is reached");
+  assert.ok(result.actionsTaken.some((action) => action.type === "fill_calendar_gaps"));
+  assert.ok(!result.actionsTaken.some((action) => action.type === "automation_not_authorized"));
+});
+
+test("a forged 'autopilot' on Free gets Manual behaviour on an explicit Replenish: plan only, no approvals or media", async () => {
+  const admin = createMemoryAdmin(adminSeed({ preferredChannels: ["Instagram"], businessOverrides: { plan: "free", automation_level: "autopilot" } }));
+  const planningDeps = { provider: structuredProvider(), performanceContext: async () => null };
+  const run = await service.runOwnerWorkflow(admin, { ownerId: OWNER, now: NOW, trigger: "replenish", planningDeps });
+  assert.equal(run.mode, "manual");
+  assert.equal(run.stage, "planning_only");
+  assert.equal(run.autoApproved + run.awaitingApproval + run.mediaQueued, 0);
+  assert.equal(admin.tables.get("mara_pending_actions").length, 0);
+  assert.equal(admin.tables.get("mara_media_generations").length, 0);
+  assert.ok(admin.tables.get("mara_drafts").every((draft) => draft.status === "draft"));
+});
