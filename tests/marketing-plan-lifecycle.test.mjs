@@ -177,3 +177,14 @@ test("API and UI wire the authoritative lifecycle contract and exact user guidan
   assert.match(workspaceSource, /We couldn't replenish your plan/);
   assert.match(workspaceSource, /Your existing plan hasn't been changed\. Try again\./);
 });
+
+test("a partially saved Replenish never claims the plan is unchanged", () => {
+  assert.equal(lifecycle.replenishFailureMessage(null), "Your existing plan hasn't been changed. Try again.");
+  assert.equal(lifecycle.replenishFailureMessage({ created: 0 }), "Your existing plan hasn't been changed. Try again.");
+  const partial = lifecycle.replenishFailureMessage({ created: 6 });
+  assert.match(partial, /^6 new recommendations were added/);
+  assert.doesNotMatch(partial, /hasn't been changed/);
+  assert.match(lifecycle.replenishFailureMessage({ created: 1 }), /^1 new recommendation was added/);
+  assert.match(routeSource, /error: replenishFailureMessage\(run\)/);
+  assert.match(workspaceSource, /if \(body\.snapshot\) setSnapshot\(body\.snapshot\);/);
+});

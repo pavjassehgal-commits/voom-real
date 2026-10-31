@@ -55,14 +55,19 @@ export interface CalendarCommitment {
    * commitments carry their real channel — Instagram, TikTok, YouTube or
    * email. Understanding a channel never grants execution over it.
    */
-  channel: "instagram_post" | "instagram_reel" | "instagram_story" | "tiktok_video" | "youtube_short" | "youtube_video" | "email";
+  channel: "instagram_post" | "instagram_reel" | "instagram_story" | "tiktok_video" | "youtube_short" | "youtube_video" | "linkedin_text" | "email";
   /** Instagram keeps post/reel/story; social video commitments use video/short. */
-  format: ContentType | "video" | "short";
+  format: ContentType | "video" | "short" | "text";
   title: string;
   publishAt: string;
   localDate: string;
   localTime: string;
   status: "proposed" | "needs_approval" | "approved" | "scheduled" | "publishing" | "published" | "failed" | "waiting_for_media";
+  /**
+   * The provider publish itself failed (as opposed to a rejected idea). Such a
+   * date is neither cadence coverage nor an automatic gap: it needs the owner.
+   */
+  publishFailed?: boolean;
 }
 
 export interface ActiveCampaignState {
@@ -162,6 +167,18 @@ export interface AuthoritativeMarketingState {
   timezone: string;
   now: string;
   todayLocalDate: string;
+  /**
+   * Local date the cadence pattern is pinned to (the active plan's start, or
+   * today when there is no plan). Optional for states rebuilt from older runs.
+   */
+  cadenceAnchorDate?: string;
+  /**
+   * Social commitments in the wider cadence window (today - 6 .. today + 12),
+   * so every rolling 7-day window that touches the horizon is checked against
+   * the cadence, including already-published and later-scheduled work.
+   * Optional for states rebuilt from older runs (falls back to `commitments`).
+   */
+  cadenceCommitments?: CalendarCommitment[];
   horizonStart: string; // YYYY-MM-DD
   horizonEnd: string;   // YYYY-MM-DD
   cadence: Cadence;

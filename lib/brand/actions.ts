@@ -55,7 +55,7 @@ export async function saveBrandSection(sectionId: string, raw: unknown): Promise
     changeSummary,
   });
   if (appended === null) {
-    return { ok: false, error: "Voom couldn't record that change. Apply the latest Supabase migration (0059), then try again." };
+    return { ok: false, error: "Voom couldn't record that change. Apply the latest Supabase migration (0075, brand kits), then try again." };
   }
 
   if (validated.assets) await afterAssetsSaved(user.id, previousAssets, validated.assets, validated.values as BrandSectionValues["assets"]);

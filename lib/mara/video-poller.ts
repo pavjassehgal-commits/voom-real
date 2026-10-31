@@ -18,7 +18,10 @@ import {
   type AdvanceResult,
   type VideoGenerationPorts,
   type VideoJobRow,
+  type VideoKind,
+  isNativeVideoKind,
 } from "./video-generation";
+import { nativeVideoPorts } from "@/lib/social/video-generation";
 import { buildVideoPollingPorts } from "./video-ports";
 import { enforceVideoJobHardTimeout } from "./video-service";
 import { logVideoPoll, type VideoPollEvent } from "./video-poll-log";
@@ -29,7 +32,6 @@ export const VIDEO_GENERATION_POLL_INTERVAL_MINUTES = VIDEO_JOB_POLL_INTERVAL_MS
 export const VIDEO_GENERATION_POLL_BATCH_SIZE = 10;
 
 const VIDEO_ACTIVE_STATES = ["queued", "generating", "processing"] as const;
-type VideoKind = "reel" | "story";
 
 export interface DueVideoGeneration {
   row: VideoJobRow;
@@ -170,9 +172,16 @@ export async function runVideoGenerationPoller(deps: VideoPollerDependencies = {
   if (!jobs.length) return result;
 
   if (!ports && provider) ports = buildVideoPollingPorts({ admin, provider });
-  const advance = deps.advance ?? advanceVideoGeneration;
+  const advance = deps.advance ?? ((base, ownerId, id, kind, options) =>
+    advanceVideoGeneration(isNativeVideoKind(kind) ? nativeVideoPorts(admin, base, id) : base, ownerId, id, kind, options));
   const enforceTimeout = deps.enforceTimeout ?? (async (db, ownerId, generationId, at) => enforceVideoJobHardTimeout(db, ownerId, generationId, { now: at }));
-  const syncCalendar = deps.syncCalendar ?? ((db, ownerId, draftId) => syncPostToCalendar(db, ownerId, draftId));
+  // Newly stored media: mirror it, then let Autopilot evaluate the COMPLETE
+  // post if it was waiting for exactly this media (approval integrity, 0059).
+  const syncCalendar = deps.syncCalendar ?? (async (db, ownerId, draftId) => {
+    await syncPostToCalendar(db, ownerId, draftId);
+    const { completeAutopilotAfterMediaArrival } = await import("@/lib/voom/workflow/media-arrival");
+    await completeAutopilotAfterMediaArrival(db, ownerId, draftId);
+  });
 
   for (const job of jobs) {
     const { row, kind } = job;
@@ -253,7 +262,7 @@ export async function runVideoGenerationPoller(deps: VideoPollerDependencies = {
       const newlyCompleted = !wasCompleted && advanced.attached;
       logger("provider_completed", { generationId: current.id, provider: current.provider ?? providerName, providerStatus: current.provider_status ?? "completed" });
       if (newlyCompleted) {
-        await syncCalendar(admin, current.owner_user_id, current.draft_id).catch(() => undefined);
+        if (!isNativeVideoKind(kind)) await syncCalendar(admin, current.owner_user_id, current.draft_id).catch(() => undefined);
         logger("asset_stored", { generationId: current.id, provider: current.provider ?? providerName });
       }
       result.results.push({ generationId: current.id, outcome: "completed" });
@@ -376,7 +385,7 @@ async function reconcileOnce(ctx: SettleContext & {
     result.completed += 1;
     logger("provider_completed", { generationId: current.id, provider: current.provider ?? providerName, providerStatus: current.provider_status ?? "completed" });
     if (!wasCompleted && advanced.attached) {
-      await syncCalendar(admin, current.owner_user_id, current.draft_id).catch(() => undefined);
+      if (!isNativeVideoKind(kind)) await syncCalendar(admin, current.owner_user_id, current.draft_id).catch(() => undefined);
       logger("asset_stored", { generationId: current.id, provider: current.provider ?? providerName });
     }
     result.results.push({ generationId: current.id, outcome: "completed" });
@@ -416,7 +425,7 @@ async function findVideoKind(admin: AdminClient, ownerId: string, draftId: strin
     .eq("id", draftId)
     .maybeSingle();
   if (error || !data) return null;
-  return data.kind === "story" ? "story" : data.kind === "reel" ? "reel" : null;
+  return isNativeVideoKind(data.kind) ? data.kind : data.kind === "story" ? "story" : data.kind === "reel" ? "reel" : null;
 }
 
 function elapsed(start: number, now: () => number): number {

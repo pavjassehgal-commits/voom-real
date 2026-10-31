@@ -33,6 +33,7 @@
  */
 
 import "server-only";
+import { youtubeMediaBucket } from "../youtube/upload-rules.ts";
 
 import { ensureStudioConversation } from "@/lib/post/server-data";
 import { normalizeSchedule } from "@/lib/post/core";
@@ -90,6 +91,8 @@ export interface SocialDraftView {
   madeForKids: boolean | null;
   /** Explicit privacy choice, or null when not yet declared. */
   privacy: "public" | "private" | "unlisted" | null;
+  containsSyntheticMedia?: boolean | null;
+  maraGeneratedVideo?: boolean;
   /**
    * Explicit TikTok privacy choice (TikTok's own four values), or null when
    * not yet declared. TikTok has NO default privacy level, so null is a real,
@@ -111,7 +114,7 @@ export interface SocialDraftView {
   queueStatus: string | null;
   /** The queue's truthful failure message, when it carries one. */
   queueFailureMessage: string | null;
-  asset: { displayName: string; mimeType: string } | null;
+  asset: { displayName: string; mimeType: string; previewUrl?: string | null } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -256,7 +259,7 @@ export async function getSocialDraft(
   const row = data as Record<string, unknown>;
   if (!isSocialVideoDraftKind(row.kind)) return null;
   const { data: asset, error: assetError } = await admin.from("post_draft_assets")
-    .select("display_name,mime_type").eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
+    .select("display_name,mime_type,storage_path,status").eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
   if (assetError) throw new Error("social_draft_asset_read_failed");
   const channel = kindPair(row.kind as SocialVideoDraftKind).channel;
   const queue = channel === "youtube"
@@ -264,7 +267,16 @@ export async function getSocialDraft(
     : channel === "tiktok"
       ? await getTikTokQueueItemForDraft(admin, ownerId, draftId)
       : null;
-  return toSocialDraftView(row, (asset as Record<string, unknown> | null) ?? null, queue);
+  const view = toSocialDraftView(row, (asset as Record<string, unknown> | null) ?? null, queue);
+  // Only an authenticated owner's YouTube editor receives a short-lived
+  // private preview. Never return a raw storage path or sign another owner.
+  if (channel === "youtube" && view.asset && asset?.status === "uploaded"
+    && typeof asset.storage_path === "string" && asset.storage_path.startsWith(`${ownerId}/`)
+    && !asset.storage_path.includes("..")) {
+    const signed = await admin.storage.from(youtubeMediaBucket(asset.storage_path)).createSignedUrl(asset.storage_path, 900).catch(() => null);
+    view.asset.previewUrl = signed?.data?.signedUrl ?? null;
+  }
+  return view;
 }
 
 /**
@@ -391,6 +403,8 @@ function toSocialDraftView(row: Record<string, unknown>, asset: Record<string, u
     providerRef: typeof row.provider_ref === "string" && row.provider_ref ? row.provider_ref : null,
     madeForKids,
     privacy,
+    containsSyntheticMedia: typeof meta.containsSyntheticMedia === "boolean" ? meta.containsSyntheticMedia : null,
+    maraGeneratedVideo: meta.maraGeneratedVideo === true,
     tiktokPrivacy,
     // Sanitized: the fingerprint and the TikTok account id stay on the server.
     tiktokPost: consent ? {
@@ -454,6 +468,7 @@ export interface UpdateSocialDraftInput {
   /** Explicit YouTube declarations (policy-sensitive; never defaulted here). */
   madeForKids?: boolean | null;
   privacy?: "public" | "private" | "unlisted" | null;
+  containsSyntheticMedia?: boolean | null;
   /** Explicit TikTok privacy declaration (policy-sensitive; never defaulted here). */
   tiktokPrivacy?: string | null;
   /**
@@ -541,7 +556,7 @@ export async function updateSocialDraft(
     ? input.script.filter((line): line is string => typeof line === "string").map((line) => line.trim().slice(0, 400)).filter(Boolean).slice(0, 40)
     : existing.script;
   const scheduledAt = input.scheduledAt !== undefined ? normalizeSchedule(input.scheduledAt) : existing.scheduledAt;
-  const status = input.decision === "approved" ? "approved"
+  let status = input.decision === "approved" ? "approved"
     : input.decision === "draft" ? "draft"
       : input.decision === "rejected" ? "rejected" : existing.status;
 
@@ -549,23 +564,46 @@ export async function updateSocialDraft(
   // to undeclared (which parks the queue row visibly — never a silent guess).
   const madeForKids = input.madeForKids !== undefined ? input.madeForKids : existing.madeForKids;
   const privacy = input.privacy !== undefined ? input.privacy : existing.privacy;
+  const containsSyntheticMedia = input.containsSyntheticMedia !== undefined ? input.containsSyntheticMedia : existing.containsSyntheticMedia;
+  if (status === "approved" && existing.channel === "youtube" && existing.maraGeneratedVideo && typeof containsSyntheticMedia !== "boolean") {
+    throw new Error("youtube_synthetic_declaration_required");
+  }
   let tiktokPrivacy = input.tiktokPrivacy !== undefined
     ? (isTikTokPrivacy(input.tiktokPrivacy) ? input.tiktokPrivacy : null)
     : existing.tiktokPrivacy;
 
+  // Approval integrity (migration 0059): an approval covers one content
+  // version. Changing what will be published — title, caption, YouTube
+  // description/audience/privacy, TikTok privacy — withdraws it unless this
+  // same request explicitly approves the new version (decision "approved" or
+  // a fresh TikTok post consent). The owner's own reschedule keeps it.
+  const explicitAuthorization = input.decision === "approved" || Boolean(input.tiktokPostConsent);
+  const publishableChanged = title !== existing.title
+    || (caption || title) !== existing.caption
+    || (description || null) !== (existing.description || null)
+    || madeForKids !== existing.madeForKids
+    || privacy !== existing.privacy
+    || containsSyntheticMedia !== existing.containsSyntheticMedia
+    || (input.tiktokPostConsent ? input.tiktokPostConsent.settings.privacy : tiktokPrivacy) !== existing.tiktokPrivacy;
+  const scheduleChanged = scheduledAt !== existing.scheduledAt;
+  const wasApproved = existing.status === "approved";
+  if (wasApproved && status === "approved" && !explicitAuthorization && publishableChanged) status = "draft";
+  const ownerReschedule = wasApproved && status === "approved" && !explicitAuthorization && !publishableChanged && scheduleChanged;
+  const reapprove = wasApproved && status === "approved" && explicitAuthorization && (publishableChanged || scheduleChanged);
+
   // TikTok consent covers exactly what the owner reviewed. A new consent
   // replaces it; un-approving, or changing the caption, title or privacy
   // afterwards withdraws it, so the worker cannot send what was not confirmed.
+  const { data: raw, error: rawError } = await admin.from("mara_drafts").select("content_meta")
+    .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
+  if (rawError) throw new Error("social_draft_read_failed");
+  const rawMeta = raw?.content_meta && typeof raw.content_meta === "object" ? raw.content_meta as Record<string, unknown> : {};
   let tiktokPost: TikTokPostConsent | null = null;
   if (existing.channel === "tiktok") {
     if (input.tiktokPostConsent) {
       tiktokPost = input.tiktokPostConsent;
       tiktokPrivacy = tiktokPost.settings.privacy;
     } else {
-      const { data: raw, error: rawError } = await admin.from("mara_drafts").select("content_meta")
-        .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
-      if (rawError) throw new Error("social_draft_read_failed");
-      const rawMeta = raw?.content_meta && typeof raw.content_meta === "object" ? raw.content_meta as Record<string, unknown> : {};
       const stored = parseTikTokPostConsent(rawMeta.tiktokPost);
       const withdrawn = status !== "approved"
         || title !== existing.title
@@ -576,6 +614,7 @@ export async function updateSocialDraft(
   }
 
   const meta: Record<string, unknown> = {
+    ...rawMeta,
     ...(description ? { description } : {}),
     ...(concept ? { concept } : {}),
     script,
@@ -584,6 +623,16 @@ export async function updateSocialDraft(
     ...(tiktokPrivacy ? { tiktokPrivacy } : {}),
     ...(tiktokPost ? { tiktokPost } : {}),
   };
+  // Preserve the plan's hashtags, script and generation provenance while
+  // retaining explicit declaration clearing and TikTok consent withdrawal.
+  if (!description) delete meta.description;
+  if (!concept) delete meta.concept;
+  if (typeof madeForKids !== "boolean") delete meta.madeForKids;
+  if (!privacy) delete meta.privacy;
+  if (!tiktokPrivacy) delete meta.tiktokPrivacy;
+  if (!tiktokPost) delete meta.tiktokPost;
+  if (typeof containsSyntheticMedia === "boolean") meta.containsSyntheticMedia = containsSyntheticMedia;
+  else delete meta.containsSyntheticMedia;
 
   const needsQueueCancellation = status !== "approved" || !scheduledAt;
   const previouslyConfirmedCancellation = options.queueCancellationConfirmed === true
@@ -594,14 +643,31 @@ export async function updateSocialDraft(
     await cancelAndVerifyTikTokQueue(admin, ownerId, draftId);
   }
 
-  const { error } = await admin.from("mara_drafts").update({
+  const { data: written, error } = await admin.from("mara_drafts").update({
     title,
     content: caption || title,
-    proposed_publish_at: scheduledAt,
+    ...(ownerReschedule ? {} : { proposed_publish_at: scheduledAt }),
     status,
     content_meta: meta,
-  }).eq("owner_user_id", ownerId).eq("id", draftId);
-  if (error) throw new Error("social_draft_update_failed");
+  }).eq("owner_user_id", ownerId).eq("id", draftId).select("status,content_version").maybeSingle();
+  if (error || !written) throw new Error("social_draft_update_failed");
+  if (ownerReschedule) {
+    const { error: rescheduleError } = await admin.rpc("reschedule_approved_draft", {
+      p_owner_user_id: ownerId, p_draft_id: draftId, p_publish_at: scheduledAt,
+    });
+    if (rescheduleError) throw new Error("social_draft_update_failed");
+  } else if (reapprove && written.status !== "approved") {
+    // The edit moved the version (and the database withdrew the old
+    // approval); this request's explicit approval covers exactly the version
+    // it just wrote — never a concurrent edit that landed in between.
+    const { data: reapproved, error: reapproveError } = await admin.from("mara_drafts")
+      .update({ status: "approved", approval_origin: "user" })
+      .eq("owner_user_id", ownerId).eq("id", draftId)
+      .eq("content_version", written.content_version).eq("status", "draft")
+      .select("id").maybeSingle();
+    if (reapproveError) throw new Error("social_draft_update_failed");
+    if (!reapproved) throw new Error("social_draft_changed");
+  }
 
   // Calendar mirror: approved + scheduled shows on the one marketing
   // calendar; anything else removes the mirror.

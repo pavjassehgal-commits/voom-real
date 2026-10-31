@@ -133,6 +133,12 @@ and `tests/onboarding-completion.test.mjs`.
 
 ### B3. Renumber our migration to 0071
 
+**Changed on 2026-11-01, at the start of Phase B: the number is 0075, not 0071.** The fresh fetch
+showed a new branch on GitHub, `fix/automation-mode-normalization` (3 commits, not yet on `main`),
+already carrying `0071_automation_mode_entitlement_guard.sql` and
+`0072_coordinator_email_flow_authorization.sql`. Gurnoor chose 0075 to leave 0073 and 0074 free
+for the other developer's next branches. Read every "0071" below as "0075".
+
 Why: two files numbered 0059 make the order ambiguous for any tool that sorts by number, and both
 sides' tests disagree about "the newest migration". Ours moves because theirs is already applied to
 production-bound history under that number. The dev database is unaffected: our table exists

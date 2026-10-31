@@ -4,33 +4,29 @@ import type { ReactNode } from "react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { BottomBar } from "./BottomBar";
+import { PageTransition } from "../motion/PageTransition";
 
 /**
- * Voom 2.0 Application Shell
+ * Application shell — redesign Batch 1 (Figma "15 — Today · Dashboard home").
  *
- * - Graphite glass sidebar + neutral refracted-light workspace
- * - Restrained translucent topbar, contextual
- * - Generous but efficient whitespace, premium rounded surfaces
- * - Responsive: sidebar collapses to overlay on mobile, bottom bar for primary nav
- * - Atmospheric accent: extremely subtle glow via CSS (globals.css body::before)
+ * - `.voom-shell` scopes the redesign tokens and DM Sans to the signed-in
+ *   workspace (public/auth surfaces keep theirs until their own batches).
+ * - Floating light sidebar card, translucent sticky topbar, flat neutral
+ *   workspace — no decorative atmosphere layers.
+ * - Responsive: the sidebar becomes an overlay drawer below `md`, and the
+ *   bottom bar carries primary navigation on mobile.
  */
 export function AppShell({ children }: { children: ReactNode }) {
   return (
-    <div className="relative isolate flex min-h-dvh bg-bg text-text antialiased">
+    <div className="voom-shell relative isolate flex min-h-dvh bg-bg text-text antialiased">
       <Sidebar />
       <div className="relative flex min-w-0 flex-1 flex-col bg-transparent">
         <Topbar />
-        <main
-          className="mx-auto flex w-full max-w-[1280px] flex-1 flex-col px-4 pb-[88px] pt-6 sm:px-6 sm:pb-10 sm:pt-8 lg:px-8"
-          style={{ animation: "voom-fade-in 0.32s ease" }}
-        >
-          {/* Decorative light volumes are inert, slow and remain behind content. */}
-          <div
-            aria-hidden="true"
-            className="voom-atmospheric-orbit pointer-events-none absolute right-[3%] top-[-92px] z-0"
-          />
-          <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 z-0 h-[320px] bg-[var(--atmosphere)] opacity-90" />
-          <div className="relative z-10 w-full flex-1">{children}</div>
+        <main className="mx-auto flex w-full max-w-[1280px] flex-1 flex-col px-4 pb-[96px] pt-6 sm:px-6 sm:pb-12 sm:pt-8 lg:px-10">
+          {/* Only the page content animates, and only on in-app navigation. */}
+          <div className="relative z-10 flex w-full flex-1 flex-col">
+            <PageTransition>{children}</PageTransition>
+          </div>
         </main>
       </div>
       <BottomBar />
@@ -62,8 +58,8 @@ export function PageHead({
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-4 sm:mb-8">
       <div className="min-w-0">
-        <h1 className="font-display text-[22px] font-bold tracking-tight text-text sm:text-[26px]">{title}</h1>
-        {description && <p className="mt-1.5 max-w-2xl text-[14px] leading-relaxed text-text-2">{description}</p>}
+        <h1 className="font-display text-[26px] font-bold tracking-[-0.035em] text-text sm:text-[32px]">{title}</h1>
+        {description && <p className="mt-1 max-w-2xl text-[15px] leading-relaxed text-text-2 sm:text-[16px]">{description}</p>}
         {tags && <div className="mt-3 flex flex-wrap items-center gap-1.5">{tags}</div>}
       </div>
       {actions && (

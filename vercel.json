@@ -1,4 +1,19 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "codex/linkedin-production-release": false,
+      "codex/linkedin-marketing-plan": false,
+      "codex/marketing-plan-action-handoff": false,
+      "codex/native-plan-video-generation": false,
+      "codex/youtube-owner-refresh-diagnostic": false,
+      "codex/youtube-canonical-oauth": false,
+      "codex/youtube-native-mp4-upload": false,
+      "codex/youtube-resumable-uploads": false,
+      "fix/instagram-token-renewal": false,
+      "codex/scheduled-worker-config-drift": false,
+      "fix/mara-automation-launch": false
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/weekly-plans",
@@ -7,6 +22,10 @@
     {
       "path": "/api/cron/trend-collection",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/linkedin-publish",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

@@ -1,9 +1,11 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import Link from "next/link";
 import GoogleButton from "../components/GoogleButton";
+import { Icon } from "@/components/voom/icons";
+import { AUTH_INPUT, AUTH_SUBMIT, AuthAlert, AuthField, AuthFrame, PasswordToggle } from "@/components/voom/auth/AuthFrame";
 import { signup, type SignupState } from "./actions";
 
 const initialState: SignupState = {};
@@ -11,83 +13,65 @@ const initialState: SignupState = {};
 function SubmitButton() {
   const { pending } = useFormStatus();
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="voom-grad mt-1 inline-flex h-[46px] w-full items-center justify-center rounded-[11px] text-sm font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
-    >
-      {pending ? "Creating account…" : "Create account"}
+    <button type="submit" disabled={pending} className={AUTH_SUBMIT}>
+      {pending ? "Creating account…" : <>Create account <Icon name="arrow" size={15} /></>}
     </button>
   );
 }
 
+/**
+ * A guide only: the server action enforces the real rule (8+ characters).
+ * Each satisfied check fills one of the four segments.
+ */
+function passwordStrength(password: string) {
+  if (!password) return null;
+  const score = [password.length >= 8, /[a-z]/.test(password) && /[A-Z]/.test(password), /\d/.test(password), /[^A-Za-z0-9]/.test(password)].filter(Boolean).length;
+  const label = password.length < 8 ? "Too short — use at least 8 characters" : score >= 4 ? "Strong password" : score === 3 ? "Good password" : "Weak password";
+  return { score: password.length < 8 ? Math.min(score, 1) : score, label, ok: password.length >= 8 && score >= 3 };
+}
+
+/**
+ * Sign up through the existing `signup` server action (email, password and
+ * the confirmation it validates), or "Continue with Google" (Supabase OAuth,
+ * since 2026-10-20). The reference's Apple button and its "Resend link" are
+ * not shown: Voom has neither flow. Agreement to the
+ * Terms and Privacy Policy is stated plainly instead of a checkbox the
+ * server would not record.
+ */
 export default function SignupForm() {
   const [state, formAction] = useActionState(signup, initialState);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const strength = passwordStrength(password);
 
   if (state.success) {
     return (
-      <div
-        role="status"
-        className="w-full max-w-sm rounded-2xl border border-line bg-surface p-7 text-center shadow-[0_1px_2px_rgba(0,0,0,.5),0_12px_32px_-16px_rgba(0,0,0,.8)]"
-      >
-        <div
-          className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full"
-          style={{ background: "var(--brand-soft)" }}
-        >
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="var(--brand)"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="h-6 w-6"
-          >
-            <rect x="2" y="5" width="20" height="14" rx="3" />
-            <path d="M3 7l9 6 9-6" />
-          </svg>
-        </div>
-        <h1 className="font-display text-xl font-semibold tracking-tight">
-          Check your email
-        </h1>
-        <p className="mt-2 text-sm text-text-2">
-          We&apos;ve sent a confirmation link to your inbox. Click it to
-          activate your account and sign in.
-        </p>
-        <p className="mt-6 text-xs text-text-3">
-          <Link href="/login" className="hover:text-text-2">
-            Back to login
+      <AuthFrame title="Check your email" badge={<span className="grid h-12 w-12 place-items-center rounded-full bg-[#e7f6f1] text-[var(--green)]"><Icon name="mail" size={20} /></span>}>
+        <div role="status" className="mt-2 text-center">
+          <p className="text-[13.5px] leading-relaxed text-text-2">
+            We sent a confirmation link to {email ? <b className="font-semibold text-text">{email}</b> : "your inbox"}. Click it to activate your account and sign in.
+          </p>
+          <p className="mt-5 rounded-[10px] border border-[var(--line)] bg-[var(--surface-2)] px-4 py-3 text-left text-[12.5px] leading-relaxed text-text-2">
+            Didn&apos;t get it? Check spam, or make sure this is the email you signed up with.
+          </p>
+          <button type="button" onClick={() => window.location.reload()} className="mx-auto mt-5 block text-[13px] font-semibold text-[var(--brand-ink)] hover:underline">Use a different email</button>
+          <Link href="/login" className="mt-4 inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--brand)] hover:underline">
+            <Icon name="back" size={14} /> Back to log in
           </Link>
-        </p>
-      </div>
+        </div>
+      </AuthFrame>
     );
   }
 
   return (
-    <div className="w-full max-w-sm rounded-2xl border border-line bg-surface p-7 shadow-[0_1px_2px_rgba(0,0,0,.5),0_12px_32px_-16px_rgba(0,0,0,.8)]">
-      <h1 className="font-display text-xl font-semibold tracking-tight">
-        Create your Voom account
-      </h1>
-      <p className="mt-1 text-sm text-text-2">
-        MARA is ready when you are.
-      </p>
-
+    <AuthFrame title="Create your account" subtitle="Start on the Free plan · no credit card">
       <GoogleButton />
 
       <form action={formAction} className="flex flex-col gap-4">
-        {state.formError && (
-          <p
-            role="alert"
-            className="rounded-xl border border-red-900/40 bg-red-950/30 px-3.5 py-2.5 text-sm text-red-300"
-          >
-            {state.formError}
-          </p>
-        )}
+        {state.formError && <AuthAlert>{state.formError}</AuthAlert>}
 
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-semibold text-text-2">
-            Email
-          </span>
+        <AuthField label="Work email" icon="mail" error={state.fieldErrors?.email} errorId="email-error">
           <input
             id="email"
             name="email"
@@ -95,86 +79,74 @@ export default function SignupForm() {
             required
             autoComplete="email"
             placeholder="you@business.com"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
             aria-invalid={state.fieldErrors?.email ? "true" : undefined}
-            aria-describedby={
-              state.fieldErrors?.email ? "email-error" : undefined
-            }
-            className="h-11 w-full rounded-xl border border-line bg-surface-2 px-3.5 text-sm text-text placeholder:text-text-3 focus:border-brand focus:outline-none focus:ring-4 focus:ring-[var(--brand-soft)]"
+            aria-describedby={state.fieldErrors?.email ? "email-error" : undefined}
+            className={AUTH_INPUT}
           />
-          {state.fieldErrors?.email && (
-            <p id="email-error" role="alert" className="mt-1.5 text-xs text-red-400">
-              {state.fieldErrors.email}
-            </p>
-          )}
-        </label>
+        </AuthField>
 
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-semibold text-text-2">
-            Password
-          </span>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            required
-            minLength={8}
-            autoComplete="new-password"
-            placeholder="At least 8 characters"
-            aria-invalid={state.fieldErrors?.password ? "true" : undefined}
-            aria-describedby={
-              state.fieldErrors?.password ? "password-error" : undefined
-            }
-            className="h-11 w-full rounded-xl border border-line bg-surface-2 px-3.5 text-sm text-text placeholder:text-text-3 focus:border-brand focus:outline-none focus:ring-4 focus:ring-[var(--brand-soft)]"
-          />
-          {state.fieldErrors?.password && (
-            <p id="password-error" role="alert" className="mt-1.5 text-xs text-red-400">
-              {state.fieldErrors.password}
-            </p>
+        <div>
+          <AuthField label="Password" icon="lock" error={state.fieldErrors?.password} errorId="password-error">
+            <input
+              id="password"
+              name="password"
+              type={showPassword ? "text" : "password"}
+              required
+              minLength={8}
+              autoComplete="new-password"
+              placeholder="At least 8 characters"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              aria-invalid={state.fieldErrors?.password ? "true" : undefined}
+              aria-describedby={[state.fieldErrors?.password ? "password-error" : "", strength ? "password-strength" : ""].filter(Boolean).join(" ") || undefined}
+              className={`${AUTH_INPUT} !pr-11`}
+            />
+            <PasswordToggle shown={showPassword} onToggle={() => setShowPassword((value) => !value)} />
+          </AuthField>
+          {strength && (
+            <div className="mt-2.5">
+              <div className="grid grid-cols-4 gap-1.5" aria-hidden="true">
+                {[0, 1, 2, 3].map((step) => (
+                  <span key={step} className={`h-1 rounded-full ${step < strength.score ? (strength.ok ? "bg-[var(--green-dot)]" : "bg-[var(--amber)]") : "bg-[var(--surface-3)]"}`} />
+                ))}
+              </div>
+              <p id="password-strength" className={`mt-1.5 text-[12px] font-medium ${strength.ok ? "text-[var(--green)]" : "text-[var(--amber)]"}`}>{strength.label}</p>
+            </div>
           )}
-        </label>
+        </div>
 
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-semibold text-text-2">
-            Confirm password
-          </span>
+        <AuthField label="Confirm password" icon="lock" error={state.fieldErrors?.confirmPassword} errorId="confirm-password-error">
           <input
             id="confirmPassword"
             name="confirmPassword"
-            type="password"
+            type={showPassword ? "text" : "password"}
             required
             minLength={8}
             autoComplete="new-password"
             placeholder="Re-enter your password"
-            aria-invalid={
-              state.fieldErrors?.confirmPassword ? "true" : undefined
-            }
-            aria-describedby={
-              state.fieldErrors?.confirmPassword
-                ? "confirm-password-error"
-                : undefined
-            }
-            className="h-11 w-full rounded-xl border border-line bg-surface-2 px-3.5 text-sm text-text placeholder:text-text-3 focus:border-brand focus:outline-none focus:ring-4 focus:ring-[var(--brand-soft)]"
+            aria-invalid={state.fieldErrors?.confirmPassword ? "true" : undefined}
+            aria-describedby={state.fieldErrors?.confirmPassword ? "confirm-password-error" : undefined}
+            className={AUTH_INPUT}
           />
-          {state.fieldErrors?.confirmPassword && (
-            <p
-              id="confirm-password-error"
-              role="alert"
-              className="mt-1.5 text-xs text-red-400"
-            >
-              {state.fieldErrors.confirmPassword}
-            </p>
-          )}
-        </label>
+        </AuthField>
+
+        <p className="text-[12.5px] leading-relaxed text-text-2">
+          By creating an account you agree to the{" "}
+          <Link href="/terms" className="font-semibold text-[var(--brand)] hover:underline">Terms of Service</Link> and{" "}
+          <Link href="/privacy" className="font-semibold text-[var(--brand)] hover:underline">Privacy Policy</Link>.
+        </p>
 
         <SubmitButton />
       </form>
 
-      <p className="mt-6 text-center text-xs text-text-3">
+      <p className="mt-7 text-center text-[13px] text-text-2">
         Already have an account?{" "}
-        <Link href="/login" className="font-medium text-text-2 hover:text-text">
+        <Link href="/login" className="font-semibold text-[var(--brand)] hover:underline">
           Log in
         </Link>
       </p>
-    </div>
+    </AuthFrame>
   );
 }

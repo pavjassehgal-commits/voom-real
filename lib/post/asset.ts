@@ -9,6 +9,9 @@ import { type PostAssetKind } from "./core";
  * Post Studio never re-encodes, resizes, or otherwise changes a user asset.
  */
 export const POST_ASSET_MAX_BYTES = 20 * 1024 * 1024;
+
+/** Leaves multipart overhead below Vercel's 4.5 MB request-body limit. */
+export const YOUTUBE_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
 export const POST_ASSET_ACCEPT = ".jpg,.jpeg,.png,.webp,.mp4,.mov";
 export const POST_IMAGE_ACCEPT = ".jpg,.jpeg,.png,.webp";
 

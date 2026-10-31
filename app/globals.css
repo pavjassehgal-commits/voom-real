@@ -278,6 +278,8 @@
 }
 
 @theme inline {
+  /* Redesign Batch 1: Today's 3-column composition needs ≥1380px. */
+  --breakpoint-wide: 86.25rem;
   --color-bg: var(--bg);
   --color-bg-soft: var(--bg-soft);
   --color-surface: var(--surface);
@@ -493,6 +495,8 @@ body::before {
   --ch-youtube: #cf4629;
   --ch-youtube-soft: rgba(207, 70, 41, 0.11);
   --ch-email: #2f62d6;
+  --ch-linkedin: #2f6f9f;
+  --ch-linkedin-soft: rgba(47, 111, 159, 0.11);
   --ch-email-soft: rgba(47, 98, 214, 0.11);
 
   /* Workspace panel — luminous frost, never flat white */
@@ -507,6 +511,8 @@ body::before {
   --ch-youtube: #ff8563;
   --ch-youtube-soft: rgba(255, 133, 99, 0.15);
   --ch-email: #7aa2ff;
+  --ch-linkedin: #83b9e5;
+  --ch-linkedin-soft: rgba(131, 185, 229, 0.15);
   --ch-email-soft: rgba(122, 162, 255, 0.15);
 
   --ws-panel: linear-gradient(168deg, rgba(23, 28, 45, 0.92), rgba(15, 19, 32, 0.88));
@@ -521,6 +527,8 @@ body::before {
     --ch-youtube: #ff8563;
     --ch-youtube-soft: rgba(255, 133, 99, 0.15);
     --ch-email: #7aa2ff;
+    --ch-linkedin: #83b9e5;
+    --ch-linkedin-soft: rgba(131, 185, 229, 0.15);
     --ch-email-soft: rgba(122, 162, 255, 0.15);
     --ws-panel: linear-gradient(168deg, rgba(23, 28, 45, 0.92), rgba(15, 19, 32, 0.88));
   }
@@ -608,4 +616,471 @@ body::before {
   .ws-aurora,
   .ws-orbit { animation: none !important; }
   .ws-disclosure-caret { transition: none; }
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Voom redesign (Batch 1) — application shell tokens
+   Source: Figma export "15 — Today · Dashboard home" (PDF p.52).
+   Scoped to `.voom-shell` so the signed-in workspace adopts the
+   redesign while public, auth and onboarding surfaces keep their
+   current tokens until their own batches ship.
+   ────────────────────────────────────────────────────────────── */
+/* `.voom-public` (homepage, log in, sign up, setup) shares the same tokens
+   but stays light: the Figma has no dark design for these screens. */
+.voom-shell,
+.voom-public {
+  --font-public-sans: var(--font-dm-sans);
+  --font-bricolage: var(--font-dm-sans);
+  font-family: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+
+  --bg: #f6f6f7;
+  --bg-soft: #f2f2f5;
+  --surface: #fdfcfd;
+  --surface-2: #f7f7fa;
+  --surface-3: #f0eff5;
+  --surface-hover: #f4f3fa;
+
+  --line: #e8e6ee;
+  --line-2: #dddbe6;
+  --line-strong: #c9c6d6;
+
+  --text: #1a1f30;
+  --text-2: #5b6274;
+  --text-3: #8a90a0;
+
+  --brand: #6b4ef6;
+  --brand-2: #c35bf0;
+  --brand-ink: #382e9c;
+  --brand-soft: #f2f0ff;
+  --brand-soft-2: #f8f7ff;
+  --brand-tile: #e6e2ff;
+  --brand-line: #d6d0ff;
+  --create: linear-gradient(95deg, #8645fa 0%, #a944f3 50%, #cc40ea 100%);
+  --hero: radial-gradient(120% 140% at 85% 0%, #7b3fb0 0%, transparent 55%),
+          linear-gradient(150deg, #4a35a0 0%, #3a2a7a 45%, #241c3a 100%);
+
+  --green: #1f8f6c;
+  --green-soft: #e8f6f1;
+  --green-dot: #35ac8f;
+  --coral: #c65828;
+  --coral-soft: #fff4ef;
+  --amber: #a96a07;
+  --amber-soft: #fdf3e2;
+  --red: #c0352d;
+  --red-soft: #fdecea;
+  --blue: #2c6fb0;
+  --blue-soft: #e9f2fb;
+
+  --shadow-sm: 0 1px 2px rgba(26, 31, 48, 0.04);
+  --shadow: 0 1px 2px rgba(26, 31, 48, 0.04), 0 8px 24px -18px rgba(44, 38, 92, 0.18);
+  --shadow-md: 0 10px 30px -18px rgba(44, 38, 92, 0.24), 0 2px 6px rgba(26, 31, 48, 0.04);
+  --shadow-lg: 0 24px 60px -30px rgba(44, 38, 92, 0.32), 0 8px 20px -14px rgba(26, 31, 48, 0.12);
+  --atmosphere: none;
+
+  --sidebar-bg: #fdfcfd;
+  --sidebar-bg-2: #f7f7fa;
+  --sidebar-bg-3: #f0eff5;
+  --sidebar-bg-hover: #f6f5fb;
+  --sidebar-bg-active: #f2f0ff;
+  --sidebar-bg-active-2: #f2f0ff;
+  --sidebar-line: #ebe9f1;
+  --sidebar-line-2: #dddbe6;
+  --sidebar-text: #1a1f30;
+  --sidebar-text-2: #1d2233;
+  --sidebar-text-3: #5f677a;
+  --sidebar-text-active: #1a1f30;
+  --sidebar-green-dot: #35ac8f;
+
+  --topbar-bg: rgba(250, 250, 250, 0.9);
+  --topbar-line: #e8e9ef;
+}
+
+:root[data-theme="dark"] .voom-shell {
+  --bg: #0c0d13;
+  --bg-soft: #101119;
+  --surface: #15161f;
+  --surface-2: #1b1c27;
+  --surface-3: #232433;
+  --surface-hover: #20212e;
+  --line: #272838;
+  --line-2: #33344a;
+  --line-strong: #45465f;
+  --text: #f2f2f7;
+  --text-2: #b4b7c6;
+  --text-3: #8b8fa3;
+  --brand: #9b84ff;
+  --brand-ink: #c9bdff;
+  --brand-soft: rgba(139, 112, 255, 0.16);
+  --brand-soft-2: rgba(139, 112, 255, 0.10);
+  --brand-tile: rgba(139, 112, 255, 0.26);
+  --brand-line: rgba(139, 112, 255, 0.38);
+  --green: #4cc9a2;
+  --green-soft: rgba(53, 172, 143, 0.16);
+  --coral: #f08a5d;
+  --coral-soft: rgba(240, 138, 93, 0.12);
+  --amber: #e2a63d;
+  --amber-soft: rgba(226, 166, 61, 0.14);
+  --red: #f0766e;
+  --red-soft: rgba(240, 118, 110, 0.14);
+  --blue: #7cb3ec;
+  --blue-soft: rgba(124, 179, 236, 0.14);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 26px -18px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 28px 60px -28px rgba(0, 0, 0, 0.8);
+  --sidebar-bg: #15161f;
+  --sidebar-bg-2: #1b1c27;
+  --sidebar-bg-3: #232433;
+  --sidebar-bg-hover: #1e1f2b;
+  --sidebar-bg-active: rgba(139, 112, 255, 0.16);
+  --sidebar-bg-active-2: rgba(139, 112, 255, 0.16);
+  --sidebar-line: #272838;
+  --sidebar-line-2: #33344a;
+  --sidebar-text: #f2f2f7;
+  --sidebar-text-2: #d7d8e2;
+  --sidebar-text-3: #8b8fa3;
+  --sidebar-text-active: #ffffff;
+  --topbar-bg: rgba(12, 13, 19, 0.86);
+  --topbar-line: #272838;
+}
+
+/* The redesign workspace is calm and flat: no page-wide atmosphere layer. */
+body:has(.voom-shell)::before { display: none; }
+body:has(.voom-public)::before { display: none; }
+body:has(.voom-public) { background: #f6f6f7; color: #1a1f30; }
+.voom-public { color: var(--text); background: var(--bg); color-scheme: light; }
+.voom-brand-text {
+  background: linear-gradient(90deg, #a24cf6 0%, #d652d8 55%, #ec5aa9 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.voom-auth-panel {
+  background:
+    radial-gradient(55% 45% at 22% 38%, rgba(96, 48, 190, 0.42) 0%, transparent 70%),
+    radial-gradient(50% 40% at 80% 18%, rgba(60, 36, 140, 0.30) 0%, transparent 70%),
+    linear-gradient(165deg, #150f33 0%, #0f0b26 50%, #0a0819 100%);
+}
+.voom-setup-wash {
+  background:
+    radial-gradient(60% 70% at 0% 100%, rgba(196, 172, 255, 0.45) 0%, transparent 60%),
+    radial-gradient(50% 60% at 100% 0%, rgba(240, 198, 245, 0.45) 0%, transparent 60%),
+    linear-gradient(135deg, #f5f3ff 0%, #f8f6fd 50%, #fbf3fb 100%);
+}
+
+.voom-create-btn { background: var(--create); }
+.voom-hero-card { background: var(--hero); }
+.voom-shell .voom-card,
+.voom-public .voom-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  box-shadow: var(--shadow-sm);
+}
+.voom-shell .voom-tile,
+.voom-public .voom-tile {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+@media (min-width: 640px) {
+  .today-perf-tiles { grid-template-columns: repeat(var(--tiles, 3), minmax(0, 1fr)); }
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Notifications (components/voom/ui/ToastHost.tsx)
+   Own tokens: the host lives outside .voom-shell / .voom-public.
+   All text pairs meet WCAG AA (≥4.5:1) on their own surface.
+   ────────────────────────────────────────────────────────────── */
+.voom-toast-host {
+  --toast-bg: #ffffff;
+  --toast-text: #1a1f30;      /* 16.4:1 on #fff */
+  --toast-line: #e8e6ee;
+  --toast-muted: #5b6274;     /* 6.1:1 */
+  --toast-shadow: 0 18px 40px -22px rgba(44, 38, 92, 0.45), 0 4px 12px -6px rgba(26, 31, 48, 0.12);
+  --toast-ok: #1f7a5c;        /* 5.3:1 */
+  --toast-ok-soft: #e8f6f1;
+  --toast-err: #b42f27;       /* 6.2:1 */
+  --toast-err-soft: #fdecea;
+  --toast-warn: #8a5a00;      /* 5.9:1 */
+  --toast-warn-soft: #fdf3e2;
+  --toast-info: #4b38c9;      /* 7.8:1 */
+  --toast-info-soft: #f2f0ff;
+
+  position: fixed;
+  z-index: 200;
+  left: 14px;
+  right: 14px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+  font-family: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+}
+@media (min-width: 640px) {
+  .voom-toast-host { left: auto; right: 20px; bottom: 20px; width: min(400px, calc(100vw - 40px)); }
+}
+/* Workspace on phones: sit above the fixed 68px bottom navigation. */
+@media (max-width: 767px) {
+  body:has(.voom-shell) .voom-toast-host { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+}
+/* A sticky action footer (setup's Back / Continue) is never covered. */
+body:has([data-toast-clearance]) .voom-toast-host { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
+
+/* Dark only where the page itself is dark: the workspace in dark theme. */
+:root[data-theme="dark"] body:not(:has(.voom-public)) .voom-toast-host {
+  --toast-bg: #1b1c27;
+  --toast-text: #f2f2f7;      /* 15.2:1 on #1b1c27; tones 7.6–9.8:1 */
+  --toast-line: #33344a;
+  --toast-muted: #b4b7c6;     /* 8.5:1 */
+  --toast-shadow: 0 18px 40px -20px rgba(0, 0, 0, 0.8);
+  --toast-ok: #4cc9a2;
+  --toast-ok-soft: rgba(53, 172, 143, 0.18);
+  --toast-err: #ff8d86;
+  --toast-err-soft: rgba(240, 118, 110, 0.18);
+  --toast-warn: #f0b955;
+  --toast-warn-soft: rgba(226, 166, 61, 0.18);
+  --toast-info: #c9bdff;
+  --toast-info-soft: rgba(139, 112, 255, 0.2);
+}
+
+.voom-toast {
+  --tone: var(--toast-info);
+  --tone-soft: var(--toast-info-soft);
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 12px 12px 14px;
+  border: 1px solid var(--toast-line);
+  border-left: 4px solid var(--tone);
+  border-radius: 14px;
+  background: var(--toast-bg);
+  color: var(--toast-text);
+  box-shadow: var(--toast-shadow);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+  animation: voom-toast-in 180ms ease-out;
+}
+.voom-toast--ok { --tone: var(--toast-ok); --tone-soft: var(--toast-ok-soft); }
+.voom-toast--err { --tone: var(--toast-err); --tone-soft: var(--toast-err-soft); }
+.voom-toast--warn { --tone: var(--toast-warn); --tone-soft: var(--toast-warn-soft); }
+.voom-toast--info { --tone: var(--toast-info); --tone-soft: var(--toast-info-soft); }
+.voom-toast__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  margin-top: -2px;
+  border-radius: 8px;
+  background: var(--tone-soft);
+  color: var(--tone);
+}
+.voom-toast__close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin: -4px -2px -4px 0;
+  border-radius: 8px;
+  color: var(--toast-muted);
+  transition: background-color 150ms, color 150ms;
+}
+.voom-toast__close:hover { background: var(--tone-soft); color: var(--toast-text); }
+.voom-toast__close:focus-visible { outline: 2px solid var(--tone); outline-offset: 1px; }
+.voom-toast__count {
+  flex: none;
+  align-self: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--tone-soft);
+  color: var(--tone);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.voom-toast-more {
+  pointer-events: none;
+  align-self: flex-end;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--toast-bg);
+  border: 1px solid var(--toast-line);
+  color: var(--toast-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  box-shadow: var(--toast-shadow);
+}
+@keyframes voom-toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .voom-toast { animation: none; } }
+
+/* ──────────────────────────────────────────────────────────────
+   Homepage (app/page.tsx) — restrained, CSS-only entrance motion.
+   Content is visible without JavaScript; only opacity / transform /
+   scale animate (no layout shift); everything is removed under
+   prefers-reduced-motion.
+   ────────────────────────────────────────────────────────────── */
+.voom-home {
+  --home-ease: cubic-bezier(0.16, 1, 0.3, 1);   /* expo-out: fast start, long soft settle */
+  --home-ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --hero-zoom: 1.55;                            /* phones: frame the subject */
+  --hero-origin: 63% 90%;
+}
+@media (min-width: 640px) {
+  .voom-home { --hero-zoom: 1; --hero-origin: 50% 100%; }
+}
+.voom-home-wash {
+  background:
+    radial-gradient(60% 55% at 18% 8%, rgba(196, 172, 255, 0.38) 0%, transparent 70%),
+    radial-gradient(55% 50% at 86% 4%, rgba(240, 198, 245, 0.42) 0%, transparent 70%),
+    linear-gradient(180deg, #faf9ff 0%, #f6f6f7 100%);
+}
+.voom-home-hero-img { scale: var(--hero-zoom); transform-origin: var(--hero-origin); }
+
+@keyframes voom-home-drop { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
+@keyframes voom-home-rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+@keyframes voom-home-sweep {
+  from { opacity: 0; transform: translateY(18px); background-position: 100% 50%; }
+  60% { opacity: 1; }
+  to { opacity: 1; transform: none; background-position: 0% 50%; }
+}
+@keyframes voom-home-reveal { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+@keyframes voom-home-settle { from { scale: calc(var(--hero-zoom) * 1.08); } to { scale: var(--hero-zoom); } }
+
+.voom-home-header { animation: voom-home-drop 700ms var(--home-ease-soft) both; }
+.voom-home-title { animation: voom-home-rise 900ms var(--home-ease) 120ms both; }
+.voom-home-gradient {
+  background-image: linear-gradient(90deg, #8b45f6 0%, #a24cf6 22%, #d652d8 52%, #ec5aa9 78%, #a24cf6 100%);
+  background-size: 220% 100%;
+  animation: voom-home-sweep 1400ms var(--home-ease) 260ms both;
+}
+.voom-home-sub { animation: voom-home-rise 900ms var(--home-ease) 420ms both; }
+.voom-home-cta { animation: voom-home-rise 900ms var(--home-ease) 540ms both; }
+.voom-home-hero { animation: voom-home-reveal 1200ms var(--home-ease) 620ms both; }
+.voom-home-hero-img { animation: voom-home-settle 1800ms var(--home-ease) 620ms both; }
+
+/* Interaction: a quiet lift, an arrow nudge, a visible focus ring. */
+.voom-home-btn {
+  transition: transform 260ms var(--home-ease), box-shadow 260ms var(--home-ease), background-color 200ms ease, border-color 200ms ease, filter 200ms ease;
+}
+.voom-home-btn:hover { transform: translateY(-1px); }
+.voom-home-btn:active { transform: translateY(0) scale(0.985); transition-duration: 90ms; }
+.voom-home-arrow { transition: transform 260ms var(--home-ease); }
+.voom-home-btn:hover .voom-home-arrow { transform: translateX(3px); }
+.voom-home-focus:focus-visible { outline: 2px solid #8b45f6; outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .voom-home-in, .voom-home-hero-img { animation: none !important; }
+  .voom-home-btn, .voom-home-arrow { transition: none; }
+  .voom-home-btn:hover, .voom-home-btn:active, .voom-home-btn:hover .voom-home-arrow { transform: none; }
+  .voom-home-gradient { background-position: 0% 50%; }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   VOOM MOTION SYSTEM
+   One set of tokens for every animated surface. Rules:
+   - Only opacity, transform / scale and colour animate (no layout).
+   - Press 120–180ms, controls 180–250ms, page entrances 250–350ms.
+   - Deceleration curves; nothing bounces.
+   - prefers-reduced-motion (and the in-app "Reduce motion" choice,
+     html[data-motion="reduce"]) collapses everything to an instant change.
+   ══════════════════════════════════════════════════════════════ */
+:root {
+  --motion-press: 140ms;
+  --motion-control: 200ms;
+  --motion-enter: 300ms;
+  --motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);   /* decelerate: entrances */
+  --motion-ease: cubic-bezier(0.2, 0, 0, 1);          /* standard: state changes */
+  --motion-ease-in: cubic-bezier(0.4, 0, 1, 1);       /* exits */
+  --motion-stagger: 40ms;                             /* per item, capped at 5 steps */
+  --motion-lift: -2px;
+  --motion-press-scale: 0.97;
+}
+
+@keyframes voom-m-page-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes voom-m-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes voom-m-pop { from { opacity: 0; transform: translateY(-4px) scale(0.97); } to { opacity: 1; transform: none; } }
+@keyframes voom-m-dialog { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes voom-m-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes voom-m-select { 0% { transform: scale(0.96); } 100% { transform: none; } }
+@keyframes voom-m-nudge { 0%, 100% { transform: none; } 25% { transform: translateX(-4px); } 60% { transform: translateX(3px); } }
+@keyframes voom-m-confirm { 0% { transform: scale(0.6); opacity: 0; } 70% { transform: scale(1.06); opacity: 1; } 100% { transform: none; } }
+@keyframes voom-m-slide-next { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@keyframes voom-m-slide-prev { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
+
+/* ── Page entrance (client navigations only — see PageTransition) ──
+   The page's top-level blocks rise in a short, capped stagger. The wrapper
+   itself does not fade too (nested opacity would multiply and wash the page
+   out for longer than --motion-enter). */
+.voom-page-enter > * > * { animation: voom-m-rise var(--motion-enter) var(--motion-ease-out) both; }
+/* A page whose root has no child blocks still gets one gentle entrance. */
+.voom-page-enter > :only-child:empty { animation: voom-m-page-in var(--motion-enter) var(--motion-ease-out) both; }
+.voom-page-enter > * > :nth-child(2) { animation-delay: calc(var(--motion-stagger) * 1); }
+.voom-page-enter > * > :nth-child(3) { animation-delay: calc(var(--motion-stagger) * 2); }
+.voom-page-enter > * > :nth-child(4) { animation-delay: calc(var(--motion-stagger) * 3); }
+.voom-page-enter > * > :nth-child(n + 5) { animation-delay: calc(var(--motion-stagger) * 4); }
+
+/* ── Press feedback: every button and button-like link in the app ── */
+:is(.voom-shell, .voom-public, .voom-motion) :is(button, a[role="button"], .voom-create-btn):not(:disabled) {
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform, filter;
+  transition-duration: var(--motion-control);
+  transition-timing-function: var(--motion-ease);
+}
+:is(.voom-shell, .voom-public, .voom-motion) :is(button, a[role="button"]):not(:disabled):active,
+:is(.voom-shell, .voom-public) a.voom-create-btn:active {
+  transform: scale(var(--motion-press-scale));
+  transition-duration: var(--motion-press);
+}
+/* Primary (gradient) actions lift slightly on hover. */
+:is(.voom-shell, .voom-public) :is(a, button).voom-create-btn:not(:disabled):hover { transform: translateY(-1px); filter: brightness(1.04); }
+
+/* ── Interactive cards: lift on hover, settle on press ── */
+.voom-shell :is(a.voom-card, button.voom-card, a.voom-tile, button.voom-tile) {
+  transition: transform var(--motion-control) var(--motion-ease), box-shadow var(--motion-control) var(--motion-ease), border-color var(--motion-control) var(--motion-ease);
+}
+@media (hover: hover) {
+  .voom-shell :is(a.voom-card, button.voom-card):hover { transform: translateY(var(--motion-lift)); box-shadow: 0 14px 30px -20px rgba(44, 38, 92, 0.45); }
+  .voom-shell :is(a.voom-tile, button.voom-tile):hover { transform: translateY(-1px); }
+}
+
+/* ── Navigation and selection: the newly selected item settles in ──
+   Only after the owner's first interaction (html[data-interacted], set by
+   MotionRuntime), so already-selected items don't pop on every page load. */
+html[data-interacted] .voom-shell nav :is(a, button)[aria-current="page"] { animation: voom-m-select var(--motion-control) var(--motion-ease-out); }
+html[data-interacted] :is(.voom-shell, .voom-public) :is(button[aria-pressed="true"], [role="tab"][aria-selected="true"]) { animation: voom-m-select var(--motion-control) var(--motion-ease-out); }
+
+/* ── Menus, popovers and dialogs ── */
+.voom-m-pop { transform-origin: top right; animation: voom-m-pop var(--motion-control) var(--motion-ease-out) both; }
+.voom-m-backdrop { animation: voom-m-fade var(--motion-control) var(--motion-ease) both; }
+.voom-m-backdrop > * { animation: voom-m-dialog var(--motion-enter) var(--motion-ease-out) both; }
+
+/* ── Validation and confirmation ── */
+:is(.voom-shell, .voom-public) :is(input, textarea, select)[aria-invalid="true"] { animation: voom-m-nudge 260ms var(--motion-ease); }
+.voom-m-nudge { animation: voom-m-nudge 260ms var(--motion-ease); }
+.voom-toast--ok .voom-toast__icon { animation: voom-m-confirm 320ms var(--motion-ease-out) both; }
+
+/* ── Calendar: the grid slides in the direction of travel ── */
+.voom-m-slide-next { animation: voom-m-slide-next var(--motion-enter) var(--motion-ease-out) both; }
+.voom-m-slide-prev { animation: voom-m-slide-prev var(--motion-enter) var(--motion-ease-out) both; }
+
+/* ── Reduced motion: system setting or the in-app choice ── */
+@media (prefers-reduced-motion: reduce) {
+  :is(.voom-shell, .voom-public, .voom-motion, .voom-toast-host, .voom-m-backdrop),
+  :is(.voom-shell, .voom-public, .voom-motion, .voom-toast-host, .voom-m-backdrop) * {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+html[data-motion="reduce"] :is(.voom-shell, .voom-public, .voom-motion, .voom-toast-host, .voom-m-backdrop),
+html[data-motion="reduce"] :is(.voom-shell, .voom-public, .voom-motion, .voom-toast-host, .voom-m-backdrop) * {
+  animation-duration: 1ms !important;
+  animation-delay: 0ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
 }

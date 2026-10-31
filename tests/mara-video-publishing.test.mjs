@@ -86,7 +86,7 @@ test("regeneration semantics: one entry point, safe unconfigured state, atomic r
 
 test("story and reel video share the same 9:16 pipeline with per-kind duration bounds", async () => {
   const orchestrator = await read("lib/mara/video-generation.ts");
-  assert.match(orchestrator, /kind === "reel" \? \{ min: 4, max: 15 \} : \{ min: 3, max: 30 \}/);
+  assert.match(orchestrator, /kind === "story" \? \{ min: 3, max: 30 \} : \{ min: 4, max: 15 \}/);
   assert.match(orchestrator, /aspectMatches\(inspection\.width, inspection\.height, "9:16"\)/);
   const plan = await read("lib/mara/media-plan.ts");
   assert.match(plan, /durationSeconds: z\.number\(\)\.int\(\)\.min\(4\)\.max\(15\)/);

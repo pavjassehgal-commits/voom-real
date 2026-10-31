@@ -48,7 +48,7 @@ same change.
 
 ## Data
 
-### `brand_kits` (migration 0059, built)
+### `brand_kits` (migration 0075, built; written as 0059, renumbered at the 2026-11-01 merge with main)
 Append-only. Every edit inserts a new row; the version list is the history.
 
 | Column | Type | Notes |
@@ -173,7 +173,7 @@ prop that hides History and the gallery in onboarding.
   separate from the canonical `SOCIAL_CHANNELS`; `Q_CHANNELS` stays for Settings.
 
 ## Build order (each slice: tests + browser check, useful on its own)
-1. **Brand kit storage and reader. BUILT 2026-10-22.** Migration 0059, `lib/brand/context.ts`,
+1. **Brand kit storage and reader. BUILT 2026-10-22.** Migration 0075 (written as 0059, renumbered 2026-11-01), `lib/brand/context.ts`,
    `lib/brand/versions.ts`, wired into Post Studio (copy, Story, suggestions) and the weekly
    plan; dual write from onboarding and Settings. Tests: `tests/brand-kit-context.test.mjs`.
 2. **Brand Hub page. BUILT 2026-10-23.** `/app/brand`, "Brand" in the Primary nav, eight

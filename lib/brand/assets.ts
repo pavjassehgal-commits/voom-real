@@ -1,7 +1,7 @@
 /**
  * Brand Kit v2, slice 5: brand assets (logo, product photos, past posts).
  *
- * The files live in the private `brand-kit` bucket (migration 0059) under
+ * The files live in the private `brand-kit` bucket (migration 0075) under
  * `<ownerId>/<kind>/<uuid>.<ext>`; a kit version stores REFERENCES only in its
  * `assets` column, never bytes. Each reference carries the one line that says
  * what the image is, and for past posts a few style chips and a short "look"

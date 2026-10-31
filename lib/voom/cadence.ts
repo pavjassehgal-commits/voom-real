@@ -9,7 +9,7 @@
  * instead of creating duplicates.
  */
 
-import { addDays, daysBetween, weekdayIndex } from "./timezone.ts";
+import { addDays, daysBetween, localDate, weekdayIndex } from "./timezone.ts";
 
 export const CADENCES = ["daily", "5x_week", "3x_week", "weekly"] as const;
 export type Cadence = (typeof CADENCES)[number];
@@ -51,16 +51,41 @@ export function normalizeCadence(value: string | null | undefined): Cadence {
 
 /**
  * The local dates inside [startDate, startDate + horizonDays) that should carry
- * one executable item, beginning TODAY. Distribution is deterministic and
- * evenly spread: daily = every day, 5x = every day except two rest days, 3x =
- * roughly every other day, weekly = the first day of the horizon.
+ * one executable item. Distribution is deterministic and evenly spread: daily =
+ * every day, 5x = every day except two rest days, 3x = roughly every other day,
+ * weekly = one day.
+ *
+ * `anchorDate` pins the weekly pattern to a stable calendar position (the
+ * active plan's start). Without it the pattern restarts on `startDate`, so a
+ * rolling run made on a later day would see a brand-new "slot 0" every day and
+ * a weekly plan would quietly turn into a daily one. With it, every run in any
+ * window sees the same dates, so each window holds exactly the cadence count.
+ * Omitted, the anchor is `startDate` (index 0 is today).
  */
-export function slotDates(startDate: string, cadence: Cadence, horizonDays = DEFAULT_HORIZON_DAYS): string[] {
+export function slotDates(
+  startDate: string,
+  cadence: Cadence,
+  horizonDays = DEFAULT_HORIZON_DAYS,
+  anchorDate?: string,
+): string[] {
+  if (anchorDate !== undefined && anchorDate !== startDate) {
+    const pattern = new Set(weeklySlotOffsets(cadence, DEFAULT_HORIZON_DAYS));
+    const dates: string[] = [];
+    for (let index = 0; index < horizonDays; index += 1) {
+      const date = addDays(startDate, index);
+      const phase = ((daysBetween(anchorDate, date) % DEFAULT_HORIZON_DAYS) + DEFAULT_HORIZON_DAYS) % DEFAULT_HORIZON_DAYS;
+      if (pattern.has(phase)) dates.push(date);
+    }
+    return dates;
+  }
+  return weeklySlotOffsets(cadence, horizonDays).map((offset) => addDays(startDate, offset));
+}
+
+/** Evenly spread day offsets in [0, horizonDays) for one cadence window; 0 is always included. */
+function weeklySlotOffsets(cadence: Cadence, horizonDays: number): number[] {
   const count = Math.min(CADENCE_PER_WEEK[cadence], horizonDays);
   if (count <= 0) return [];
-  if (count >= horizonDays) return Array.from({ length: horizonDays }, (_, index) => addDays(startDate, index));
-  // Even spread across the horizon; index 0 is always today so the plan always
-  // has something executable on the current date.
+  if (count >= horizonDays) return Array.from({ length: horizonDays }, (_, index) => index);
   const offsets = new Set<number>();
   for (let index = 0; index < count; index += 1) {
     offsets.add(Math.round((index * horizonDays) / count));
@@ -72,7 +97,20 @@ export function slotDates(startDate: string, cadence: Cadence, horizonDays = DEF
     if (!offsets.has(probe)) offsets.add(probe);
     probe += 1;
   }
-  return [...offsets].sort((a, b) => a - b).slice(0, count).map((offset) => addDays(startDate, offset));
+  return [...offsets].sort((a, b) => a - b).slice(0, count);
+}
+
+/**
+ * The cadence anchor for an account: the local date its active plan started,
+ * or `today` when there is no plan yet (the first Build starts on today).
+ * The planner and the coordinator both resolve it here so they always agree.
+ */
+export function cadenceAnchorDate(planCreatedAt: unknown, timeZone: string, today: string): string {
+  if (typeof planCreatedAt !== "string") return today;
+  const instant = new Date(planCreatedAt);
+  if (Number.isNaN(instant.getTime())) return today;
+  const anchor = localDate(instant, timeZone);
+  return anchor <= today ? anchor : today;
 }
 
 export const CONTENT_TYPES = ["post", "reel", "story"] as const;

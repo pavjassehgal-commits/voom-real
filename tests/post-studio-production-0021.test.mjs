@@ -177,8 +177,9 @@ test("DB failure cleans up the newly uploaded storage object", async () => {
   assert.equal(objectsAfterPreviousFailure.size, 0);
 
   const data = await read("lib/post/server-data.ts");
-  assert.match(data, /await admin\.storage\.from\(POST_ASSET_BUCKET\)\.remove\(\[storagePath\]\)/);
-  assert.match(data, /Never leave an orphan object behind if the link could not be written/);
+  const cleanup = data.slice(data.indexOf('removeUploaded: async () =>'), data.indexOf('export async function verifyPostAssetStored'));
+  assert.match(cleanup, /await removePostAssetObject\(admin, ownerId, storagePath\)/);
+  assert.doesNotMatch(cleanup, /\.remove\(\[storagePath\]\)/);
 });
 
 test("a storage failure does not attempt a DB write", async () => {
@@ -253,10 +254,12 @@ test("0021 matches production and 0022-0028 migrations stay scoped", async () =>
   // this suite has not been told about — it must be added deliberately.
   // 0050 (approval-state write lockdown) and 0051 (AI request rate limits)
   // are the production-hardening release and are the only migrations after 0049.
-  // Trend Intelligence (0055-0058) follows; 0052-0054 are reserved for the Admin Panel release.
-  // 0059 (Brand Kit v2 storage) is the newest migration.
-  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_brand_kits.sql"], "only the 0050/0051 hardening, Trend Intelligence and Brand Kit migrations follow 0049");
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 59), "no migration beyond 0059 (brand kits) may exist");
+  // Reviewed Trend/automation/AI usage migrations, LinkedIn (0062), native plan video
+  // generation (0063), native uploads (0064-0067), Instagram token renewal (0068), slot leases
+  // (0070) and Brand Kit v2 (0075; written as 0059, renumbered at the 2026-11-01 merge);
+  // 0052-0054 reserved, 0060/0065/0069/0071-0074 are gaps.
+  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql", "0066_youtube_resumable_uploads.sql", "0067_youtube_upload_cleanup_fairness.sql", "0068_instagram_token_renewal.sql", "0070_plan_slot_generation_leases.sql", "0075_brand_kits.sql"], "only reviewed post-0049 migrations are present");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 75), "no unreviewed migration beyond 0075 (brand kits) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],

@@ -285,7 +285,15 @@ export async function buildAutomatedCampaign(
     channels,
     now,
   });
-  const generated = await generateCampaignIntelligence(context, input.deps ?? {});
+  const generated = await generateCampaignIntelligence(context, {
+    ...(input.deps ?? {}),
+    usage: input.deps?.usage ?? {
+      ownerId,
+      operationKey: `campaign-build:${input.idempotencyKey}`,
+      operationType: "campaign_build",
+      category: "planning",
+    },
+  });
 
   // 3) Validated merge. The skeleton's length, channels, stages, days and
   //    timing boundaries win; refused content falls back per action.
@@ -1715,7 +1723,15 @@ export async function regenerateCampaignAction(
     },
   });
 
-  const generated = await generateCampaignIntelligence(context, input.deps ?? {});
+  const generated = await generateCampaignIntelligence(context, {
+    ...(input.deps ?? {}),
+    usage: input.deps?.usage ?? {
+      ownerId,
+      operationKey: `campaign-regenerate:${actionId}:${input.idempotencyKey}`,
+      operationType: "campaign_action_regenerate",
+      category: "text",
+    },
+  });
   const merged = applyCampaignIntelligence({
     skeleton,
     summary: {

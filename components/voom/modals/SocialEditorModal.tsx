@@ -5,6 +5,7 @@ import { Btn, Field, Input, Tag, Textarea } from "@/components/voom/ui/primitive
 import { ModalBody, ModalFoot, ModalHead, ModalShell } from "@/components/voom/ui/Modal";
 import { TikTokPostSheet } from "@/components/voom/modals/TikTokPostSheet";
 import { TIKTOK_PRIVACY_LABELS, isTikTokPrivacy } from "@/lib/tiktok/publishing";
+import { YouTubeVideoUpload } from "./YouTubeVideoUpload";
 
 /**
  * Multi-Social Core — the editor for ONE TikTok or YouTube draft.
@@ -36,13 +37,15 @@ interface SocialDraft {
   publishStateLabel: string;
   madeForKids: boolean | null;
   privacy: "public" | "private" | "unlisted" | null;
+  containsSyntheticMedia?: boolean | null;
+  maraGeneratedVideo?: boolean;
   /** TikTok's own four privacy values, or null when not declared. */
   tiktokPrivacy: string | null;
   /** The owner's confirmation of this TikTok post, or null. */
   tiktokPost: { settings: { privacy: string | null }; creatorNickname: string | null; consentedAt: string } | null;
   queueStatus: string | null;
   queueFailureMessage: string | null;
-  asset: { displayName: string; mimeType: string } | null;
+  asset: { displayName: string; mimeType: string; previewUrl?: string | null } | null;
 }
 
 function toLocalInput(iso: string | null): string {
@@ -62,10 +65,12 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
   const [schedule, setSchedule] = useState("");
   const [madeForKids, setMadeForKids] = useState("");
   const [privacy, setPrivacy] = useState("");
+  const [synthetic, setSynthetic] = useState("");
   const [posting, setPosting] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -80,6 +85,7 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
       setSchedule(toLocalInput(body.draft.scheduledAt));
       setMadeForKids(body.draft.madeForKids === null || body.draft.madeForKids === undefined ? "" : String(body.draft.madeForKids));
       setPrivacy(body.draft.privacy ?? "");
+      setSynthetic(typeof body.draft.containsSyntheticMedia === "boolean" ? String(body.draft.containsSyntheticMedia) : "");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Voom couldn't load that content.");
     }
@@ -104,6 +110,7 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
                 description: description.trim(),
                 madeForKids: madeForKids === "" ? null : madeForKids === "true",
                 privacy: privacy === "" ? null : privacy,
+                containsSyntheticMedia: synthetic === "" ? null : synthetic === "true",
               }
             : {}),
           script: script.split("\n").map((line) => line.trim()).filter(Boolean),
@@ -130,6 +137,18 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
   /** Saves any edits first, so the post sheet reviews exactly what is stored. */
   async function openPostSheet() {
     if (await save()) setPosting(true);
+  }
+
+  async function refreshVideoPreview() {
+    try {
+      const response=await fetch(`/api/social-drafts/${draftId}`,{cache:"no-store"});
+      const body=await response.json() as {draft?:SocialDraft};
+      if(!response.ok || body.draft?.id!==draftId || !body.draft.asset?.previewUrl)throw Error();
+      const asset=body.draft.asset;
+      // Refresh only the signed link. Never discard unsaved copy/settings.
+      setDraft(current=>current?.id===draftId?{...current,asset}:current);
+      setError("");
+    }catch{setError("Voom couldn't renew this private preview. Your stored video is unchanged.");}
   }
 
   if (!draft) {
@@ -199,6 +218,20 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
           {draft.asset ? <Tag tone="t-green">Video attached: {draft.asset.displayName}</Tag> : <Tag tone="t-grey">No video attached yet</Tag>}
         </div>
 
+        {draft.channel === "youtube" && <Field label="Upload video"
+          hint="Resumable private MP4 upload. Shorts must be square or vertical, up to three minutes. Validated replacement requires fresh approval; unsaved text edits stay here. Uploading alone does not stop existing approved work. No AI credits are used.">
+          <YouTubeVideoUpload key={draftId} draftId={draftId} disabled={busy} onBusy={setUploading} onAttached={value=>{
+            const updated=value as SocialDraft;
+            if(updated.id!==draftId)return;
+            setDraft(updated);setSynthetic(typeof updated.containsSyntheticMedia==="boolean"?String(updated.containsSyntheticMedia):"");
+            setError("");setNotice("Video stored privately. Review and approve separately.");onChanged?.();window.dispatchEvent(new Event("voom:data-changed"));
+          }}/>
+          {draft.asset?.previewUrl && <video key={draft.asset.previewUrl} src={draft.asset.previewUrl} controls playsInline preload="metadata"
+            onError={()=>setError("Preview could not play. Refresh the private link; if needed, export the original as H.264 MP4. Your stored video is unchanged.")}
+            aria-label="YouTube video preview" className="mt-3 max-h-72 w-full rounded-xl bg-black" />}
+          {draft.asset && <button type="button" disabled={busy || uploading} onClick={()=>void refreshVideoPreview()} className="mt-2 text-sm underline">Refresh private preview</button>}
+        </Field>}
+
         <Field label="Title" hint={isYouTubeVideo ? "Search-friendly — front-load the topic." : "A short internal name."}>
           <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={160} />
         </Field>
@@ -221,7 +254,7 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
 
         <Field
           label={draft.channel === "tiktok" ? "Beat list" : isYouTubeVideo ? "Outline / script" : "Beat list"}
-          hint="One line per beat or section. Planning text only — no video is generated."
+          hint="One line per beat or section. Editing the script does not generate a new video."
         >
           <Textarea rows={5} value={script} onChange={(e) => setScript(e.target.value)} placeholder={"Hook…\nSection 1…\nClose…"} />
         </Field>
@@ -261,6 +294,12 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
               : "Not confirmed for TikTok yet. Choose Post to TikTok to review and confirm this video."}
           </div>
         )}
+        {draft.channel === "youtube" && draft.maraGeneratedVideo && <Field label="Altered or synthetic content (required)"
+          hint="Review the generated video. Does it contain realistic-looking altered or synthetic content? Voom does not guess this declaration.">
+          <select className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm" value={synthetic} onChange={(event) => setSynthetic(event.target.value)}>
+            <option value="">Review and choose</option><option value="true">Yes</option><option value="false">No</option>
+          </select>
+        </Field>}
 
         {draft.channel !== "tiktok" && <Field
           label="Schedule (optional)"
@@ -274,17 +313,17 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
         </Field>}
       </ModalBody>
       <ModalFoot className="justify-between">
-        <Btn variant="outline" disabled={busy} onClick={() => void save()}>Save draft</Btn>
+        <Btn variant="outline" disabled={busy || uploading} onClick={() => void save()}>Save draft</Btn>
         <div className="flex gap-2">
           {draft.status === "approved"
-            ? <Btn variant="ghost" disabled={busy} onClick={() => void save("draft")}>Move back to draft</Btn>
+            ? <Btn variant="ghost" disabled={busy || uploading} onClick={() => void save("draft")}>Move back to draft</Btn>
             : null}
           {draft.channel === "tiktok"
-            ? <Btn variant="primary" disabled={busy || !draft.asset} title={draft.asset ? undefined : "Attach a video first"} onClick={() => void openPostSheet()}>
+            ? <Btn variant="primary" disabled={busy || uploading || !draft.asset} title={draft.asset ? undefined : "Attach a video first"} onClick={() => void openPostSheet()}>
                 {draft.tiktokPost ? "Review TikTok post" : "Post to TikTok…"}
               </Btn>
             : draft.status !== "approved"
-              ? <Btn variant="primary" disabled={busy} onClick={() => void save("approved")}>Approve</Btn>
+              ? <Btn variant="primary" disabled={busy || uploading} onClick={() => void save("approved")}>Approve</Btn>
               : null}
         </div>
       </ModalFoot>

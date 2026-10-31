@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { YouTubeClient } from "@/lib/youtube/client";
-import { YouTubeConfigurationError, requireYouTubeConfig } from "@/lib/youtube/config";
+import { YouTubeConfigurationError, requireYouTubeOAuthConfig, YOUTUBE_CALLBACK_PATH } from "@/lib/youtube/config";
 import { createYouTubeOAuthState } from "@/lib/youtube/data";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
@@ -23,13 +23,14 @@ export async function POST(request: Request) {
   const origin = request.headers.get("origin");
   if (origin && origin !== new URL(request.url).origin) return Response.json({ error: "That connection request was not valid." }, { status: 403 });
   try {
-    const config = requireYouTubeConfig();
+    // Fail before issuing state or redirecting to a different cookie host.
+    const config = requireYouTubeOAuthConfig(request.url);
     const state = await createYouTubeOAuthState(createAdminClient(), user.id);
     (await cookies()).set(STATE_COOKIE, state, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
-      path: "/api/integrations/youtube/callback",
+      path: YOUTUBE_CALLBACK_PATH,
       maxAge: 600,
     });
     return Response.json(
@@ -37,7 +38,7 @@ export async function POST(request: Request) {
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
-    if (error instanceof YouTubeConfigurationError) return Response.json({ error: "YouTube setup is not configured yet." }, { status: 503 });
+    if (error instanceof YouTubeConfigurationError) return Response.json({ error: "YouTube connection setup is unavailable or its callback does not match this site. Please contact support." }, { status: 503 });
     return Response.json({ error: "YouTube connection could not be started. Please retry." }, { status: 503 });
   }
 }

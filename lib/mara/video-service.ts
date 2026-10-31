@@ -163,7 +163,7 @@ export async function enforceVideoJobHardTimeout(
   return { enforced: false, row: current ?? row };
 }
 
-export type StartJobInput = Omit<StartInput, "ownerId" | "providerName" | "supportsImageToVideo" | "estimatedCostUsd" | "monthlySpendLimitUsd">;
+export type StartJobInput = Omit<StartInput, "ownerId" | "providerName" | "supportsImageToVideo" | "supportsTextToVideo" | "estimatedCostUsd" | "monthlySpendLimitUsd">;
 
 export async function startVideoJob(service: VideoService, input: StartJobInput & { durationTarget: number }): Promise<StartResult & { view: ClientGenerationView | null }> {
   const { durationTarget, ...rest } = input;
@@ -171,7 +171,9 @@ export async function startVideoJob(service: VideoService, input: StartJobInput 
     ...rest,
     ownerId: service.ownerId,
     providerName: service.videoConfig.provider,
+    providerModel: service.videoConfig.model,
     supportsImageToVideo: service.videoConfig.supportsImageToVideo,
+    supportsTextToVideo: service.videoConfig.supportsTextToVideo,
     estimatedCostUsd: estimatedCostUsdForDuration(service.videoConfig.durationSeconds ?? durationTarget),
     monthlySpendLimitUsd: monthlySpendLimitUsd(),
     source: input.source ?? "user_request",
@@ -184,7 +186,12 @@ export async function startVideoJob(service: VideoService, input: StartJobInput 
 export async function advanceVideoJob(service: VideoService, draftId: string, generationId: string, kind: "reel" | "story"): Promise<AdvanceResult & { view: ClientGenerationView | null }> {
   const result = await advanceVideoGeneration(service.ports, service.ownerId, generationId, kind);
   if (!result.ok) return { ...result, view: null };
-  if (result.attached) await syncPostToCalendar(service.admin, service.ownerId, draftId).catch(() => null);
+  if (result.attached) {
+    await syncPostToCalendar(service.admin, service.ownerId, draftId).catch(() => null);
+    // Autopilot re-evaluates the complete post when its awaited media lands.
+    const { completeAutopilotAfterMediaArrival } = await import("@/lib/voom/workflow/media-arrival");
+    await completeAutopilotAfterMediaArrival(service.admin, service.ownerId, draftId).catch(() => null);
+  }
   return { ...result, view: toClientGenerationView(result.generation, result.previewUrl) };
 }
 

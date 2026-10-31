@@ -12,6 +12,7 @@ export type TodayItem = {
   dayLabel?: string;
   statusLabel?: string;
   mediaPreviewUrl?: string | null;
+  caption?: string;
 };
 
 export type TodaySnapshotInput<T extends TodayItem = TodayItem> = {
@@ -47,6 +48,9 @@ export type TodayCoordinatorInput = {
 export type TodayCoverageDay = {
   date: string;
   label: string;
+  /** Short weekday ("Mon") and month-day ("Oct 5") for the week strip. */
+  weekday: string;
+  monthDay: string;
   dayNumber: string;
   items: TodayItem[];
   covered: boolean;
@@ -85,6 +89,8 @@ export function buildTodayView<T extends TodayItem>(
     return {
       date,
       label: new Intl.DateTimeFormat("en-AE", { timeZone: "UTC", weekday: "narrow" }).format(new Date(`${date}T12:00:00Z`)),
+      weekday: new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short" }).format(new Date(`${date}T12:00:00Z`)),
+      monthDay: new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short", day: "numeric" }).format(new Date(`${date}T12:00:00Z`)),
       dayNumber: String(Number(date.slice(-2))),
       items,
       covered: items.length > 0,

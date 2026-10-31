@@ -1,7 +1,7 @@
 /**
  * Brand Kit v2, slice 1: appending a version row.
  *
- * `brand_kits` (migration 0059) is append-only: every save inserts
+ * `brand_kits` (migration 0075) is append-only: every save inserts
  * version = newest + 1 for the owner. Row-level security lets a user insert
  * only their own rows, so this runs fine on the user-scoped client.
  *

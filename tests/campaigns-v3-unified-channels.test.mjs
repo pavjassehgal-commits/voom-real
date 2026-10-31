@@ -571,8 +571,11 @@ test("migrations 0001–0045 are untouched and 0046–0051 are the only new ones
   // lockdown (0050) and AI request rate limits (0051) are the only
   // migrations after Campaigns v3.
   // Trend Intelligence (0055-0058) follows 0051; 0052-0054 are reserved for the Admin Panel release.
-  // 0059 (Brand Kit v2 storage) is the newest migration.
-  assert.deepEqual(files.slice(-5), ["0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_brand_kits.sql"], "0055-0058 (Trend Intelligence) and 0059 (Brand Kit v2) are the newest migrations");
+  // Then main's 0059 (automation pause), 0061 (AI usage), 0062 (LinkedIn), 0063 (native plan
+  // videos), 0064/0066/0067 (YouTube uploads), 0068 (Instagram token renewal), 0070 (slot leases),
+  // and 0075 (Brand Kit v2 storage; written as 0059, renumbered at the 2026-11-01 merge). 0060,
+  // 0065, 0069 and 0071-0074 are gaps.
+  assert.deepEqual(files.slice(-14), ["0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql", "0066_youtube_resumable_uploads.sql", "0067_youtube_upload_cleanup_fairness.sql", "0068_instagram_token_renewal.sql", "0070_plan_slot_generation_leases.sql", "0075_brand_kits.sql"], "0055-0058 (Trend Intelligence), main's 0059-0070 and 0075 (Brand Kit v2) are the newest migrations");
   const beforeTrend = files.filter((name) => name < "0055");
   assert.equal(beforeTrend[beforeTrend.length - 1], "0051_ai_request_rate_limits.sql", "0051 (AI request rate limits) precedes Trend Intelligence");
   assert.equal(beforeTrend[beforeTrend.length - 2], "0050_approval_state_write_lockdown.sql", "0050 (approval-state write lockdown) precedes it");

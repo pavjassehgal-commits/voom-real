@@ -185,7 +185,7 @@ export function inspectVideoBytes(bytes: Uint8Array): VideoInspection | null {
 }
 
 interface BoxSpan {
-  /** Payload start (right after the 8-byte box header). */
+  /** Payload start (right after the 8- or 16-byte box header). */
   start: number;
   /** End of the box (payload end). */
   end: number;
@@ -201,10 +201,15 @@ function readBoxHeader(bytes: Uint8Array, offset: number, limit: number): BoxSpa
   const size = readUint32Be(bytes, offset);
   const type = ascii(bytes, offset + 4, offset + 8);
   if (!isPrintableType(type)) return null;
-  if (size === 1) return null; // 64-bit box sizes are not expected here.
-  const end = size === 0 ? limit : offset + size; // 0: box runs to the end of its container
-  if (size < 8 || end > limit || end <= offset) return null;
-  const start = offset + 8;
+  // AVFoundation exports use an extended-size mdat even for small MP4s.
+  // Skip its bytes safely to reach moov; never trust a size outside the
+  // supplied buffer or JavaScript's exact-integer range.
+  const headerSize = size === 1 ? 16 : 8;
+  if (offset + headerSize > limit) return null;
+  const boxSize = size === 1 ? readUint64Be(bytes, offset + 8) : size === 0 ? limit - offset : size;
+  const end = offset + boxSize;
+  if (!Number.isSafeInteger(boxSize) || boxSize < headerSize || end > limit || end <= offset) return null;
+  const start = offset + headerSize;
   const version = start + 1 < end ? bytes[start] : -1;
   return { start, end, type, version, payloadStart: start };
 }

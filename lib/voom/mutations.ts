@@ -61,7 +61,7 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
   const colours = cleanBrandColours(input.kit?.colours);
   const checked: OnboardingInput = input.kit ? { ...input, kit: { ...input.kit, assets, colours: colours ?? undefined } } : input;
 
-  // Brand Kit v2 dual write (migration 0059): the answers, including the
+  // Brand Kit v2 dual write (migration 0075): the answers, including the
   // kit-only screens (rules, banned words, notes, facts, offerings, brief),
   // become brand kit version 1 (or the next version after a restart).
   // Best-effort: the businesses row above is what today's generation reads

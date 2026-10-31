@@ -89,14 +89,14 @@ test("the stored mode is read verbatim and the no-mode wording names no mode", (
    ────────────────────────────────────────────────────────────── */
 
 const MATRIX = [
-  { name: "Max + Manual", plan: "max", mode: "manual", expected: "Manual — MARA acts only when you ask.", planLabel: "Max workspace", forbidden: /Automated|MARA is running|Assisted —|Autopilot —/ },
-  { name: "Max + Assisted", plan: "max", mode: "assisted", expected: "Assisted — MARA drafts, you approve.", planLabel: "Max workspace", forbidden: /MARA is running|Autopilot —|Manual —/ },
-  { name: "Max + Autopilot", plan: "max", mode: "autopilot", expected: "Autopilot — MARA runs within your limits.", planLabel: "Max workspace", forbidden: /MARA is running\.|“Manual|Manual —|Assisted —/ },
-  { name: "Pro + Manual", plan: "pro", mode: "manual", expected: "Manual — MARA acts only when you ask.", planLabel: "Pro workspace", forbidden: /Automated|MARA is running|Assisted —/ },
-  { name: "Pro + Assisted", plan: "pro", mode: "assisted", expected: "Assisted — MARA drafts, you approve.", planLabel: "Pro workspace", forbidden: /MARA is running|Autopilot —/ },
-  { name: "Free + Manual", plan: "free", mode: "manual", expected: "Manual — MARA acts only when you ask.", planLabel: "Free workspace", forbidden: /Automated|MARA is running|Assisted —/ },
-  { name: "Max + nothing stored", plan: "max", mode: null, expected: "Automation mode not set.", planLabel: "Max workspace", forbidden: /Manual —|Assisted —|Autopilot —|MARA is running|Automated/ },
-  { name: "Free + Autopilot stored", plan: "free", mode: "autopilot", expected: "Autopilot — MARA runs within your limits.", planLabel: "Free workspace", forbidden: /Manual —|Assisted —|MARA is running\./ },
+  { name: "Max + Manual", plan: "max", mode: "manual", expected: "Manual — MARA acts only when you ask.", planLabel: "Max plan", forbidden: /Automated|MARA is running|Assisted —|Autopilot —/ },
+  { name: "Max + Assisted", plan: "max", mode: "assisted", expected: "Assisted — MARA drafts, you approve.", planLabel: "Max plan", forbidden: /MARA is running|Autopilot —|Manual —/ },
+  { name: "Max + Autopilot", plan: "max", mode: "autopilot", expected: "Autopilot — MARA runs within your limits.", planLabel: "Max plan", forbidden: /MARA is running\.|“Manual|Manual —|Assisted —/ },
+  { name: "Pro + Manual", plan: "pro", mode: "manual", expected: "Manual — MARA acts only when you ask.", planLabel: "Pro plan", forbidden: /Automated|MARA is running|Assisted —/ },
+  { name: "Pro + Assisted", plan: "pro", mode: "assisted", expected: "Assisted — MARA drafts, you approve.", planLabel: "Pro plan", forbidden: /MARA is running|Autopilot —/ },
+  { name: "Free + Manual", plan: "free", mode: "manual", expected: "Manual — MARA acts only when you ask.", planLabel: "Free plan", forbidden: /Automated|MARA is running|Assisted —/ },
+  { name: "Max + nothing stored", plan: "max", mode: null, expected: "Automation mode not set.", planLabel: "Max plan", forbidden: /Manual —|Assisted —|Autopilot —|MARA is running|Automated/ },
+  { name: "Free + Autopilot stored", plan: "free", mode: "autopilot", expected: "Autopilot — MARA runs within your limits.", planLabel: "Free plan", forbidden: /Manual —|Assisted —|MARA is running\./ },
 ];
 
 test("sidebar operational copy per plan and saved mode (rendered)", async (t) => {

@@ -820,8 +820,8 @@ test("7. migrations 0040–0044 remain additive and owner-scoped", async () => {
   // exactly as 0040–0044 shipped them.
   assert.ok(files.includes("0044_email_flow_durable_claims.sql"), "0044 is still applied");
   const afterEmailAutomation = files.filter((name) => name > "0044_email_flow_durable_claims.sql");
-  assert.deepEqual(afterEmailAutomation, ["0045_campaigns_v3_unified_channels.sql", "0046_multi_social_core.sql", "0047_youtube_provider.sql", "0048_youtube_oauth_state_acl.sql", "0049_tiktok_provider.sql", "0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_brand_kits.sql"],
-    "0045 Campaigns v3, 0046 Multi-Social Core, 0047 YouTube provider, 0048 OAuth ACL fix, 0049 TikTok provider, 0050 write lockdown, 0051 rate limits, 0055-0058 Trend Intelligence and 0059 Brand Kit v2 are the only migrations after the Email Automation freeze");
+  assert.deepEqual(afterEmailAutomation, ["0045_campaigns_v3_unified_channels.sql", "0046_multi_social_core.sql", "0047_youtube_provider.sql", "0048_youtube_oauth_state_acl.sql", "0049_tiktok_provider.sql", "0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql", "0066_youtube_resumable_uploads.sql", "0067_youtube_upload_cleanup_fairness.sql", "0068_instagram_token_renewal.sql", "0070_plan_slot_generation_leases.sql", "0075_brand_kits.sql"],
+    "0045 Campaigns v3, 0046 Multi-Social Core, 0047 YouTube provider, 0048 OAuth ACL fix, 0049 TikTok provider, 0050 write lockdown, 0051 rate limits, 0055-0058 Trend Intelligence, 0059 automation pause/resume, 0061 AI usage, 0062 LinkedIn, 0063 native plan videos, 0064/0066/0067 YouTube uploads, 0068 Instagram token renewal, 0070 slot leases and 0075 Brand Kit v2 (renumbered from 0059 at the 2026-11-01 merge) are the only migrations after the Email Automation freeze");
   // Executed statements only: 0047 documents its rollback plan in comments
   // (`-- drop table ...`), which must not be confused with destruction.
   const stripSql = (name) => fs.readFileSync(path.join(dir, name), "utf8")
@@ -846,7 +846,7 @@ test("7. migrations 0040–0044 remain additive and owner-scoped", async () => {
   assert.doesNotMatch(youTubeProvider, /pg_cron|cron\.schedule/, "0047 schedules no cron");
   assert.doesNotMatch(youTubeProvider, /drop table|drop column|truncate/, "0047 destroys nothing");
   assert.doesNotMatch(youTubeProvider, /instagram_publish_queue|instagram_connections/, "0047 never touches the Instagram integration");
-  for (const name of ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_brand_kits.sql"]) {
+  for (const name of ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql", "0066_youtube_resumable_uploads.sql", "0067_youtube_upload_cleanup_fairness.sql", "0068_instagram_token_renewal.sql", "0070_plan_slot_generation_leases.sql", "0075_brand_kits.sql"]) {
     const hardening = stripSql(name);
     assert.doesNotMatch(hardening, /voom_email_flow/, `${name} never touches an email flow table`);
     assert.doesNotMatch(hardening, /voom_email_identity|voom_email_brand|voom_email_asset|voom_email_suppression|voom_email_unsubscribe/,
@@ -854,6 +854,16 @@ test("7. migrations 0040–0044 remain additive and owner-scoped", async () => {
     assert.doesNotMatch(hardening, /pg_cron|cron\.schedule/, `${name} schedules no cron`);
     assert.doesNotMatch(hardening, /drop table|drop column|truncate/, `${name} destroys nothing`);
   }
+  // 0059 (automation emergency pause/resume) may only PAUSE active flows; it
+  // never re-activates, creates, deletes or reshapes an email flow.
+  const pauseResume = stripSql("0059_automation_emergency_pause.sql");
+  assert.deepEqual(pauseResume.match(/update public\.voom_email_flows[^;]*;/g), ["update public.voom_email_flows set status = 'paused', paused_at = now()\n    where owner_user_id = p_owner_user_id and status = 'active';"],
+    "0059 only pauses active flows");
+  assert.doesNotMatch(pauseResume, /insert into public\.voom_email_flow|delete from public\.voom_email_flow|status = 'active'[^;]*voom_email_flows/,
+    "0059 never creates, deletes or re-activates an email flow");
+  assert.doesNotMatch(pauseResume, /voom_email_identity|voom_email_brand|voom_email_asset|voom_email_suppression|voom_email_unsubscribe/);
+  assert.doesNotMatch(pauseResume, /pg_cron|cron\.schedule/, "0059 schedules no cron");
+  assert.doesNotMatch(pauseResume, /drop table|drop column|truncate/, "0059 destroys nothing");
   assert.ok(files.includes("0043_plans_credits_safety.sql"));
   assert.ok(files.includes("0042_branded_email_url_regex_fix.sql"));
   assert.ok(files.includes("0041_branded_email_engine.sql"));

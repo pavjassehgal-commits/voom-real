@@ -16,6 +16,7 @@ import "server-only";
 
 import { AiError, createAiProvider } from "@/lib/ai";
 import type { AiProvider } from "@/lib/ai";
+import type { AiUsageContext } from "@/lib/ai";
 import {
   CAMPAIGN_INTELLIGENCE_SYSTEM_PROMPT,
   campaignIntelligenceJsonSchema,
@@ -31,6 +32,7 @@ export interface CampaignTextAi {
 export interface CampaignIntelligenceDeps {
   /** Test seam. Production uses the existing MARA text provider. */
   ai?: CampaignTextAi;
+  usage?: AiUsageContext;
 }
 
 export type CampaignIntelligenceOutcome =
@@ -60,6 +62,7 @@ export async function generateCampaignIntelligence(
       ],
       temperature: 0.6,
       maxTokens: CAMPAIGN_INTELLIGENCE_MAX_TOKENS,
+      usage: deps.usage,
       // Strict structured output where the provider supports it; the zod
       // parse below stays the second safety layer in every case.
       jsonSchema: campaignIntelligenceJsonSchema,

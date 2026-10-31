@@ -28,29 +28,28 @@ export function WorkspaceSkeleton({ label = "Loading", children }: { label?: str
   );
 }
 
-/** Page-header skeleton matching `PageHead`/`WorkspaceHeader` rhythm. */
+/**
+ * Page-header skeleton matching the redesign `PageHeader`: a title line the
+ * height of its clamp(28px→36px) heading, a subtitle line, and the same mb-6,
+ * so the real header replaces it without the page jumping.
+ */
 export function WorkspaceHeaderSkeleton() {
   return (
-    <div className="mb-6 flex flex-col gap-3 sm:mb-8">
-      <Block className="h-[26px] w-[220px] max-w-full" />
-      <Block className="h-[14px] w-[min(420px,80%)]" />
+    <div className="mb-6 flex flex-col gap-2">
+      <Block className="h-[31px] w-[200px] max-w-full sm:h-[40px] sm:w-[240px]" />
+      <Block className="h-[19px] w-[min(420px,80%)]" />
     </div>
   );
 }
 
-/** A workspace panel skeleton: header line plus stacked content rows. */
+/** A workspace panel skeleton in the real `voom-card` frame: a title line plus stacked tile rows. */
 export function WorkspacePanelSkeleton({ rows = 3, className }: { rows?: number; className?: string }) {
   return (
-    <section
-      className={cx(
-        "rounded-[var(--r-lg)] border border-line bg-surface p-4 shadow-[var(--shadow-sm)] sm:p-5",
-        className,
-      )}
-    >
-      <Block className="mb-4 h-[16px] w-[140px]" />
-      <div className="flex flex-col gap-2.5">
+    <section className={cx("voom-card min-w-0 p-5", className)}>
+      <Block className="mb-4 h-[20px] w-[140px]" />
+      <div className="flex flex-col gap-3">
         {Array.from({ length: rows }, (_, index) => (
-          <Block key={index} className="h-[52px] w-full" />
+          <Block key={index} className="h-[56px] w-full" />
         ))}
       </div>
     </section>

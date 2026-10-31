@@ -7,13 +7,15 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 test("the demo MARA chat UI is removed from the product and navigation", async () => {
   const nav = await read("components/voom/shell/nav.ts");
   // The fake MARA chat was removed outright; protected MARA actions live on
-  // Approvals and the /app/mara route simply forwards to Today.
-  assert.doesNotMatch(nav, /n: "MARA"/);
+  // Approvals. Batch 3 gives /app/mara a real, read-only MARA overview
+  // (Figma "19 — MARA") — never the chat.
+  assert.match(nav, /id: "mara", n: "MARA"/, "MARA links to its real overview");
   let missing = false;
   try { await read("components/voom/mara/LegacyMaraChat.tsx"); } catch { missing = true; }
   assert.equal(missing, true, "LegacyMaraChat.tsx must not exist in production");
   const route = await read("app/app/(shell)/mara/page.tsx");
-  assert.match(route, /redirect\("\/app\/today"\)/);
+  assert.match(route, /getOperatingData\(\)/, "the overview reads the shared operating data");
+  assert.doesNotMatch(route, /fetch\(|\/api\/mara["'`]|<input|<textarea/i, "no chat input and no call to the retired chat API");
 });
 
 test("marketing plans are owner-scoped, anonymous-blocked, and server-written", async () => {
@@ -344,7 +346,8 @@ test("approved plan content is independently and idempotently linked to the cale
   assert.match(data, /onConflict: "owner_user_id,source_draft_id"/);
   assert.match(tools, /status: "approved"/);
   assert.match(tools, /Nothing was published/);
-  assert.match(tools, /mara_drafts"\)\.update\(\{ status: "approved" \}\)/);
+  // approve_draft records user provenance and approves only the version it checked (0059).
+  assert.match(tools, /mara_drafts"\)\.update\(\{ status: "approved", approval_origin: "user" \}\)/);
 });
 
 test("approval edits persist atomically and confirmation uses the latest owned draft", async () => {
@@ -359,8 +362,11 @@ test("approval edits persist atomically and confirmation uses the latest owned d
   assert.match(migration, /owner_user_id = v_owner_id/);
   assert.match(migration, /update public\.mara_drafts/);
   assert.match(migration, /update public\.mara_pending_actions/);
-  assert.match(tools, /draft\?\.content \?\? a\.content/);
-  assert.match(tools, /draft\?\.proposed_publish_at \?\? a\.publishAt/);
+  // Confirmation uses the owned draft's stored content and schedule, and only
+  // when they still equal the card the user confirmed (compare-and-swap; see
+  // lib/mara/draft-approval.ts and tests/automation-resume-reliability.test.mjs).
+  assert.match(tools, /approveDraftFromConfirmedSnapshot\(c\.db, c\.ownerId, a\.sourceDraftId as string, a, draft,/);
+  assert.match(tools, /content: draft\.content, topic: a\.topic, publish_at: draft\.proposed_publish_at/);
 });
 
 test("saved calendar details are read-only, current, sanitized, and owner-scoped", async () => {

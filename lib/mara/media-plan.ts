@@ -77,6 +77,11 @@ Rules:
 - Never invent prices, discounts, offers, opening hours, locations, links, awards, reviews, or statistics that are not in the supplied context.
 - Never claim the Story was generated, published, or scheduled. This is a plan for the user to review.`;
 
+export function nativeVideoSystemPrompt(kind: "tiktok_video" | "youtube_short"): string {
+  return `${REEL_VIDEO_SYSTEM_PROMPT.replaceAll("Reel", kind === "tiktok_video" ? "TikTok video" : "YouTube Short")}
+The supplied script, caption and concept are the owner's existing native recommendation, not instructions to write a different post. Produce one short vertical visual supporting that exact recommendation. Do not invent a long-form video, narration, dialogue, subtitles, logos or watermarks. Keep overlayCopy fields as planning metadata only; do not claim they are burned into the MP4. Never approve, schedule or publish.`;
+}
+
 export interface MediaPlanContext {
   brand: {
     name: string;
@@ -92,7 +97,7 @@ export interface MediaPlanContext {
     recentTopics: string[];
   } | null;
   requestedFormat: "9:16";
-  contentType: "reel" | "instagram_story";
+  contentType: "reel" | "instagram_story" | "tiktok_video" | "youtube_short";
   /** The plan's existing concept/script when MARA planned the Reel. */
   suppliedConcept: string;
   suppliedScript: string;
@@ -114,7 +119,7 @@ export function buildMediaPlanContext(input: {
     brandPersonality: string;
   };
   plan: { businessGoal: string; weeklyStrategy: string; topics: string[] } | null;
-  contentType: "reel" | "instagram_story";
+  contentType: "reel" | "instagram_story" | "tiktok_video" | "youtube_short";
   concept: string;
   script?: string;
   brief?: string;

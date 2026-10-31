@@ -1,39 +1,30 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useModal } from "@/lib/voom/modal";
 import { Icon } from "@/components/voom/icons";
 import { CreateContentModal } from "@/components/voom/modals/CreateContentModal";
 import { SavedCalendarDetailModal } from "@/components/voom/modals/SavedCalendarDetailModal";
 import { SocialEditorModal } from "@/components/voom/modals/SocialEditorModal";
-import { Btn, Chip, IconBtn, Tag } from "@/components/voom/ui/primitives";
+import { Btn, Tag } from "@/components/voom/ui/primitives";
+import { BTN, ChannelGlyph, StatusChip } from "@/components/voom/redesign/ui";
+import { cx } from "@/lib/voom/cx";
 import { currentScheduleDate } from "@/lib/voom/schedule-guard";
 import { PublishingQueue } from "@/components/voom/PublishingQueue";
 import type { WorkflowSnapshot, WorkflowView } from "@/lib/voom/workflow/read";
 import { MEDIA_GENERATION_HARD_TIMEOUT_MINUTES, WORKFLOW_STATUSES } from "@/lib/voom/workflow/state";
 import { isPastInstant } from "@/lib/voom/schedule-guard";
 import type { SocialCalendarItemView } from "@/lib/social/server-drafts";
-import {
-  ChannelPill,
-  MetaChip,
-  Panel,
-  PanelHead,
-  QuietState,
-  StatePill,
-  WorkspaceFrame,
-  WorkspaceHeader,
-} from "@/components/voom/workspace/ui";
+import { ChannelPill, StatePill } from "@/components/voom/workspace/ui";
 import {
   CHANNEL_ACCENT_HEX,
-  STATE_GROUP_LABELS,
   channelIdentity,
   providerConfirmationLabel,
   socialQueueTone,
-  stateGroup,
   TONE_ACCENT_HEX,
   workflowTone,
   type ChannelKey,
-  type StateGroup,
   type WorkspaceTone,
 } from "@/lib/voom/workflow/presentation";
 
@@ -49,7 +40,7 @@ import {
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const FILTERS = ["All", "Instagram Post", "Reel", "Instagram Story", "TikTok Video", "YouTube Short", "YouTube Video"] as const;
-const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 /** One calendar cell entry: an active Marketing Plan item or a standalone
  * approved TikTok/YouTube draft. Both surfaces use truthful queue status. */
@@ -106,6 +97,8 @@ function attentionReason(item: WorkflowView): string | null {
   return null;
 }
 
+type CalendarMode = "month" | "week";
+
 export default function CalendarPage() {
   const { open } = useModal();
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot | null>(null);
@@ -113,7 +106,12 @@ export default function CalendarPage() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>("All");
   const [cursor, setCursor] = useState<{ month: number; year: number } | null>(null);
+  const [mode, setMode] = useState<CalendarMode>("month");
+  // The week view is anchored on one real local date; the selected day starts as that date.
+  const [weekDay, setWeekDay] = useState<string | null>(null);
   const [showAllPending, setShowAllPending] = useState(false);
+  // Direction of the last month/week move, so the grid slides the way you travelled.
+  const [travel, setTravel] = useState<"next" | "prev" | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -166,8 +164,10 @@ export default function CalendarPage() {
   const view = cursor ?? monthOf(currentScheduleDate());
   const cells = useMemo(() => buildCells(view.year, view.month), [view.year, view.month]);
   const counts = useMemo(() => countByStatus(items), [items]);
-  const nativePlanCount = items.filter((item) => item.channel !== "instagram").length;
   const totalVisible = items.length + socialCells.length;
+  const scheduledCount = (counts.scheduled ?? 0) + (counts.publishing ?? 0) + socialCells.filter((item) => socialQueueTone(item.queueStatus) === "blue").length;
+  const approvalCount = (counts.needs_approval ?? 0) + (counts.ready_for_review ?? 0);
+  const draftCount = (counts.planned ?? 0) + (counts.needs_content ?? 0) + (counts.generating ?? 0) + (counts.waiting_for_media ?? 0);
 
   // "What needs attention" is a truthful projection of the real workflow state —
   // never a separate calculation: it lists the exact items the read model marks
@@ -179,149 +179,144 @@ export default function CalendarPage() {
       .sort((a, b) => a.item.publishAt.localeCompare(b.item.publishAt)),
     [items],
   );
-  const groups = useMemo(() => groupCounts(counts), [counts]);
   const visibleAttention = showAllPending ? attention : attention.slice(0, 3);
 
+  const today = snapshot?.today ?? currentScheduleDate();
+  const selectedDay = weekDay ?? today;
+  const week = useMemo(() => weekOf(selectedDay), [selectedDay]);
+  function openWeek(date: string) {
+    setWeekDay(date);
+    setMode("week");
+  }
+
   return (
-    <WorkspaceFrame>
-      <WorkspaceHeader
-        eyebrow="Content Calendar"
-        title="What is happening, where, and when."
-        question={snapshot
-          ? `${totalVisible} item${totalVisible === 1 ? "" : "s"} on the real schedule · ${snapshot.cadenceLabel} · times in ${snapshot.timeZone.replace("_", " ")}`
-          : "Loading your real schedule…"}
-        description="Every entry below is the same record Voom will execute — the Marketing Plan item, the approved draft and the provider queue row are one piece of work."
-        meta={<>
-          <MetaChip accent><Icon name="cal" size={12} /> {MONTHS[view.month]} {view.year}</MetaChip>
-          {attention.length > 0
-            ? <MetaChip><span className="text-[var(--amber)]">{attention.length} need{attention.length === 1 ? "s" : ""} attention</span></MetaChip>
-            : snapshot ? <MetaChip><span className="text-[var(--green)]">Nothing needs attention</span></MetaChip> : null}
-          {nativePlanCount + socialCells.length > 0 && <MetaChip>{nativePlanCount + socialCells.length} TikTok / YouTube</MetaChip>}
-        </>}
-        actions={<Btn variant="brand" size="sm" onClick={() => open(<CreateContentModal onChanged={() => void load()} />)}>
-          <Icon name="plus" size={14} /> Create content
-        </Btn>}
-      />
-
-      {error && <div role="alert" className="relative z-10 mb-3.5 rounded-2xl border border-red/35 bg-red/10 px-4 py-3 text-[13px] text-red">{error}</div>}
-
-      {attention.length > 0 && (
-        <Panel className="relative z-10 mb-3.5 border-amber/35 bg-[var(--amber-soft)]">
-          <PanelHead
-            icon="warn"
-            title={`${attention.length} item${attention.length === 1 ? "" : "s"} need${attention.length === 1 ? "s" : ""} your attention`}
-            hint="Real state from the workflow — nothing here is inferred from a timer alone."
-            action={attention.length > 3
-              ? <Btn variant="ghost" size="sm" onClick={() => setShowAllPending((value) => !value)}>{showAllPending ? "Show fewer" : `Show all ${attention.length}`}</Btn>
-              : undefined}
-          />
-          <ul className="mt-3 min-w-0 space-y-2">
-            {visibleAttention.map(({ item, reason }) => (
-              <li key={`attn-${item.draftId}`} className="flex min-w-0 flex-col gap-2 rounded-xl border border-line bg-[var(--surface)]/70 p-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                  <ChannelPill channel={item.channel} format={item.format} dense />
-                  <span className="text-[12px] font-semibold text-text-2 truncate">{item.concept}</span>
-                  <span className="text-[11.5px] text-text-3">{item.dayLabel} · {item.localTime}</span>
-                </div>
-                <div className="flex min-w-0 items-center gap-2">
-                  <p className="min-w-0 text-[12px] leading-relaxed text-text-2 sm:max-w-[52%]">{reason}</p>
-                  <Btn variant="outline" size="sm" onClick={() => openEvent({ type: "workflow", item }, open, load)}>
-                    Open
-                  </Btn>
-                </div>
-              </li>
+    <div className="min-w-0">
+      <header className="mb-3 flex min-w-0 flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0">
+          <div className="text-[12px] font-semibold uppercase tracking-[0.16em] text-text-2">Calendar</div>
+          {mode === "month"
+            ? <h1 className="mt-1 text-[clamp(1.9rem,3.4vw,2.4rem)] font-bold leading-[1.1] tracking-[-0.04em] text-text">{MONTHS[view.month]} <span className="text-[var(--brand)]">{view.year}</span></h1>
+            : <h1 className="mt-1 text-[clamp(1.9rem,3.4vw,2.4rem)] font-bold leading-[1.1] tracking-[-0.04em] text-text">Your week, planned</h1>}
+          <p className="mt-1 text-[15px] text-text-2">
+            {snapshot
+              ? mode === "month"
+                ? `${scheduledCount} scheduled · ${approvalCount} need${approvalCount === 1 ? "s" : ""} your approval · ${draftCount} in progress · times in ${snapshot.timeZone.replace("_", " ")}`
+                : "Pick a day to see everything scheduled for it."
+              : "Loading your real schedule…"}
+          </p>
+        </div>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {mode === "month" ? <>
+            <button type="button" aria-label="Previous month" data-haptic="light" className={ROUND} onClick={() => { setTravel("prev"); setCursor(shift(view, -1)); }}><Icon name="chevL" size={16} /></button>
+            <button type="button" aria-label="Next month" data-haptic="light" className={ROUND} onClick={() => { setTravel("next"); setCursor(shift(view, 1)); }}><Icon name="chevR" size={16} /></button>
+            <button type="button" className={cx(BTN.quiet, "rounded-full")} onClick={() => snapshot && setCursor(monthOf(snapshot.today))}>Today</button>
+          </> : <>
+            <button type="button" aria-label="Previous week" data-haptic="light" className={ROUND} onClick={() => { setTravel("prev"); setWeekDay(addDaysIso(week[0], -7)); }}><Icon name="chevL" size={16} /></button>
+            <button type="button" aria-label="Next week" data-haptic="light" className={ROUND} onClick={() => { setTravel("next"); setWeekDay(addDaysIso(week[0], 7)); }}><Icon name="chevR" size={16} /></button>
+            <button type="button" className={cx(BTN.quiet, "rounded-full")} onClick={() => setWeekDay(today)}>Jump to today</button>
+          </>}
+          <div className="inline-flex rounded-full border border-line bg-surface-2 p-1" role="group" aria-label="Calendar view">
+            {(["week", "month"] as const).map((value) => (
+              <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)}
+                className={cx("rounded-full px-4 py-1.5 text-[14px] font-semibold transition", mode === value ? "bg-surface text-text shadow-[var(--shadow-sm)]" : "text-text-2 hover:text-text")}>
+                {value === "week" ? "Week" : "Month"}
+              </button>
             ))}
-          </ul>
-        </Panel>
-      )}
-
-      <Panel className="relative z-10 mb-3.5" padded={false}>
-        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2.5 p-3.5 sm:p-4">
-          {/* Month navigation: the label takes the space that is left and wraps
-              the controls to a second line on a narrow phone rather than
-              pushing "Today" past the viewport. */}
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-none">
-            <IconBtn aria-label="Previous month" onClick={() => setCursor(shift(view, -1))}><Icon name="back" /></IconBtn>
-            <b className="min-w-0 flex-1 truncate text-center font-display text-[16px] font-semibold tracking-[-0.02em] sm:min-w-[150px] sm:flex-none">{MONTHS[view.month]} {view.year}</b>
-            <IconBtn aria-label="Next month" onClick={() => setCursor(shift(view, 1))}><Icon name="arrow" /></IconBtn>
-            <Btn variant="ghost" size="sm" onClick={() => snapshot && setCursor(monthOf(snapshot.today))}>Today</Btn>
-          </div>
-          <div className="flex min-w-0 flex-wrap gap-1.5">
-            {FILTERS.map((value) => <Chip key={value} active={filter === value} onClick={() => setFilter(value)}>{value}</Chip>)}
           </div>
         </div>
+      </header>
 
-        {groups.length > 0 && (
-          <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 border-t border-line px-3.5 py-2.5 sm:px-4">
-            {groups.map((group) => (
-              <span key={group.group} className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-text-3">
-                <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ background: groupAccent(group.group) }} />
-                {STATE_GROUP_LABELS[group.group]} <b className="text-text-2">{group.count}</b>
-              </span>
-            ))}
+      <div className="mb-4 flex min-w-0 flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap gap-x-4 gap-y-1.5 text-[13px] text-text-2">
+          {([["blue", "Scheduled"], ["amber", "Needs approval"], ["green", "Published"], ["grey", "In progress"], ["red", "Failed"]] as const).map(([tone, label]) => (
+            <span key={label} className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-2.5 w-2.5 rounded-[3px]" style={{ background: TONE_ACCENT_HEX[tone] }} />{label}</span>
+          ))}
+        </div>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <label className="sr-only" htmlFor="calendar-format">Format</label>
+          <select id="calendar-format" value={filter} onChange={(e) => setFilter(e.target.value)} className={cx(BTN.field, "h-10 rounded-full")}>
+            {FILTERS.map((value) => <option key={value} value={value}>{value === "All" ? "All formats" : value}</option>)}
+          </select>
+          <button type="button" className={cx(BTN.primary, "h-10")} onClick={() => open(<CreateContentModal onChanged={() => void load()} />)}>
+            <Icon name="plus" size={14} /> Create content
+          </button>
+
+        </div>
+      </div>
+
+
+      {error && <div role="alert" className="mb-4 rounded-[14px] border border-[var(--red)]/30 bg-[var(--red-soft)] px-4 py-3 text-[13.5px] text-[var(--red)]">{error}</div>}
+
+
+      {mode === "month" ? (
+        <section className="voom-card mb-5 overflow-hidden" aria-label={`${MONTHS[view.month]} ${view.year}`}>
+          <div className="grid grid-cols-7 border-b border-line">
+            {DOW.map((day) => <div key={day} className="px-1 py-2.5 text-center text-[11px] font-semibold uppercase tracking-[0.1em] text-text-2 sm:px-3 sm:text-left sm:text-[12px]">{day}</div>)}
           </div>
-        )}
-
-        <div className="border-t border-line p-2.5 sm:p-3.5">
-          <div className="grid grid-cols-7 gap-px overflow-hidden rounded-[16px] border border-line bg-line">
-            {DOW.map((day) => <div key={day} className="bg-surface-2 py-2 text-center text-[10.5px] font-bold uppercase tracking-[.06em] text-text-3 sm:py-2.5 sm:text-[11px]">{day}</div>)}
+          <div key={`${view.year}-${view.month}`} className={cx("grid grid-cols-7", travel === "next" ? "voom-m-slide-next" : travel === "prev" ? "voom-m-slide-prev" : undefined)}>
             {cells.map((cell, index) => {
               const date = cell.date;
               const events = cell.out ? [] : byDate.get(date) ?? [];
               const isToday = Boolean(snapshot) && date === snapshot!.today;
+              const needsApproval = events.some((event) => event.type === "workflow" && (event.item.status === "needs_approval" || event.item.status === "ready_for_review"));
               const attentionInCell = events.filter((event) => event.type === "workflow" && attentionReason(event.item)).length;
-              return <div key={index} className={`group flex min-h-[64px] min-w-0 flex-col gap-1 bg-surface p-1 sm:min-h-[116px] sm:p-1.5 ${cell.out ? "bg-surface-2 opacity-50" : "hover:bg-surface-2"}`}>
-                <div className="flex items-center justify-between gap-1">
-                  <span className={`grid h-[21px] w-[21px] place-items-center rounded-lg text-[11.5px] font-semibold ${isToday ? "voom-grad text-white" : "text-text-2"}`}>{cell.day}</span>
-                  {attentionInCell > 0 && <span aria-label={`${attentionInCell} needing attention`} className="h-1.5 w-1.5 rounded-full bg-[var(--amber)]" />}
-                </div>
+              return (
+                <div key={index} className={cx("group relative flex min-h-[64px] min-w-0 flex-col gap-1 border-b border-r border-line p-1 [&:nth-child(7n)]:border-r-0 sm:min-h-[118px] sm:p-2.5", cell.out ? "bg-surface-2/60" : isToday ? "bg-[var(--brand-soft-2)]" : "bg-surface")}>
+                  <div className="flex items-center justify-between gap-1">
+                    {cell.out
+                      ? <span className="text-[12px] font-semibold text-text-3 sm:text-[15px]">{cell.day}</span>
+                      : <button type="button" onClick={() => openWeek(date)} aria-label={`Open the week of ${date}`}
+                          className={cx("inline-flex items-center gap-1.5 rounded-full text-[12px] font-semibold focus-visible:outline-2 focus-visible:outline-[var(--brand)] sm:text-[15px]", isToday ? "text-[var(--brand)]" : "text-text hover:text-[var(--brand)]")}>
+                          <span className={cx("grid h-6 min-w-6 place-items-center rounded-full px-1", isToday && "voom-create-btn text-white")}>{cell.day}</span>
+                          {isToday && <span className="hidden text-[12.5px] font-medium sm:inline">Today</span>}
+                        </button>}
+                    {needsApproval && <span className="hidden rounded-full bg-[var(--amber-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--amber)] lg:inline">Approve</span>}
+                    {attentionInCell > 0 && <span aria-label={`${attentionInCell} needing attention`} className="h-1.5 w-1.5 rounded-full bg-[var(--amber)] lg:hidden" />}
+                  </div>
 
-                {/* Mobile: one dot per real item, so a dense day is still legible in a 40px cell. */}
-                {events.length > 0 && (
-                  <span className="flex flex-wrap gap-0.5 sm:hidden" aria-hidden="true">
-                    {events.slice(0, 4).map((event, dotIndex) => (
-                      <span key={`dot-${dotIndex}`} className="h-1.5 w-1.5 rounded-full" style={{ background: eventAccent(event) }} />
+                  {/* Mobile: one dot per real item, so a dense day is still legible in a narrow cell. */}
+                  {events.length > 0 && (
+                    <span className="flex flex-wrap gap-0.5 sm:hidden" aria-hidden="true">
+                      {events.slice(0, 4).map((event, dotIndex) => (
+                        <span key={`dot-${dotIndex}`} className="h-1.5 w-1.5 rounded-full" style={{ background: eventAccent(event) }} />
+                      ))}
+                      {events.length > 4 && <span className="text-[8px] font-bold text-text-3">+{events.length - 4}</span>}
+                    </span>
+                  )}
+
+                  <span className="hidden min-w-0 flex-col gap-1 sm:flex">
+                    {events.slice(0, 3).map((event) => (
+                      <button
+                        type="button"
+                        key={event.type === "workflow" ? event.item.draftId : `social-${event.item.draftId}`}
+                        className="flex w-full min-w-0 items-center gap-1.5 overflow-hidden border-l-[3px] pl-1.5 text-left text-[11.5px] leading-tight text-text hover:text-[var(--brand-ink)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--brand)] lg:text-[12.5px]"
+                        style={{ borderColor: eventAccent(event) }}
+                        aria-label={`Open ${event.item.concept} (${event.item.contentTypeLabel}, ${event.item.statusLabel})`}
+                        title={eventTitle(event)}
+                        onClick={() => openEvent(event, open, load)}
+                      >
+                        <span className="truncate"><b className="font-semibold">{event.item.localTime}</b> {event.item.concept}</span>
+                        {confirmedOf(event) && <Icon name="shield" size={10} className="flex-none text-[var(--green)]" />}
+                      </button>
                     ))}
-                    {events.length > 4 && <span className="text-[8px] font-bold text-text-3">+{events.length - 4}</span>}
+                    {events.length > 3 && <button type="button" onClick={() => openWeek(date)} className="pl-2 text-left text-[11px] font-semibold text-text-3 hover:text-[var(--brand-ink)]">+{events.length - 3} more</button>}
                   </span>
-                )}
-
-                <span className="hidden min-w-0 flex-col gap-0.5 sm:flex">
-                  {events.slice(0, 3).map((event) => (
-                    <button
-                      type="button"
-                      key={event.type === "workflow" ? event.item.draftId : `social-${event.item.draftId}`}
-                      className="flex w-full min-w-0 items-center gap-1 overflow-hidden rounded-[7px] px-1.5 py-1 text-left text-[9.5px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand lg:text-[11px]"
-                      style={{ background: `${eventAccent(event)}1f`, color: eventAccent(event) }}
-                      aria-label={`Open ${event.item.concept} (${event.item.contentTypeLabel}, ${event.item.statusLabel})`}
-                      title={eventTitle(event)}
-                      onClick={() => openEvent(event, open, load)}
-                    >
-                      <span aria-hidden="true" className="h-1.5 w-1.5 flex-none rounded-full" style={{ background: eventAccent(event) }} />
-                      <span className="truncate">{event.item.localTime} · {event.item.contentTypeLabel} · {event.item.concept}</span>
-                      {confirmedOf(event) && <Icon name="shield" size={10} className="flex-none" />}
-                    </button>
-                  ))}
-                  {events.length > 3 && <span className="pl-1 text-[10px] text-text-3">+{events.length - 3} more</span>}
-                </span>
-              </div>;
+                </div>
+              );
             })}
           </div>
+          <p className="hidden px-4 py-3 text-right text-[13px] text-text-2 sm:block">Click any day to open it in the weekly view.</p>
 
           {/* Mobile keeps the day list explicit: dots alone never hide what is scheduled. */}
-          <ul className="mt-3 min-w-0 space-y-1.5 sm:hidden">
+          <ul className="min-w-0 space-y-1.5 p-2.5 sm:hidden">
             {cells.flatMap((cell) => cell.out ? [] : (byDate.get(cell.date) ?? []).map((event) => ({ date: cell.date, event })))
               .slice(0, 8)
               .map(({ date, event }) => (
-                <li key={`mobile-${date}-${event.type === "workflow" ? event.item.draftId : event.item.draftId}`}>
-                  <button
-                    type="button"
-                    className="flex w-full min-w-0 items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2 text-left"
-                    onClick={() => openEvent(event, open, load)}
-                  >
+                <li key={`mobile-${date}-${event.item.draftId}`}>
+                  <button type="button" className="flex w-full min-w-0 items-center gap-2 rounded-[12px] border border-line bg-surface px-3 py-2 text-left" onClick={() => openEvent(event, open, load)}>
                     <span aria-hidden="true" className="h-2 w-2 flex-none rounded-full" style={{ background: eventAccent(event) }} />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[12.5px] font-semibold text-text">{event.item.localTime} · {event.item.concept}</span>
+                      <span className="block truncate text-[12.5px] font-semibold text-text">{event.item.dayLabel} {event.item.localTime} · {event.item.concept}</span>
                       <span className="block truncate text-[11.5px] text-text-3">{channelIdentity(channelOf(event)).label} · {event.item.contentTypeLabel} · {event.item.statusLabel}</span>
                     </span>
                     {confirmedOf(event) && <Icon name="shield" size={12} className="flex-none text-[var(--green)]" />}
@@ -330,32 +325,57 @@ export default function CalendarPage() {
               ))}
           </ul>
 
-          {snapshot && totalVisible === 0 && (
-            <QuietState
-              icon="cal"
-              title="Your calendar is empty"
-              action={<Btn variant="outline" size="sm" onClick={() => open(<CreateContentModal onChanged={() => void load()} />)}>
-                <Icon name="plus" size={14} /> Create content
-              </Btn>}
-            >
-              <p>This calendar shows the content Voom is actually executing — planned drafts, items waiting for your approval, and what is scheduled or published, across Instagram, TikTok and YouTube.</p>
-              <p className="mt-1.5">Build your rolling plan, or create content directly, and each item appears here with its real status.</p>
-            </QuietState>
-          )}
-        </div>
-      </Panel>
+          {snapshot && totalVisible === 0 && <EmptyCalendar onCreate={() => open(<CreateContentModal onChanged={() => void load()} />)} />}
+        </section>
+      ) : (
+        <WeekView
+          week={week}
+          selectedDay={selectedDay}
+          today={today}
+          byDate={byDate}
+          onSelect={setWeekDay}
+          onOpen={(event) => openEvent(event, open, load)}
+          onCreate={() => open(<CreateContentModal onChanged={() => void load()} />)}
+          onMonth={() => { setMode("month"); setCursor(monthOf(selectedDay)); }}
+          empty={Boolean(snapshot) && totalVisible === 0}
+          travel={travel}
+        />
+      )}
 
-      <div className="relative z-10">
+      {attention.length > 0 && (
+        <section className="mb-5 rounded-[18px] bg-[var(--coral-soft)] px-5 py-4" aria-labelledby="calendar-attention">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 id="calendar-attention" className="flex items-center gap-2 text-[15px] font-semibold text-text"><Icon name="warn" size={16} className="text-[var(--coral)]" />
+              {attention.length} item{attention.length === 1 ? "" : "s"} need{attention.length === 1 ? "s" : ""} your attention</h2>
+            {attention.length > 3 && <button type="button" className="text-[13px] font-semibold text-[var(--brand-ink)] hover:underline" onClick={() => setShowAllPending((value) => !value)}>{showAllPending ? "Show fewer" : `Show all ${attention.length}`}</button>}
+          </div>
+          <p className="mt-0.5 text-[12.5px] text-text-2">Real state from the workflow — nothing here is inferred from a timer alone.</p>
+          <ul className="mt-3 min-w-0 space-y-2">
+            {visibleAttention.map(({ item, reason }) => (
+              <li key={`attn-${item.draftId}`} className="flex min-w-0 flex-col gap-2 rounded-[14px] border border-line bg-surface p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <ChannelGlyph channel={item.channel} size={20} />
+                  <span className="truncate text-[13px] font-semibold text-text">{item.concept}</span>
+                  <span className="text-[12px] text-text-3">{item.dayLabel} · {item.localTime}</span>
+                </div>
+                <div className="flex min-w-0 items-center gap-2">
+                  <p className="min-w-0 text-[12.5px] leading-relaxed text-text-2 sm:max-w-[52%]">{reason}</p>
+                  <button type="button" className={cx(BTN.outline, "h-9 px-4")} onClick={() => openEvent({ type: "workflow", item }, open, load)}>Open</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <div className="mb-5">
         <PublishingQueue />
       </div>
 
-      <Panel className="relative z-10 mt-3.5">
-        <PanelHead
-          icon="target"
-          title="How to read this calendar"
-          hint="Voom only ever claims what a provider confirmed: scheduled is not submitted, submitted is not accepted, and accepted is not published."
-        />
-        <div className="mt-3 grid min-w-0 gap-2.5 sm:grid-cols-3">
+      <section className="voom-card p-5 sm:p-6" aria-labelledby="calendar-legend">
+        <h2 id="calendar-legend" className="text-[16px] font-semibold text-text">How to read this calendar</h2>
+        <p className="mt-0.5 text-[13px] text-text-2">Voom only ever claims what a provider confirmed: scheduled is not submitted, submitted is not accepted, and accepted is not published.</p>
+        <div className="mt-4 grid min-w-0 gap-2.5 sm:grid-cols-3">
           <StateNote status="scheduled" label="Scheduled" text="The time and channel are set. Nothing has been handed to the provider yet." />
           <StateNote status="publishing" label="Publishing" text="Voom submitted it and the provider is processing it. Not published yet." />
           <StateNote status="published" label="Published" text="The provider itself confirmed it. Instagram shows Meta-confirmed; TikTok and YouTube show provider-confirmed." />
@@ -365,8 +385,142 @@ export default function CalendarPage() {
             ? "Counts above come from the live workflow items on screen — no separate tally exists."
             : "Items appear here the moment the Marketing Plan, the Studio or an approval creates real work."}
         </p>
-      </Panel>
-    </WorkspaceFrame>
+      </section>
+    </div>
+  );
+}
+
+const ROUND = "grid h-10 w-10 place-items-center rounded-full border border-line bg-surface text-text-2 transition hover:bg-surface-2 hover:text-text";
+
+function EmptyCalendar({ onCreate }: { onCreate: () => void }) {
+  return (
+    <div className="flex flex-col items-start gap-3 border-t border-line p-5 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h3 className="text-[15px] font-semibold text-text">Your calendar is empty</h3>
+        <p className="mt-0.5 max-w-xl text-[13px] leading-relaxed text-text-2">This calendar shows the content Voom is actually executing — planned drafts, items waiting for your approval, and what is scheduled or published, across Instagram, TikTok and YouTube. Build your rolling plan, or create content directly, and each item appears here with its real status.</p>
+      </div>
+      <button type="button" className={BTN.outline} onClick={onCreate}><Icon name="plus" size={14} /> Create content</button>
+    </div>
+  );
+}
+
+/**
+ * Week view (Figma "Your week, planned"): seven real days — the selected day
+ * is lifted like the reference's card deck — then that day's items, this
+ * week's items waiting for approval, and the rest of the week. Every card is
+ * a real item and opens the same editor as the month view. The reference's
+ * "Best time" hint and List view are not shown: Voom computes neither.
+ */
+function WeekView({ week, selectedDay, today, byDate, onSelect, onOpen, onCreate, onMonth, empty, travel }: {
+  week: string[];
+  selectedDay: string;
+  today: string;
+  byDate: Map<string, CalendarEvent[]>;
+  onSelect: (date: string) => void;
+  onOpen: (event: CalendarEvent) => void;
+  onCreate: () => void;
+  onMonth: () => void;
+  empty: boolean;
+  travel: "next" | "prev" | null;
+}) {
+  const weekEvents = week.flatMap((date) => (byDate.get(date) ?? []).map((event) => ({ date, event })));
+  const dayEvents = byDate.get(selectedDay) ?? [];
+  const approvals = weekEvents.filter(({ event }) => event.type === "workflow" && (event.item.status === "needs_approval" || event.item.status === "ready_for_review"));
+  const later = weekEvents.filter(({ date }) => date > selectedDay);
+  return (
+    <div className="mb-5 min-w-0 space-y-6">
+      <section className="voom-card min-w-0 overflow-hidden px-3 py-5 sm:px-6" aria-label="This week">
+        <div className="text-center">
+          <h2 className="text-[22px] font-bold tracking-[-0.03em] text-text">{week.includes(today) ? "This week" : "Week of " + shortDate(week[0])}</h2>
+          <p className="text-[13px] text-text-2">{shortDate(week[0])} to {shortDate(week[6])}</p>
+        </div>
+        <ol key={week[0]} className={cx("mt-5 grid grid-cols-7 items-end gap-1 sm:gap-2.5 lg:gap-3", travel === "next" ? "voom-m-slide-next" : travel === "prev" ? "voom-m-slide-prev" : undefined)}>
+          {week.map((date) => {
+            const events = byDate.get(date) ?? [];
+            const selected = date === selectedDay;
+            const pending = events.filter((event) => event.type === "workflow" && (event.item.status === "needs_approval" || event.item.status === "ready_for_review")).length;
+            return (
+              <li key={date} className="min-w-0">
+                <button
+                  type="button"
+                  onClick={() => onSelect(date)}
+                  data-haptic="light"
+                  aria-pressed={selected}
+                  aria-label={`${weekdayOf(date)} ${shortDate(date)}: ${events.length} item${events.length === 1 ? "" : "s"}`}
+                  className={cx(
+                    "flex w-full min-w-0 flex-col rounded-[14px] p-1.5 text-left transition sm:rounded-[20px] sm:p-3.5 lg:min-h-[176px]",
+                    selected ? "voom-create-btn text-white shadow-[0_18px_36px_-18px_rgba(134,69,250,.9)] lg:-translate-y-3"
+                      : events.length ? "bg-[linear-gradient(160deg,#2a1d63,#141026)] text-white hover:brightness-110"
+                      : "border border-line bg-surface text-text-3 hover:border-[var(--brand-line)]",
+                  )}
+                >
+                  <span className="flex items-center justify-between gap-1">
+                    <span className="text-[10.5px] font-medium sm:text-[13px]">{weekdayOf(date)}</span>
+                    {date === today && <span className="hidden rounded-full bg-white/25 px-2 py-0.5 text-[11px] font-semibold lg:inline">Today</span>}
+                  </span>
+                  <span className="mt-0.5 text-[20px] font-bold leading-none tracking-[-0.04em] sm:mt-1 sm:text-[34px] lg:text-[44px]">{Number(date.slice(8))}</span>
+                  <span className="mt-1 hidden text-[12.5px] sm:block">{pending ? `${pending} to approve` : events.length ? `${events.length} post${events.length === 1 ? "" : "s"}` : "Open slot"}</span>
+                  <span className="mt-auto hidden flex-wrap gap-1 pt-3 lg:flex">
+                    {[...new Set(events.map((event) => channelOf(event)))].slice(0, 3).map((channel) => <ChannelGlyph key={channel} channel={channel} size={20} />)}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      </section>
+
+      <WeekGroup icon="cal" title={selectedDay === today ? "Today" : weekdayOf(selectedDay)} hint={`${longDate(selectedDay)} · ${dayEvents.length} item${dayEvents.length === 1 ? "" : "s"}`}>
+        {dayEvents.map((event) => <EventCard key={`day-${event.item.draftId}`} event={event} onOpen={onOpen} />)}
+        <button type="button" onClick={onCreate} className="flex min-h-[132px] flex-col justify-center rounded-[18px] border border-dashed border-[var(--brand-line)] bg-[var(--brand-soft-2)] p-4 text-left transition hover:bg-[var(--brand-soft)]">
+          <span className="grid h-9 w-9 place-items-center rounded-[10px] border border-[var(--brand-line)] bg-surface text-[var(--brand-ink)]"><Icon name="plus" size={16} /></span>
+          <b className="mt-3 text-[15px] font-semibold text-[var(--brand-ink)]">Add content</b>
+          <span className="text-[12.5px] text-text-2">Opens Create on any format.</span>
+        </button>
+      </WeekGroup>
+
+      {approvals.length > 0 && (
+        <WeekGroup icon="sparkles" title="Needs your approval" hint={`${approvals.length} waiting on you`} action={<Link href="/app/approvals" className="text-[13.5px] font-semibold text-[var(--brand-ink)] hover:underline">Review all</Link>}>
+          {approvals.map(({ event }) => <EventCard key={`appr-${event.item.draftId}`} event={event} onOpen={onOpen} />)}
+        </WeekGroup>
+      )}
+
+      <WeekGroup icon="clock" title="Later this week" hint={later.length ? `${later.length} still to go out` : "Nothing else this week"} action={<button type="button" onClick={onMonth} className="text-[13.5px] font-semibold text-[var(--brand-ink)] hover:underline">See the full month</button>}>
+        {later.length ? later.map(({ event }) => <EventCard key={`later-${event.item.draftId}`} event={event} onOpen={onOpen} />)
+          : <p className="col-span-full text-[13.5px] text-text-2">{empty ? "Nothing is planned yet. Build your plan in Marketing Plan or create content directly." : "No more items after this day in the selected week."}</p>}
+      </WeekGroup>
+    </div>
+  );
+}
+
+function WeekGroup({ icon, title, hint, action, children }: { icon: string; title: string; hint: string; action?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="min-w-0">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[19px] font-semibold tracking-[-0.02em] text-text">
+          <Icon name={icon} size={18} className="text-[var(--brand)]" /> {title}
+          <span className="text-[13px] font-normal text-text-2">{hint}</span>
+        </h2>
+        {action}
+      </div>
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 sm:grid-cols-2 xl:grid-cols-4">{children}</div>
+    </section>
+  );
+}
+
+function EventCard({ event, onOpen }: { event: CalendarEvent; onOpen: (event: CalendarEvent) => void }) {
+  const tone = eventTone(event);
+  return (
+    <button type="button" onClick={() => onOpen(event)} title={eventTitle(event)}
+      className="voom-card flex min-h-[132px] min-w-0 flex-col p-4 text-left transition hover:border-[var(--brand-line)]">
+      <span className="flex items-center justify-between gap-2">
+        <ChannelGlyph channel={channelOf(event)} size={24} />
+        <Icon name="chevR" size={15} className="text-text-3" />
+      </span>
+      <b className="mt-3 line-clamp-2 text-[15px] font-semibold leading-snug text-text">{event.item.concept}</b>
+      <span className="mt-0.5 text-[12.5px] text-text-2">{event.item.dayLabel} · {event.item.localTime} · {channelIdentity(channelOf(event)).label}</span>
+      <span className="mt-auto pt-3"><StatusChip status={event.type === "workflow" ? event.item.status : tone === "green" ? "published" : tone === "red" ? "failed" : "scheduled"} label={event.item.statusLabel} small /></span>
+    </button>
   );
 }
 
@@ -443,7 +597,8 @@ function shift(view: { month: number; year: number }, delta: number) {
   return { month: value, year: view.year };
 }
 function buildCells(year: number, month: number) {
-  const first = new Date(Date.UTC(year, month, 1)).getUTCDay();
+  // Weeks start on Monday, as in the reference.
+  const first = (new Date(Date.UTC(year, month, 1)).getUTCDay() + 6) % 7;
   const days = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
   const prev = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const cells: { day: number; out: boolean; date: string }[] = [];
@@ -452,24 +607,35 @@ function buildCells(year: number, month: number) {
   while (cells.length % 7) cells.push({ day: cells.length - days - first + 1, out: true, date: "" });
   return cells;
 }
+/** The seven local dates (Mon–Sun) of the week containing `date`. */
+function weekOf(date: string): string[] {
+  const [year, month, day] = date.split("-").map(Number);
+  const at = new Date(Date.UTC(year, month - 1, day));
+  const monday = addDaysIso(date, -((at.getUTCDay() + 6) % 7));
+  return Array.from({ length: 7 }, (_, index) => addDaysIso(monday, index));
+}
+function addDaysIso(date: string, days: number): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const at = new Date(Date.UTC(year, month - 1, day + days));
+  return iso(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate());
+}
+function weekdayOf(date: string): string {
+  const [year, month, day] = date.split("-").map(Number);
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+}
+function shortDate(date: string): string {
+  const [, month, day] = date.split("-").map(Number);
+  return `${day} ${MONTHS[month - 1].slice(0, 3)}`;
+}
+function longDate(date: string): string {
+  const [year, month, day] = date.split("-").map(Number);
+  return `${weekdayOf(date)} ${day} ${MONTHS[month - 1]} ${year}`;
+}
 function iso(year: number, month: number, day: number) {
   return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 function countByStatus(items: WorkflowView[]) {
   return items.reduce<Record<string, number>>((acc, item) => { acc[item.status] = (acc[item.status] ?? 0) + 1; return acc; }, {});
-}
-
-/** The ONE state vocabulary, grouped for the legend strip — counts of real rows. */
-const STATE_GROUP_ORDER: StateGroup[] = ["attention", "review", "live", "ready", "open"];
-function groupCounts(counts: Record<string, number>): { group: StateGroup; count: number }[] {
-  const totals = new Map<StateGroup, number>();
-  for (const [status, count] of Object.entries(counts)) {
-    const group = stateGroup(status);
-    totals.set(group, (totals.get(group) ?? 0) + count);
-  }
-  return STATE_GROUP_ORDER
-    .map((group) => ({ group, count: totals.get(group) ?? 0 }))
-    .filter((entry) => entry.count > 0);
 }
 
 /**
@@ -486,11 +652,4 @@ function eventAccent(event: CalendarEvent): string {
   const tone = eventTone(event);
   if (tone !== "grey") return TONE_ACCENT_HEX[tone];
   return CHANNEL_ACCENT_HEX[channelIdentity(channelOf(event)).key as ChannelKey] ?? TONE_ACCENT_HEX.grey;
-}
-function groupAccent(group: StateGroup): string {
-  if (group === "attention") return "var(--amber)";
-  if (group === "review") return "var(--amber)";
-  if (group === "live") return "var(--blue)";
-  if (group === "ready") return "var(--brand)";
-  return "var(--line-strong)";
 }

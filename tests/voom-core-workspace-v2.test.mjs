@@ -58,7 +58,7 @@ const FILES = {
   plan: ["app/app/(shell)/plan/page.tsx", "components/voom/operating/PlanWorkspace.tsx", "components/voom/operating/PlanItemCard.tsx"],
   calendar: ["app/app/(shell)/calendar/page.tsx"],
   studio: ["app/app/(shell)/studio/page.tsx"],
-  performance: ["app/app/(shell)/performance/page.tsx"],
+  performance: ["app/app/(shell)/performance/page.tsx", "components/voom/performance/PerformanceView.tsx"],
   approvals: ["app/app/(shell)/approvals/page.tsx", "components/voom/operating/ApprovalsWorkspace.tsx", "components/voom/operating/ApprovalsBoard.tsx"],
 };
 
@@ -70,7 +70,7 @@ const FILES = {
 const REQUIRES_PRESENTATION = new Set(["plan", "calendar", "studio"]);
 
 /** Server components only: the pages Next renders on the server. */
-const SERVER_PAGES = ["app/app/(shell)/plan/page.tsx", "app/app/(shell)/performance/page.tsx", "app/app/(shell)/approvals/page.tsx"];
+const SERVER_PAGES = ["app/app/(shell)/plan/page.tsx", "app/app/(shell)/performance/page.tsx", "components/voom/performance/PerformanceView.tsx", "app/app/(shell)/approvals/page.tsx"];
 
 /** Strips comments so a check never trips over documentation that names the pattern. */
 const withoutComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
@@ -121,7 +121,9 @@ test("the five redesigned surfaces share one vocabulary instead of five design s
     let usesPresentation = false;
     for (const file of files) {
       const source = withoutComments(await readRepoFile(file));
-      if (/@\/components\/voom\/workspace\/ui/.test(source)) usesPrimitives = true;
+      // The redesign's shared module (components/voom/redesign/ui) builds on the
+      // same presentation vocabulary, so either shared layer satisfies this.
+      if (/@\/components\/voom\/(workspace|redesign)\/ui/.test(source)) usesPrimitives = true;
       if (/@\/lib\/voom\/workflow\/presentation/.test(source)) usesPresentation = true;
       // One tone mapping, one channel identity: the old per-page colour maps are
       // gone, so a status can no longer be amber on one screen and red on another.
@@ -193,9 +195,31 @@ const startFor = (name) => `
   })();
 `;
 
+/**
+ * Fetch-driven surfaces show a loading state first. Before reading the page,
+ * wait (up to 3s) for that surface's real content instead of relying on an
+ * unrelated entrance animation happening to delay the read; the loaded text
+ * then replaces `bodyText`.
+ */
+const waitForLoaded = (scenario) => {
+  const marker = LOADED_MARKER[scenario.name];
+  if (!marker || scenario.evaluate) return scenario;
+  return {
+    ...scenario,
+    evaluate: `(async () => {
+      const marker = ${JSON.stringify(marker)};
+      for (let i = 0; i < 60 && !document.body.innerText.includes(marker); i++) await new Promise((r) => setTimeout(r, 50));
+      return { __loadedText: document.body.innerText };
+    })()`,
+  };
+};
+
 const measured = async (scenarios) => {
   try {
-    return await measureRenderedPages(scenarios);
+    const results = await measureRenderedPages(scenarios.map(waitForLoaded));
+    return results.map((result) => (result.evaluate && typeof result.evaluate.__loadedText === "string"
+      ? { ...result, bodyText: result.evaluate.__loadedText, evaluate: null }
+      : result));
   } catch (error) {
     if (error instanceof RenderedSurfaceUnavailable) return null;
     throw error;
@@ -263,7 +287,9 @@ test("each surface really renders its loaded content at every width", async (t) 
   }
 });
 
-test("light mode keeps the refracted Voom workspace rather than flattening to white SaaS", async (t) => {
+test("light mode renders the redesign's light card surfaces (Batch 2)", async (t) => {
+  // The approved redesign (Figma "33 — Marketing Plan · Week view") replaces
+  // the frosted-glass panels and atmosphere layers with flat light cards.
   const [result] = (await measured([
     {
       name: "light tokens",
@@ -273,16 +299,13 @@ test("light mode keeps the refracted Voom workspace rather than flattening to wh
       onDocumentStart: startFor("plan"),
       evaluate: `(() => {
         const root = getComputedStyle(document.documentElement);
-        const panel = document.querySelector(".ws-panel");
-        const spectrum = document.querySelector(".ws-spectrum");
+        const card = document.querySelector(".voom-card");
         return {
           theme: document.documentElement.getAttribute("data-theme"),
           background: getComputedStyle(document.body).backgroundColor,
           iridescent: root.getPropertyValue("--iridescent").trim().slice(0, 40),
-          panelBackground: panel ? getComputedStyle(panel).backgroundColor : null,
-          panelIsTranslucent: panel ? getComputedStyle(panel).backgroundColor.includes("rgba") : false,
-          atmosphere: Boolean(spectrum),
-          spectrumFilter: spectrum ? getComputedStyle(spectrum).backgroundImage.slice(0, 60) : null,
+          hasCard: Boolean(card),
+          atmosphere: Boolean(document.querySelector(".ws-spectrum, .ws-aurora, .ws-orbit")),
           bodyText: document.body.innerText.slice(0, 200),
         };
       })()`,
@@ -292,10 +315,9 @@ test("light mode keeps the refracted Voom workspace rather than flattening to wh
 
   assert.equal(result.evaluate.theme, "light", "the default workspace is the light one");
   assert.equal(result.evaluate.background, "rgb(247, 248, 251)");
-  assert.match(result.evaluate.iridescent, /linear-gradient/, "the refracted spectrum token is still defined");
-  assert.equal(result.evaluate.atmosphere, true, "the atmospheric light volume is present in light mode too");
-  assert.match(result.evaluate.spectrumFilter ?? "", /gradient/, "the spectrum band keeps real colour in light mode");
-  assert.equal(result.evaluate.panelIsTranslucent, true, "workspace panels are frosted glass, not flat white");
+  assert.match(result.evaluate.iridescent, /linear-gradient/, "the brand spectrum token is still defined");
+  assert.equal(result.evaluate.hasCard, true, "the plan renders the redesign's card surfaces");
+  assert.equal(result.evaluate.atmosphere, false, "the flat redesign adds no decorative atmosphere layers");
 });
 
 test("the mobile shell survives the redesign: navigation stays and content is not clipped", async (t) => {

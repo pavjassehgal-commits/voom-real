@@ -172,7 +172,7 @@ test("every file path sits in the owner's own folder; anything else is refused",
   for (const bad of [`${OWNER}/../${OTHER}/logo/${uuid(1)}.png`, `${OWNER}/logo/${uuid(1)}.gif`, `${OWNER}/videos/${uuid(1)}.png`, `/${OWNER}/logo/${uuid(1)}.png`, 42, null]) {
     assert.equal(assets.isOwnBrandAssetPath(OWNER, bad), false, `refused: ${String(bad)}`);
   }
-  assert.equal(assets.BRAND_KIT_BUCKET, "brand-kit", "the private bucket from migration 0059");
+  assert.equal(assets.BRAND_KIT_BUCKET, "brand-kit", "the private bucket from migration 0075");
 });
 
 /* ── 2. The reference list ───────────────────────────────────────────────── */

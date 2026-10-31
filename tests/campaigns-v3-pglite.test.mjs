@@ -256,7 +256,7 @@ test("0045 backfills existing Campaigns v2 rows and leaves every one of them rea
   // ── Migrate ──
   const applied = await applyPending();
   assert.ok(applied.includes(MIGRATION_0045), "0045 is applied to the legacy database");
-  assert.equal(applied[applied.length - 1], "0059_brand_kits.sql", "0059 (Brand Kit v2 storage) is the checked-in head");
+  assert.equal(applied[applied.length - 1], "0075_brand_kits.sql", "0075 (Brand Kit v2 storage; written as 0059, renumbered at the 2026-11-01 merge with main) is the checked-in head");
 
   const q = async (sql, params = []) => (await legacy.query(sql, params)).rows;
 

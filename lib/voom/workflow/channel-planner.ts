@@ -9,20 +9,20 @@
  */
 
 import {
-  SOCIAL_CHANNEL_LABELS,
-  SOCIAL_FORMATS,
-  SOCIAL_FORMAT_LABELS,
-  SOCIAL_MEDIA_CHANNELS,
-  actionChannelFor,
-  isValidChannelFormat,
-  parseActionChannel,
-  type SocialFormat,
-  type SocialMediaChannel,
-} from "../../social/channels.ts";
+  PLAN_CHANNEL_LABELS,
+  PLAN_FORMATS,
+  PLAN_FORMAT_LABELS,
+  PLAN_CHANNELS,
+  planActionChannelFor,
+  isPlanChannelFormat,
+  parsePlanActionChannel,
+  type PlanFormat,
+  type PlanChannel,
+} from "./channels.ts";
 
 const LOCAL_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-export type PlannedContentType = "post" | "reel" | "story" | "video" | "short";
+export type PlannedContentType = "post" | "reel" | "story" | "video" | "short" | "text";
 
 export interface ExistingPlanAssignment {
   draftId?: string;
@@ -43,8 +43,8 @@ export interface ChannelCoverage {
 
 export interface AssignedPlanSlot {
   date: string;
-  channel: SocialMediaChannel;
-  format: SocialFormat;
+  channel: PlanChannel;
+  format: PlanFormat;
   contentType: PlannedContentType;
   /** Existing legacy date keys are preserved; new slots use date|channel_format. */
   slotKey: string;
@@ -63,31 +63,31 @@ export interface PlanAssignmentResult {
  * channel_format identifiers. Email, retired channels and unknown values are
  * excluded. The output is always in product order so tie-breaking is stable.
  */
-export function normalizeSelectedSocialChannels(value: unknown): SocialMediaChannel[] {
+export function normalizeSelectedSocialChannels(value: unknown): PlanChannel[] {
   if (!Array.isArray(value)) return [];
   const selected = new Set<string>();
   for (const entry of value) {
     if (typeof entry !== "string") continue;
     const normalized = entry.trim().toLowerCase();
     if (!normalized) continue;
-    if ((SOCIAL_MEDIA_CHANNELS as readonly string[]).includes(normalized)) {
+    if ((PLAN_CHANNELS as readonly string[]).includes(normalized)) {
       selected.add(normalized);
       continue;
     }
-    for (const channel of SOCIAL_MEDIA_CHANNELS) {
-      if (SOCIAL_CHANNEL_LABELS[channel].toLowerCase() === normalized) selected.add(channel);
+    for (const channel of PLAN_CHANNELS) {
+      if (PLAN_CHANNEL_LABELS[channel].toLowerCase() === normalized) selected.add(channel);
     }
-    const parsed = parseActionChannel(normalized.replace(/[\s-]+/g, "_"));
+    const parsed = parsePlanActionChannel(normalized.replace(/[\s-]+/g, "_"));
     if (parsed && parsed.channel !== "email") selected.add(parsed.channel);
   }
-  return SOCIAL_MEDIA_CHANNELS.filter((channel) => selected.has(channel));
+  return PLAN_CHANNELS.filter((channel) => selected.has(channel));
 }
 
 /** Validates the date-only / date|channel_format source-plan identity. */
 export function parseWorkflowSlotIdentity(value: unknown): {
   date: string;
-  channel: SocialMediaChannel | null;
-  format: SocialFormat | null;
+  channel: PlanChannel | null;
+  format: PlanFormat | null;
   legacy: boolean;
 } | null {
   if (typeof value !== "string") return null;
@@ -96,7 +96,7 @@ export function parseWorkflowSlotIdentity(value: unknown): {
   if (!isRealLocalDate(date)) return null;
   if (separator < 0) return { date, channel: null, format: null, legacy: true };
   if (separator !== date.length || value.indexOf("|", separator + 1) >= 0) return null;
-  const parsed = parseActionChannel(value.slice(separator + 1));
+  const parsed = parsePlanActionChannel(value.slice(separator + 1));
   if (!parsed || parsed.channel === "email" || !parsed.format) return null;
   return {
     date,
@@ -112,12 +112,12 @@ export function isRealLocalDate(value: string): boolean {
   return Number.isFinite(instant) && new Date(instant).toISOString().slice(0, 10) === value;
 }
 
-export function workflowSlotKey(date: string, channel: SocialMediaChannel, format: SocialFormat): string {
-  return `${date}|${actionChannelFor(channel, format)}`;
+export function workflowSlotKey(date: string, channel: PlanChannel, format: PlanFormat): string {
+  return `${date}|${planActionChannelFor(channel, format)}`;
 }
 
-export function socialFormatLabel(channel: SocialMediaChannel, format: SocialFormat): string {
-  return SOCIAL_FORMAT_LABELS[channel][format] ?? SOCIAL_CHANNEL_LABELS[channel];
+export function socialFormatLabel(channel: PlanChannel, format: PlanFormat): string {
+  return PLAN_FORMAT_LABELS[channel][format] ?? PLAN_CHANNEL_LABELS[channel];
 }
 
 /**
@@ -129,7 +129,7 @@ export function socialFormatLabel(channel: SocialMediaChannel, format: SocialFor
 export function planChannelAssignments(input: {
   dates: string[];
   today: string;
-  selectedChannels: SocialMediaChannel[];
+  selectedChannels: PlanChannel[];
   existing?: ExistingPlanAssignment[];
   coverage?: ChannelCoverage[];
 }): PlanAssignmentResult {
@@ -141,8 +141,8 @@ export function planChannelAssignments(input: {
   const candidatesByDate = new Map<string, Array<{
     source: ExistingPlanAssignment;
     date: string;
-    channel: SocialMediaChannel;
-    format: SocialFormat;
+    channel: PlanChannel;
+    format: PlanFormat;
     protected: boolean;
     identity: string;
   }>>();
@@ -155,6 +155,14 @@ export function planChannelAssignments(input: {
     const protectedWork = item.protected === true || item.status === "approved" || item.status === "published";
     const eligible = selectedSet.has(channelFormat.channel) || protectedWork;
     const future = identity.date >= input.today;
+
+    // A rejected idea no longer fills its date. It is detached from the plan
+    // (kept, unchanged, in the Content library) so the slot can be replaced
+    // instead of leaving a dead "Rejected" card that blocks the date forever.
+    if (item.status === "rejected" && !protectedWork) {
+      if (future && item.draftId) detach.add(item.draftId);
+      continue;
+    }
 
     if (!eligible && future && item.draftId) {
       detach.add(item.draftId);
@@ -199,13 +207,13 @@ export function planChannelAssignments(input: {
     }
   }
 
-  const counts = new Map<SocialMediaChannel, number>(selected.map((channel) => [channel, 0]));
-  const formatCounts = new Map<SocialMediaChannel, Map<SocialFormat, number>>();
+  const counts = new Map<PlanChannel, number>(selected.map((channel) => [channel, 0]));
+  const formatCounts = new Map<PlanChannel, Map<PlanFormat, number>>();
   for (const channel of selected) {
-    formatCounts.set(channel, new Map((SOCIAL_FORMATS[channel] as readonly SocialFormat[]).map((format) => [format, 0])));
+    formatCounts.set(channel, new Map((PLAN_FORMATS[channel] as readonly PlanFormat[]).map((format) => [format, 0])));
   }
   const occupied = new Set(assignedByDate.keys());
-  const countAssignment = (channel: SocialMediaChannel, format: SocialFormat) => {
+  const countAssignment = (channel: PlanChannel, format: PlanFormat) => {
     counts.set(channel, (counts.get(channel) ?? 0) + 1);
     const byFormat = formatCounts.get(channel);
     if (byFormat) byFormat.set(format, (byFormat.get(format) ?? 0) + 1);
@@ -239,7 +247,7 @@ export function planChannelAssignments(input: {
     const channel = selected.reduce((best, candidate) =>
       (counts.get(candidate) ?? 0) < (counts.get(best) ?? 0) ? candidate : best,
     selected[0]);
-    const supportedFormats = SOCIAL_FORMATS[channel] as readonly SocialFormat[];
+    const supportedFormats = PLAN_FORMATS[channel] as readonly PlanFormat[];
     const byFormat = formatCounts.get(channel)!;
     const format = supportedFormats.reduce((best, candidate) =>
       (byFormat.get(candidate) ?? 0) < (byFormat.get(best) ?? 0) ? candidate : best,
@@ -262,30 +270,31 @@ export function planChannelAssignments(input: {
 
 function normalizedExistingPair(
   item: ExistingPlanAssignment,
-  keyChannel: SocialMediaChannel | null,
-  keyFormat: SocialFormat | null,
-): { channel: SocialMediaChannel; format: SocialFormat } | null {
+  keyChannel: PlanChannel | null,
+  keyFormat: PlanFormat | null,
+): { channel: PlanChannel; format: PlanFormat } | null {
   // Composite slot identity is the server-owned assignment. Persisted columns
   // are checked on write/read, but a mismatch must never relabel the key.
   if (keyChannel && keyFormat) return { channel: keyChannel, format: keyFormat };
-  if (isValidChannelFormat(item.channel, item.format)) {
-    return { channel: item.channel as SocialMediaChannel, format: item.format as SocialFormat };
+  if (isPlanChannelFormat(item.channel, item.format)) {
+    return { channel: item.channel as PlanChannel, format: item.format as PlanFormat };
   }
   return null;
 }
 
-function normalizedCoveragePair(commitment: ChannelCoverage): { channel: SocialMediaChannel; format: SocialFormat } | null {
-  if (isValidChannelFormat(commitment.channel, commitment.format)) {
-    return { channel: commitment.channel as SocialMediaChannel, format: commitment.format as SocialFormat };
+function normalizedCoveragePair(commitment: ChannelCoverage): { channel: PlanChannel; format: PlanFormat } | null {
+  if (isPlanChannelFormat(commitment.channel, commitment.format)) {
+    return { channel: commitment.channel as PlanChannel, format: commitment.format as PlanFormat };
   }
-  const parsed = parseActionChannel(commitment.channel);
+  const parsed = parsePlanActionChannel(commitment.channel);
   if (parsed && parsed.channel !== "email" && parsed.format) {
     return { channel: parsed.channel, format: parsed.format };
   }
   return null;
 }
 
-function contentTypeFor(channel: SocialMediaChannel, format: SocialFormat): PlannedContentType {
+function contentTypeFor(channel: PlanChannel, format: PlanFormat): PlannedContentType {
+  if (channel === "linkedin") return "text";
   if (channel === "instagram") return format as "post" | "reel" | "story";
   if (channel === "youtube" && format === "short") return "short";
   return "video";

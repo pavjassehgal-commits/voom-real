@@ -34,6 +34,7 @@ const patchSchema = z.object({
   /** Explicit YouTube declarations. null CLEARS a declaration (never a guess). */
   madeForKids: z.boolean().nullable().optional(),
   privacy: z.enum(["public", "private", "unlisted"]).nullable().optional(),
+  containsSyntheticMedia: z.boolean().nullable().optional(),
   /**
    * Explicit TikTok privacy declaration (TikTok's own four values).
    * null CLEARS the declaration (never a guess) — TikTok has no default
@@ -88,6 +89,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     });
   } catch (reason) {
     const code = reason instanceof Error ? reason.message : "";
+    if (code === "youtube_synthetic_declaration_required") {
+      return Response.json({ error: "Review the altered/synthetic-content declaration before approving this generated video." }, { status: 400 });
+    }
     if (code.includes("publish_enqueue_failed")) {
       const channel = code.startsWith("youtube_") ? "YouTube" : "TikTok";
       return Response.json({
@@ -103,6 +107,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       return Response.json({
         error: "Voom couldn't confirm the durable queue cancellation. No draft or calendar changes were saved. Retry when the queue is available.",
       }, { status: 503 });
+    }
+    if (code === "social_draft_changed") {
+      return Response.json({
+        error: "This content changed while you were approving it. Nothing was approved or published — review the latest version and approve again.",
+      }, { status: 409 });
     }
     if (code === "social_calendar_sync_failed") {
       return Response.json({

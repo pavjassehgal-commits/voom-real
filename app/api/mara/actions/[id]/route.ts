@@ -1,8 +1,9 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
-import { executeConfirmedAction } from "@/lib/mara/tools";
+import { APPROVAL_INCOMPLETE, APPROVAL_STALE, executeConfirmedAction } from "@/lib/mara/tools";
 import { createClient } from "@/utils/supabase/server";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { resyncWorkflowItem } from "@/lib/voom/workflow/service";
+import { rejectPostDraft, reopenStaleDraftApproval } from "@/lib/post/server-data";
 import { z } from "zod";
 import { productionStatusFor, reelProductionMethods } from "@/lib/mara/reel-production";
 
@@ -67,6 +68,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
 
   if (decision === "cancel") {
+    const { data: current } = await db.from("mara_pending_actions").select("tool_name,sanitized_arguments,status")
+      .eq("id", id).eq("owner_user_id", user.id).eq("status", "pending").maybeSingle();
+    if (!current) return currentAction(db, user.id, id);
+    const sourceDraftId = current.sanitized_arguments?.sourceDraftId;
+    if (current.tool_name === "propose_calendar_item" && typeof sourceDraftId === "string") {
+      const rejected = await rejectPostDraft(admin, user.id, sourceDraftId).catch(() => null);
+      if (!rejected) return friendlyFailure();
+    }
     const { data, error } = await admin.from("mara_pending_actions").update({ status: "cancelled", result_summary: "Cancelled. Nothing changed.", executed_at: new Date().toISOString() })
       .eq("id", id).eq("owner_user_id", user.id).eq("status", "pending")
       .select("id,conversation_id,message_id,tool_name,summary,old_value,new_value,status,result_summary,error_summary,created_at,updated_at,executed_at").maybeSingle();
@@ -93,7 +102,22 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     await admin.from("mara_tool_runs").update({ status: "succeeded", result_summary: result.summary.slice(0, 1000), completed_at: new Date().toISOString() }).eq("pending_action_id", id).eq("owner_user_id", user.id);
     const { data } = await db.from("mara_pending_actions").select("id,conversation_id,message_id,tool_name,summary,old_value,new_value,status,result_summary,error_summary,created_at,updated_at,executed_at").eq("id", id).eq("owner_user_id", user.id).single();
     return Response.json({ action: data, message: result.summary });
-  } catch {
+  } catch (err) {
+    const staleDraftId = claimed.sanitized_arguments?.sourceDraftId;
+    const incomplete = err instanceof Error && err.message === APPROVAL_INCOMPLETE;
+    if (err instanceof Error && (err.message === APPROVAL_STALE || incomplete) && claimed.tool_name === "propose_calendar_item" && typeof staleDraftId === "string") {
+      // Nothing was approved: the draft changed after this card was shown.
+      // Re-open it on the current version so the owner confirms what will publish.
+      const reopened = await reopenStaleDraftApproval(admin, user.id, id, staleDraftId).then(() => true, () => false);
+      if (!reopened) return friendlyFailure();
+      const { data } = await db.from("mara_pending_actions").select("id,conversation_id,message_id,tool_name,summary,old_value,new_value,status,result_summary,error_summary,created_at,updated_at,executed_at").eq("id", id).eq("owner_user_id", user.id).maybeSingle();
+      return Response.json({
+        action: data,
+        error: incomplete
+          ? "This post's image or video isn't ready yet. Nothing was approved — review the complete post once its media is there."
+          : "This draft changed while you were confirming. Nothing was approved — review the latest version and confirm again.",
+      }, { status: 409 });
+    }
     await admin.from("mara_pending_actions").update({ status: "failed", error_summary: "Voom could not apply this change safely.", executed_at: new Date().toISOString() }).eq("id", id).eq("owner_user_id", user.id).eq("status", "executing");
     await admin.from("mara_tool_runs").update({ status: "failed", error_summary: "The confirmed Voom operation failed safely.", completed_at: new Date().toISOString() }).eq("pending_action_id", id).eq("owner_user_id", user.id);
     return friendlyFailure();

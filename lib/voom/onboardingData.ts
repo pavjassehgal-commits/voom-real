@@ -1,4 +1,4 @@
-import { SOCIAL_CHANNELS, SOCIAL_CHANNEL_LABELS } from "@/lib/social/channels";
+import { PLAN_CHANNELS, PLAN_CHANNEL_LABELS } from "@/lib/voom/workflow/channels";
 
 export const Q_INDUSTRY: [string, string][] = [
   ["🍽️", "Restaurant / Café"],
@@ -36,13 +36,13 @@ export const OB_TONE = ["Friendly", "Premium", "Playful", "Professional", "Bold"
 
 /**
  * The channels onboarding may offer: exactly the channels Voom genuinely
- * supports in V1, derived from the ONE canonical channel vocabulary
- * (lib/social/channels.ts) so this list can never drift from the product.
+ * supports, derived from the planning vocabulary (including LinkedIn text).
+ * Email remains a separate preference, never a social planning slot.
  * Historical `businesses.preferred_channels` values outside this list are
  * preserved as stored — Settings round-trips them verbatim and nothing
  * rewrites them.
  */
-export const Q_CHANNELS: string[] = SOCIAL_CHANNELS.map((channel) => SOCIAL_CHANNEL_LABELS[channel]);
+export const Q_CHANNELS: string[] = [...PLAN_CHANNELS.map((channel) => PLAN_CHANNEL_LABELS[channel]), "Email"];
 
 /**
  * The channels the onboarding wizard offers (Brand Kit v2): the two the new
@@ -51,8 +51,8 @@ export const Q_CHANNELS: string[] = SOCIAL_CHANNELS.map((channel) => SOCIAL_CHAN
  * and the Brand Hub use) so an existing account keeps YouTube and Email.
  */
 export const ONBOARDING_CHANNELS: { label: string; available: boolean }[] = [
-  { label: SOCIAL_CHANNEL_LABELS.instagram, available: true },
-  { label: SOCIAL_CHANNEL_LABELS.tiktok, available: true },
+  { label: PLAN_CHANNEL_LABELS.instagram, available: true },
+  { label: PLAN_CHANNEL_LABELS.tiktok, available: true },
   { label: "LinkedIn", available: false },
 ];
 

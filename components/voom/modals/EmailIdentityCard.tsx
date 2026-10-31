@@ -249,7 +249,7 @@ export function EmailIdentityCard() {
       </p>
 
       {loadError && (
-        <div role="alert" className="mb-3.5 rounded-xl border border-red-900/40 bg-red-950/30 px-3.5 py-2.5 text-sm text-red-300">
+        <div role="alert" className="mb-3.5 rounded-xl border border-[var(--red)]/25 bg-[var(--red-soft)] px-3.5 py-2.5 text-sm text-[var(--red)]">
           {loadError}
         </div>
       )}
@@ -381,7 +381,7 @@ export function EmailIdentityCard() {
       {message && (
         <div
           role={message.kind === "err" ? "alert" : "status"}
-          className={`mt-3.5 rounded-xl px-3.5 py-2.5 text-sm ${message.kind === "ok" ? "border border-green/40 bg-green/10 text-green" : "border border-red-900/40 bg-red-950/30 text-red-300"}`}
+          className={`mt-3.5 rounded-xl px-3.5 py-2.5 text-sm ${message.kind === "ok" ? "border border-green/40 bg-green/10 text-green" : "border border-[var(--red)]/25 bg-[var(--red-soft)] text-[var(--red)]"}`}
         >
           {message.text}
         </div>

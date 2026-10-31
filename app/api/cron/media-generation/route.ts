@@ -1,4 +1,6 @@
 import { runVideoGenerationPoller, VIDEO_GENERATION_POLL_INTERVAL_MINUTES } from "@/lib/mara/video-poller";
+import { reconcilePendingCreditTransactions } from "@/lib/billing/ledger";
+import { createAdminClient } from "@/utils/supabase/admin";
 import { bearerMatches } from "@/utils/bearer-auth";
 
 export const runtime = "nodejs";
@@ -26,8 +28,9 @@ export async function GET(request: Request) {
 
   try {
     const result = await runVideoGenerationPoller();
+    const creditReconciliation = await reconcilePendingCreditTransactions(createAdminClient());
     return Response.json(
-      { ...result, cadenceMinutes: VIDEO_GENERATION_POLL_INTERVAL_MINUTES },
+      { ...result, creditReconciliation, cadenceMinutes: VIDEO_GENERATION_POLL_INTERVAL_MINUTES },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch {

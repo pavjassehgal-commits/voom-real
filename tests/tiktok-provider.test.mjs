@@ -210,6 +210,11 @@ function createPgliteAdmin(db) {
           const result = await db.query(sql, params);
           return { data: mode === "insert" ? null : result.rows, error: null };
         }
+        if (mode === "delete") {
+          const { sql: whereSql, params } = assembleWhere();
+          const result = await db.query(`delete from public.${table}${whereSql} returning *`, params);
+          return { data: result.rows, error: null };
+        }
         if (mode === "update") {
           const keys = Object.keys(writeValues);
           const params = keys.map((key) => writeValues[key]);
@@ -259,6 +264,7 @@ function createPgliteAdmin(db) {
         insert(values) { mode = "insert"; writeValues = values; return wrap(); },
         upsert(values, options) { mode = "upsert"; writeValues = values; upsertConflict = options?.onConflict ?? null; return wrap(); },
         update(values) { mode = "update"; writeValues = values; return builder; },
+        delete() { mode = "delete"; return builder; },
         eq(column, value) { filters.push([`"${column}" = #0`, [value]]); return builder; },
         in(column, values) {
           const holders = values.map((_, index) => `#${index}`).join(",");
@@ -416,11 +422,18 @@ async function makeDraft(ownerId, { kind = "tiktok_video", format = "video", sta
 
 async function makeAsset(ownerId, draftId, { mime = "video/mp4", byteSize = 1024, status = "uploaded" } = {}) {
   const { db } = await liteDb();
+  const before = await db.query("select status from public.mara_drafts where id = $1", [draftId]);
   await db.query(
     `insert into public.post_draft_assets (owner_user_id, draft_id, storage_path, display_name, mime_type, byte_size, status)
      values ($1, $2, $3, 'video.mp4', $4, $5, $6)`,
     [ownerId, draftId, `tiktok/${ownerId}/${draftId}-video.mp4`, mime, byteSize, status],
   );
+  // Complete-content approval (0059): attaching the video revokes an earlier
+  // approval. Fixtures that model "an approved post" mean one approved WITH
+  // its video, so the owner's approval is given again for the complete post.
+  if (before.rows[0]?.status === "approved") {
+    await db.query("update public.mara_drafts set status = 'approved' where id = $1 and status = 'draft'", [draftId]);
+  }
 }
 
 /**
@@ -2202,9 +2215,11 @@ test("approval alone (Autopilot, campaigns, an old privacy choice or owner defau
   // (scheduledAt is passed because PGlite returns timestamps as Date objects, unlike Supabase's ISO strings.)
   const edited = await socialDrafts.updateSocialDraft(admin, OWNER_A, second, { caption: "A different caption", scheduledAt });
   assert.equal(edited.tiktokPost, null, "the confirmation no longer covers the edited caption");
-  row = await one("select status, privacy_level from public.tiktok_publish_queue where draft_id = $1", [second]);
-  assert.equal(row.status, "needs_declaration");
-  assert.equal(row.privacy_level, null);
+  // Approval integrity (0059): editing approved content also withdraws the
+  // approval itself, so the unclaimed queue row is cancelled, not re-parked.
+  assert.equal(edited.status, "draft");
+  row = await one("select status from public.tiktok_publish_queue where draft_id = $1", [second]);
+  assert.equal(row.status, "cancelled");
 });
 
 test("reconciliation: PUBLISH_COMPLETE publishes, a fail-closed row is recovered read-only, and a provider-attested 'does not exist' re-arms guarded", async () => {
@@ -2449,10 +2464,14 @@ test("rolling-plan channel assignment requires no database migration", async (t)
     t.skip("git history with a `main` branch is unavailable in this checkout");
     return;
   }
-  // Trend Intelligence and Brand Kit v2 ship their own reviewed migrations; slot assignment added none.
-  const TREND_MIGRATIONS = ["supabase/migrations/0055_trend_intelligence.sql", "supabase/migrations/0056_trend_mara_workflow_context.sql", "supabase/migrations/0057_wikidata_event_source.sql", "supabase/migrations/0058_universal_trend_sources.sql", "supabase/migrations/0059_brand_kits.sql"];
-  const added = current.filter((file) => !mainFiles.includes(file) && !TREND_MIGRATIONS.includes(file));
+  // Future unrelated migrations are allowed (Trend Intelligence, Brand Kit v2 and main's
+  // 0059-0070 all ship their own). This regression concerns only the rolling-plan
+  // slot-assignment change: it must remain server-owned and must not add SQL coupling to
+  // its slot/channel fields.
+  const added = current.filter((file) => !mainFiles.includes(file));
+  const addedSql = (await Promise.all(added.map(async (file) => [file, await readFile(file, "utf8")])))
+    .filter(([, body]) => /source_plan_item_key|planChannelAssignments|channel assignment/i.test(body));
   const removed = mainFiles.filter((file) => !current.includes(file));
-  assert.deepEqual(added, [], "no new migration was needed for server-owned slot assignment");
+  assert.deepEqual(addedSql, [], "no new migration was needed for server-owned slot assignment");
   assert.deepEqual(removed, [], "all pre-existing migrations remain untouched");
 });

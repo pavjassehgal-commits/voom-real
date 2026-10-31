@@ -277,10 +277,14 @@ test("0021 is marked already-applied; 0018-0020 are untouched and 0022-0028 stay
   // this suite has not been told about — it must be added deliberately.
   // 0050 (approval-state write lockdown) and 0051 (AI request rate limits)
   // are the production-hardening release and are the only migrations after 0049.
-  // Trend Intelligence (0055-0058) follows; 0052-0054 are reserved for the Admin Panel release.
-  // 0059 (Brand Kit v2 storage) is the newest migration.
-  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_brand_kits.sql"], "only the 0050/0051 hardening, Trend Intelligence and Brand Kit migrations follow 0049");
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 59), "no migration beyond 0059 (brand kits) may exist");
+  // Trend Intelligence (0055-0058) and the reviewed automation safety boundary
+  // (0059), AI usage (0061), LinkedIn (0062), native plan video generation
+  // (0063), native YouTube uploads (0064), direct resumable uploads (0066), cleanup
+  // fairness (0067), Instagram token renewal (0068), slot leases (0070) and Brand Kit v2
+  // (0075; written as 0059 on Gurnoor's branch, renumbered at the 2026-11-01 merge) follow;
+  // 0052-0054 and 0065 remain reserved, 0060/0069/0071-0074 are gaps.
+  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql", "0066_youtube_resumable_uploads.sql", "0067_youtube_upload_cleanup_fairness.sql", "0068_instagram_token_renewal.sql", "0070_plan_slot_generation_leases.sql", "0075_brand_kits.sql"], "only reviewed post-0049 migrations are present");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 75), "no unreviewed migration beyond 0075 (brand kits) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],
@@ -387,7 +391,7 @@ test("replacing a visual never deletes the object it just wrote", async () => {
   // paid-generation audit row never points at a removed object.
   assert.match(data, /export async function removePostAssetObject/);
   assert.match(data, /\.eq\("storage_path", storagePath\)/);
-  assert.match(data, /if \(\(count \?\? 0\) > 0\) return;/);
+  assert.match(data, /if \(error !== null \|\| count !== 0\) return;/);
   for (const path of ["app/api/posts/[id]/asset/route.ts", "app/api/posts/[id]/generate/route.ts"]) {
     const route = await read(path);
     assert.match(route, /previousStoragePath !== storagePath/, `${path} must not delete the current object`);
@@ -435,12 +439,14 @@ test("existing-content suggestions disclose exactly what MARA saw: a photo throu
 test("posts can be saved as a draft, scheduled, and approved without publishing", async () => {
   const route = await read("app/api/posts/[id]/route.ts");
   assert.match(route, /action === "approve"/);
-  assert.match(route, /approvePostDraft\(admin, user\.id, id\)/);
+  // Optionally bound to the content version the owner reviewed (approval integrity, 0059).
+  assert.match(route, /approvePostDraft\(admin, user\.id, id, expected === undefined \? undefined : \{ expectedContentVersion: expected \}\)/);
   assert.match(route, /postApprovalBlockers\(\{ caption: existing\.caption, hasVisual: existing\.visualReady, kind: existing\.kind \}\)/);
   assert.match(route, /checkScheduleInstant/);
   assert.match(route, /Voom will automatically publish this to Instagram at the scheduled time\./);
   const data = await read("lib/post/server-data.ts");
-  assert.match(data, /update\(\{ status: "approved" \}\)/);
+  assert.match(data, /status: "approved"/);
+  assert.match(data, /approval_origin: options\?\.approvalOrigin \?\? "user"/);
   assert.match(data, /export async function syncPostToCalendar/);
 });
 
@@ -558,9 +564,21 @@ test("no test executes a provider, so no real paid generation runs in the suite"
   const files = (await readdir(new URL("tests/", root))).filter((name) => name.endsWith(".test.mjs"));
   for (const name of files) {
     const source = await read(`tests/${name}`);
-    // Routes and providers are only ever read as text; the suite never imports
-    // a route module or a provider, and never sets provider credentials.
-    assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media"|api\/posts|generate\/route)/, `${name} must not import a provider or route`);
+    // The upload route's behavioural suite substitutes auth/storage and
+    // rejects external HTTP; all other Post Studio suites remain source-only.
+    if (name === "youtube-native-upload.test.mjs") {
+      assert.match(source, /registerHooks/);
+      assert.match(source, /globalThis\.fetch=async\(\)=>\{throw new Error\('External HTTP forbidden/);
+      assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media"|generate\/route)/);
+    } else if (name === "youtube-resumable-upload.test.mjs") {
+      // Same bar for the direct-upload route: auth/storage substituted, and
+      // its only HTTP target is the synthetic storage.invalid host.
+      assert.match(source, /registerHooks/);
+      assert.match(source, /globalThis\.fetch=async\(url,options\)=>\{\s*const u=new URL\(url\);assert\.equal\(u\.hostname,'storage\.invalid','No external\/provider calls allowed'\)/);
+      assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media"|generate\/route)/);
+    } else {
+      assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media"|api\/posts|generate\/route)/, `${name} must not import a provider or route`);
+    }
     // A provider credential may only ever be set to an obvious decoy (the
     // secret-exclusivity tests plant look-alikes to prove they are ignored),
     // and never to something a provider could accept.
@@ -613,7 +631,8 @@ test("the Create content entry point is reachable from navigation and the calend
   const store = await read("lib/voom/store.tsx");
   assert.match(store, /studio: "\/app\/studio"/);
   const page = await read("app/app/(shell)/studio/page.tsx");
-  assert.match(page, /title="Create content"/);
+  // Redesign Batch 2 (Figma "21 — Create · Empty state"): the Create page title.
+  assert.match(page, /title="What do you want to create\?"/);
   assert.match(page, /Instagram Post/);
   assert.match(page, /Reel/);
   assert.match(page, /fetch\("\/api\/posts"/);

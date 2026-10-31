@@ -1,4 +1,7 @@
--- 0059_brand_kits.sql: Brand Kit v2 storage (slice 1).
+-- 0075_brand_kits.sql: Brand Kit v2 storage (Gurnoor's branch, slice 1).
+-- Written as 0059 on 2026-10-22; renumbered 0075 at the 2026-11-01 merge with main,
+-- which had its own 0059 (automation emergency pause) and ran to 0070, with 0071 and
+-- 0072 already taken on a branch not yet merged. 0071-0074 are left as a gap on purpose.
 --
 -- One append-only table holds everything MARA knows about a brand beyond the
 -- original onboarding columns on public.businesses: the structured answers,

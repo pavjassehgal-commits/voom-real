@@ -60,7 +60,7 @@ export interface YouTubeFlowItem {
 
 export interface YouTubeFlowPorts {
   /** Server-side re-resolution of the draft (approval is re-checked, never trusted from the snapshot). */
-  loadDraft(ownerId: string, draftId: string): Promise<{ status: string } | null>;
+  loadDraft(ownerId: string, draftId: string): Promise<{ status: string; containsSyntheticMedia?: boolean } | null>;
   /** Server-side re-resolution of the connection. */
   loadConnection(ownerId: string): Promise<{ status: string; scopes: string[] } | null>;
   /** Decrypted credentials (refresh handled inside). Throwing = not connected. */
@@ -133,7 +133,7 @@ export async function runYouTubePublishFlow(item: YouTubeFlowItem, ports: YouTub
 
   // 1) Approval is re-checked server-side; a rejected/un-approved draft never
   //    uploads. An unreadable draft is a transient fact, not a withdrawal.
-  let draft: { status: string } | null;
+  let draft: { status: string; containsSyntheticMedia?: boolean } | null;
   try {
     draft = await ports.loadDraft(item.ownerUserId, item.draftId);
   } catch {
@@ -222,7 +222,7 @@ export async function runYouTubePublishFlow(item: YouTubeFlowItem, ports: YouTub
       categoryId: item.categoryId,
       privacy,
       madeForKids: item.madeForKids === true,
-      containsSyntheticMedia: item.containsSyntheticMedia,
+      containsSyntheticMedia: draft.containsSyntheticMedia ?? item.containsSyntheticMedia,
     });
     let started: string;
     try {

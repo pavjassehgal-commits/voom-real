@@ -203,7 +203,7 @@ test("the action fails plainly: logged out, invalid values, businesses error, ki
     fakeDb({ insertError: { message: "relation brand_kits does not exist" } });
     const result = await saveBrandSection("facts", { facts: ["Roasting since 2014"] });
     assert.equal(result.ok, false);
-    assert.match(result.error, /migration \(0059\)/);
+    assert.match(result.error, /migration \(0075, brand kits\)/);
   } finally {
     console.error = original;
   }

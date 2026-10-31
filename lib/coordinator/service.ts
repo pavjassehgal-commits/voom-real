@@ -3,9 +3,9 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildMarketingState } from "./state";
-import { evaluateMarketingNeeds } from "./engine";
+import { evaluateMarketingNeeds, failedPublishDates } from "./engine";
 import { runOwnerWorkflow } from "@/lib/voom/workflow/service";
-import { parseActionChannel } from "@/lib/social/channels";
+import { parsePlanActionChannel as parseActionChannel } from "@/lib/voom/workflow/channels";
 import { proposeEmailFlow } from "@/lib/email-flows/create";
 import type { AdminClient } from "@/lib/post/server-data";
 import type { PerformanceReport } from "@/lib/performance/insights";
@@ -53,6 +53,9 @@ export async function runCoordinatorForOwner(
 
   // Evaluate Needs
   const evaluation = evaluateMarketingNeeds(state);
+  // Dates whose only social work is a failed publish: neither filled nor
+  // re-planned automatically; reported so the owner can retry or replace.
+  const heldForOwner = [...failedPublishDates(state)].sort();
 
   const actionsTaken: { type: string; details: Record<string, unknown> }[] = [];
 
@@ -119,6 +122,7 @@ export async function runCoordinatorForOwner(
           awaitingApproval: workflowResult.awaitingApproval,
           autoApproved: workflowResult.autoApproved,
           failures: workflowResult.failures.filter((failure) => requestedGapSet.has(failure.slot)),
+          ...(heldForOwner.length ? { heldForOwner } : {}),
         },
       });
     } catch (err) {
@@ -224,8 +228,9 @@ export async function runFleetCoordinator(
   ownerIds?: string[],
 ) {
   let query = admin.from("businesses")
-    .select("id,owner_user_id,automation_level")
+    .select("id,owner_user_id,automation_level,automation_paused_at")
     .eq("onboarding_completed", true)
+    .is("automation_paused_at", null)
     .in("automation_level", ["assisted", "autopilot"]);
 
   if (ownerIds && ownerIds.length > 0) {

@@ -853,7 +853,12 @@ test("migration 0046 backfills Instagram rows and keeps every channel on one cal
   );
 
   const applied = await applyPending();
-  assert.equal(applied[applied.length - 1], "0059_brand_kits.sql", "0059 (Brand Kit v2 storage) is the final checked-in migration");
+  assert.equal(applied[applied.length - 1], "0075_brand_kits.sql", "0075 (Brand Kit v2 storage; written as 0059, renumbered at the 2026-11-01 merge with main) is the final checked-in migration");
+  assert.ok(applied.includes("0070_plan_slot_generation_leases.sql"), "plan slot leases follow Instagram token renewal without rewriting installed migrations");
+  assert.ok(applied.includes("0068_instagram_token_renewal.sql"), "Instagram token renewal is retained");
+  assert.ok(applied.includes("0067_youtube_upload_cleanup_fairness.sql"), "cleanup fairness is retained");
+  assert.ok(applied.includes("0066_youtube_resumable_uploads.sql"), "the installed direct-upload migration is retained");
+  assert.ok(applied.includes("0064_youtube_uploaded_video.sql"), "the original native-upload migration is retained");
 
   const legacy = await one(
     "select social_channel, social_format from public.mara_drafts where title = 'Legacy Reel'",
@@ -1096,7 +1101,7 @@ test("the ONE Studio and calendar surfaces present every channel truthfully", as
   const studio = await read("app/app/(shell)/studio/page.tsx");
   const calendar = await read("app/app/(shell)/calendar/page.tsx");
   const connections = await read("app/app/(shell)/connections/page.tsx");
-  const performance = await read("app/app/(shell)/performance/page.tsx");
+  const performance = (await read("app/app/(shell)/performance/page.tsx")) + (await read("components/voom/performance/PerformanceView.tsx"));
 
   assert.match(studio, /SocialEditorModal/, "the Studio opens the social editor for social drafts");
   assert.match(studio, /isSocialVideoDraftKind/, "the Studio routes by kind");

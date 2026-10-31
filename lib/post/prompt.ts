@@ -166,7 +166,7 @@ export interface PostBrandContext {
   mainGoal: string;
   brandPersonality: string;
   contentFrequency: string;
-  /** Brand Kit prompt block (migration 0059), already built by the loader. Absent/null = no `brandKit` key in the payload. */
+  /** Brand Kit prompt block (migration 0075), already built by the loader. Absent/null = no `brandKit` key in the payload. */
   brandKit?: BrandKitPromptContext | null;
 }
 

@@ -1,8 +1,8 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { accountTimezone, isoToLocalDate, localDate, localToUtcIso } from "@/lib/voom/timezone";
-import { normalizeCadence, slotDates, type ContentType } from "@/lib/voom/cadence";
+import { accountTimezone, addDays, isoToLocalDate, localDate, localToUtcIso } from "@/lib/voom/timezone";
+import { cadenceAnchorDate, normalizeCadence, slotDates, type ContentType } from "@/lib/voom/cadence";
 import { normalizeAutomationMode } from "@/lib/voom/automation";
 import { normalizePlan, canUseAutopilot, canGenerateExplicitMedia } from "@/lib/billing/plans";
 import { getCreditSummary } from "@/lib/billing/ledger";
@@ -71,6 +71,10 @@ export async function buildMarketingState(
   const horizonEnd = horizonDates[horizonDates.length - 1] || today;
   const horizonStartIso = localToUtcIso(horizonStart, 0, tz);
   const horizonEndIso = localToUtcIso(horizonEnd, 23 * 60 + 59, tz);
+  // Every 7-day window that contains a horizon date lies inside
+  // [today - 6, today + 12]; social work there counts toward the cadence.
+  const cadenceWindowStartIso = localToUtcIso(addDays(today, -6), 0, tz);
+  const cadenceWindowEndIso = localToUtcIso(addDays(today, 12), 23 * 60 + 59, tz);
 
   // ── Independent owner-scoped reads fire concurrently (one wave) ──────────
   // Every read below is independent of the others: they used to run one after
@@ -90,7 +94,7 @@ export async function buildMarketingState(
     }
   })();
   const activePlanPromise = admin.from("marketing_plans")
-    .select("id,business_goal,valid_from,valid_until,status")
+    .select("id,business_goal,valid_from,valid_until,status,created_at")
     .eq("owner_user_id", ownerId)
     .eq("status", "active")
     .order("created_at", { ascending: false })
@@ -106,18 +110,18 @@ export async function buildMarketingState(
   const draftsPromise = admin.from("mara_drafts")
     .select("id,source_plan_id,source_plan_item_key,kind,title,content,proposed_publish_at,status")
     .eq("owner_user_id", ownerId)
-    .gte("proposed_publish_at", horizonStartIso)
-    .lte("proposed_publish_at", horizonEndIso);
+    .gte("proposed_publish_at", cadenceWindowStartIso)
+    .lte("proposed_publish_at", cadenceWindowEndIso);
   const calendarItemsPromise = admin.from("content_calendar_items")
     .select("id,source_draft_id,title,channel,publish_at,status")
     .eq("owner_user_id", ownerId)
-    .gte("publish_at", horizonStartIso)
-    .lte("publish_at", horizonEndIso);
+    .gte("publish_at", cadenceWindowStartIso)
+    .lte("publish_at", cadenceWindowEndIso);
   const queueItemsPromise = admin.from("instagram_publish_queue")
     .select("id,draft_id,status,scheduled_at,failure_message")
     .eq("owner_user_id", ownerId)
-    .gte("scheduled_at", horizonStartIso)
-    .lte("scheduled_at", horizonEndIso);
+    .gte("scheduled_at", cadenceWindowStartIso)
+    .lte("scheduled_at", cadenceWindowEndIso);
   const contactsPromise = (async () => {
     try {
       const { count } = await admin.from("contacts")
@@ -217,6 +221,10 @@ export async function buildMarketingState(
   // 6. Marketing Plan Drafts & Calendar Items (bounded horizon reads were part
   // of the parallel wave above)
   const queueByDraft = new Map((queueItems ?? []).map((q) => [String(q.draft_id), q]));
+  // TikTok/YouTube/LinkedIn publish truth lives in their own provider queues.
+  const nativeQueueByDraft = await readNativeQueueStates(admin, ownerId, (drafts ?? [])
+    .filter((d) => ["tiktok_video", "youtube_short", "youtube_video", "linkedin_text"].includes(String(d.kind)))
+    .map((d) => String(d.id)));
 
   const draftCommitments: CalendarCommitment[] = [];
   for (const d of drafts ?? []) {
@@ -227,8 +235,8 @@ export async function buildMarketingState(
     const kind = String(d.kind ?? "instagram_post");
     // TikTok/YouTube planning drafts carry their real channel. This state is
     // used only for date coverage; the provider queue owns execution status.
-    const isSocialDraft = kind === "tiktok_video" || kind === "youtube_short" || kind === "youtube_video";
-    const format: ContentType | "video" | "short" = kind === "reel" ? "reel"
+    const isSocialDraft = kind === "tiktok_video" || kind === "youtube_short" || kind === "youtube_video" || kind === "linkedin_text";
+    const format: ContentType | "video" | "short" | "text" = kind === "linkedin_text" ? "text" : kind === "reel" ? "reel"
       : kind === "story" ? "story"
       : kind === "youtube_short" ? "short"
       : isSocialDraft ? "video"
@@ -238,12 +246,19 @@ export async function buildMarketingState(
     const qRow = queueByDraft.get(String(d.id));
 
     let status: CalendarCommitment["status"] = "proposed";
+    let publishFailed = false;
     if (isSocialDraft) {
       status = d.status === "approved" ? "approved" : d.status === "rejected" ? "failed" : "proposed";
+      const native = nativeQueueByDraft.get(String(d.id));
+      if (d.status !== "rejected" && native === "published") status = "published";
+      else if (d.status !== "rejected" && native === "failed") { status = "failed"; publishFailed = true; }
     } else {
-      if (qRow?.status === "published") status = "published";
+      // A rejected Instagram idea no longer covers its date, exactly like a
+      // rejected TikTok/YouTube draft above; the planner replaces it.
+      if (d.status === "rejected") status = "failed";
+      else if (qRow?.status === "published") status = "published";
       else if (qRow?.status === "publishing") status = "publishing";
-      else if (qRow?.status === "failed") status = "failed";
+      else if (qRow?.status === "failed") { status = "failed"; publishFailed = true; }
       else if (qRow?.status === "waiting_for_media") status = "waiting_for_media";
       else if (qRow?.status === "scheduled") status = "scheduled";
       else if (d.status === "approved") status = "approved";
@@ -263,6 +278,7 @@ export async function buildMarketingState(
       localDate: localD,
       localTime: publishAt,
       status,
+      ...(publishFailed ? { publishFailed: true } : {}),
     });
   }
 
@@ -279,8 +295,9 @@ export async function buildMarketingState(
     const isTikTok = channelLabel === "tiktok";
     const isYouTubeShort = channelLabel === "youtube short";
     const isYouTubeVideo = channelLabel === "youtube video";
-    const isSocialCalendar = isTikTok || isYouTubeShort || isYouTubeVideo;
-    const format: ContentType | "video" | "short" = isYouTubeShort ? "short"
+    const isLinkedIn = channelLabel === "linkedin";
+    const isSocialCalendar = isTikTok || isYouTubeShort || isYouTubeVideo || isLinkedIn;
+    const format: ContentType | "video" | "short" | "text" = isLinkedIn ? "text" : isYouTubeShort ? "short"
       : isSocialCalendar ? "video"
       : channelLabel.includes("reel") ? "reel"
       : channelLabel.includes("story") ? "story"
@@ -292,7 +309,7 @@ export async function buildMarketingState(
       sourceId: String(c.id),
       // In the non-social branch `format` is always post/reel/story at
       // runtime; the cast keeps the template inside the channel union.
-      channel: isTikTok ? "tiktok_video" : isYouTubeShort ? "youtube_short" : isYouTubeVideo ? "youtube_video" : `instagram_${format as ContentType}`,
+      channel: isLinkedIn ? "linkedin_text" : isTikTok ? "tiktok_video" : isYouTubeShort ? "youtube_short" : isYouTubeVideo ? "youtube_video" : `instagram_${format as ContentType}`,
       format,
       title: String(c.title),
       publishAt,
@@ -304,11 +321,13 @@ export async function buildMarketingState(
     });
   }
 
-  const allCommitments = [
+  const cadenceCommitments = [
     ...campaignActionCommitments,
     ...draftCommitments,
     ...standaloneCalendarCommitments,
   ];
+  // Everything except cadence evaluation keeps the 7-day horizon it always had.
+  const allCommitments = cadenceCommitments.filter((c) => c.localDate >= horizonStart && c.localDate <= horizonEnd);
 
   // 7. Email Marketing State (eligible count was read in the parallel wave)
 
@@ -390,6 +409,8 @@ export async function buildMarketingState(
     timezone: tz,
     now: now.toISOString(),
     todayLocalDate: today,
+    cadenceCommitments,
+    cadenceAnchorDate: cadenceAnchorDate((activePlan as { created_at?: unknown } | null)?.created_at, tz, today),
     horizonStart,
     horizonEnd,
     cadence,
@@ -612,4 +633,21 @@ async function readActiveCampaigns(
     }
   }
   return { activeCampaigns, campaignActionCommitments };
+}
+
+/** Latest non-cancelled provider queue status per social draft (date coverage only). */
+async function readNativeQueueStates(admin: SupabaseClient, ownerId: string, draftIds: string[]): Promise<Map<string, string>> {
+  const states = new Map<string, string>();
+  if (!draftIds.length) return states;
+  const results = await Promise.all(["tiktok_publish_queue", "youtube_publish_queue", "linkedin_publish_queue"].map((table) =>
+    admin.from(table).select("draft_id,status").eq("owner_user_id", ownerId).in("draft_id", draftIds)));
+  for (const { data, error } of results) {
+    // Unreadable queue state falls back to the draft's own status, which only
+    // ever counts as coverage: an outage can suppress new work, never add it.
+    if (error) continue;
+    for (const row of data ?? []) {
+      if (row.status !== "cancelled") states.set(String(row.draft_id), String(row.status));
+    }
+  }
+  return states;
 }

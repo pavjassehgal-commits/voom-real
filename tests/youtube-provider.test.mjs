@@ -1048,6 +1048,19 @@ test("the happy path publishes ONLY with YouTube's own processed evidence, in th
   assert.equal(ports.failures.length, 0);
 });
 
+for (const disclosed of [true, false]) test(`generated Shorts forwards the owner's synthetic-media answer (${disclosed}) without changing audience/privacy`, async () => {
+  let metadata;
+  const ports = makePorts({
+    loadDraft: async () => ({ status: "approved", containsSyntheticMedia: disclosed }),
+    initiateSession: async (input) => { metadata = input.metadata; return SESSION_URL; },
+  });
+  const result = await flowMod.runYouTubePublishFlow(baseItem({ privacyStatus: "private", madeForKids: false }), ports);
+  assert.equal(result.outcome, "published");
+  assert.equal(metadata.status.containsSyntheticMedia, disclosed);
+  assert.equal(metadata.status.privacyStatus, "private");
+  assert.equal(metadata.status.selfDeclaredMadeForKids, false);
+});
+
 test("a completion with uploadStatus 'uploaded' is provider ACCEPTANCE — the flow polls and reports processing, never published", async () => {
   let polls = 0;
   const ports = makePorts({
@@ -1390,11 +1403,18 @@ async function makeDraft(ownerId, { kind = "youtube_short", format = "short", st
 
 async function makeAsset(ownerId, draftId, { mime = "video/mp4", byteSize = 1024 } = {}) {
   const { db } = await liteDb();
+  const before = await db.query("select status from public.mara_drafts where id = $1", [draftId]);
   await db.query(
     `insert into public.post_draft_assets (owner_user_id, draft_id, storage_path, display_name, mime_type, byte_size)
      values ($1, $2, $3, 'video.mp4', $4, $5)`,
     [ownerId, draftId, `yt/${ownerId}/${draftId}-video.mp4`, mime, byteSize],
   );
+  // Complete-content approval (0059): attaching the video revokes an earlier
+  // approval. Fixtures that model "an approved post" mean one approved WITH
+  // its video, so the owner's approval is given again for the complete post.
+  if (before.rows[0]?.status === "approved") {
+    await db.query("update public.mara_drafts set status = 'approved' where id = $1 and status = 'draft'", [draftId]);
+  }
 }
 
 let videoSeq = 0;
@@ -1448,17 +1468,24 @@ async function saveConnection(ownerId, overrides = {}) {
   });
 }
 
-test("migrations 0047-0051 apply cleanly and 0051 is the checked-in head", async () => {
+test("migrations 0047-0051 apply cleanly and retain their required ordering", async () => {
   const { applied } = await liteDb();
   assert.ok(applied.includes("0047_youtube_provider.sql"), "0047 applied through PGlite");
   assert.ok(applied.includes("0049_tiktok_provider.sql"), "0049 (TikTok) applied through PGlite");
   assert.ok(applied.includes("0050_approval_state_write_lockdown.sql"), "0050 (write lockdown) applied through PGlite");
-  assert.equal(applied[applied.length - 1], "0059_brand_kits.sql", "Trend Intelligence 0055-0058 and Brand Kit 0059 follow 0051");
+  assert.equal(applied[applied.length - 1], "0075_brand_kits.sql", "Brand Kit v2 (0075; written as 0059, renumbered at the 2026-11-01 merge with main) is the newest migration");
+  const ordered = ["0047_youtube_provider.sql", "0048_youtube_oauth_state_acl.sql", "0049_tiktok_provider.sql", "0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql"];
+  assert.deepEqual(applied.filter((name) => ordered.includes(name)), ordered, "provider migrations remain ordered through 0051");
+  assert.ok(applied.indexOf("0055_trend_intelligence.sql") > applied.indexOf("0051_ai_request_rate_limits.sql"), "Trend Intelligence follows 0051");
+  assert.ok(applied.indexOf("0061_ai_usage_cost_tracking.sql") > applied.indexOf("0059_automation_emergency_pause.sql"));
+  assert.ok(applied.indexOf("0063_native_plan_video_generation.sql") > applied.indexOf("0061_ai_usage_cost_tracking.sql"));
+  assert.ok(applied.indexOf("0066_youtube_resumable_uploads.sql") > applied.indexOf("0064_youtube_uploaded_video.sql"), "direct native uploads follow the existing provider and attachment migrations");
+  assert.ok(applied.indexOf("0067_youtube_upload_cleanup_fairness.sql") > applied.indexOf("0066_youtube_resumable_uploads.sql"), "cleanup fairness follows the installed upload migration");
   const tables = await all(
     "select table_name from information_schema.tables where table_schema = 'public' and table_name like 'youtube_%' order by table_name",
   );
   assert.deepEqual(tables.map((row) => row.table_name), [
-    "youtube_connection_secrets", "youtube_connections", "youtube_oauth_states", "youtube_performance_snapshots", "youtube_publish_queue",
+    "youtube_connection_secrets", "youtube_connections", "youtube_oauth_states", "youtube_performance_snapshots", "youtube_publish_queue", "youtube_upload_sessions",
   ]);
   for (const table of tables.map((row) => row.table_name)) {
     const rls = await one("select relrowsecurity from pg_class where oid = $1::regclass", [`public.${table}`]);

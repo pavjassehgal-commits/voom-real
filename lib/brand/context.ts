@@ -4,7 +4,7 @@
  *
  * Core brand fields (name, description, category, audience, goal, personality,
  * posting pace) still come from `public.businesses`, exactly as before. The
- * newest `public.brand_kits` row (migration 0059) only ADDS context on top:
+ * newest `public.brand_kits` row (migration 0075) only ADDS context on top:
  * the confirmed brief, what the business offers, rules to avoid, banned words,
  * facts MARA may state, owner notes and voice samples. An account with no kit
  * row gets empty extras and generation behaves exactly as it did.

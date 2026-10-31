@@ -1,8 +1,9 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { YouTubeApiError, YouTubeClient } from "@/lib/youtube/client";
-import { requireYouTubeConfig, youTubeKeyRing } from "@/lib/youtube/config";
+import { YouTubeConfigurationError, requireYouTubeOAuthConfig, YOUTUBE_CALLBACK_PATH, youTubeKeyRing } from "@/lib/youtube/config";
 import { consumeYouTubeOAuthState, saveYouTubeConnection } from "@/lib/youtube/data";
+import { hasUploadPermission } from "@/lib/youtube/scopes";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 
@@ -38,13 +39,20 @@ export async function GET(request: Request) {
   const state = params.get("state");
   const cookieStore = await cookies();
   const cookieState = cookieStore.get(STATE_COOKIE)?.value;
-  cookieStore.delete(STATE_COOKIE);
+  // Expire the same host-only, path-scoped cookie that connect created.
+  cookieStore.set(STATE_COOKIE, "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: YOUTUBE_CALLBACK_PATH,
+    maxAge: 0,
+  });
   if (!code || code.length > 2048 || !state || !/^[A-Za-z0-9_-]{43}$/.test(state) || !cookieState) {
     return redirectWith(fallback, "invalid_state");
   }
   let stage: "state" | "token" | "channel" | "save" = "state";
   try {
-    const config = requireYouTubeConfig();
+    const config = requireYouTubeOAuthConfig(request.url);
     const admin = createAdminClient();
     if (!(await consumeYouTubeOAuthState(admin, user.id, state, cookieState))) {
       return redirectWith(fallback, "invalid_state");
@@ -56,6 +64,10 @@ export async function GET(request: Request) {
       // No offline access granted: Voom could never publish unattended, so
       // it refuses the connection instead of pretending it works.
       return redirectWith(fallback, "token_no_offline_access");
+    }
+    if (!hasUploadPermission(tokens.grantedScopes)) {
+      // Partial consent must not replace a previously stored authorization.
+      return redirectWith(fallback, "token_upload_permission_required");
     }
     stage = "channel";
     const channel = await client.getMyChannel(tokens.accessToken);
@@ -75,6 +87,7 @@ export async function GET(request: Request) {
     fallback.searchParams.set("youtube", "connected");
     return NextResponse.redirect(fallback);
   } catch (error) {
+    if (error instanceof YouTubeConfigurationError) return redirectWith(fallback, "configuration_mismatch");
     const reason = error instanceof YouTubeApiError
       ? `${error.operation}_${error.kind}${error.reason ? `_${error.reason}` : ""}`
       : "failed";

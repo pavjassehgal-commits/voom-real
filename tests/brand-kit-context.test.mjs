@@ -1,7 +1,7 @@
 /**
  * Brand Kit v2, slice 1 (docs/brand-kit-v2-design.md):
  *
- *   1. Migration 0059 applies on top of every earlier migration (real PGlite
+ *   1. Migration 0075 (brand kits; written as 0059, renumbered at the 2026-11-01 merge) applies on top of every earlier migration (real PGlite
  *      Postgres). A user can read and append only their own versions and can
  *      never update or delete one; the `brand-kit` bucket is private.
  *   2. The reader (`lib/brand/context.ts`) turns a kit row into prompt extras,
@@ -66,11 +66,11 @@ const KIT_ROW = {
   },
 };
 
-/* ── 1. Migration 0059 ───────────────────────────────────────────────────── */
+/* ── 1. Migration 0075 ───────────────────────────────────────────────────── */
 
-test("migration 0059 applies after every earlier migration and keeps versions append-only per owner", async () => {
+test("migration 0075 applies after every earlier migration and keeps versions append-only per owner", async () => {
   const { db, applied } = await createSupabaseLite();
-  assert.equal(applied.at(-1), "0059_brand_kits.sql", "0059 is the newest migration");
+  assert.equal(applied.at(-1), "0075_brand_kits.sql", "0075 (brand kits) is the newest migration");
 
   const columns = await db.query(
     "select column_name from information_schema.columns where table_schema = 'public' and table_name = 'brand_kits' order by ordinal_position",
@@ -124,8 +124,8 @@ test("migration 0059 applies after every earlier migration and keeps versions ap
   assert.deepEqual(all.rows, [{ owner_user_id: OWNER_A, version: 1 }, { owner_user_id: OWNER_A, version: 2 }]);
 });
 
-test("migration 0059 touches nothing that exists already", async () => {
-  const sql = (await read("supabase/migrations/0059_brand_kits.sql")).split("\n").map((line) => line.replace(/--.*$/, "")).join("\n");
+test("migration 0075 touches nothing that exists already", async () => {
+  const sql = (await read("supabase/migrations/0075_brand_kits.sql")).split("\n").map((line) => line.replace(/--.*$/, "")).join("\n");
   assert.match(sql, /^begin;/m);
   assert.match(sql, /^commit;/m);
   assert.doesNotMatch(sql, /alter table public\.(businesses|profiles|mara_drafts|voom_email_brands)/i, "no existing table is altered");

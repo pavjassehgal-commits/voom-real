@@ -70,6 +70,11 @@ export function isAiVisionConfigured(env: NodeJS.ProcessEnv = process.env): bool
   }
 }
 
+/** The configured per-request timeout alone (no provider credentials needed). Throws when invalid. */
+export function aiRequestTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  return requestTimeoutMs(env.AI_REQUEST_TIMEOUT_MS);
+}
+
 export function getAiConfig(env: NodeJS.ProcessEnv = process.env): AiConfig {
   const provider = env.AI_PROVIDER?.trim().toLowerCase() || "groq";
   const apiKey = env.AI_API_KEY?.trim();

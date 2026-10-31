@@ -11,54 +11,51 @@ export interface NavGroup {
 }
 
 /**
- * Voom 2.0 — Application shell navigation
+ * Application shell navigation — redesign Batch 1 (Figma "15 — Today").
  *
- * Primary: Today, Brand (Brand Kit v2 hub), Marketing Plan, Create, Calendar, Performance
- * Secondary: Campaigns, Contacts, Connections
- * Utility: Settings
+ * Workspace: Today, Brand (the Brand Kit v2 hub, Gurnoor's branch), Create, Calendar, Content, Performance
+ * Automation: MARA, Marketing Plan, Approvals, Automations
+ * Manage: Channels (the existing Connections hub), Campaigns, Contacts
+ * System: Settings
  *
- * Legacy / System: Approvals, Automations are preserved for current
- * functionality. They remain reachable via sidebar (System group) and via
- * direct routes. Ads, Reels, and other unimplemented surfaces are NOT in
- * navigation — their routes still resolve (reels → studio, ads → truthful
- * empty state) so no dead links are introduced.
- *
- * This structure satisfies:
- * - Voom 2.0 spec primary/secondary/utility hierarchy
- * - Preservation of existing functionality (Approvals, Automations)
- * - Existing tests that assert kept entries are registered
+ * Content is the Batch 2 library (/app/content); MARA is the Batch 3 overview
+ * (/app/mara) — a read-only view of MARA's work, not the retired chat.
+ * No nav item may lead to a dead or placeholder destination.
+ * Every existing route keeps resolving; nothing is orphaned.
  */
 export const NAV: NavGroup[] = [
   {
-    g: "Primary",
+    g: "Workspace",
     items: [
-      { id: "today", n: "Today", i: "home" },
+      { id: "today", n: "Today", i: "house" },
       { id: "brand", n: "Brand", i: "heart" },
-      { id: "plan", n: "Marketing Plan", i: "spark" },
-      { id: "studio", n: "Create", i: "plus" },
+      { id: "studio", n: "Create", i: "pencil" },
       { id: "calendar", n: "Calendar", i: "cal" },
-      { id: "performance", n: "Performance", i: "trend" },
+      { id: "content", n: "Content", i: "file" },
+      { id: "performance", n: "Performance", i: "bars" },
     ],
   },
   {
-    g: "Secondary",
+    g: "Automation",
     items: [
-      { id: "campaigns", n: "Campaigns", i: "mail" },
-      { id: "contacts", n: "Contacts", i: "users" },
-      { id: "connections", n: "Connections", i: "globe" },
+      { id: "mara", n: "MARA", i: "sparkles" },
+      { id: "plan", n: "Marketing Plan", i: "map" },
+      { id: "approvals", n: "Approvals", i: "checkCircle" },
+      { id: "automations", n: "Automations", i: "bolt" },
+    ],
+  },
+  {
+    g: "Manage",
+    items: [
+      { id: "connections", n: "Channels", i: "share" },
+      { id: "campaigns", n: "Campaigns", i: "folder" },
+      { id: "contacts", n: "Contacts", i: "contacts" },
     ],
   },
   {
     g: "System",
     items: [
-      { id: "approvals", n: "Approvals", i: "check" },
-      { id: "automations", n: "Automations", i: "bolt" },
-    ],
-  },
-  {
-    g: "Utility",
-    items: [
-      { id: "settings", n: "Settings", i: "cog" },
+      { id: "settings", n: "Settings", i: "settings" },
     ],
   },
 ];
@@ -70,10 +67,11 @@ export const TITLES: Record<string, string> = {
   studio: "Create",
   create: "Create",
   calendar: "Calendar",
+  content: "Content",
   performance: "Performance",
   campaigns: "Campaigns",
   contacts: "Contacts",
-  connections: "Connections",
+  connections: "Channels",
   approvals: "Approvals",
   automations: "Automations",
   settings: "Settings",
@@ -107,7 +105,7 @@ export function pageIdFromPath(pathname: string): string {
  * - /app/reels — redirects to /app/studio (real Create Content studio)
  * - /app/instagram, /app/tiktok, /app/youtube — via /app/connections hub,
  *   direct URLs, and settings/connections flows
- * - /app/mara — redirects to /app/today (MARA is ambient, not chatbot)
+ * - /app/mara — MARA overview (read-only; the chat API stays retired)
  * - /app/pricing — via account menu (Plans & billing) and settings
  *
  * No route is silently orphaned; all existing functionality remains

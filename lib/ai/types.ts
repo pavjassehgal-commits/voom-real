@@ -20,6 +20,8 @@ export interface AiRequest {
   maxTokens?: number;
   /** Optional provider reasoning control. Omitted by every existing production caller. */
   reasoningEffort?: "low" | "medium" | "high";
+  /** Server-only accounting context. It is never sent to the AI provider. */
+  usage?: import("./usage").AiUsageContext;
 }
 
 /**

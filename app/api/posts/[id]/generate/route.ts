@@ -16,6 +16,7 @@ import { normalizePlan, canUseAutomationMode } from "@/lib/billing/plans";
 import { guardAndReserveMedia, releaseReservationOnFailure, confirmReservation } from "@/lib/billing/entitlement-guard";
 import { consumeAiRateLimit, rateLimitedResponse } from "@/lib/rate-limit";
 import { normalizeAutomationMode } from "@/lib/voom/automation";
+import { createUsageRecorder, recordUsageSafely } from "@/lib/ai/usage";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -133,7 +134,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!brand) return Response.json({ error: "Complete your brand profile before creating posts with MARA." }, { status: 409 });
 
   // Brand Kit rules join the system prompt only when the account has a kit
-  // with content (migration 0059); otherwise the prompts are unchanged.
+  // with content (migration 0075, Brand Kit v2); otherwise the prompts are unchanged.
   const brandKit = brand.brandKit ?? null;
 
   const format = post.kind === "story" ? "9:16" : post.format;
@@ -185,6 +186,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         ],
         temperature: 0.6,
         maxTokens: 600,
+        usage: {
+          ownerId: user.id,
+          operationKey: `post-generate:${id}:${idempotencyToken}:story-plan`,
+          operationType: "story_visual_plan",
+          category: "planning",
+        },
         jsonSchema: storyVisualJsonSchema,
         parse: (value) => storyVisualSchema.parse(value),
       });
@@ -211,6 +218,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         ],
         temperature: 0.6,
         maxTokens: 1200,
+        usage: {
+          ownerId: user.id,
+          operationKey: `post-generate:${id}:${idempotencyToken}:caption`,
+          operationType: "post_caption_generation",
+          category: "caption",
+        },
         jsonSchema: postDraftJsonSchema,
         parse: (value) => postDraftSchema.parse(value),
       });
@@ -250,9 +263,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return Response.json({ error: "Voom couldn't start that generation safely. Nothing changed." }, { status: 503 });
   }
 
+  let providerAttemptRecorded = false;
+  let providerName = "unconfigured";
+  let providerModel = "unknown";
+  const usageRecorder = createUsageRecorder(admin);
   try {
     const config = getMediaConfig();
+    providerName = config.provider;
+    providerModel = config.imageModel;
     const result = await createMediaProvider(config).generateImage({ prompt: visualPrompt, aspectRatio: format });
+    providerAttemptRecorded = true;
+    await recordUsageSafely(usageRecorder, {
+      context: { ownerId: user.id, operationKey: `image:${generationId}`, operationType: "image_generation", category: "image" },
+      attemptNumber: 1, provider: providerName, model: providerModel, status: "succeeded",
+      mediaUnits: 1, estimatedCostUsd: estimateMediaCostUsd({ mediaType: "image" }),
+    });
     if (!result.bytes.length || result.bytes.length > GENERATED_IMAGE_MAX_BYTES) throw new MediaError("malformed_response");
 
     const inspected = inspectImageBytes(result.bytes);
@@ -304,6 +329,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       message: "MARA wrote the copy and generated the visual. It is stored privately in Voom. Nothing was published.",
     });
   } catch (reason) {
+    if (!providerAttemptRecorded) {
+      await recordUsageSafely(usageRecorder, {
+        context: { ownerId: user.id, operationKey: `image:${generationId}`, operationType: "image_generation", category: "image" },
+        attemptNumber: 1, provider: providerName, model: providerModel, status: "failed",
+        mediaUnits: 1, estimatedCostUsd: estimateMediaCostUsd({ mediaType: "image" }),
+        errorCode: reason instanceof MediaError ? reason.code : "unavailable",
+      });
+    }
     const code = reason instanceof MediaError ? reason.code : "unavailable";
     await admin.from("mara_media_generations").update({ status: "failed", error_code: code, provider_diagnostic: reason instanceof MediaError ? reason.diagnostic : null })
       .eq("id", generationId).eq("owner_user_id", user.id);

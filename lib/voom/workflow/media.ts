@@ -14,6 +14,8 @@ import { normalizePlan, type PlanId } from "@/lib/billing/plans";
 import { creditCostForMedia } from "@/lib/billing/credits";
 import { guardAndReserveMedia, releaseReservationOnFailure, confirmReservation } from "@/lib/billing/entitlement-guard";
 import { normalizeAllowAutomaticPaidMedia, estimateMediaCostUsd } from "@/lib/mara/media-spend";
+import { assertAutonomousWorkAllowed } from "@/lib/voom/automation-safety";
+import { createUsageRecorder, recordUsageSafely } from "@/lib/ai/usage";
 
 /**
  * Media generation for one workflow item, reusing the EXISTING durable MARA
@@ -201,14 +203,14 @@ export interface WorkflowMediaDeps {
   advance(admin: AdminClient, ownerId: string, draftId: string, generationId: string): Promise<"advanced" | "unavailable">;
   enforceTimeout(admin: AdminClient, ownerId: string, generationId: string, now: Date): Promise<{ enforced: boolean }>;
   startVideo(args: PostStudioVideoStartArgs): Promise<PostStudioVideoStartResult>;
-  generateImage(input: { prompt: string; aspectRatio: "1:1" | "9:16" }): Promise<{ provider: string; bytes: Uint8Array }>;
+  generateImage(input: { prompt: string; aspectRatio: "1:1" | "9:16" }): Promise<{ provider: string; model?: string; bytes: Uint8Array }>;
 }
 
 export const defaultWorkflowMediaDeps: WorkflowMediaDeps = {
   async generateImage(input) {
     const config = getMediaConfig();
     const result = await createMediaProvider(config).generateImage({ prompt: input.prompt, aspectRatio: input.aspectRatio });
-    return { provider: config.provider, bytes: result.bytes };
+    return { provider: config.provider, model: config.imageModel, bytes: result.bytes };
   },
   async advance(admin, ownerId, draftId, generationId) {
     const service = await buildVideoService(admin, ownerId);
@@ -364,6 +366,19 @@ export async function produceWorkflowMedia(
     } catch { /* best effort */ }
   }
 
+  // This is the final boundary immediately before either paid provider is
+  // invoked. A pause, downgrade or entitlement change after reservation is
+  // honored and the unused reservation is released. Explicit user actions do
+  // not pass through this autonomous-only gate.
+  if (!isExplicit) {
+    try {
+      await assertAutonomousWorkAllowed(admin, request.ownerId);
+    } catch {
+      await releaseReservationOnFailure(admin, request.ownerId, generationIdForLedger).catch(() => null);
+      return { ok: false, code: "automatic_media_disabled" };
+    }
+  }
+
   if (request.contentType === "reel") {
     // For video, we already reserved with generationIdForLedger. Pass same id to startVideo
     // so its internal guard uses same ledger row and does not double-charge.
@@ -420,8 +435,16 @@ export async function produceWorkflowMedia(
     return { ok: false, code: "media_job_failed" };
   }
 
+  let providerAttemptRecorded = false;
+  const usageRecorder = createUsageRecorder(admin);
   try {
     const result = await deps.generateImage({ prompt, aspectRatio: format });
+    providerAttemptRecorded = true;
+    await recordUsageSafely(usageRecorder, {
+      context: { ownerId: request.ownerId, operationKey: `image:${imageGenId}`, operationType: "workflow_image_generation", category: "image" },
+      attemptNumber: 1, provider: result.provider, model: result.model ?? "unknown", status: "succeeded",
+      mediaUnits: 1, estimatedCostUsd: estimateMediaCostUsd({ mediaType: "image" }),
+    });
     if (!result.bytes.length || result.bytes.length > GENERATED_IMAGE_MAX_BYTES) throw new MediaError("malformed_response");
     const inspected = inspectImageBytes(result.bytes);
     if (!inspected || !aspectMatches(inspected.width, inspected.height, format)) throw new MediaError("malformed_response");
@@ -444,8 +467,19 @@ export async function produceWorkflowMedia(
     }
     await confirmReservation(admin, request.ownerId, generationIdForLedger).catch(() => null);
     await syncPostToCalendar(admin, request.ownerId, request.draftId).catch(() => null);
+    // No-op unless Autopilot parked this draft awaiting media.
+    const { completeAutopilotAfterMediaArrival } = await import("./media-arrival");
+    await completeAutopilotAfterMediaArrival(admin, request.ownerId, request.draftId).catch(() => null);
     return { ok: true, state: "completed" };
   } catch (reason) {
+    if (!providerAttemptRecorded) {
+      await recordUsageSafely(usageRecorder, {
+        context: { ownerId: request.ownerId, operationKey: `image:${imageGenId}`, operationType: "workflow_image_generation", category: "image" },
+        attemptNumber: 1, provider: "unknown", model: "unknown", status: "failed",
+        mediaUnits: 1, estimatedCostUsd: estimateMediaCostUsd({ mediaType: "image" }),
+        errorCode: reason instanceof MediaError ? reason.code : "unavailable",
+      });
+    }
     const code = reason instanceof MediaError ? reason.code : "unavailable";
     await admin.from("mara_media_generations").update({
       status: "failed", error_code: code,

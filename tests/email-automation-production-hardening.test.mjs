@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-const { isAuthorizedEmailFlowCron } = await import("../app/api/cron/email-flows/route.ts");
+const { isAuthorizedEmailFlowCron } = await import("../lib/email-flows/cron-auth.ts");
 const { isInsideSendWindow, nextSafeSendInstant } = await import("../lib/email-flows/timing.ts");
 
 test("cron authorization accepts only the exact configured bearer secret", () => {

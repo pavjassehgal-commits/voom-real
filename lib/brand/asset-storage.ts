@@ -1,7 +1,7 @@
 import "server-only";
 
 /**
- * Brand Kit v2, slice 5: the private `brand-kit` bucket (migration 0059).
+ * Brand Kit v2, slice 5: the private `brand-kit` bucket (migration 0075).
  *
  * The bucket has no storage policies for users: every read and write goes
  * through server code with the service-role client, and every path is checked

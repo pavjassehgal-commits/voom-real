@@ -11,6 +11,7 @@ import {
   STORY_VIDEO_SYSTEM_PROMPT,
   reelVideoPlanSchema,
   storyVideoPlanSchema,
+  nativeVideoSystemPrompt,
   type ReelVideoPlan,
   type StoryVideoPlan,
 } from "@/lib/mara/media-plan";
@@ -21,12 +22,13 @@ import type {
   VideoJobRow,
   VideoPlanResult,
 } from "./video-generation";
-import { VIDEO_JOB_SELECT } from "./video-generation";
+import { VIDEO_JOB_SELECT, isNativeVideoKind } from "./video-generation";
 import type { CreatedVideoJob, ReferenceImage, VideoJobPoll, VideoGenerationProvider } from "@/lib/media/video-provider";
 import { normalizePlan } from "@/lib/billing/plans";
 import { normalizeAllowAutomaticPaidMedia } from "@/lib/mara/media-spend";
 import { guardAndReserveMedia, releaseReservationOnFailure, confirmReservation } from "@/lib/billing/entitlement-guard";
 import { normalizeAutomationMode } from "@/lib/voom/automation";
+import { createUsageRecorder } from "@/lib/ai/usage";
 
 export const MEDIA_GENERATIONS_TABLE = "mara_media_generations";
 const POST_ASSET_BUCKET = "mara-media";
@@ -66,6 +68,7 @@ async function loadBillingForVideo(admin: SupabaseClient, ownerId: string) {
 
 export function buildVideoGenerationPorts(deps: VideoPortDependencies): VideoGenerationPorts {
   const { admin, provider, imageProvider, brand, plan } = deps;
+  const usageRecorder = createUsageRecorder(admin);
 
   const readRow = (data: Record<string, unknown> | null): VideoJobRow | null => {
     if (!data) return null;
@@ -189,9 +192,15 @@ export function buildVideoGenerationPorts(deps: VideoPortDependencies): VideoGen
       await confirmReservation(admin, ownerId, generationId).catch(() => null);
     },
 
+    async recordUsageAttempt(attempt) {
+      await usageRecorder(attempt);
+    },
+
     async planMedia(input): Promise<VideoPlanResult> {
       const contentType = input.contentType;
-      const systemPrompt = contentType === "reel" ? REEL_VIDEO_SYSTEM_PROMPT : STORY_VIDEO_SYSTEM_PROMPT;
+      const shortVideo = contentType === "reel" || isNativeVideoKind(contentType);
+      const systemPrompt = isNativeVideoKind(contentType) ? nativeVideoSystemPrompt(contentType)
+        : contentType === "reel" ? REEL_VIDEO_SYSTEM_PROMPT : STORY_VIDEO_SYSTEM_PROMPT;
       const context = buildMediaPlanContext({
         brand,
         plan,
@@ -208,9 +217,15 @@ export function buildVideoGenerationPorts(deps: VideoPortDependencies): VideoGen
         ],
         temperature: 0.6,
         maxTokens: 900,
-        parse: (value) => (contentType === "reel" ? reelVideoPlanSchema.parse(value) : storyVideoPlanSchema.parse(value)),
+        usage: {
+          ownerId: input.ownerId,
+          operationKey: `video-plan:${input.draftId}`,
+          operationType: "video_generation_plan",
+          category: "planning",
+        },
+        parse: (value) => (shortVideo ? reelVideoPlanSchema.parse(value) : storyVideoPlanSchema.parse(value)),
       });
-      if (contentType === "reel") {
+      if (shortVideo) {
         const reel = parsed as unknown as ReelVideoPlan;
         return {
           concept: reel.concept,
