@@ -429,7 +429,11 @@ test("2a. Manual mode: the Coordinator creates nothing at all", async () => {
 
 test("2b. Assisted and Autopilot may propose a draft, and nothing more", async () => {
   for (const mode of ["assisted", "autopilot"]) {
-    const admin = createAdmin({ ...baseTables(), voom_email_flows: [] }, createRpc());
+    // The proposal re-checks the account's REAL mode and plan before acting, so
+    // each mode is tested on an account that has confirmed it and is entitled.
+    const tables = { ...baseTables(), voom_email_flows: [] };
+    tables.businesses = [{ ...tables.businesses[0], automation_level: mode, plan: mode === "autopilot" ? "max" : "pro" }];
+    const admin = createAdmin(tables, createRpc());
     const outcome = await proposeEmailFlow(admin, { ownerId: OWNER, flowType: "welcome", mode, deps: { ai: fakeAi(VALID_INTELLIGENCE) } });
 
     assert.equal(outcome.outcome, "proposed", mode);

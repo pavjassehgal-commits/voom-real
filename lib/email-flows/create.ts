@@ -17,11 +17,13 @@
 
 import "server-only";
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { accountTimezone } from "@/lib/voom/timezone";
 import { confirmedAutomationMode, type AutomationModeValue } from "@/lib/voom/automation";
+import { assertAutonomousWorkAllowed } from "@/lib/voom/automation-safety";
+import type { AdminClient } from "@/lib/post/server-data";
 import { buildFlowSkeleton, type FlowBrandContext } from "./skeleton";
 import {
   applyFlowIntelligence,
@@ -74,6 +76,12 @@ export interface CreateEmailFlowInput {
   now?: Date;
   /** Test seam for the text-AI provider only. No media provider is injectable. */
   deps?: FlowIntelligenceDeps;
+  /**
+   * Re-checks the owner's authorization (fresh read). Called immediately
+   * before the AI generation and again immediately before the write; throws to
+   * stop. Coordinator proposals always pass one (see proposeEmailFlow).
+   */
+  authorize?: () => Promise<void>;
 }
 
 export interface CreateEmailFlowResult {
@@ -152,7 +160,9 @@ export async function createEmailFlow(
     name: input.name ?? null,
   });
 
-  // 2) MARA intelligence inside that skeleton. Never fatal.
+  // 2) MARA intelligence inside that skeleton. Never fatal — but never started
+  // for an owner whose authorization was revoked since the run began.
+  await input.authorize?.();
   const context = buildFlowIntelligenceContext({
     skeleton,
     brand: brand.context,
@@ -163,7 +173,9 @@ export async function createEmailFlow(
     usage: input.deps?.usage ?? {
       ownerId: input.ownerId,
       businessId: brand.businessId,
-      operationKey: `email-flow-create:${input.idempotencyKey}`,
+      // One key per generation call: a discarded (revoked) attempt and a later
+      // authorized one are separate paid calls and are both recorded.
+      operationKey: `email-flow-create:${input.idempotencyKey}:${randomUUID()}`,
       operationType: "email_flow_create",
       category: "planning",
     },
@@ -177,7 +189,9 @@ export async function createEmailFlow(
     allowedUrls: input.allowedUrls ?? [],
   });
 
-  // 4) Store, through the only write path.
+  // 4) Store, through the only write path. A revocation during generation
+  // discards the result; migration 0072 re-checks inside the write transaction.
+  await input.authorize?.();
   const { data, error } = await admin.rpc("create_email_flow", {
     p_owner_user_id: input.ownerId,
     p_payload: {
@@ -294,9 +308,18 @@ export async function proposeEmailFlow(
       mode,
       now: input.now,
       deps: input.deps,
+      // Fresh pause/mode/confirmation/plan check before the AI call and before
+      // the write — never the snapshot the coordinator took before planning.
+      authorize: () => assertAutonomousWorkAllowed(admin as AdminClient, input.ownerId, mode),
     });
     return { outcome: "proposed", result };
   } catch (error) {
+    // A revoked authorization is "not permitted", never a failed or partial
+    // proposal: by the app-side check, or by the write-time check (0072).
+    const message = error instanceof Error ? error.message : "";
+    if (message.startsWith("automation_")) return { outcome: "not_permitted", reason: message };
+    const causeMessage = String((error as { cause?: { message?: unknown } } | null)?.cause?.message ?? "");
+    if (causeMessage.includes("coordinator_flow_not_authorized")) return { outcome: "not_permitted", reason: "coordinator_flow_not_authorized" };
     if (error instanceof EmailFlowValidationError && error.code === "flow_type_already_exists") {
       return { outcome: "already_exists" };
     }

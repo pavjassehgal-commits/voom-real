@@ -49,6 +49,13 @@
 
   Unchanged values pass, so no existing row is rewritten. Values forged before
   the guard grant nothing because of the runtime rule above.
+- **Coordinator email flows.** Authorization is re-checked fresh before
+  **each** email AI call and again before **each** write. A revocation during
+  generation discards the result, which is reported as `not_permitted`, never
+  as proposed. **Migration 0072** re-checks inside the insert transaction,
+  holding a share lock on the owner's businesses row. A concurrent pause, mode
+  change or plan change is therefore serialized against the write. Each email
+  generation gets its own AI usage key.
 - **No Production business is updated.** Existing answers stay stored until the
   owner confirms a mode.
 
@@ -56,17 +63,21 @@
 
 No step leaves a window where unauthorized automation can run:
 
-1. Apply 0071 to staging and run the release-order acceptance there: today's
-   onboarding write, forged writes, a pre-guard forged row, and the coordinator.
+1. Apply 0071 and 0072 to staging and run the release-order acceptance there:
+   today's onboarding write, forged writes, a pre-guard forged row, and the
+   coordinator.
 2. **Production Gate 0, read-only:** confirm 0071 is absent and count stored
    values that exceed their plan (canonical mode or paid-media consent). If any
    exist, they keep their old-code reach until the deploy, so report them before
    continuing. No data is changed.
-3. Apply 0071 to Production. It's compatible with the onboarding code currently
-   live, and from then on no new forged value can be written.
+3. Apply 0071, then 0072, to Production. Both are compatible with the code
+   currently live: 0071 accepts today's onboarding answers, and 0072 refuses
+   only unauthorized coordinator email drafts. From then on no new forged value
+   can be written and no unauthorized coordinator draft can be saved.
 4. Merge and deploy the code. From this point any value that is stored but not
    confirmed or not entitled grants nothing at runtime.
 5. Post-deploy read-only verification.
 
-Rollback: `supabase/rollbacks/0071_automation_mode_entitlement_guard.sql`.
+Rollbacks: `supabase/rollbacks/0071_automation_mode_entitlement_guard.sql`,
+`supabase/rollbacks/0072_coordinator_email_flow_authorization.sql`.
 This branch is opted out of automatic Vercel Preview deployments.

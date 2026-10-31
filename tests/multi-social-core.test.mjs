@@ -853,7 +853,8 @@ test("migration 0046 backfills Instagram rows and keeps every channel on one cal
   );
 
   const applied = await applyPending();
-  assert.equal(applied[applied.length - 1], "0071_automation_mode_entitlement_guard.sql", "the automation mode guard follows the plan slot leases without rewriting installed migrations");
+  assert.equal(applied[applied.length - 1], "0072_coordinator_email_flow_authorization.sql", "the coordinator email-flow guard follows the automation mode guard without rewriting installed migrations");
+  assert.ok(applied.includes("0071_automation_mode_entitlement_guard.sql"), "the automation mode guard is retained");
   assert.ok(applied.includes("0070_plan_slot_generation_leases.sql"), "plan slot leases are retained");
   assert.ok(applied.includes("0068_instagram_token_renewal.sql"), "Instagram token renewal is retained");
   assert.ok(applied.includes("0067_youtube_upload_cleanup_fairness.sql"), "cleanup fairness is retained");

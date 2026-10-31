@@ -60,9 +60,11 @@ async function getDb() {
       insert into auth.users (id, email) values
         ('${OWNER_A}', 'owner.a@example.com'),
         ('${OWNER_B}', 'owner.b@example.com');
-      insert into public.businesses (owner_user_id, brand_name, industry, automation_level) values
-        ('${OWNER_A}', 'SynraPay', 'Fintech', 'assisted'),
-        ('${OWNER_B}', 'Other Studio', 'Fashion', 'manual');
+      -- Assisted needs a plan that includes it (migration 0072 checks it for
+      -- every coordinator-created flow).
+      insert into public.businesses (owner_user_id, brand_name, industry, automation_level, plan) values
+        ('${OWNER_A}', 'SynraPay', 'Fintech', 'assisted', 'pro'),
+        ('${OWNER_B}', 'Other Studio', 'Fashion', 'manual', 'pro');
       insert into public.audiences (id, owner_id, name, type) values
         ('${AUD_A}', '${OWNER_A}', 'Merchants', 'manual');
       insert into public.contacts (id, owner_id, first_name, email, email_status) values
@@ -247,6 +249,13 @@ test("1d. a Coordinator proposal can never duplicate a live flow of the same typ
     steps: applied.steps,
   });
 
+  // OWNER_B is Manual: the write itself refuses a coordinator proposal (0072).
+  await expectError(
+    () => one("select * from public.create_email_flow($1::uuid, $2::jsonb)", [OWNER_B, JSON.stringify(proposal(KEY("coord-b-manual")))]),
+    "coordinator_flow_not_authorized",
+  );
+  // Once the owner confirms Assisted, exactly one proposal of a type may exist.
+  await db.query("update public.businesses set automation_level = 'assisted' where owner_user_id = $1", [OWNER_B]);
   const created = await one("select * from public.create_email_flow($1::uuid, $2::jsonb)", [
     OWNER_B, JSON.stringify(proposal(KEY("coord-b"))),
   ]);
@@ -260,6 +269,7 @@ test("1d. a Coordinator proposal can never duplicate a live flow of the same typ
     ]),
     "flow_type_already_exists",
   );
+  await db.query("update public.businesses set automation_level = 'manual' where owner_user_id = $1", [OWNER_B]);
 });
 
 // ─── 2. Consent is authoritative at enrollment ─────────────────────────────
