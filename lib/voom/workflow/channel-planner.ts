@@ -156,6 +156,14 @@ export function planChannelAssignments(input: {
     const eligible = selectedSet.has(channelFormat.channel) || protectedWork;
     const future = identity.date >= input.today;
 
+    // A rejected idea no longer fills its date. It is detached from the plan
+    // (kept, unchanged, in the Content library) so the slot can be replaced
+    // instead of leaving a dead "Rejected" card that blocks the date forever.
+    if (item.status === "rejected" && !protectedWork) {
+      if (future && item.draftId) detach.add(item.draftId);
+      continue;
+    }
+
     if (!eligible && future && item.draftId) {
       detach.add(item.draftId);
       continue;

@@ -5,6 +5,8 @@ import {
   failedPlanReplenishOutcome,
   marketingPlanSnapshot,
   planReplenishOutcome,
+  replenishFailureMessage,
+  PLAN_UNCHANGED_MESSAGE,
 } from "@/lib/voom/workflow/marketing-plan";
 import { runOwnerWorkflow } from "@/lib/voom/workflow/service";
 import { normalizeCadence, CADENCES } from "@/lib/voom/cadence";
@@ -73,7 +75,7 @@ export async function POST(request: Request) {
   if ((count ?? 0) >= 30) {
     return Response.json({
       outcome: failedPlanReplenishOutcome(),
-      error: "Your existing plan hasn't been changed. Try again.",
+      error: PLAN_UNCHANGED_MESSAGE,
     }, { status: 429 });
   }
 
@@ -89,13 +91,13 @@ export async function POST(request: Request) {
     const mediaSpendNotice = mediaSpendRunNotice(run.failures);
     const response = { run, snapshot, outcome, mediaSpendNotice };
     if (outcome.state === "failed") {
-      return Response.json({ ...response, error: "Your existing plan hasn't been changed. Try again." }, { status: 503 });
+      return Response.json({ ...response, error: replenishFailureMessage(run) }, { status: 503 });
     }
     return Response.json(response);
   } catch {
     return Response.json({
       outcome: failedPlanReplenishOutcome(),
-      error: "Your existing plan hasn't been changed. Try again.",
+      error: PLAN_UNCHANGED_MESSAGE,
     }, { status: 503 });
   }
 }

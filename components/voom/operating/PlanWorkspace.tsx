@@ -91,6 +91,9 @@ export function PlanWorkspace({
         setSpendNotice(body.mediaSpendNotice ?? "");
         window.dispatchEvent(new Event("voom:data-changed"));
       } else if (authoritativeOutcome.state === "failed") {
+        // A partially saved run returns the authoritative snapshot: show the
+        // items that were kept alongside the truthful error.
+        if (body.snapshot) setSnapshot(body.snapshot);
         setError(body.error ?? "Your existing plan hasn't been changed. Try again.");
       }
     } catch {
