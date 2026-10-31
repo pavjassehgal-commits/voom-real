@@ -74,13 +74,25 @@ test("1b. the SynraPay regression: a stored 'manual' highlights Manual, never As
   }
 });
 
-test("1c. an unset or legacy automation_level falls back to Assisted and nothing else", () => {
-  // Onboarding stores free-text answers, so the normalizer's fallback is real.
-  for (const raw of [null, undefined, "", "MARA drafts, I approve", "nonsense"]) {
+test("1c. unset or unknown values run as Manual; onboarding answers map to their mode, never Autopilot", () => {
+  // Missing or unrecognised values must default to safe, inactive Manual.
+  for (const raw of [null, undefined, "", "nonsense", "automatic", "Autopilot please"]) {
     const saved = automation.normalizeAutomationMode(raw);
-    assert.equal(saved, automation.RECOMMENDED_AUTOMATION_MODE);
+    assert.equal(saved, "manual", `${JSON.stringify(raw)} runs as Manual`);
     assert.equal(activeCards(saved).length, 1);
-    assert.equal(activeValue(saved), "assisted");
+    assert.equal(activeValue(saved), "manual");
+  }
+  // Onboarding answers saved verbatim by older versions map to what they
+  // describe, capped at Assisted: none of them was an explicit Autopilot choice.
+  const expected = {
+    "I decide everything": "manual",
+    "MARA drafts, I approve": "assisted",
+    "MARA drafts and schedules": "assisted",
+    "MARA runs it end-to-end": "assisted",
+  };
+  for (const [label, mode] of Object.entries(expected)) {
+    assert.equal(automation.normalizeAutomationMode(label), mode, label);
+    assert.equal(activeValue(automation.normalizeAutomationMode(label)), mode);
   }
 });
 
@@ -268,8 +280,10 @@ test("3d. the presentation module cannot change behaviour: no I/O, no scheduling
   assert.doesNotMatch(source, /import\s+"server-only"/);
   assert.doesNotMatch(source, /\bfetch\(|createClient|createAdminClient|supabase|cron|revalidate/i,
     "mode presentation stays presentational");
-  // The normalizer and the stored-value contract are unchanged.
-  assert.match(source, /value === "manual" \|\| value === "autopilot" \? value : "assisted"/);
+  // One normalizer: every reading goes through automationModeState, and the
+  // stored-value contract (exact canonical values only) is unchanged.
+  assert.match(source, /return automationModeState\(value\)\.mode;/);
+  assert.match(source, /value === "manual" \|\| value === "assisted" \|\| value === "autopilot" \? value : null/);
 });
 
 // ---------------------------------------------------------------------------
@@ -282,11 +296,12 @@ test("4. the control renders the cards from the saved-mode state it also highlig
   assert.match(source, /const \[mode, setMode\] = useState\(initial\)/);
   assert.match(source, /variant=\{mode === value \? "primary" : "plain"\}/);
   assert.match(source, /automationModeCards\(mode\)/, "cards are derived from the saved mode, not a literal");
-  assert.match(source, /aria-pressed=\{mode === value\}/);
+  // A mode reads as pressed only once it is a saved, confirmed choice.
+  assert.match(source, /aria-pressed=\{mode === value && confirmed\}/);
   assert.match(source, /role="group"/);
   // The state only moves after a successful save, so the active card never
   // claims a mode that failed to persist.
-  assert.match(source, /if \(response\.ok\) setMode\(next\);\s*else setError/);
+  assert.match(source, /if \(response\.ok\) \{ setMode\(next\); setConfirmed\(true\); \}\s*else setError/);
   // The active card is marked active in DOM terms as well as visually.
   assert.match(source, /data-active=\{card\.active \? "true" : "false"\}/);
   assert.match(source, /aria-current=\{card\.active \? "true" : undefined\}/);
@@ -313,7 +328,7 @@ test("4b. the Automations page passes the saved mode and the saved plan, and kee
   // locks the modes a plan does not include (Free = Manual only, Pro adds
   // Assisted, Max adds Autopilot) — and it is normalised server-side, never
   // trusted from the client.
-  assert.match(page, /<AutomationMode describe initial=\{normalizeAutomationMode\(data\.business\.automation_level\)\} plan=\{planId\} \/>/);
+  assert.match(page, /<AutomationMode describe initial=\{normalizeAutomationMode\(data\.business\.automation_level\)\} confirmed=\{automationModeConfirmed\(data\.business\.automation_level\)\} plan=\{planId\} \/>/);
   assert.match(page, /const planId = normalizePlan\(/);
   const control = await read("components/voom/operating/AutomationMode.tsx");
   assert.match(control, /planConfig\.allowedModes\.includes\(value\)/, "the control locks modes from the shared plan config");
@@ -336,6 +351,10 @@ test("4c. Today keeps the compact control without the descriptive cards", async 
     read("components/voom/today/TodayDashboard.tsx"),
   ]);
   assert.match(today, /automationMode=\{normalizeAutomationMode\(data\.business\.automation_level\)\}/);
-  assert.match(dashboard, /<AutomationMode compact showPlanSummary=\{false\} initial=\{automationMode\} \/>/);
+  // The compact control gets the same confirmation state and the account's
+  // real plan (it previously defaulted to Free and locked Assisted for everyone).
+  assert.match(today, /automationModeConfirmed=\{automationModeConfirmed\(data\.business\.automation_level\)\}/);
+  assert.match(today, /automationPlan=\{normalizePlan\(/);
+  assert.match(dashboard, /<AutomationMode compact showPlanSummary=\{false\} initial=\{automationMode\} confirmed=\{automationModeConfirmed\} plan=\{automationPlan\} \/>/);
   assert.doesNotMatch(today + dashboard, /describe/, "the Today control stays compact");
 });

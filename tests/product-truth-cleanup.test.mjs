@@ -117,6 +117,8 @@ function makeFakes({ rpcError = null, adminThrows = false } = {}) {
           return { error: null, data: { id: "row-1" } };
         },
         update: async () => ({ error: null, data: [] }),
+        // Onboarding reads the account's plan before choosing a mode to save.
+        select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { plan: "free" }, error: null }) }) }),
       };
     },
     auth: {

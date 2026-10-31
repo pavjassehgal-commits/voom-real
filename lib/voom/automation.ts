@@ -37,8 +37,79 @@
 
 export type AutomationModeValue = "manual" | "assisted" | "autopilot";
 
+/**
+ * Onboarding answers that older versions of Voom (and Settings) saved verbatim
+ * into `businesses.automation_level`. They map to the mode they describe, but
+ * never above Assisted: "drafts and schedules" and "end-to-end" were not an
+ * explicit, entitlement-checked Autopilot choice. Autopilot only ever comes
+ * from the Automations control (/api/automation-mode).
+ */
+const LEGACY_AUTOMATION_LABELS: Record<string, "manual" | "assisted"> = {
+  "i decide everything": "manual",
+  "mara drafts, i approve": "assisted",
+  "mara drafts and schedules": "assisted",
+  "mara runs it end-to-end": "assisted",
+};
+
+/**
+ * The one reading of a stored automation value:
+ *   saved  — an exact canonical value chosen through Voom (the only state that
+ *            scheduled planning acts on);
+ *   legacy — a recognised onboarding label: shown as its mode, but the owner
+ *            must confirm it before scheduled planning starts;
+ *   unset  — missing or unrecognised: runs as Manual (nothing automatic).
+ */
+export type AutomationModeState =
+  | { kind: "saved"; mode: AutomationModeValue }
+  | { kind: "legacy"; mode: "manual" | "assisted"; label: string }
+  | { kind: "unset"; mode: "manual" };
+
+export function automationModeState(value: string | null | undefined): AutomationModeState {
+  if (value === "manual" || value === "assisted" || value === "autopilot") return { kind: "saved", mode: value };
+  const legacy = typeof value === "string" ? LEGACY_AUTOMATION_LABELS[value.trim().toLowerCase()] : undefined;
+  if (legacy && typeof value === "string") return { kind: "legacy", mode: legacy, label: value.trim() };
+  return { kind: "unset", mode: "manual" };
+}
+
+/**
+ * The mode the product RUNS AS for a stored value. Legacy labels run as their
+ * (never-Autopilot) mode; missing or unknown values run as Manual.
+ */
 export function normalizeAutomationMode(value: string | null | undefined): AutomationModeValue {
-  return value === "manual" || value === "autopilot" ? value : "assisted";
+  return automationModeState(value).mode;
+}
+
+/**
+ * The mode a stored value may ACT with: a confirmed canonical value, otherwise
+ * Manual. Unconfirmed onboarding answers and unknown values never grant
+ * automation (they are still DISPLAYED through normalizeAutomationMode).
+ */
+export function confirmedAutomationMode(value: string | null | undefined): AutomationModeValue {
+  const state = automationModeState(value);
+  return state.kind === "saved" ? state.mode : "manual";
+}
+
+/** True only for an exact canonical value the owner chose — the gate for scheduled planning. */
+export function automationModeConfirmed(value: string | null | undefined): boolean {
+  return automationModeState(value).kind === "saved";
+}
+
+/** Whether the scheduled coordinator may plan for this stored value (matches its exact-value query). */
+export function scheduledPlanningEnabled(value: string | null | undefined): boolean {
+  const state = automationModeState(value);
+  return state.kind === "saved" && state.mode !== "manual";
+}
+
+/**
+ * The canonical value an onboarding answer saves. Onboarding can choose
+ * Manual or Assisted; it can never save Autopilot (that needs the explicit,
+ * plan-checked Automations control). Unknown answers save nothing.
+ */
+export function onboardingAutomationMode(value: string | null | undefined): "manual" | "assisted" | null {
+  if (value === "manual") return "manual";
+  if (value === "assisted" || value === "autopilot") return "assisted";
+  const state = automationModeState(value);
+  return state.kind === "legacy" ? state.mode : null;
 }
 
 /**
@@ -73,10 +144,25 @@ export const AUTOMATION_MODE_STATUS_LINES: Record<AutomationModeValue, string> =
  */
 export const AUTOMATION_MODE_UNKNOWN_STATUS = "Automation mode not set.";
 
+/** Shown while an onboarding answer still needs the owner's confirmation. */
+export function automationModeConfirmLine(mode: AutomationModeValue): string {
+  return `${AUTOMATION_MODE_LABELS[mode]} — confirm it in Automations to start scheduled planning.`;
+}
+
+/** Short label for a stored value, e.g. Settings: "Assisted", "Assisted · not confirmed", "Not set yet". */
+export function automationModeDisplayLabel(value: string | null | undefined): string {
+  const state = automationModeState(value);
+  if (state.kind === "saved") return AUTOMATION_MODE_LABELS[state.mode];
+  if (state.kind === "legacy") return `${AUTOMATION_MODE_LABELS[state.mode]} · not confirmed`;
+  return "Not set yet";
+}
+
 /** The sidebar status line for a stored value. Never plan-derived. */
 export function automationModeStatusLine(value: string | null | undefined): string {
-  const mode = storedAutomationMode(value);
-  return mode ? AUTOMATION_MODE_STATUS_LINES[mode] : AUTOMATION_MODE_UNKNOWN_STATUS;
+  const state = automationModeState(value);
+  if (state.kind === "saved") return AUTOMATION_MODE_STATUS_LINES[state.mode];
+  if (state.kind === "legacy") return automationModeConfirmLine(state.mode);
+  return AUTOMATION_MODE_UNKNOWN_STATUS;
 }
 
 /** The event a successful save broadcasts so shell surfaces stay truthful. */

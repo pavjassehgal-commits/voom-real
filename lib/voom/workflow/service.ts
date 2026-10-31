@@ -8,9 +8,9 @@ import { composePostCaption } from "@/lib/post/core";
 import { APPROVAL_CONTENT_CHANGED, approvePostDraft, syncPostToCalendar, type AdminClient } from "@/lib/post/server-data";
 import { loadPerformancePlanContext } from "@/lib/performance/data";
 import type { PerformancePlanContext } from "@/lib/performance/plan-context";
-import { mayAutomaticallyGeneratePaidMedia, normalizeAutomationMode, type AutomationModeValue, type WorkflowTrigger } from "@/lib/voom/automation";
-import { canUseAutomationMode, normalizePlan } from "@/lib/billing/plans";
-import { assertAutonomousWorkAllowed } from "@/lib/voom/automation-safety";
+import { mayAutomaticallyGeneratePaidMedia, type AutomationModeValue, type WorkflowTrigger } from "@/lib/voom/automation";
+import { normalizePlan } from "@/lib/billing/plans";
+import { assertAutonomousWorkAllowed, effectiveAutomationMode } from "@/lib/voom/automation-safety";
 import { CADENCE_LABELS, cadenceAnchorDate, normalizeCadence, type Cadence, type ContentType } from "@/lib/voom/cadence";
 import { accountTimezone, formatLocalTime, localDate } from "@/lib/voom/timezone";
 import { ensureWorkflowMedia, type WorkflowMediaDeps } from "./media";
@@ -177,10 +177,9 @@ export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInp
   const cadence = input.cadence ?? normalizeCadence(business.content_frequency);
   
   const planId = normalizePlan((business as { plan?: string | null }).plan);
-  let mode = normalizeAutomationMode(business.automation_level);
-  if (!canUseAutomationMode(planId, mode)) {
-    mode = planId === "pro" ? "assisted" : "manual";
-  }
+  // Only a confirmed mode, capped at the plan, may act: an unconfirmed answer
+  // or a forged/stale value runs as Manual (or Assisted for Autopilot on Pro).
+  const mode = effectiveAutomationMode(business.automation_level, planId);
   const trigger: WorkflowTrigger = input.trigger === "replenish" ? "replenish" : "scheduled";
   if (trigger === "scheduled" && (business as { automation_paused_at?: string | null }).automation_paused_at) {
     throw new Error("automation_paused");

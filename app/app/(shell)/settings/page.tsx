@@ -6,7 +6,7 @@ import { useVoomActions, useVoomState } from "@/lib/voom/store";
 import { Q_INDUSTRY, OB_TONE, Q_CHANNELS, Q_CUSTOMER } from "@/lib/voom/onboardingData";
 import type { BusinessProfileInput } from "@/lib/voom/types";
 import { MANUAL_NEVER_AUTO_SPENDS } from "@/lib/mara/media-spend";
-import { AUTOMATION_MODE_LABELS } from "@/lib/voom/automation";
+import { automationModeDisplayLabel } from "@/lib/voom/automation";
 import { Icon } from "@/components/voom/icons";
 import { BTN, ChannelGlyph, PageHeader } from "@/components/voom/redesign/ui";
 import { AdSepNote } from "@/components/voom/ui/Notes";
@@ -281,7 +281,7 @@ export default function SettingsPage() {
           {section === "mara" && <>
             <Panel title="Voom automation" hint="What MARA can prepare or do without asking you. Change the mode on the Automations page." icon="sparkles">
               <ul className="divide-y divide-line">
-                <Row label="Automation level" hint="How proactive MARA is overall." value={automationMode ? AUTOMATION_MODE_LABELS[automationMode] : "Not set yet"} tone="brand" />
+                <Row label="Automation level" hint="How proactive MARA is overall." value={automationModeDisplayLabel(automationMode)} tone="brand" />
                 <Row label="Draft content" hint="Write captions, ideas and post drafts." value="Always" tone="green" />
                 <Row label="Publish to social channels" hint="Instagram, TikTok and YouTube." value={brand.permission ? (brand.permission.startsWith("No") ? "Automatic" : "Ask first") : "Not set yet"} tone="amber" />
                 <Row label="Send email campaigns" hint="Only through an explicit send action." value="Ask first" tone="amber" />

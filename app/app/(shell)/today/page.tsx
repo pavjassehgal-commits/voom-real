@@ -1,6 +1,7 @@
 import { TodayDashboard, type TodayChannel, type TodayContentCard } from "@/components/voom/today/TodayDashboard";
 import { getResendAvailability } from "@/lib/email/config";
-import { normalizeAutomationMode } from "@/lib/voom/automation";
+import { automationModeConfirmed, normalizeAutomationMode } from "@/lib/voom/automation";
+import { normalizePlan } from "@/lib/billing/plans";
 import { readInstagramConfig } from "@/lib/instagram/config";
 import { getInstagramConnection } from "@/lib/instagram/data";
 import { readTikTokConfig } from "@/lib/tiktok/config";
@@ -51,6 +52,8 @@ export default async function TodayPage() {
     channels={channels}
     recent={recentContent(data.snapshot.items, performance.items, now)}
     automationMode={normalizeAutomationMode(data.business.automation_level)}
+    automationModeConfirmed={automationModeConfirmed(data.business.automation_level)}
+    automationPlan={normalizePlan((data.business as { plan?: string | null }).plan)}
   />;
 }
 

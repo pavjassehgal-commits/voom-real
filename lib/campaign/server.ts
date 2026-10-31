@@ -9,7 +9,7 @@ import { listAudiences } from "@/lib/contacts/server-data";
 import { loadPerformancePlanContext } from "@/lib/performance/data";
 import type { PerformancePlanContext } from "@/lib/performance/plan-context";
 import {
-  normalizeAutomationMode,
+  confirmedAutomationMode,
   type AutomationModeValue,
 } from "@/lib/voom/automation";
 import { getPostDraft, approvePostDraft } from "@/lib/post/server-data";
@@ -208,7 +208,7 @@ export async function buildAutomatedCampaign(
   ownerId: string,
   input: BuildAutomatedCampaignInput,
 ): Promise<BuildResult> {
-  const mode = normalizeAutomationMode(input.mode);
+  const mode = confirmedAutomationMode(input.mode);
   const now = input.now ?? new Date();
   const timeZone = accountTimezone(input.timeZone);
   // Direct unit/test seams may omit billing context; production routes pass it
@@ -516,7 +516,7 @@ export async function createSelfCampaign(
   ownerId: string,
   input: CreateSelfCampaignInput,
 ): Promise<SelfCampaignResult> {
-  const mode = normalizeAutomationMode(input.mode);
+  const mode = confirmedAutomationMode(input.mode);
   const now = input.now ?? new Date();
   const timeZone = accountTimezone(input.timeZone);
   const channels = resolveChannels(input.channels ?? input.brief.channels ?? null);
@@ -737,7 +737,7 @@ export async function addCampaignAction(
   input: AddCampaignActionInput,
 ): Promise<{ ok: true; action: CampaignActionRecord } | { ok: false; reason: string }> {
   const now = input.now ?? new Date();
-  const mode = normalizeAutomationMode(input.mode ?? null);
+  const mode = confirmedAutomationMode(input.mode ?? null);
 
   const { data: containerRow, error: containerError } = await admin.from("voom_campaigns")
     .select(CONTAINER_SELECT).eq("owner_user_id", ownerId).eq("id", campaignId).maybeSingle();

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { AutomationMode } from "@/components/voom/operating/AutomationMode";
+import type { PlanId } from "@/lib/billing/plans";
 import { Icon } from "@/components/voom/icons";
 import type { PerformanceReport } from "@/lib/performance/insights";
 import type { AutomationModeValue } from "@/lib/voom/automation";
@@ -66,6 +67,8 @@ export function TodayDashboard({
   channels,
   recent,
   automationMode,
+  automationModeConfirmed = true,
+  automationPlan = "free",
 }: {
   firstName: string;
   greeting: string;
@@ -79,6 +82,10 @@ export function TodayDashboard({
   channels: TodayChannel[];
   recent: TodayContentCard[];
   automationMode: AutomationModeValue;
+  /** False while the stored value still needs the owner's confirmation. */
+  automationModeConfirmed?: boolean;
+  /** The account's plan, so the compact control locks only the modes it really excludes. */
+  automationPlan?: PlanId;
 }) {
   const todayCount = view.days[0]?.items.length ?? 0;
   return (
@@ -105,7 +112,7 @@ export function TodayDashboard({
         {/* Left column (xl): Engagement, MARA */}
         <div className="contents wide:flex wide:min-w-0 wide:flex-col wide:gap-[18px]">
           <div className="order-3 min-w-0"><EngagementCard metrics={metrics} /></div>
-          <div className="order-5 min-w-0"><MaraCard ideas={ideas} ideaCount={ideaCount} insight={view.coordinatorInsight} automationMode={automationMode} /></div>
+          <div className="order-5 min-w-0"><MaraCard ideas={ideas} ideaCount={ideaCount} insight={view.coordinatorInsight} automationMode={automationMode} automationModeConfirmed={automationModeConfirmed} automationPlan={automationPlan} /></div>
         </div>
         {/* Middle column (xl): Next up, This week */}
         <div className="contents wide:flex wide:min-w-0 wide:flex-col wide:gap-[18px]">
@@ -186,7 +193,7 @@ function EngagementCard({ metrics }: { metrics: TodayMetrics }) {
   );
 }
 
-function MaraCard({ ideas, ideaCount, insight, automationMode }: { ideas: Idea[]; ideaCount: number; insight: View["coordinatorInsight"]; automationMode: AutomationModeValue }) {
+function MaraCard({ ideas, ideaCount, insight, automationMode, automationModeConfirmed, automationPlan }: { ideas: Idea[]; ideaCount: number; insight: View["coordinatorInsight"]; automationMode: AutomationModeValue; automationModeConfirmed: boolean; automationPlan: PlanId }) {
   return (
     <section className="voom-card p-5" aria-labelledby="today-mara">
       <div className="flex items-center gap-3">
@@ -199,7 +206,7 @@ function MaraCard({ ideas, ideaCount, insight, automationMode }: { ideas: Idea[]
       {/* The saved automation mode, changed through the one existing endpoint. */}
       <div className="mt-4 flex min-w-0 flex-wrap items-center gap-2">
         <span className="text-[12.5px] font-medium text-text-3">Automation</span>
-        <AutomationMode compact showPlanSummary={false} initial={automationMode} />
+        <AutomationMode compact showPlanSummary={false} initial={automationMode} confirmed={automationModeConfirmed} plan={automationPlan} />
       </div>
       <div className="mt-4 rounded-[16px] bg-[var(--brand-soft-2)] p-3">
         {ideaCount > 0 ? <>

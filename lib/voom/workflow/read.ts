@@ -1,10 +1,11 @@
 import "server-only";
-import { normalizePlan, canUseAutomationMode, canGenerateExplicitMedia } from "@/lib/billing/plans";
+import { normalizePlan, canGenerateExplicitMedia } from "@/lib/billing/plans";
 import { videoJobSafeError } from "@/lib/mara/video-job";
 import { LINKEDIN_STATUS_LABELS } from "@/lib/linkedin/status";
 
 import { accountTimezone, formatLocalTime, isoToLocalDate, localDate, relativeDayLabel } from "@/lib/voom/timezone";
 import { CADENCE_LABELS, DEFAULT_HORIZON_DAYS, isWithinHorizon, normalizeCadence, type Cadence } from "@/lib/voom/cadence";
+import { effectiveAutomationMode } from "@/lib/voom/automation-safety";
 import type { AdminClient } from "@/lib/post/server-data";
 import { classifyReelProduction, type MaraProductionOption, type ReelProductionMethod } from "@/lib/mara/reel-production";
 import {
@@ -328,11 +329,9 @@ export async function loadWorkflowSnapshot(
   const cadence = normalizeCadence(business?.content_frequency);
   
   const planId = normalizePlan((business as { plan?: string | null } | null)?.plan);
-  let mode = business?.automation_level === "manual" || business?.automation_level === "autopilot"
-    ? business.automation_level : "assisted";
-  if (!canUseAutomationMode(planId, mode)) {
-    mode = planId === "pro" ? "assisted" : "manual";
-  }
+  // The mode the plan actually runs with (confirmed and plan-capped), so the
+  // Marketing Plan never promises automation the account cannot perform.
+  const mode = effectiveAutomationMode(business?.automation_level, planId);
 
   const { data: plan } = planRead;
 
