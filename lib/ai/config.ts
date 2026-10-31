@@ -29,6 +29,11 @@ const PROVIDER_DEFAULTS: Record<string, string> = {
   nvidia: "https://integrate.api.nvidia.com/v1",
 };
 
+/** The configured per-request timeout alone (no provider credentials needed). Throws when invalid. */
+export function aiRequestTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  return requestTimeoutMs(env.AI_REQUEST_TIMEOUT_MS);
+}
+
 export function getAiConfig(env: NodeJS.ProcessEnv = process.env): AiConfig {
   const provider = env.AI_PROVIDER?.trim().toLowerCase() || "groq";
   const apiKey = env.AI_API_KEY?.trim();

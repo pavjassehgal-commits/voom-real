@@ -36,7 +36,13 @@ type ResponseFormat =
 // input failures are never retried, so a bad request can never loop.
 export const STRUCTURED_MAX_ATTEMPTS = 3;
 const STRUCTURED_RETRY_DELAYS_MS = [250, 500];
-const STRUCTURED_RETRY_MAX_DELAY_MS = 2_000;
+export const STRUCTURED_RETRY_MAX_DELAY_MS = 2_000;
+/**
+ * Unsupported structured-output modes degrade strict -> best-effort ->
+ * json_object without spending a retry, so one structured() call can make up
+ * to STRUCTURED_MAX_ATTEMPTS + STRUCTURED_FORMAT_FALLBACKS provider requests.
+ */
+export const STRUCTURED_FORMAT_FALLBACKS = 2;
 
 /**
  * Internal control-flow signal: the provider rejected the structured-output

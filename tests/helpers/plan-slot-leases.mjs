@@ -13,6 +13,9 @@ export function planSlotLeaseRpc(leases = new Map(), now = () => Date.now()) {
   return function handle(name, args = {}) {
     const key = `${args.p_owner_user_id}|${args.p_plan_id}|${args.p_slot_key}`;
     if (name === "claim_plan_slot_generation") {
+      if (!Number.isInteger(args.p_lease_seconds) || args.p_lease_seconds < 10 || args.p_lease_seconds > 600) {
+        return { data: null, error: { message: "invalid_plan_slot_lease" } };
+      }
       const current = leases.get(key);
       if (current && current.leasedUntil > now()) return { data: [], error: null };
       const next = { leaseId: randomUUID(), fence: (current?.fence ?? 0) + 1, leasedUntil: now() + args.p_lease_seconds * 1000 };

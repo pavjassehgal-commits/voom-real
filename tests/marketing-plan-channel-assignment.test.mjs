@@ -1868,3 +1868,107 @@ test("Autopilot never re-approves or re-syncs already-approved work (a failed In
   assert.equal(reapprovals, firstRun, "no second approval/queue sync for approved items");
   assert.equal(approvals, 0);
 });
+
+// ── Lease duration derived from the AI timeout (fail closed when it cannot fit) ──
+
+const slotLease = await import("../lib/voom/workflow/slot-lease.ts");
+
+test("the slot lease covers every retry, format fallback, backoff and the write, within 0070's 10–600 s", () => {
+  // 5 requests (3 attempts + 2 format fallbacks) x timeout + 2 x 2 s backoff + 30 s persistence.
+  const evergreen = (ms) => slotLease.slotLeaseSeconds({ requestTimeoutMs: ms, generationsPerSlot: 1 });
+  assert.equal(evergreen(30_000), 184, "default timeout");
+  assert.equal(evergreen(60_000), 334, "increased timeout");
+  assert.equal(evergreen(113_000), 599, "largest timeout that still fits");
+  assert.equal(evergreen(114_000), null, "beyond 600 s: no lease, fail closed");
+  assert.equal(evergreen(120_000), null, "the configured maximum (120 s) cannot fit");
+  assert.equal(evergreen(1), 35);
+  assert.equal(slotLease.slotLeaseSeconds({ requestTimeoutMs: 0, generationsPerSlot: 1 }), 34, "backoff + overhead only; never below 10");
+  // With trend context on, a matched-trend idea may fall back to a second generation.
+  const trend = (ms) => slotLease.slotLeaseSeconds({ requestTimeoutMs: ms, generationsPerSlot: 2 });
+  assert.equal(trend(30_000), 338);
+  assert.equal(trend(56_000), 598);
+  assert.equal(trend(57_000), null);
+});
+
+function withEnv(t, values) {
+  const saved = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
+  t.after(() => { for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
+}
+
+for (const [label, env, expected] of [
+  ["default timeout", { AI_REQUEST_TIMEOUT_MS: undefined, VOOM_TREND_CONTEXT_ENABLED: undefined }, 184],
+  ["increased timeout", { AI_REQUEST_TIMEOUT_MS: "60000", VOOM_TREND_CONTEXT_ENABLED: undefined }, 334],
+  ["trend context on", { AI_REQUEST_TIMEOUT_MS: "30000", VOOM_TREND_CONTEXT_ENABLED: "true" }, 338],
+]) {
+  test(`a Build requests the derived lease (${label}: ${expected} s)`, async (t) => {
+    withEnv(t, env);
+    const admin = createMemoryAdmin(adminSeed({ preferredChannels: ["TikTok"] }));
+    const rpc = admin.rpc;
+    const requested = new Set();
+    admin.rpc = async (name, args) => { if (name === "claim_plan_slot_generation") requested.add(args.p_lease_seconds); return rpc(name, args); };
+    const run = await service.runOwnerWorkflow(admin, {
+      ownerId: OWNER, now: NOW, trigger: "replenish",
+      planningDeps: { provider: structuredProvider(), performanceContext: async () => null, trendIdeas: async () => [], trendContext: async () => null },
+    });
+    assert.deepEqual([...requested], [expected]);
+    assert.equal(run.failures.length, 0);
+    assert.equal(run.created, 7);
+  });
+}
+
+for (const [label, timeout] of [["the 120 s maximum", "120000"], ["an invalid timeout", "not-a-number"]]) {
+  test(`${label} cannot be covered by a lease, so no paid generation starts`, async (t) => {
+    withEnv(t, { AI_REQUEST_TIMEOUT_MS: timeout, VOOM_TREND_CONTEXT_ENABLED: undefined });
+    const admin = createMemoryAdmin(adminSeed({ preferredChannels: ["TikTok"] }));
+    let calls = 0;
+    const base = structuredProvider();
+    const provider = { async structured(request) { calls += 1; return base.structured(request); } };
+    const run = await service.runOwnerWorkflow(admin, {
+      ownerId: OWNER, now: NOW, trigger: "replenish", planningDeps: { provider, performanceContext: async () => null },
+    });
+    assert.equal(calls, 0);
+    assert.equal(run.created, 0);
+    assert.ok(run.failures.length === 7 && run.failures.every((failure) => failure.code === "slot_lease_budget_exceeded"));
+    const outcome = (await import("../lib/voom/workflow/marketing-plan.ts")).planReplenishOutcome(run, { today: DATE, planValidUntil: null });
+    assert.equal(outcome.state, "failed");
+  });
+}
+
+test("increased timeout on the real 0070 SQL: the lease runs ~334 s and a slow worker that outlives it is fenced out", async (t) => {
+  withEnv(t, { AI_REQUEST_TIMEOUT_MS: "60000", VOOM_TREND_CONTEXT_ENABLED: undefined });
+  const { db, admin } = await raceFixture();
+  let calls = 0;
+  let observedSeconds = null;
+  let takeover = null;
+  const base = structuredProvider();
+  const run = (provider) => service.runOwnerWorkflow(admin, {
+    ownerId: RACE_OWNER, now: NOW, trigger: "replenish",
+    planningDeps: { provider, performanceContext: async () => null }, slotLeaseWait: { pollMs: 5, maxWaitMs: 2_000 },
+  });
+  const plain = { async structured(request) { calls += 1; return base.structured(request); } };
+  const slow = {
+    async structured(request) {
+      calls += 1;
+      if (calls === 1) {
+        const lease = await db.query("select extract(epoch from (leased_until - now()))::int as seconds from public.plan_slot_generation_leases");
+        observedSeconds = lease.rows[0].seconds;
+        // The provider "takes longer than the lease": expire it and let another worker take over.
+        await db.query("update public.plan_slot_generation_leases set leased_until = now() - interval '1 second'");
+        takeover = await run(plain);
+      }
+      return base.structured(request);
+    },
+  };
+  const stuck = await run(slow);
+  assert.ok(observedSeconds >= 330 && observedSeconds <= 334, `lease length ${observedSeconds}s`);
+  assert.equal(takeover.created, 7);
+  assert.deepEqual(stuck.failures.map((failure) => failure.code), ["slot_lease_lost"]);
+  assert.equal(stuck.created, 0);
+  assert.equal(calls, 8, "one unavoidable call by the stuck worker, then one per slot");
+  const drafts = admin.tables.get("mara_drafts").filter((draft) => draft.source_plan_id === RACE_PLAN);
+  assert.equal(drafts.length, 7);
+  assert.equal(new Set(drafts.map((draft) => draft.source_plan_item_key)).size, 7);
+});

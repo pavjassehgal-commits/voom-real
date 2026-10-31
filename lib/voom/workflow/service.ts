@@ -24,6 +24,8 @@ import { MAX_TREND_IDEAS_PER_RUN } from "@/lib/trends/relevance";
 import type { TrendRpcClient } from "@/lib/trends/supabase-rpc";
 import { buildPlannedContentPayload, plannedContentJsonSchema, plannedContentSchema, plannedContentSystemPrompt } from "./prompt";
 import { trendContextEnabled } from "./trend-flag";
+import { slotLeaseSeconds } from "./slot-lease";
+import { aiRequestTimeoutMs } from "@/lib/ai/config";
 import {
   ensureRollingPlan,
   type GeneratedContent,
@@ -259,8 +261,6 @@ interface PortContext {
   slotLeaseWait?: { pollMs: number; maxWaitMs: number };
 }
 
-/** Lease held while one worker generates one slot; longer than a full retried generation. */
-export const SLOT_LEASE_SECONDS = 180;
 const SLOT_LEASE_WAIT = { pollMs: 1_000, maxWaitMs: 20_000 };
 
 /**
@@ -611,12 +611,24 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
     },
 
     async claimSlot(planId, slot) {
+      // The lease covers the slowest generation this configuration allows; a
+      // configuration it cannot cover (or an invalid timeout) starts nothing.
+      let leaseSeconds: number | null;
+      try {
+        leaseSeconds = slotLeaseSeconds({
+          requestTimeoutMs: aiRequestTimeoutMs(),
+          generationsPerSlot: trendContextEnabled() ? 2 : 1,
+        });
+      } catch {
+        leaseSeconds = null;
+      }
+      if (leaseSeconds === null) throw new Error("slot_lease_budget_exceeded");
       // Fail closed: without a durable lease no paid generation starts.
       const { data, error } = await admin.rpc("claim_plan_slot_generation", {
         p_owner_user_id: context.ownerId,
         p_plan_id: planId,
         p_slot_key: slot.slotKey,
-        p_lease_seconds: SLOT_LEASE_SECONDS,
+        p_lease_seconds: leaseSeconds,
       });
       // The function returns a set: one row when claimed, none when held.
       // Anything else is an unknown state and starts no generation.
