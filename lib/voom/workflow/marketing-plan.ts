@@ -83,7 +83,7 @@ export function planReplenishOutcome(
   // Content-stage failures mean the requested plan was only partially
   // persisted. Downstream media/approval holds do not negate a successfully
   // created recommendation and remain reported through their own notices.
-  const incompletePersistence = run.failures.some((failure) => failure.stage === "content")
+  const incompletePersistence = run.failures.some((failure) => failure.stage === "content" || failure.stage === "authorization")
     || !run.plan
     || run.created !== createdItems.length
     || run.created + run.reused !== run.slots;

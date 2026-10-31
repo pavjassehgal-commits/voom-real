@@ -63,6 +63,11 @@ export interface CalendarCommitment {
   localDate: string;
   localTime: string;
   status: "proposed" | "needs_approval" | "approved" | "scheduled" | "publishing" | "published" | "failed" | "waiting_for_media";
+  /**
+   * The provider publish itself failed (as opposed to a rejected idea). Such a
+   * date is neither cadence coverage nor an automatic gap: it needs the owner.
+   */
+  publishFailed?: boolean;
 }
 
 export interface ActiveCampaignState {
@@ -167,6 +172,13 @@ export interface AuthoritativeMarketingState {
    * today when there is no plan). Optional for states rebuilt from older runs.
    */
   cadenceAnchorDate?: string;
+  /**
+   * Social commitments in the wider cadence window (today - 6 .. today + 12),
+   * so every rolling 7-day window that touches the horizon is checked against
+   * the cadence, including already-published and later-scheduled work.
+   * Optional for states rebuilt from older runs (falls back to `commitments`).
+   */
+  cadenceCommitments?: CalendarCommitment[];
   horizonStart: string; // YYYY-MM-DD
   horizonEnd: string;   // YYYY-MM-DD
   cadence: Cadence;

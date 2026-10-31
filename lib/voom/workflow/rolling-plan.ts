@@ -117,7 +117,40 @@ export interface RollingPlanPorts {
   autoApproveAndSchedule(item: WorkflowItem): Promise<{ approved: boolean; reason?: string }>;
   /** Mirrors the current horizon onto the marketing plan row. */
   savePlanItems(planId: string, items: WorkflowItem[]): Promise<void>;
+  /**
+   * Durable single-flight for one slot, taken BEFORE any paid generation:
+   * "claimed" carries a lease the worker must still hold when it persists;
+   * "exists" means another worker already persisted the slot; "held" means
+   * another worker is generating it right now.
+   */
+  claimSlot?(planId: string, slot: PlanSlot): Promise<SlotClaim>;
+  /** Waits briefly for the worker holding a slot to persist it; null if it did not. */
+  awaitSlotItem?(planId: string, slot: PlanSlot): Promise<WorkflowItem | null>;
+  /**
+   * Re-checks that this run is still authorized (pause, mode, entitlement)
+   * immediately before a generation and before a draft write. Throws to stop.
+   */
+  assertStillAuthorized?(): Promise<void>;
 }
+
+export interface SlotLease {
+  /** Throws "slot_lease_lost" when the lease expired or was taken over (fencing). */
+  verify(): Promise<void>;
+  release(): Promise<void>;
+}
+
+export type SlotClaim =
+  | { status: "claimed"; lease: SlotLease }
+  | { status: "exists"; item: WorkflowItem }
+  | { status: "held" };
+
+/** Failure codes that mean the run itself is no longer authorized: stop all further work. */
+const AUTHORIZATION_STOP_CODES = new Set([
+  "automation_paused",
+  "automation_mode_changed",
+  "automation_subscription_restricted",
+  "automation_state_unavailable",
+]);
 
 export interface RollingPlanInput {
   now: Date;
@@ -134,6 +167,12 @@ export interface RollingPlanInput {
   channelCoverage?: ChannelCoverage[];
   /** When supplied by the coordinator, only these actual gap dates are generated. */
   targetDates?: string[];
+  /**
+   * When supplied, NEW drafts are created only on these dates (the dates that
+   * fit the cadence in every rolling 7-day window); existing items on other
+   * plan dates are still reused. Omitted, every plan date may be created.
+   */
+  creatableDates?: string[];
   /**
    * Local date the cadence pattern is pinned to (see `slotDates`). Supplied by
    * the service from the active plan's start; omitted, the pattern starts today.
@@ -338,7 +377,9 @@ export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingP
   const workDateSet = input.targetDates === undefined
     ? new Set(baseDates)
     : new Set(input.targetDates.filter((date) => baseDates.includes(date)));
-  const workSlots = slots.filter((slot) => workDateSet.has(slot.date));
+  const creatable = input.creatableDates === undefined ? null : new Set(input.creatableDates);
+  const workSlots = slots.filter((slot) => workDateSet.has(slot.date)
+    && (!creatable || creatable.has(slot.date) || existingItems.some((item) => item.slotKey === slot.slotKey)));
   result.slots = workSlots.length;
 
   const existingByKey = new Map(existingItems.map((item) => [item.slotKey, item]));
@@ -352,20 +393,53 @@ export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingP
     }
   }
 
+  let stopped: string | null = null;
   for (const slot of workSlots) {
+    // A pause, downgrade or mode change during the run stops every remaining
+    // slot: nothing further is generated or written, and each unfinished slot
+    // is reported, so the run can never read as complete.
+    if (stopped) {
+      result.failures.push({ slot: slot.date, stage: "authorization", code: stopped });
+      continue;
+    }
     let item = existingByKey.get(slot.slotKey) ?? null;
     let created = false;
     if (item) {
       result.reused += 1;
     } else {
+      let lease: SlotLease | null = null;
       try {
-        const content = await ports.generateContent(slot);
-        item = await ports.createDraft({ planId, slot, content });
-        result.created += 1;
-        created = true;
+        if (ports.claimSlot) {
+          const claim = await ports.claimSlot(planId, slot);
+          if (claim.status === "exists") item = claim.item;
+          else if (claim.status === "held") item = await ports.awaitSlotItem?.(planId, slot) ?? null;
+          else lease = claim.lease;
+          if (!item && !lease) throw new Error("slot_in_progress");
+        }
+        if (item) {
+          result.reused += 1;
+        } else {
+          await ports.assertStillAuthorized?.();
+          const content = await ports.generateContent(slot);
+          // Fencing + authorization at the write boundary: a worker whose
+          // lease was taken over, or a run paused mid-generation, writes nothing.
+          await lease?.verify();
+          await ports.assertStillAuthorized?.();
+          item = await ports.createDraft({ planId, slot, content });
+          result.created += 1;
+          created = true;
+        }
       } catch (reason) {
-        result.failures.push({ slot: slot.date, stage: "content", code: codeOf(reason) });
+        const code = codeOf(reason);
+        if (AUTHORIZATION_STOP_CODES.has(code)) {
+          stopped = code;
+          result.failures.push({ slot: slot.date, stage: "authorization", code });
+        } else {
+          result.failures.push({ slot: slot.date, stage: "content", code: codeOf(reason) });
+        }
         continue;
+      } finally {
+        await lease?.release().catch(() => undefined);
       }
     }
 
@@ -403,6 +477,12 @@ export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingP
     } catch (reason) {
       result.failures.push({ slot: slot.date, stage: "media", code: codeOf(reason) });
     }
+
+    // Approved work already belongs to its schedule (media above is
+    // idempotent and only fills a missing visual). Automation never
+    // re-approves or re-syncs it: a re-sync would re-arm a FAILED publish job
+    // (upsert_instagram_publish_queue_item) and retry it without the owner.
+    if (item.status === "approved") continue;
 
     if (input.mode === "autopilot") {
       try {

@@ -38,6 +38,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createFakeCreditLedger, waitFor } from "./helpers/credit-ledger-fake.mjs";
+import { planSlotLeaseRpc } from "./helpers/plan-slot-leases.mjs";
 
 // MARA copy is the free internal planning step; it is answered by the fake
 // fetch below (AI_PROVIDER=local needs no API key). No media provider is
@@ -157,6 +158,7 @@ function containsMatch(value, needle) {
 function createFakeAdmin(tables) {
   const writes = [];
   const rpcs = [];
+  const leaseRpc = planSlotLeaseRpc();
   // The credit ledger of migration 0035, in memory: the REAL entitlement guard
   // and ledger module run against it, so "exactly one paid job" is also
   // "exactly one reservation" — and a Free account is refused before any seam.
@@ -176,6 +178,13 @@ function createFakeAdmin(tables) {
     eq(column, value) { this.filters.push((row) => row[column] === value); return this; }
     in(column, values) { const set = new Set(values.map(String)); this.filters.push((row) => set.has(String(row[column]))); return this; }
     gte(column, value) { this.filters.push((row) => String(row[column] ?? "") >= String(value)); return this; }
+    // The cadence-window read Replenish shares with the coordinator.
+    lte(column, value) { this.filters.push((row) => String(row[column] ?? "") <= String(value)); return this; }
+    neq(column, value) { this.filters.push((row) => row[column] !== value); return this; }
+    not(column, operator, value) {
+      this.filters.push((row) => operator === "is" && value === null ? row[column] !== null && row[column] !== undefined : row[column] !== value);
+      return this;
+    }
     contains(column, needle) { this.filters.push((row) => containsMatch(row[column], needle)); return this; }
     order(column, options = {}) { this.orderColumn = column; this.orderDirection = options.ascending === false ? -1 : 1; return this; }
     limit(count) { this.limitCount = count; return this; }
@@ -249,6 +258,10 @@ function createFakeAdmin(tables) {
     writesTo: (table) => writes.filter((write) => write.table === table),
     from: (table) => new Query(table),
     async rpc(name, args) {
+      // Slot generation leases (0070) are single-flight bookkeeping, not a
+      // publish, queue or credit RPC; they are served and not recorded here.
+      const lease = leaseRpc(name, args);
+      if (lease) return lease;
       rpcs.push({ name, args });
       return (await ledger.rpc(name, args)) ?? { data: null, error: null };
     },
