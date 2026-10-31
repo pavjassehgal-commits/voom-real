@@ -1,7 +1,11 @@
 # Voom architecture (plain language)
 
-Last verified against the code: 2026-10-22. If the code and this file disagree, the code wins:
-update this file in the same change.
+Last verified against the code: 2026-10-22, with a light pass on 2026-11-01 after the merge with
+`main` (73 commits: the Figma redesign of every screen, LinkedIn personal text publishing, native
+TikTok/Shorts plan videos, YouTube uploads, AI usage and cost tracking, automation emergency pause,
+rolling-cadence slot leases). The full pass describing that work is Phase C of
+`handover/merge-plan.md`; until then its section 0 table is the map of what `main` built. If the
+code and this file disagree, the code wins: update this file in the same change.
 
 ## The big picture
 
@@ -34,9 +38,9 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 | Folder | What lives there |
 |---|---|
 | `app/` | Pages and API. `app/page.tsx` = landing. `app/login`, `app/signup`, `app/forgot-password`, `app/reset-password`, `app/auth/callback`, `app/auth/google` = sign-in. `app/app/…` = the logged-in product. `app/api/…` = 75 backend endpoints. `app/privacy`, `terms`, `data-deletion`, `unsubscribe` = public pages. `app/components/` = logo, legal-text pieces and the Google button used by the public pages. |
-| `app/app/(shell)/` | Logged-in screens inside the sidebar layout: today, brand (the Brand Hub: everything MARA knows, editable, with version history), plan, studio, calendar, performance, approvals, automations, campaigns, contacts, connections, instagram, tiktok, youtube, settings, pricing, mara. `reels` only redirects to `studio`; `ads` is a real "not built yet" screen explaining what paid advertising will do |
+| `app/app/(shell)/` | Logged-in screens inside the redesigned sidebar layout (`main`, 2026-10): today, brand (the Brand Hub: everything MARA knows, editable, with version history; our page, old styling until Phase C), studio (Create), content (the content library, `main`), calendar, performance, approvals, automations, plan, mara (read-only overview of MARA's work), campaigns, contacts, connections ("Channels"), instagram, tiktok, youtube, linkedin (`main`), settings (sectioned; the brand section links to the Brand page), pricing. `reels` only redirects to `studio`; `ads` is a real "not built yet" screen explaining what paid advertising will do |
 | `app/app/onboarding/` | Onboarding wizard page |
-| `components/voom/` | UI pieces: `shell/` (sidebar, top bar, nav list in `nav.ts`), `brand/` (the Brand Hub component, also the last onboarding screen), `onboarding/`, `operating/` (plan, approvals), `modals/` (post editor, connect modals, campaign modals), `today/`, `contacts/`, `automations/`, `campaigns/`, `performance/`, `workspace/` (loading skeleton and shared workspace bits), `ui/` (buttons, modal, toast) |
+| `components/voom/` | UI pieces: `shell/` (sidebar, top bar, nav list in `nav.ts`; Brand sits right after Today), `redesign/` (`main`'s shared redesign pieces: `ui.tsx` buttons, page header, channel glyphs), `auth/` (`main`'s login/signup frame), `icons.tsx` (`main`'s icon set), `motion/` (page transitions), `brand/` (the Brand Hub component, also an onboarding screen), `onboarding/` (our 11-screen wizard, `AnalyzingScreen`; `main`'s `SetupComplete` and `onboardingIcons` wait for Phase C), `operating/` (plan, approvals), `modals/` (post editor, connect modals, YouTube upload), `create/`, `content/`, `linkedin/`, `mara/`, `today/`, `contacts/`, `automations/`, `campaigns/`, `performance/`, `workspace/`, `ui/` (primitives, modal, toast host with stacking) |
 | `lib/` | All business logic (see below) |
 | `utils/supabase/` | How code talks to Supabase: `server.ts` (as the logged-in user), `admin.ts` (server master key, bypasses database rules: server only), `client.ts` (browser), `proxy.ts` (refreshes login cookie) |
 | `proxy.ts` (root) | Runs on every request to keep the login session fresh |
@@ -54,12 +58,12 @@ Timers (Supabase Cron, Vercel Cron) ──► app/api/cron/* ──► same as a
 | `lib/voom/` | Core app: types, client state store (`store.tsx`), onboarding questions (`onboardingData.ts`), saving onboarding/settings (`mutations.ts`), "who is logged in" (`server-data.ts` → `getCurrentUser`), timezone, cadence, schedule guards |
 | `lib/voom/workflow/` | The rolling 7-day marketing plan: builds slots, assigns channels, asks MARA to fill them, moves items through plan → draft → approval → schedule |
 | `lib/brand/` | Brand Kit v2 (migration 0075, formerly 0059): `context.ts` is the ONE reader generation uses (`loadBrandContext()` = core fields from `businesses` + the newest `brand_kits` row's brief, offerings, avoid rules, banned words, facts, notes, voice samples; fails open to "no kit"); `versions.ts` appends a kit version on every onboarding/Settings/Brand Hub save, carrying the previous version forward and replacing only the fields that save owns; `sections.ts` defines the Brand Hub sections and which fields and `businesses` columns each owns; `actions.ts` is the hub's save action; `read.ts` loads the version history; `extract.ts` + `extract-actions.ts` are the one AI read of the onboarding description (strict schema over our own option lists, never stored); slice 5 images: `assets.ts` (reference rules, caps, path ownership, list edits, the text-only visual style), `asset-storage.ts` (private `brand-kit` bucket, service role, one-hour signed previews, and the sweep that deletes the owner's files the newest kit version no longer references, run after onboarding Finish and after a Brand page images save), `image.ts` (logo colours from pixels, small JPEG for vision, with sharp), `vision.ts` (one image-reading call), `email-sync.ts` (logo and colours fill the email brand only where empty); slice 6 voice samples: `voice.ts` (one text-model call that writes three sample captions from a snapshot of the answers, and drops any using a banned word or copying a sorted sample) + `voice-actions.ts` (the server action, 20 per user per hour, stores nothing); slice 7 website: `website.ts` (address rules that refuse every non-public host, robots.txt, HTML to text, follow-up links, the capped text block, the homepage-look schema and prompt), `website-fetch.ts` (the guarded text fetch: every host checked, redirects re-checked, 10 s and 2 MB caps), `website-screenshot.ts` (headless Chromium through puppeteer-core, every request the page makes checked the same way), `website-actions.ts` (the two server actions, text and look, 10 per user per hour each, store nothing). Routes: `app/api/brand/assets` (upload, remove unsaved) and `app/api/brand/assets/describe` |
-| `lib/ai/` | Connection to the AI text model (any OpenAI-compatible API; default Groq), plus the optional image-reading model (`AI_VISION_*`, off until `AI_VISION_MODEL` is set; Groq, OpenRouter or any OpenAI-compatible vision model) |
+| `lib/ai/` | Connection to the AI text model (any OpenAI-compatible API; default Groq), plus the optional image-reading model (`AI_VISION_*`, off until `AI_VISION_MODEL` is set; Groq, OpenRouter or any OpenAI-compatible vision model). `main` added `usage.ts`: every call records provider attempts and cost (migration 0061), the vision calls included |
 | `lib/mara/` | MARA's brain: chat prompt, tools, Reel production, video generation and polling, paid-media spending rules, Autopilot safety |
 | `lib/media/` | Image/video generation providers, checking uploaded files, overlays |
 | `lib/post/` | Post Studio: drafts, copy prompts (`prompt.ts`), brand context loader for posts (`server-data.ts`), assets, and `vision.ts` (slice 5b: one look at an uploaded photo with a brand hint before MARA suggests its caption) |
 | `lib/social/` | Shared channel layer: channel list (`channels.ts`), connection status, readiness, publishing state |
-| `lib/instagram/`, `lib/tiktok/`, `lib/youtube/` | One folder per platform: OAuth connect, encrypted tokens, publish queue, publish worker, reconcile, insights |
+| `lib/instagram/`, `lib/tiktok/`, `lib/youtube/`, `lib/linkedin/` | One folder per platform: OAuth connect, encrypted tokens, publish queue, publish worker, reconcile, insights. `main` added LinkedIn (personal text posts only, manual publish; `docs/linkedin-personal-publishing.md`), YouTube MP4 and resumable uploads, Instagram token renewal |
 | `lib/performance/` | Reads results (Instagram insights), ranks what worked, feeds hints into the next plan (`plan-context.ts`) |
 | `lib/billing/` | Plans (free/pro/max), credits ledger, the guard that reserves credits before paid AI calls |
 | `lib/campaign/` | Multi-channel campaigns |
@@ -173,14 +177,18 @@ the admin key (`utils/supabase/admin.ts`) bypasses that, so it **must** filter b
 ## Background jobs (Supabase Cron unless noted)
 instagram-publish (5 min) · youtube-publish (5 min) · tiktok-publish (5 min) · youtube-reconcile
 (10 min) · tiktok-reconcile (10 min) · media-generation (2 min) · email-flows (15 min) ·
-instagram-performance (6 h) · youtube-performance (hourly) · weekly-plans (daily, Vercel) ·
+instagram-performance (6 h) · youtube-performance (hourly) · instagram-token-refresh (`main`) ·
+weekly-plans (daily, Vercel) · linkedin-publish (every 5 min, Vercel; `main`) ·
 trend-collection (daily, Vercel, off by flag). All require `Authorization: Bearer <CRON_SECRET>`.
+`main` rewrote the Supabase schedules (`supabase/ops/schedule-workers.sql`, `docs/scheduled-workers.md`);
+they are not yet re-run on the dev project (`handover/changes-log.md`).
 
 ## Configuration
 All keys go in `.env.local` (copy from `.env.example`). Never commit real values. Anything starting
 `NEXT_PUBLIC_` is visible in the browser; everything else is server-only.
 
 ## Not built yet
-2FA · LinkedIn · Stripe billing · Instagram import
-(`docs/brand-kit-v2-design.md`, slice 8) · the brand kit in Reel video
-plans (slice 9) · reference images in image generation.
+2FA · LinkedIn company pages (personal text posts exist since the merge) · Stripe billing ·
+Instagram import (`docs/brand-kit-v2-design.md`, slice 8) · the brand kit in Reel video
+plans (slice 9) · reference images in image generation · our Brand page and onboarding in the
+redesign's styling (Phase C of `handover/merge-plan.md`).

@@ -10,6 +10,11 @@ checklist at the end of section A; tick what is done). Phase B is the merge itse
 `voom-merge` folder in a new session. Phase C makes our screens look like the redesign. Phase D is
 the habit that stops this from being painful again.
 
+**Status 2026-11-01: Phases A and B are done** (merge commit `a958352`, follow-ups `bfaa2a3`,
+`665caa5` and the B8 docs commit). What was decided and found is in `DECISIONS.md` 2026-11-01;
+the expected test result is in `docs/baseline.md`. One change against the text below: our
+migration is **0075**, not 0071 (B3 note). Phase C is next; `handover/next-session.md` leads.
+
 ---
 
 ## 0. The situation in numbers (read-only facts gathered 2026-10-31)
