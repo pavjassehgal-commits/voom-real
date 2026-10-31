@@ -1,4 +1,4 @@
-# Merge plan: bringing GitHub `main` (the other developer's 67 commits) into Gurnoor's branch
+# Merge plan: bringing GitHub `main` (the other developer's 73 commits) into Gurnoor's branch
 
 Written 2026-10-31 in the session that finished Brand Kit v2 slice 7. Read after `AGENTS.md`,
 `ARCHITECTURE.md`, `DECISIONS.md` and `handover/next-session.md`. The rules in `AGENTS.md` apply
@@ -16,14 +16,14 @@ the habit that stops this from being painful again.
 
 - Our branch `gurnoor-dev`: 17 commits since the shared starting point `8067316` (16 October),
   105 files changed. Everything is described in `handover/next-session.md`.
-- GitHub `main`: 67 commits since the same point, about 300 files changed, head `9043131`
+- GitHub `main`: 73 commits since the same point, about 300 files changed, head `ea1676b`
   (31 October). None of our commits are on it; none of its commits are on ours.
-- **33 files changed on both sides** (section B2 lists them with the rule for each).
+- **34 files changed on both sides** (section B2 lists them with the rule for each).
 - `main` has **no** `ARCHITECTURE.md`, `DECISIONS.md` or `handover/` folder, and its `AGENTS.md` is
   only the Next.js notice that ours already contains. Our docs merge in as plain additions.
 - **Migration number clash:** `main` has `0059_automation_emergency_pause.sql`; we have
-  `0059_brand_kits.sql`. `main`'s migrations run 0059, 0061, 0062, 0063, 0064, 0066, 0067, 0068
-  (no 0060 or 0065). Ours becomes **0069** (section B3). Our 0059 was applied to the dev Supabase
+  `0059_brand_kits.sql`. `main`'s migrations run 0059, 0061, 0062, 0063, 0064, 0066, 0067, 0068, 0070
+  (no 0060, 0065 or 0069). Ours becomes **0071** (section B3). Our 0059 was applied to the dev Supabase
   project through the **SQL editor**, not the command-line tool, so the database has no migration
   history table entry to fix: the rename is a file rename only.
 - `main` deleted `components/voom/onboarding/AnalyzingScreen.tsx`; our wizard still imports it.
@@ -41,6 +41,13 @@ What `main` built, by theme (so the new session knows what it is looking at):
 | AI usage and cost tracking; credit reconciliation | PR #82 | `lib/ai/*`, migration 0061, rollback script |
 | MARA automation safety: emergency pause/resume, approval integrity | PR #81 | `lib/coordinator/*`, migration 0059 (theirs) |
 | Next.js entry-point export rules; test harness leak fix | PR #83 and others | `tests/helpers/*` |
+| MARA automation launch hardening (added 31 Oct, after the first count): rolling cadence windows, single-flight slot generation with a lease, fail-closed AI timeout, failed-publish handling; secure production worker schedules | PRs #101, #102 | `lib/coordinator/*`, `lib/voom/cadence.ts`, `lib/voom/workflow/{rolling-plan,slot-lease,marketing-plan,channel-planner}.ts`, `lib/ai/config.ts`, migration **0070**, `supabase/ops/*`, `vercel.json`, `docs/mara-automation-launch.md`, `docs/scheduled-workers.md` |
+
+`main` moved twice while this plan was written (9043131 in the morning, ea1676b in the evening of
+31 October). **B1 starts with a fresh `git fetch origin` and a re-check of this section**: list the
+commits since ea1676b (`git log --oneline ea1676b..origin/main`), the migrations, and the overlap
+with our files (`comm -12 <(git diff --name-only ea1676b origin/main | sort) <(git diff --name-only 8067316 pre-merge-2026-10-31 | sort)`).
+If a migration above 0070 appeared, ours takes the next free number instead of 0071.
 
 ---
 
@@ -95,7 +102,7 @@ The AI tool first lists the conflicted files (`git status` is read-only and allo
 the list with B2. Any conflicted file **not** in B2 is new information: read both sides before
 deciding, and note it in the merge decision entry (B8).
 
-### B2. The 33 files changed on both sides, and the rule for each
+### B2. The 34 files changed on both sides, and the rule for each
 
 "Ours" = `gurnoor-dev`. "Theirs" = `main`. "Both" = keep every change from both sides; where the
 same lines differ, read both and write one version that does both jobs. For every file: open it,
@@ -114,32 +121,32 @@ Gurnoor to run `git add <file>`.
 | `app/login/page.tsx`, `app/login/LoginForm.tsx`, `app/signup/SignupForm.tsx` | **Theirs, plus our Google button and forgot-password link** (`app/components/GoogleButton.tsx`, `/forgot-password`). | Theirs is the redesign; ours added two features. |
 | `components/voom/modals/CreateContentModal.tsx`, `components/voom/operating/PlanWorkspace.tsx` | **Theirs, plus ours**: our "Existing content" source switch (2026-10-23) and the "What is this post for?" purpose line (slice 5b) in the editor. | Theirs is the redesign and native videos. |
 | `app/api/posts/[id]/route.ts`, `app/api/posts/[id]/generate/route.ts`, `app/api/posts/[id]/suggest/route.ts` | **Both**: our delete/cancel-approval, brand kit extras, vision "seen" path and purpose; theirs for TikTok/YouTube draft handling and cost tracking. | Both added behaviour; neither replaces the other. |
-| `lib/ai/index.ts`, `lib/ai/types.ts` | **Both**: our `createAiVisionProvider` and vision config; their usage/cost tracking. | Two independent additions. |
+| `lib/ai/index.ts`, `lib/ai/types.ts`, `lib/ai/config.ts` | **Both**: our `createAiVisionProvider` and the `AI_VISION_*` config block; their usage/cost tracking and the AI timeout the slot lease is derived from (31 Oct). | Independent additions. |
 | `lib/post/server-data.ts`, `lib/voom/workflow/prompt.ts`, `lib/voom/workflow/service.ts` | **Both**: our brand kit block in every prompt; their native video and cost changes. | Independent additions in the same functions. |
 | `package.json`, `package-lock.json` | **Both** dependency lists (ours added `puppeteer-core`, `@sparticuz/chromium`), then `npm install` in B4 regenerates the lock file; commit the regenerated one. Never hand-edit the lock file. | |
-| `tests/post-studio.test.mjs`, `tests/post-studio-production-0021.test.mjs`, `tests/multi-social-core.test.mjs`, `tests/post-format-persistence.test.mjs`, `tests/tiktok-provider.test.mjs`, `tests/campaigns-v3-pglite.test.mjs`, `tests/campaigns-v3-unified-channels.test.mjs`, `tests/email-automation-flows-pglite.test.mjs`, `tests/mara-media-brief.test.mjs`, `tests/mara-video-publishing.test.mjs` | **Both**, then the migration-list assertions follow B3 (newest = 0069, full list includes both 0059s' names, their 0061 to 0068 and our 0069). | These tests list the migration files; both sides edited the list. |
+| `tests/post-studio.test.mjs`, `tests/post-studio-production-0021.test.mjs`, `tests/multi-social-core.test.mjs`, `tests/post-format-persistence.test.mjs`, `tests/tiktok-provider.test.mjs`, `tests/campaigns-v3-pglite.test.mjs`, `tests/campaigns-v3-unified-channels.test.mjs`, `tests/email-automation-flows-pglite.test.mjs`, `tests/mara-media-brief.test.mjs`, `tests/mara-video-publishing.test.mjs` | **Both**, then the migration-list assertions follow B3 (newest = 0071, full list includes both 0059s' names, their 0061 to 0068 and our 0071). | These tests list the migration files; both sides edited the list. |
 | `AGENTS.md` | **Ours** (theirs is only the Next.js notice, which ours contains). | Our working rules must survive. |
 
 Files only we changed (72) and files only they changed (about 270) merge by themselves. Two of
 theirs will **fail against our wizard** and are handled in B4, not deleted: `tests/onboarding-icons.test.mjs`
 and `tests/onboarding-completion.test.mjs`.
 
-### B3. Renumber our migration to 0069
+### B3. Renumber our migration to 0071
 
 Why: two files numbered 0059 make the order ambiguous for any tool that sorts by number, and both
 sides' tests disagree about "the newest migration". Ours moves because theirs is already applied to
 production-bound history under that number. The dev database is unaffected: our table exists
 already and the file name is not stored anywhere (SQL editor, not CLI).
 
-1. Rename `supabase/migrations/0059_brand_kits.sql` to `supabase/migrations/0069_brand_kits.sql`
-   (Gurnoor runs `git mv supabase/migrations/0059_brand_kits.sql supabase/migrations/0069_brand_kits.sql`).
+1. Rename `supabase/migrations/0059_brand_kits.sql` to `supabase/migrations/0071_brand_kits.sql`
+   (Gurnoor runs `git mv supabase/migrations/0059_brand_kits.sql supabase/migrations/0071_brand_kits.sql`).
 2. Change its header comment to:
    ```
-   -- 0069_brand_kits.sql: Brand Kit v2 storage (Gurnoor's branch, slice 1).
-   -- Written as 0059 on 2026-10-22; renumbered 0069 at the 2026-10-31 merge with main,
+   -- 0071_brand_kits.sql: Brand Kit v2 storage (Gurnoor's branch, slice 1).
+   -- Written as 0059 on 2026-10-22; renumbered 0071 at the 2026-10-31 merge with main,
    -- which had its own 0059 (automation emergency pause).
    ```
-3. Move every "0059 = brand kits" mention to 0069. Found on 2026-10-31 with
+3. Move every "0059 = brand kits" mention to 0071. Found on 2026-10-31 with
    `grep -rn 0059 lib app components tests docs handover` (re-run it; the merge may add more):
    - Code comments and one user-facing message: `lib/brand/actions.ts` ("Apply the latest Supabase
      migration (0059)"), `lib/brand/context.ts`, `lib/brand/versions.ts`, `lib/brand/assets.ts`,
@@ -149,13 +156,13 @@ already and the file name is not stored anywhere (SQL editor, not CLI).
    - Our test pins (13 files): `tests/brand-hub.test.mjs` (the error message regex),
      `tests/brand-assets.test.mjs`, `tests/brand-kit-context.test.mjs`, and the ten migration-list
      tests named in B2. The pattern is an exact list of file names after 0049 plus "no migration
-     beyond 0059": the list gains their 0059, 0061, 0062, 0063, 0064, 0066, 0067, 0068 and our 0069;
-     the ceiling becomes 69.
-   - Their pins at 0068 (4 files: `tests/instagram-token-renewal.test.mjs`, `tests/post-studio.test.mjs`,
+     beyond 0059": the list gains their 0059, 0061, 0062, 0063, 0064, 0066, 0067, 0068, 0070 and our 0071;
+     the ceiling becomes 71.
+   - Their pins at 0070 (as of 31 October; re-grep, they moved twice this week; files seen: `tests/instagram-token-renewal.test.mjs`, `tests/post-studio.test.mjs`,
      `tests/multi-social-core.test.mjs`, `tests/post-studio-production-0021.test.mjs`): "newest is
-     0068" becomes 0069. Their pins that name their own `0059_automation_emergency_pause.sql` stay.
+     0070" becomes 0071. Their pins that name their own `0059_automation_emergency_pause.sql` stay.
    - Docs: `docs/brand-kit-v2-design.md`, `handover/changes-log.md`, `handover/next-session.md`,
-     `ARCHITECTURE.md` (migration range "0001–0059" becomes "0001–0069, with gaps"), the
+     `ARCHITECTURE.md` (migration range "0001–0059" becomes "0001–0071, with gaps"), the
      `DECISIONS.md` slice 1 entry gets one added line, not a rewrite.
 4. `git add` the renamed file and every touched file.
 
@@ -199,7 +206,7 @@ cd "$(git rev-parse --show-toplevel)"
 TAG="${1:-pre-merge-2026-10-31}"
 git diff --name-only 8067316 "$TAG" | while IFS= read -r f; do
   target="$f"
-  [ "$f" = "supabase/migrations/0059_brand_kits.sql" ] && target="supabase/migrations/0069_brand_kits.sql"
+  [ "$f" = "supabase/migrations/0059_brand_kits.sql" ] && target="supabase/migrations/0071_brand_kits.sql"
   git show "HEAD:$target" >/dev/null 2>&1 || target="$f"
   git diff -U0 8067316 "$TAG" -- "$f" | grep '^+' | grep -v '^+++' | sed 's/^+//' | while IFS= read -r line; do
     [ -z "${line// }" ] && continue
@@ -217,12 +224,12 @@ is possible but unlikely; a list of hundreds means a B2 rule was applied wrongly
 
 ### B6. Bring the dev database up to date
 
-Run their eight migrations on the **dev** Supabase project in the SQL editor, in this order, each
+Run their nine migrations on the **dev** Supabase project in the SQL editor, in this order, each
 pasted whole and run once: `0059_automation_emergency_pause.sql`, `0061_ai_usage_cost_tracking.sql`,
 `0062_linkedin_personal.sql`, `0063_native_plan_video_generation.sql`, `0064_youtube_uploaded_video.sql`,
 `0066_youtube_resumable_uploads.sql`, `0067_youtube_upload_cleanup_fairness.sql`,
-`0068_instagram_token_renewal.sql`. Our 0069 is already applied (it was 0059). Add a row to
-`handover/changes-log.md` for the eight, Dev done, Prod pending, and copy any new env var names
+`0068_instagram_token_renewal.sql`, `0070_plan_slot_generation_leases.sql`. Our 0071 is already applied (it was 0059). Add a row to
+`handover/changes-log.md` for the nine, Dev done, Prod pending, and copy any new env var names
 their code reads (`grep -rhoE "process\.env\.[A-Z_]+" lib app | sort -u` compared with `.env.example`)
 into `.env.example` with a comment, values never.
 
@@ -241,11 +248,11 @@ defect. Anything that does not work is a defect to fix before B8.
 
 ### B8. Record and push
 
-- `DECISIONS.md`: one entry "2026-11-xx: Merged main (67 commits) into Gurnoor's branch" with the
+- `DECISIONS.md`: one entry "2026-11-xx: Merged main (73 commits) into Gurnoor's branch" with the
   B2 decisions as taken (wizard, nav position, their two tests), the B4 red list by kind, the B5
-  labelled list, and the 0069 renumbering.
+  labelled list, and the 0071 renumbering.
 - `docs/baseline.md`: a new row with the merged counts and the named parked failures from both sides.
-- `handover/next-session.md`: section 1 (new head, counts, "merged main at 9043131"), section 2
+- `handover/next-session.md`: section 1 (new head, counts, "merged main at ea1676b"), section 2
   (Phase C first), section 4 (new open items), section 6 replaced by "merge main every 2 or 3 days".
 - `ARCHITECTURE.md`: at least the folder table and the "Not built yet" list must be true again
   (LinkedIn and TikTok are now built; Brand page exists in the new shell). A fuller pass is Phase C.

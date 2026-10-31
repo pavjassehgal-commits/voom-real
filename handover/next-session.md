@@ -136,7 +136,7 @@ these is started. `ARCHITECTURE.md` "Not built yet" is the short list.
 - Supabase: the **dev project only**. Migrations go up to `0059_brand_kits.sql`; some tests pin
   "newest migration is 0059" and must move with any new one. Storage bucket `brand-kit` (private).
   Our 0059 was applied through the SQL editor (not the CLI), so renaming the file is safe; it
-  becomes 0069 at the merge (`handover/merge-plan.md` B3).
+  becomes 0071 at the merge (`handover/merge-plan.md` B3).
 - Hourly limits per user (`lib/rate-limit.ts`): extract 10, asset upload 60, vision 40, voice 20,
   website text 10, website look 10. Hitting one shows a plain message in the wizard; wait an hour
   or delete that user's row for the bucket in the `voom_rate_limits` table on the dev project.
@@ -153,7 +153,7 @@ these is started. `ARCHITECTURE.md` "Not built yet" is the short list.
 ## 6. After pulling `main`: checklist
 
 **Superseded for the 2026-10-31 merge by `handover/merge-plan.md`**, which has the real list of
-overlapping files, the migration renumbering (our 0059 becomes 0069) and the verification script.
+overlapping files, the migration renumbering (our 0059 becomes 0071) and the verification script.
 The general checklist below stays for the routine small merges that follow (Phase D of that plan).
 
 Gurnoor runs the git commands; the AI tool reads the result. The steps:
