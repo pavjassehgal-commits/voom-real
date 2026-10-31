@@ -33,6 +33,19 @@ export function marketingPlanSnapshot(snapshot: WorkflowSnapshot): WorkflowSnaps
   };
 }
 
+export const PLAN_UNCHANGED_MESSAGE = "Your existing plan hasn't been changed. Try again.";
+
+/**
+ * The owner-facing message for a failed Replenish. A run that saved some new
+ * items before another item failed must not claim the plan is unchanged: it
+ * says what was kept and that Replenish fills only the remaining dates.
+ */
+export function replenishFailureMessage(run: Pick<RollingPlanResult, "created"> | null): string {
+  const saved = run?.created ?? 0;
+  if (saved <= 0) return PLAN_UNCHANGED_MESSAGE;
+  return `${saved} new recommendation${saved === 1 ? " was" : "s were"} added, but some dates couldn't be planned. Replenish again to fill only the remaining dates.`;
+}
+
 export function failedPlanReplenishOutcome(
   snapshot?: Pick<WorkflowSnapshot, "today" | "planValidUntil">,
 ): PlanReplenishOutcome {

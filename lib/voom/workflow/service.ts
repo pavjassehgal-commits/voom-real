@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AiError, createAiProvider, type AiProvider } from "@/lib/ai";
 import { evaluateAutopilotRecommendation } from "@/lib/mara/autopilot-safety";
@@ -10,7 +11,7 @@ import type { PerformancePlanContext } from "@/lib/performance/plan-context";
 import { mayAutomaticallyGeneratePaidMedia, normalizeAutomationMode, type AutomationModeValue, type WorkflowTrigger } from "@/lib/voom/automation";
 import { canUseAutomationMode, normalizePlan } from "@/lib/billing/plans";
 import { assertAutonomousWorkAllowed } from "@/lib/voom/automation-safety";
-import { CADENCE_LABELS, normalizeCadence, type Cadence, type ContentType } from "@/lib/voom/cadence";
+import { CADENCE_LABELS, cadenceAnchorDate, normalizeCadence, type Cadence, type ContentType } from "@/lib/voom/cadence";
 import { accountTimezone, formatLocalTime, localDate } from "@/lib/voom/timezone";
 import { ensureWorkflowMedia, type WorkflowMediaDeps } from "./media";
 import type { TrendPromptContext } from "@/lib/trends/opportunity";
@@ -175,6 +176,13 @@ export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInp
   }
   const goal = String(business.main_goal ?? "Grow awareness");
   const selectedChannels = normalizeSelectedSocialChannels(business.preferred_channels);
+  // The cadence pattern is pinned to the active plan's start so every run, on
+  // any day, plans the same dates (the coordinator resolves the same anchor).
+  const { data: activePlan, error: activePlanError } = await admin.from("marketing_plans").select("created_at")
+    .eq("owner_user_id", input.ownerId).eq("status", "active")
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (activePlanError) throw new Error("plan_read_failed");
+  const anchorDate = cadenceAnchorDate(activePlan?.created_at, timeZone, localDate(now, timeZone));
 
   const ports = await buildWorkflowPorts(admin, {
     ownerId: input.ownerId,
@@ -201,6 +209,7 @@ export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInp
     selectedChannels,
     targetDates: input.targetDates,
     channelCoverage: input.channelCoverage,
+    cadenceAnchorDate: anchorDate,
     stage: input.stage,
     trigger,
   });
@@ -316,6 +325,13 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
         valid_from: validFrom,
         valid_until: validUntil,
       }).select("id").single();
+      if (error?.code === "23505") {
+        // A concurrent run (double click, or cron + Build) created the one
+        // active plan first; reuse it instead of failing this run.
+        const { data: winner } = await admin.from("marketing_plans").select("id")
+          .eq("owner_user_id", context.ownerId).eq("status", "active").limit(1).maybeSingle();
+        if (winner?.id) return String(winner.id);
+      }
       if (error || !created) throw new Error("plan_store_failed");
       return String(created.id);
     },
@@ -364,7 +380,7 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
     async detachDrafts(planId, draftIds) {
       if (!draftIds.length) return;
       const { error } = await admin.from("mara_drafts").update({ source_plan_id: null, source_plan_item_key: null })
-        .eq("owner_user_id", context.ownerId).eq("source_plan_id", planId).eq("status", "draft").in("id", draftIds);
+        .eq("owner_user_id", context.ownerId).eq("source_plan_id", planId).in("status", ["draft", "rejected"]).in("id", draftIds);
       if (error) throw new Error("plan_reconcile_failed");
     },
 
@@ -834,7 +850,10 @@ export async function generateWorkflowPlannedContent(input: {
       ...(input.ownerId ? { usage: {
         ownerId: input.ownerId,
         businessId: input.businessId ?? null,
-        operationKey: `workflow-plan:${input.businessId ?? input.ownerId}:${slot.channel}:${slot.format}:${slot.publishAt}`,
+        // One key per generation call: a replacement for a rejected idea, a
+        // re-run after a failed save or a trend fallback is a separate paid
+        // call and must be recorded, not merged into the slot's first attempt.
+        operationKey: `workflow-plan:${input.businessId ?? input.ownerId}:${slot.channel}:${slot.format}:${slot.publishAt}:${randomUUID()}`,
         operationType: "mara_workflow_plan",
         category: "recommendation" as const,
       } } : {}),

@@ -134,6 +134,11 @@ export interface RollingPlanInput {
   channelCoverage?: ChannelCoverage[];
   /** When supplied by the coordinator, only these actual gap dates are generated. */
   targetDates?: string[];
+  /**
+   * Local date the cadence pattern is pinned to (see `slotDates`). Supplied by
+   * the service from the active plan's start; omitted, the pattern starts today.
+   */
+  cadenceAnchorDate?: string;
   /** Defaults to "full". Unknown values fall back to "full". */
   stage?: WorkflowStage;
   /** Manual only plans on an explicit owner Replenish, and then planning-only. */
@@ -198,7 +203,7 @@ export function buildSlots(input: RollingPlanInput): PlanSlot[] {
   const horizon = input.horizonDays ?? DEFAULT_HORIZON_DAYS;
   const today = localDate(input.now, input.timeZone);
   const nowMinutes = localMinutes(input.now, input.timeZone);
-  const dates = slotDates(today, input.cadence, horizon);
+  const dates = slotDates(today, input.cadence, horizon, input.cadenceAnchorDate);
   const selectedChannels = normalizeInputChannels(input.selectedChannels);
   if (!selectedChannels.length) return [];
 
@@ -261,7 +266,7 @@ export async function ensureRollingPlan(ports: RollingPlanPorts, input: RollingP
   if (input.mode === "manual" && trigger !== "replenish") return result;
 
   const today = localDate(input.now, input.timeZone);
-  const baseDates = slotDates(today, input.cadence, horizonDays);
+  const baseDates = slotDates(today, input.cadence, horizonDays, input.cadenceAnchorDate);
   const validFrom = baseDates[0] ?? today;
   const validUntil = baseDates.at(-1) ?? today;
   const selectedChannels = normalizeInputChannels(input.selectedChannels);

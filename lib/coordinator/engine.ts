@@ -214,8 +214,9 @@ export function evaluateMarketingNeeds(state: AuthoritativeMarketingState): Coor
 export function identifyCalendarGaps(state: AuthoritativeMarketingState): GapIdentification[] {
   const { cadence, todayLocalDate, timezone, commitments, performance } = state;
 
-  // Determine the baseline target dates for this cadence
-  const targetDates = slotDates(todayLocalDate, cadence, 7);
+  // Target dates follow the cadence pattern pinned to the plan's start, so a
+  // run on any day sees the same dates as the run that created the plan.
+  const targetDates = slotDates(todayLocalDate, cadence, 7, state.cadenceAnchorDate ?? todayLocalDate);
 
   // Map commitments by local date
   const commitmentsByDate = new Map<string, CalendarCommitment[]>();
@@ -226,6 +227,15 @@ export function identifyCalendarGaps(state: AuthoritativeMarketingState): GapIde
     list.push(c);
     commitmentsByDate.set(c.localDate, list);
   }
+
+  // The cadence is a count per 7-day window. Social work already committed on
+  // any date in the window (including off-pattern dates from older plans,
+  // campaigns or Studio) uses up that budget, so gap filling never pushes a
+  // window past the owner's chosen frequency.
+  const horizonEndDate = slotDates(todayLocalDate, "daily", 7).at(-1) ?? todayLocalDate;
+  const committedDates = [...commitmentsByDate.entries()].filter(([date, list]) =>
+    date >= todayLocalDate && date <= horizonEndDate && list.some((c) => isSocialCommitmentChannel(c.channel))).length;
+  const remainingCapacity = Math.max(0, targetDates.length - committedDates);
 
   const gaps: GapIdentification[] = [];
   const now = new Date(state.now);
@@ -243,7 +253,7 @@ export function identifyCalendarGaps(state: AuthoritativeMarketingState): GapIde
     else if (label.includes("post")) preferredFormat = "post";
   }
 
-  for (let i = 0; i < targetDates.length; i++) {
+  for (let i = 0; i < targetDates.length && gaps.length < remainingCapacity; i++) {
     const date = targetDates[i];
     const existingOnDate = commitmentsByDate.get(date) ?? [];
 

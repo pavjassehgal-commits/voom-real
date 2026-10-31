@@ -162,6 +162,11 @@ export interface AuthoritativeMarketingState {
   timezone: string;
   now: string;
   todayLocalDate: string;
+  /**
+   * Local date the cadence pattern is pinned to (the active plan's start, or
+   * today when there is no plan). Optional for states rebuilt from older runs.
+   */
+  cadenceAnchorDate?: string;
   horizonStart: string; // YYYY-MM-DD
   horizonEnd: string;   // YYYY-MM-DD
   cadence: Cadence;

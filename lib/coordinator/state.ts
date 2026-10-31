@@ -2,7 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { accountTimezone, isoToLocalDate, localDate, localToUtcIso } from "@/lib/voom/timezone";
-import { normalizeCadence, slotDates, type ContentType } from "@/lib/voom/cadence";
+import { cadenceAnchorDate, normalizeCadence, slotDates, type ContentType } from "@/lib/voom/cadence";
 import { normalizeAutomationMode } from "@/lib/voom/automation";
 import { normalizePlan, canUseAutopilot, canGenerateExplicitMedia } from "@/lib/billing/plans";
 import { getCreditSummary } from "@/lib/billing/ledger";
@@ -90,7 +90,7 @@ export async function buildMarketingState(
     }
   })();
   const activePlanPromise = admin.from("marketing_plans")
-    .select("id,business_goal,valid_from,valid_until,status")
+    .select("id,business_goal,valid_from,valid_until,status,created_at")
     .eq("owner_user_id", ownerId)
     .eq("status", "active")
     .order("created_at", { ascending: false })
@@ -241,7 +241,10 @@ export async function buildMarketingState(
     if (isSocialDraft) {
       status = d.status === "approved" ? "approved" : d.status === "rejected" ? "failed" : "proposed";
     } else {
-      if (qRow?.status === "published") status = "published";
+      // A rejected Instagram idea no longer covers its date, exactly like a
+      // rejected TikTok/YouTube draft above; the planner replaces it.
+      if (d.status === "rejected") status = "failed";
+      else if (qRow?.status === "published") status = "published";
       else if (qRow?.status === "publishing") status = "publishing";
       else if (qRow?.status === "failed") status = "failed";
       else if (qRow?.status === "waiting_for_media") status = "waiting_for_media";
@@ -391,6 +394,7 @@ export async function buildMarketingState(
     timezone: tz,
     now: now.toISOString(),
     todayLocalDate: today,
+    cadenceAnchorDate: cadenceAnchorDate((activePlan as { created_at?: unknown } | null)?.created_at, tz, today),
     horizonStart,
     horizonEnd,
     cadence,
