@@ -853,7 +853,8 @@ test("migration 0046 backfills Instagram rows and keeps every channel on one cal
   );
 
   const applied = await applyPending();
-  assert.equal(applied[applied.length - 1], "0067_youtube_upload_cleanup_fairness.sql", "cleanup fairness follows direct uploads without rewriting installed migrations");
+  assert.equal(applied[applied.length - 1], "0068_instagram_token_renewal.sql", "Instagram token renewal follows the uploader without rewriting installed migrations");
+  assert.ok(applied.includes("0067_youtube_upload_cleanup_fairness.sql"), "cleanup fairness is retained");
   assert.ok(applied.includes("0066_youtube_resumable_uploads.sql"), "the installed direct-upload migration is retained");
   assert.ok(applied.includes("0064_youtube_uploaded_video.sql"), "the original native-upload migration is retained");
 

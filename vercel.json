@@ -8,7 +8,8 @@
       "codex/youtube-owner-refresh-diagnostic": false,
       "codex/youtube-canonical-oauth": false,
       "codex/youtube-native-mp4-upload": false,
-      "codex/youtube-resumable-uploads": false
+      "codex/youtube-resumable-uploads": false,
+      "fix/instagram-token-renewal": false
     }
   },
   "crons": [
