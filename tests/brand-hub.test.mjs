@@ -272,7 +272,8 @@ test("onboarding mode is the same component without History or operations, endin
 
 test("Brand is reachable from the Primary navigation with a path, a title and a server page", async () => {
   const nav = await read("components/voom/shell/nav.ts");
-  assert.match(nav, /\{ id: "today", n: "Today", i: "home" \},\s*\{ id: "brand", n: "Brand", i: "heart" \}/, "right after Today in the Primary group");
+  // Since the 2026-11-01 merge with main the shell is the redesign: Today uses its "house" icon and the first group is "Workspace".
+  assert.match(nav, /\{ id: "today", n: "Today", i: "house" \},\s*\{ id: "brand", n: "Brand", i: "heart" \}/, "right after Today in the Workspace group");
   assert.match(nav, /brand: "Brand"/);
   const store = await read("lib/voom/store.tsx");
   assert.match(store, /brand: "\/app\/brand"/);

@@ -24,7 +24,10 @@ test("A. the Connections page shows Instagram's real connection status, never an
   const source = await read("app/app/(shell)/connections/page.tsx");
   const instagramCard = source.slice(source.indexOf('name="Instagram"'), source.indexOf('name="TikTok"'));
   assert.ok(instagramCard.length > 0, "the Instagram card exists");
-  assert.match(instagramCard, /connected=\{/, "the Instagram card must pass a real connected value");
+  // The redesigned Channels page (merged 2026-11-01) derives the card's status from
+  // `instagramConnected`, itself read from the real connection row.
+  assert.match(instagramCard, /instagramConnected\s*\?/, "the Instagram card must derive its status from the real connected value");
+  assert.match(source, /const instagramConnected = Boolean\(instagram\?\.connected\)/, "connected means the row says so");
   assert.match(source, /getInstagramConnection\(/, "the status must be read from the stored Instagram connection row");
   assert.doesNotMatch(source, /connected = true/, "no connection card may default to Connected");
 });

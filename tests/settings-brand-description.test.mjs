@@ -265,7 +265,7 @@ test("Settings form binds the persisted description and never hardcodes an empty
   assert.match(settings, /brandDescription: brand\.desc/);
   assert.doesNotMatch(settings, /brandDescription: ""/);
   assert.doesNotMatch(settings, /descInput/, "Settings no longer has its own description field");
-  assert.match(settings, /goTo\("brand"\)/, "Settings points at the Brand page instead");
+  assert.match(settings, /href="\/app\/brand"/, "Settings points at the Brand page instead");
 
   // Both client state updates carry the description so it is never stale.
   assert.match(store, /desc: input\.brandDescription/);

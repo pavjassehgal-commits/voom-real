@@ -63,13 +63,13 @@ function fakeAdmin({ draftExists = true, queueStatus = null, asset = null, gener
 }
 
 test("deleting a post removes the calendar row, cancels the queue, removes the file and then the draft", async () => {
-  const admin = fakeAdmin({ queueStatus: "scheduled", asset: { storage_path: "posts/owner-1/a.png" } });
+  const admin = fakeAdmin({ queueStatus: "scheduled", asset: { storage_path: "owner-1/post-assets/a.png" } });
   assert.deepEqual(await serverData.deletePostDraft(admin, OWNER, DRAFT), { ok: true });
   assert.deepEqual(admin.log, [
     "delete content_calendar_items",
     "rpc cancel_instagram_publish_queue_item",
     "delete post_draft_assets",
-    "storage remove mara-media posts/owner-1/a.png",
+    "storage remove mara-media owner-1/post-assets/a.png",
     "delete mara_drafts",
   ], "calendar first (restrict foreign key), queue cancelled, file and row removed, draft last");
 });
@@ -87,14 +87,14 @@ test("a post with no visual deletes without touching storage; an unknown post is
 
 test("a post Instagram is publishing, or has published, is never deleted", async () => {
   for (const [status, reason] of [["publishing", "publishing"], ["published", "published"]]) {
-    const admin = fakeAdmin({ queueStatus: status, asset: { storage_path: "posts/owner-1/a.png" } });
+    const admin = fakeAdmin({ queueStatus: status, asset: { storage_path: "owner-1/post-assets/a.png" } });
     assert.deepEqual(await serverData.deletePostDraft(admin, OWNER, DRAFT), { ok: false, reason });
     assert.deepEqual(admin.log, [], `${status}: no row, file or queue item is touched`);
   }
 });
 
 test("a stored file still referenced by a paid generation record is kept, the draft still goes", async () => {
-  const admin = fakeAdmin({ asset: { storage_path: "posts/owner-1/paid.png" }, generationsReferencingFile: 1 });
+  const admin = fakeAdmin({ asset: { storage_path: "owner-1/post-assets/paid.png" }, generationsReferencingFile: 1 });
   assert.deepEqual(await serverData.deletePostDraft(admin, OWNER, DRAFT), { ok: true });
   assert.equal(admin.log.some((line) => line.startsWith("storage remove")), false, "the audit trail never points at a missing file");
   assert.ok(admin.log.includes("delete post_draft_assets"));

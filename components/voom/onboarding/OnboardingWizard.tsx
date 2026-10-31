@@ -315,7 +315,9 @@ export function OnboardingWizard({ visionEnabled = false }: { visionEnabled?: bo
         </div>
       </div>
 
-      <div className="sticky bottom-0 flex justify-between gap-3 border-t border-line bg-surface px-6 py-4">
+      {/* `data-toast-clearance` (main's toast system, merged 2026-11-01): notifications
+          stack above this bar instead of covering Back, Skip and Continue. */}
+      <footer data-toast-clearance className="sticky bottom-0 flex justify-between gap-3 border-t border-line bg-surface px-6 py-4">
         <Btn variant="ghost" onClick={back} disabled={onboardSaving || reading}>
           <Icon name="back" size={16} /> Back
         </Btn>
@@ -329,7 +331,7 @@ export function OnboardingWizard({ visionEnabled = false }: { visionEnabled?: bo
             {continueLabel} {!busy && <Icon name="arrow" size={16} />}
           </Btn>
         </div>
-      </div>
+      </footer>
     </div>
   );
 }

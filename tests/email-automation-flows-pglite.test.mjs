@@ -846,7 +846,8 @@ test("7. migrations 0040–0044 remain additive and owner-scoped", async () => {
   assert.doesNotMatch(youTubeProvider, /pg_cron|cron\.schedule/, "0047 schedules no cron");
   assert.doesNotMatch(youTubeProvider, /drop table|drop column|truncate/, "0047 destroys nothing");
   assert.doesNotMatch(youTubeProvider, /instagram_publish_queue|instagram_connections/, "0047 never touches the Instagram integration");
-  for (const name of ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql", "0066_youtube_resumable_uploads.sql", "0067_youtube_upload_cleanup_fairness.sql", "0068_instagram_token_renewal.sql", "0070_plan_slot_generation_leases.sql", "0075_brand_kits.sql"]) {
+  // main's 0059 (emergency pause) deliberately pauses active email flows and is checked on its own below.
+  for (const name of ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql", "0066_youtube_resumable_uploads.sql", "0067_youtube_upload_cleanup_fairness.sql", "0068_instagram_token_renewal.sql", "0070_plan_slot_generation_leases.sql", "0075_brand_kits.sql"]) {
     const hardening = stripSql(name);
     assert.doesNotMatch(hardening, /voom_email_flow/, `${name} never touches an email flow table`);
     assert.doesNotMatch(hardening, /voom_email_identity|voom_email_brand|voom_email_asset|voom_email_suppression|voom_email_unsubscribe/,

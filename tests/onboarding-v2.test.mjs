@@ -99,7 +99,8 @@ test("the channel screen leads with Instagram and TikTok and shows LinkedIn as c
     { label: "TikTok", available: true },
     { label: "LinkedIn", available: false },
   ]);
-  assert.deepEqual(data.Q_CHANNELS, ["Instagram", "TikTok", "YouTube", "Email"], "the full list stays for Settings and the Brand page");
+  // main built LinkedIn (PRs #92-#94, merged 2026-11-01), so the full list Settings and the Brand page use now carries it.
+  assert.deepEqual(data.Q_CHANNELS, ["Instagram", "TikTok", "YouTube", "LinkedIn", "Email"], "the full list stays for Settings and the Brand page");
 });
 
 /* ── 4. Finish writes businesses + brand kit version 1 ───────────────────── */
@@ -174,8 +175,9 @@ test("a new account's wizard renders its first screen with progress and no globa
 test("Settings points at the Brand page instead of duplicating the brand form", async () => {
   const settings = await read("app/app/(shell)/settings/page.tsx");
   assert.match(settings, /Open Brand page/);
-  assert.match(settings, /goTo\("brand"\)/);
-  assert.match(settings, /goTo\("automations"\)/);
+  // Links, not store navigation, since the redesigned Settings page (merged 2026-11-01).
+  assert.match(settings, /href="\/app\/brand"/);
+  assert.match(settings, /href="\/app\/automations"/);
   assert.doesNotMatch(settings, /Brand profile<\/h2>|Voom automation<\/h2>|autonomyRows|toggleTone|Q_INDUSTRY|OB_TONE/);
   assert.match(settings, /brandDescription: brand\.desc/, "the save round-trips the stored brand values unchanged");
 });

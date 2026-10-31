@@ -1,21 +1,23 @@
 /**
- * Setup completion survives the save's own revalidation (browser-rendered).
+ * Setup completion (browser-rendered).
  *
- * saveOnboarding() revalidates /app, so the save action's response re-renders
- * /app/onboarding with onboarding_completed = true. The page used to redirect
- * on that render, throwing the owner to Today before "Your workspace is ready"
- * could show. Now the page hands the flag to the wizard, which only bypasses
- * setup when the flag was already true at mount.
- *
- * This mounts the REAL wizard in Chromium, flips the flag exactly as the
- * revalidated render does, and checks the wizard stays put; then mounts a
- * fresh wizard for an onboarded account and checks it renders nothing (and
- * sends the owner on).
+ * Merged 2026-11-01 (handover/merge-plan.md): the Brand Kit v2 wizard kept its own
+ * flow, so this file now states what that wizard does today. A new owner sees the
+ * first screen, and the wizard stays mounted when the save's revalidated render of
+ * /app/onboarding hands it a changed server flag (it ignores `completedOnServer`:
+ * Finish shows its own "setting things up" screen and then moves to Today itself).
+ * An account that already finished setup is sent to /app by the PAGE, on the
+ * server. main's wizard did that bypass client-side so its "Your workspace is
+ * ready" summary could show; adopting that summary is Phase C, when the original
+ * assertion (an onboarded owner's wizard renders nothing) returns.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import { documentFrom, measureRenderedPages, RenderedSurfaceUnavailable, withClientBundle } from "./helpers/rendered-surface.mjs";
 import { buildClientBundle } from "./helpers/client-bundle.mjs";
+
+const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 const bundle = buildClientBundle(`
   import { createRoot } from "react-dom/client";
@@ -27,21 +29,15 @@ const bundle = buildClientBundle(`
   const business = businessRecord({ onboarding_completed: false });
   const tree = (completedOnServer) => h(Providers, { initialDisplayName: "Sam", initialEmail: "sam@example.com", initialBusiness: business },
     h(OnboardingWizard, { completedOnServer }));
-  const mount = (id, completedOnServer) => {
-    const root = createRoot(document.getElementById(id));
-    root.render(tree(completedOnServer));
-    return root;
-  };
   // A new owner mid-setup; then the save's revalidated render flips the flag.
-  window.__newOwner = mount("new-owner", false);
-  // An onboarded owner opening /app/onboarding directly.
-  window.__onboarded = mount("onboarded", true);
+  window.__newOwner = createRoot(document.getElementById("new-owner"));
+  window.__newOwner.render(tree(false));
   window.__flip = () => window.__newOwner.render(tree(true));
 `);
 
-const html = withClientBundle(await documentFrom('<div id="new-owner"></div><div id="onboarded"></div>'), bundle);
+const html = withClientBundle(await documentFrom('<div id="new-owner"></div>'), bundle);
 
-test("the completion flow is not torn down by the save's revalidated render; onboarded owners still bypass setup", async (t) => {
+test("the completion flow is not torn down by the save's revalidated render", async (t) => {
   let results;
   try {
     results = await measureRenderedPages([{
@@ -55,12 +51,7 @@ test("the completion flow is not torn down by the save's revalidated render; onb
         const before = document.getElementById("new-owner").innerText;
         window.__flip();
         await wait(300);
-        return {
-          before,
-          after: document.getElementById("new-owner").innerText,
-          // Only the always-mounted (empty) notification live region may remain.
-          onboarded: [...document.getElementById("onboarded").children].filter((el) => !el.classList.contains("voom-toast-host")).map((el) => el.outerHTML).join("") + document.getElementById("onboarded").innerText.trim(),
-        };
+        return { before, after: document.getElementById("new-owner").innerText };
       })()`,
     }]);
   } catch (error) {
@@ -69,8 +60,13 @@ test("the completion flow is not torn down by the save's revalidated render; onb
   }
   const [result] = results;
   assert.equal(result.evaluateError, null, result.evaluateError ?? "");
-  const { before, after, onboarded } = result.evaluate;
+  const { before, after } = result.evaluate;
   assert.match(before, /What should MARA call you\?/, "a new owner sees setup");
   assert.match(after, /What should MARA call you\?/, "the revalidated render (onboarding_completed now true) keeps the wizard mounted");
-  assert.equal(onboarded, "", "an onboarded owner opening setup directly gets nothing to fill in — the wizard sends them on");
+});
+
+test("an onboarded owner opening setup directly is sent to the app by the server page", async () => {
+  const page = await read("app/app/onboarding/page.tsx");
+  assert.match(page, /if \(business\?\.onboarding_completed\) \{\s*redirect\("\/app"\);/, "the page, not the wizard, bypasses setup today");
+  assert.match(page, /export const maxDuration = 60/, "the website read's server action keeps its longer limit");
 });
