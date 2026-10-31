@@ -33,6 +33,19 @@ export function marketingPlanSnapshot(snapshot: WorkflowSnapshot): WorkflowSnaps
   };
 }
 
+export const PLAN_UNCHANGED_MESSAGE = "Your existing plan hasn't been changed. Try again.";
+
+/**
+ * The owner-facing message for a failed Replenish. A run that saved some new
+ * items before another item failed must not claim the plan is unchanged: it
+ * says what was kept and that Replenish fills only the remaining dates.
+ */
+export function replenishFailureMessage(run: Pick<RollingPlanResult, "created"> | null): string {
+  const saved = run?.created ?? 0;
+  if (saved <= 0) return PLAN_UNCHANGED_MESSAGE;
+  return `${saved} new recommendation${saved === 1 ? " was" : "s were"} added, but some dates couldn't be planned. Replenish again to fill only the remaining dates.`;
+}
+
 export function failedPlanReplenishOutcome(
   snapshot?: Pick<WorkflowSnapshot, "today" | "planValidUntil">,
 ): PlanReplenishOutcome {
@@ -70,7 +83,7 @@ export function planReplenishOutcome(
   // Content-stage failures mean the requested plan was only partially
   // persisted. Downstream media/approval holds do not negate a successfully
   // created recommendation and remain reported through their own notices.
-  const incompletePersistence = run.failures.some((failure) => failure.stage === "content")
+  const incompletePersistence = run.failures.some((failure) => failure.stage === "content" || failure.stage === "authorization")
     || !run.plan
     || run.created !== createdItems.length
     || run.created + run.reused !== run.slots;

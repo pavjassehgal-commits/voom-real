@@ -1,5 +1,6 @@
-import { localMinutes, localToUtcIso } from "@/lib/voom/timezone";
-import { slotDates, planContentTypes, resolveSlotMinutes, type ContentType } from "@/lib/voom/cadence";
+import { addDays, localMinutes, localToUtcIso } from "@/lib/voom/timezone";
+import { CADENCE_PER_WEEK, slotDates, planContentTypes, resolveSlotMinutes, type ContentType } from "@/lib/voom/cadence";
+import { normalizeSelectedSocialChannels } from "@/lib/voom/workflow/channel-planner";
 import type {
   AuthoritativeMarketingState,
   CalendarCommitment,
@@ -214,18 +215,45 @@ export function evaluateMarketingNeeds(state: AuthoritativeMarketingState): Coor
 export function identifyCalendarGaps(state: AuthoritativeMarketingState): GapIdentification[] {
   const { cadence, todayLocalDate, timezone, commitments, performance } = state;
 
-  // Determine the baseline target dates for this cadence
-  const targetDates = slotDates(todayLocalDate, cadence, 7);
+  // Target dates follow the cadence pattern pinned to the plan's start, so a
+  // run on any day sees the same dates as the run that created the plan.
+  const targetDates = slotDates(todayLocalDate, cadence, 7, state.cadenceAnchorDate ?? todayLocalDate);
 
   // Map commitments by local date
   const commitmentsByDate = new Map<string, CalendarCommitment[]>();
+  const counts = coverageRule(state);
   for (const c of commitments) {
     // Only count active/valid commitments (not failed)
-    if (c.status === "failed") continue;
+    if (!counts(c)) continue;
     const list = commitmentsByDate.get(c.localDate) ?? [];
     list.push(c);
     commitmentsByDate.set(c.localDate, list);
   }
+
+  // The cadence is a limit on EVERY consecutive 7-day window, not just the
+  // one starting today. Social work on any date from today - 6 to today + 12
+  // (published, approved, queued, proposed — on or off the plan's pattern)
+  // counts once per date; failed or rejected work never counts.
+  const windowCommitments = state.cadenceCommitments ?? commitments;
+  const coveredDates = new Set(windowCommitments
+    .filter((c) => counts(c) && isSocialCommitmentChannel(c.channel))
+    .map((c) => c.localDate));
+  const cap = CADENCE_PER_WEEK[cadence];
+  const acceptedDates: string[] = [];
+  const fitsEveryWindow = (date: string) => {
+    for (let back = 6; back >= 0; back -= 1) {
+      const start = addDays(date, -back);
+      const end = addDays(start, 6);
+      let used = 0;
+      for (const covered of coveredDates) if (covered >= start && covered <= end) used += 1;
+      for (const accepted of acceptedDates) if (accepted >= start && accepted <= end) used += 1;
+      if (used + 1 > cap) return false;
+    }
+    return true;
+  };
+  // A failed provider publish is not coverage, but it is never silently
+  // re-planned either: retrying or replacing it is the owner's decision.
+  const heldDates = failedPublishDates(state);
 
   const gaps: GapIdentification[] = [];
   const now = new Date(state.now);
@@ -252,10 +280,11 @@ export function identifyCalendarGaps(state: AuthoritativeMarketingState): GapIde
     // reads the ONE marketing calendar, so it never stacks Instagram work on
     // top of a day another channel already fills. Email keeps its own cadence
     // and does not cover a social slot.
-    const isCovered = existingOnDate.some((c) => isSocialCommitmentChannel(c.channel));
-    if (isCovered) {
+    const isCovered = existingOnDate.some((c) => isSocialCommitmentChannel(c.channel)) || coveredDates.has(date);
+    if (isCovered || heldDates.has(date)) {
       continue;
     }
+    if (!fitsEveryWindow(date)) continue;
 
     const defaultType = types[i] ?? "post";
     const contentType: ContentType = (preferredFormat && i % 2 === 1) ? preferredFormat : defaultType;
@@ -276,6 +305,7 @@ export function identifyCalendarGaps(state: AuthoritativeMarketingState): GapIde
       continue;
     }
 
+    acceptedDates.push(date);
     gaps.push({
       date,
       recommendedFormat: contentType,
@@ -285,6 +315,39 @@ export function identifyCalendarGaps(state: AuthoritativeMarketingState): GapIde
   }
 
   return gaps;
+}
+
+/**
+ * Local dates in the horizon whose only social work is a FAILED provider
+ * publish. They are not cadence coverage and they are not automatic gaps:
+ * the failed item stays visible for the owner to retry or replace.
+ */
+export function failedPublishDates(state: AuthoritativeMarketingState): Set<string> {
+  const source = state.cadenceCommitments ?? state.commitments;
+  const counts = coverageRule(state);
+  const live = new Set(source
+    .filter((c) => counts(c) && isSocialCommitmentChannel(c.channel))
+    .map((c) => c.localDate));
+  return new Set(source
+    .filter((c) => c.publishFailed && isSocialCommitmentChannel(c.channel) && !live.has(c.localDate))
+    .map((c) => c.localDate));
+}
+
+/**
+ * Whether a commitment fills its date for cadence purposes. Failed/rejected
+ * work never does. An unexecuted proposal on a channel the owner no longer
+ * selects does not either: the planner detaches it and it can never publish.
+ * Anything approved, queued or published counts on any channel.
+ */
+function coverageRule(state: AuthoritativeMarketingState): (c: CalendarCommitment) => boolean {
+  const preferred = state.business?.preferredChannels;
+  const selected = Array.isArray(preferred) ? new Set<string>(normalizeSelectedSocialChannels(preferred)) : null;
+  return (c) => {
+    if (c.status === "failed") return false;
+    if (c.status !== "proposed" || !selected) return true;
+    const channel = c.channel.startsWith("instagram_") ? "instagram" : c.channel.split("_")[0];
+    return channel === "email" || selected.has(channel);
+  };
 }
 
 function generateSummaryMessage(

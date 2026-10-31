@@ -8,6 +8,7 @@
 import "./helpers/server-only-shim.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { planSlotLeaseRpc } from "./helpers/plan-slot-leases.mjs";
 
 const channels = await import("../lib/social/channels.ts");
 const planningChannels = await import("../lib/voom/workflow/channels.ts");
@@ -121,6 +122,7 @@ function createMemoryAdmin(seed = {}) {
   const writes = [];
   let sequence = 0;
   const nowIso = NOW.toISOString();
+  const leaseRpc = planSlotLeaseRpc();
 
   class Query {
     constructor(table) {
@@ -237,7 +239,9 @@ function createMemoryAdmin(seed = {}) {
     reads,
     writes,
     from: (table) => new Query(table),
-    async rpc() { return { data: null, error: { message: "RPC not configured in this test" } }; },
+    async rpc(name, args) {
+      return leaseRpc(name, args) ?? { data: null, error: { message: "RPC not configured in this test" } };
+    },
     storage: { from: () => ({
       createSignedUrl: async () => ({ data: null, error: null }),
       createSignedUrls: async (paths) => ({ data: paths.map((path) => ({ signedUrl: null, path })) }),
@@ -1332,4 +1336,535 @@ test("with the flag off no idea basis is recorded and no matcher runs", async ()
     assert.equal(result.created, 7);
     assert.ok(admin.tables.get("mara_drafts").every((draft) => basisOf(draft) === null));
   });
+});
+
+// ── MARA automation launch fixes ─────────────────────────────────────────────
+
+const cadenceMod = await import("../lib/voom/cadence.ts");
+const DAY_MS = 86_400_000;
+const PER_WEEK = { weekly: 1, "3x_week": 3, "5x_week": 5, daily: 7 };
+
+test("an anchored cadence keeps the same dates on every run day: each 7-day window holds exactly the cadence count", () => {
+  const anchor = "2026-09-12";
+  for (const cadence of ["weekly", "3x_week", "5x_week", "daily"]) {
+    const planned = new Set();
+    for (let day = 0; day < 21; day += 1) {
+      const today = timezone.addDays(anchor, day);
+      const dates = cadenceMod.slotDates(today, cadence, 7, anchor);
+      assert.equal(dates.length, PER_WEEK[cadence], `${cadence} window starting ${today}`);
+      for (const date of dates) planned.add(date);
+    }
+    const firstTwoWeeks = [...planned].filter((date) => date < timezone.addDays(anchor, 14));
+    assert.equal(firstTwoWeeks.length, PER_WEEK[cadence] * 2, `${cadence} must not drift into extra dates`);
+  }
+  // Without an anchor (or anchored on today) the original "today is slot 0" result is unchanged.
+  assert.deepEqual(cadenceMod.slotDates(anchor, "3x_week", 7, anchor), cadenceMod.slotDates(anchor, "3x_week", 7));
+  assert.deepEqual(cadenceMod.slotDates("2026-09-13", "weekly", 7, anchor), ["2026-09-19"]);
+  assert.equal(cadenceMod.cadenceAnchorDate("2026-09-12T05:00:00.000Z", TZ, "2026-09-20"), "2026-09-12");
+  assert.equal(cadenceMod.cadenceAnchorDate(null, TZ, "2026-09-20"), "2026-09-20");
+  assert.equal(cadenceMod.cadenceAnchorDate("2026-10-01T00:00:00.000Z", TZ, "2026-09-20"), "2026-09-20", "a future anchor never shifts today");
+});
+
+for (const [frequency, cadence] of [["Weekly", "weekly"], ["3x per week", "3x_week"]]) {
+  test(`daily scheduled runs on a ${frequency} plan create exactly the cadence count, not one item per day`, async (t) => {
+    const network = installLocalAiFetch();
+    t.after(network.restore);
+    const admin = createMemoryAdmin(adminSeed({ preferredChannels: ["TikTok"], businessOverrides: { content_frequency: frequency } }));
+    const planned = () => admin.tables.get("mara_drafts").filter((draft) => draft.source_plan_id);
+    for (let day = 0; day < 14; day += 1) {
+      const now = new Date(NOW.getTime() + day * DAY_MS);
+      await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now, trigger: "scheduled" });
+      if (day === 6) {
+        const firstWeek = planned().filter((draft) => timezone.isoToLocalDate(draft.proposed_publish_at, TZ) < timezone.addDays(DATE, 7));
+        assert.equal(firstWeek.length, PER_WEEK[cadence], "items dated in the first 7 days");
+      }
+    }
+    const dates = planned().map((draft) => timezone.isoToLocalDate(draft.proposed_publish_at, TZ));
+    assert.equal(new Set(dates).size, dates.length, "never two items on one date");
+    assert.equal(dates.filter((date) => date < timezone.addDays(DATE, 14)).length, PER_WEEK[cadence] * 2);
+    assert.equal(admin.tables.get("marketing_plans").length, 1);
+  });
+}
+
+test("social work already in the window counts toward the cadence, so gap filling never exceeds it", async () => {
+  const offPattern = {
+    id: "studio-tiktok",
+    owner_user_id: OWNER,
+    source_plan_id: null,
+    source_plan_item_key: null,
+    kind: "tiktok_video",
+    social_channel: "tiktok",
+    social_format: "video",
+    channel: "TikTok · 9:16",
+    title: "Owner's own TikTok",
+    content: "Created in Studio for later this week.",
+    proposed_publish_at: timezone.localToUtcIso("2026-09-15", 18 * 60 + 30, TZ),
+    status: "draft",
+    created_at: NOW.toISOString(),
+  };
+  const admin = createMemoryAdmin(adminSeed({
+    preferredChannels: ["TikTok"], drafts: [offPattern], businessOverrides: { content_frequency: "Weekly" },
+  }));
+  const result = await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+  assert.deepEqual(result.evaluation.gaps, []);
+  assert.equal(admin.tables.get("mara_drafts").length, 1, "no extra weekly item is generated");
+});
+
+test("a rejected idea is detached and replaced, and the coordinator reports the date honestly", async (t) => {
+  const network = installLocalAiFetch();
+  t.after(network.restore);
+  const admin = createMemoryAdmin(adminSeed({ preferredChannels: ["TikTok"] }));
+  await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+  const planId = admin.tables.get("marketing_plans")[0].id;
+  const rejectedDate = "2026-09-14";
+  const rejected = admin.tables.get("mara_drafts")
+    .find((draft) => timezone.isoToLocalDate(draft.proposed_publish_at, TZ) === rejectedDate);
+  const rejectedSnapshot = { title: rejected.title, content: rejected.content, key: rejected.source_plan_item_key };
+  rejected.status = "rejected";
+
+  const result = await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+  const action = result.actionsTaken.find((entry) => entry.type === "fill_calendar_gaps");
+  assert.ok(action, "the rejected date is filled, not reported as partial or silently reused");
+  assert.equal(action.details.gapsRequested, 1);
+  assert.equal(action.details.gapsFilled, 1);
+  assert.equal(action.details.created, 1);
+
+  assert.equal(rejected.status, "rejected", "the owner's decision is preserved");
+  assert.equal(rejected.source_plan_id, null);
+  assert.equal(rejected.title, rejectedSnapshot.title);
+  assert.equal(rejected.content, rejectedSnapshot.content);
+  const active = admin.tables.get("mara_drafts").filter((draft) => draft.source_plan_id === planId);
+  assert.equal(active.length, 7);
+  const replacement = active.find((draft) => draft.source_plan_item_key === rejectedSnapshot.key);
+  assert.ok(replacement && replacement.id !== rejected.id && replacement.status === "draft");
+  const plannedPosts = admin.tables.get("marketing_plans")[0].planned_posts;
+  assert.equal(plannedPosts.length, 7);
+  assert.ok(plannedPosts.every((post) => post.draftId !== rejected.id));
+
+  // A further run is a no-op: nothing new is generated for the replaced date.
+  const again = await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+  assert.deepEqual(again.evaluation.gaps, []);
+  assert.equal(admin.tables.get("mara_drafts").length, 8);
+});
+
+test("a concurrent first Build that loses the one-active-plan race reuses the winner's plan", async () => {
+  const admin = createMemoryAdmin(adminSeed({ preferredChannels: ["TikTok"] }));
+  const from = admin.from;
+  let raced = false;
+  admin.from = (table) => {
+    const query = from(table);
+    if (table !== "marketing_plans") return query;
+    const insert = query.insert.bind(query);
+    query.insert = (rows) => {
+      if (raced) return insert(rows);
+      raced = true;
+      // The competing request commits its active plan first.
+      admin.tables.get("marketing_plans").push({ id: "plan-winner", owner_user_id: OWNER, status: "active", created_at: NOW.toISOString(), planned_posts: [] });
+      return { select: () => ({ single: async () => ({ data: null, error: { code: "23505", message: "duplicate key" } }) }) };
+    };
+    return query;
+  };
+  const planningDeps = { provider: structuredProvider(), performanceContext: async () => null };
+  const result = await service.runOwnerWorkflow(admin, { ownerId: OWNER, now: NOW, trigger: "replenish", planningDeps });
+  assert.equal(result.planId, "plan-winner");
+  assert.equal(admin.tables.get("marketing_plans").length, 1);
+  assert.ok(admin.tables.get("mara_drafts").every((draft) => draft.source_plan_id === "plan-winner"));
+});
+
+test("a rejected Instagram idea is a real gap for the scheduled coordinator and is replaced once", async (t) => {
+  const network = installLocalAiFetch();
+  t.after(network.restore);
+  const admin = createMemoryAdmin(adminSeed({ preferredChannels: ["Instagram"] }));
+  await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+  const rejected = admin.tables.get("mara_drafts")
+    .find((draft) => timezone.isoToLocalDate(draft.proposed_publish_at, TZ) === "2026-09-15");
+  rejected.status = "rejected";
+  const result = await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+  assert.deepEqual(result.evaluation.gaps.map((gap) => gap.date), ["2026-09-15"]);
+  const action = result.actionsTaken.find((entry) => entry.type === "fill_calendar_gaps");
+  assert.equal(action?.details.created, 1);
+  assert.equal(rejected.status, "rejected");
+  assert.equal(rejected.source_plan_id, null);
+  const again = await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+  assert.deepEqual(again.evaluation.gaps, []);
+});
+
+// ── Release-hardening acceptance ─────────────────────────────────────────────
+
+for (const zone of ["Asia/Dubai", "Australia/Sydney", "America/Los_Angeles"]) {
+  test(`28 daily runs in ${zone} keep every 7-day window at the cadence (week boundaries${zone === "Australia/Sydney" ? " and the 4 Oct DST change" : ""})`, async (t) => {
+    const network = installLocalAiFetch();
+    t.after(network.restore);
+    for (const [frequency, cadence] of [["Weekly", "weekly"], ["3x per week", "3x_week"], ["5x per week", "5x_week"]]) {
+      const admin = createMemoryAdmin(adminSeed({
+        preferredChannels: ["TikTok"], businessOverrides: { content_frequency: frequency, timezone: zone },
+      }));
+      for (let day = 0; day < 28; day += 1) {
+        await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: new Date(NOW.getTime() + day * DAY_MS), trigger: "scheduled" });
+      }
+      const drafts = admin.tables.get("mara_drafts");
+      const dates = drafts.map((draft) => timezone.isoToLocalDate(draft.proposed_publish_at, zone));
+      assert.equal(new Set(dates).size, dates.length, `${zone} ${cadence}: one item per date`);
+      for (const draft of drafts) {
+        assert.equal(timezone.isoToLocalDate(draft.proposed_publish_at, zone), draft.source_plan_item_key.split("|")[0],
+          `${zone} ${cadence}: publish time lands on its planned local date`);
+      }
+      const start = timezone.localDate(NOW, zone);
+      for (let offset = 0; offset < 22; offset += 1) {
+        const from = timezone.addDays(start, offset);
+        const to = timezone.addDays(from, 7);
+        const inWindow = dates.filter((date) => date >= from && date < to).length;
+        assert.equal(inWindow, PER_WEEK[cadence], `${zone} ${cadence}: window from ${from}`);
+      }
+      assert.equal(admin.tables.get("marketing_plans").length, 1);
+    }
+  });
+}
+
+test("a replacement idea is recorded as its own AI usage operation, never merged into the rejected one", async () => {
+  const keys = [];
+  const base = structuredProvider();
+  const provider = { async structured(request) { keys.push(request.usage?.operationKey); return base.structured(request); } };
+  const admin = createMemoryAdmin(adminSeed({ preferredChannels: ["TikTok"] }));
+  const planningDeps = { provider, performanceContext: async () => null };
+  await service.runOwnerWorkflow(admin, { ownerId: OWNER, now: NOW, trigger: "replenish", planningDeps });
+  assert.equal(keys.length, 7);
+  const target = admin.tables.get("mara_drafts")[2];
+  target.status = "rejected";
+  const second = await service.runOwnerWorkflow(admin, { ownerId: OWNER, now: NOW, trigger: "replenish", planningDeps });
+  assert.equal(second.created, 1, "exactly one replacement");
+  assert.equal(keys.length, 8, "one paid generation for the one replaced slot");
+  assert.equal(new Set(keys).size, 8, "the replacement has its own usage key");
+  assert.ok(keys.every((key) => key.length <= 160 && key.startsWith(`workflow-plan:${BUSINESS}:`)));
+  const third = await service.runOwnerWorkflow(admin, { ownerId: OWNER, now: NOW, trigger: "replenish", planningDeps });
+  assert.equal(third.created, 0);
+  assert.equal(keys.length, 8, "no runaway regeneration");
+});
+
+test("Manual never replaces a rejected idea on a schedule; Assisted replaces it only as a draft awaiting approval", async (t) => {
+  const network = installLocalAiFetch();
+  t.after(network.restore);
+  const manual = createMemoryAdmin(adminSeed({ preferredChannels: ["Instagram"], businessOverrides: { automation_level: "manual" } }));
+  const planningDeps = { provider: structuredProvider(), performanceContext: async () => null };
+  await service.runOwnerWorkflow(manual, { ownerId: OWNER, now: NOW, trigger: "replenish", planningDeps });
+  manual.tables.get("mara_drafts")[1].status = "rejected";
+  await coordinator.runCoordinatorForOwner(manual, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+  assert.equal(manual.tables.get("mara_drafts").length, 7, "Manual: no scheduled generation");
+  assert.equal(manual.tables.get("mara_pending_actions").length, 0, "Manual: no approval cards");
+
+  const assisted = createMemoryAdmin(adminSeed({ preferredChannels: ["Instagram"] }));
+  await coordinator.runCoordinatorForOwner(assisted, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+  const rejected = assisted.tables.get("mara_drafts")[3];
+  rejected.status = "rejected";
+  const rejectedDate = rejected.source_plan_item_key.split("|")[0];
+  await coordinator.runCoordinatorForOwner(assisted, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+  const replacements = assisted.tables.get("mara_drafts")
+    .filter((draft) => draft.id !== rejected.id && draft.source_plan_item_key?.split("|")[0] === rejectedDate);
+  assert.equal(replacements.length, 1, "exactly one replacement for the rejected date");
+  const [replacement] = replacements;
+  assert.equal(replacement.status, "draft");
+  assert.equal(assisted.tables.get("mara_drafts").length, 8);
+  assert.ok(assisted.tables.get("mara_drafts").every((draft) => draft.status !== "approved"), "Assisted never approves");
+  assert.equal(assisted.tables.get("instagram_publish_queue").length, 0, "Assisted never queues");
+  assert.equal(assisted.tables.get("content_calendar_items").length, 0, "Assisted never schedules");
+  assert.equal(assisted.tables.get("mara_media_generations").length, 0, "no paid media");
+  assert.ok(assisted.tables.get("mara_pending_actions").some((action) => action.sanitized_arguments.sourceDraftId === replacement.id
+    && (action.status ?? "pending") === "pending")); // the table default is 'pending'; the memory store leaves it unset
+});
+
+test("concurrent Replenish requests on an existing plan create each slot exactly once", async () => {
+  const admin = createMemoryAdmin(adminSeed({ preferredChannels: ["TikTok", "YouTube"] }));
+  const planningDeps = { provider: structuredProvider(), performanceContext: async () => null };
+  await service.runOwnerWorkflow(admin, { ownerId: OWNER, now: NOW, trigger: "replenish", planningDeps });
+  for (const draft of admin.tables.get("mara_drafts").slice(0, 3)) draft.status = "rejected";
+  await Promise.all([
+    service.runOwnerWorkflow(admin, { ownerId: OWNER, now: NOW, trigger: "replenish", planningDeps }),
+    service.runOwnerWorkflow(admin, { ownerId: OWNER, now: NOW, trigger: "replenish", planningDeps }),
+  ]);
+  assert.equal(admin.tables.get("marketing_plans").length, 1);
+  const planIds = new Set(admin.tables.get("marketing_plans").map((plan) => plan.id));
+  const drafts = admin.tables.get("mara_drafts").filter((draft) => planIds.has(draft.source_plan_id));
+  const keys = drafts.map((draft) => `${draft.source_plan_id}|${draft.source_plan_item_key}`);
+  assert.equal(new Set(keys).size, keys.length, "no duplicate slot drafts");
+});
+
+test("provider retries of ONE generation share one usage key; a new generation gets a new key", async (t) => {
+  const { OpenAiCompatibleProvider } = await import("../lib/ai/openai-compatible.ts");
+  const attempts = [];
+  const provider = new OpenAiCompatibleProvider(
+    { provider: "local", baseUrl: "http://ai.test.invalid/v1", model: "plan-test", requestTimeoutMs: 5_000 },
+    async (attempt) => { attempts.push({ key: attempt.context.operationKey, n: attempt.attemptNumber, status: attempt.status }); },
+  );
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  let calls = 0;
+  globalThis.fetch = async (url) => {
+    if (!String(url).endsWith("/chat/completions")) throw new Error(`Unexpected outbound test request: ${url}`);
+    calls += 1;
+    if (calls === 1) return new Response("{}", { status: 503 }); // transient: the same generation retries
+    const content = {
+      concept: "TikTok idea", hook: "A clear hook.", caption: "A useful caption.", cta: "Learn more.",
+      hashtags: ["local"], description: "", script: ["Open", "Explain", "Show", "Close"], visualBrief: "Vertical, natural light.",
+    };
+    return Response.json({ choices: [{ message: { content: JSON.stringify(content) } }], usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 } });
+  };
+  const slot = {
+    date: "2026-09-14", slotKey: "2026-09-14|tiktok_video", index: 2, channel: "tiktok", format: "video", contentType: "video",
+    publishAt: timezone.localToUtcIso("2026-09-14", 19 * 60, TZ),
+  };
+  const input = {
+    ownerId: OWNER, businessId: BUSINESS, business: businessRow(["TikTok"]), goal: "Grow useful awareness",
+    cadence: "daily", timeZone: TZ, slot, plannedConcepts: [], provider,
+  };
+  await service.generateWorkflowPlannedContent(input);
+  assert.equal(calls, 2, "one transient failure, one retry — no extra provider call");
+  assert.deepEqual(attempts.map((a) => [a.n, a.status]), [[1, "failed"], [2, "succeeded"]]);
+  assert.equal(new Set(attempts.map((a) => a.key)).size, 1, "both attempts belong to ONE usage operation");
+
+  await service.generateWorkflowPlannedContent(input); // a genuinely new generation (e.g. a replacement)
+  assert.equal(calls, 3, "exactly one provider call for the new generation");
+  assert.equal(attempts.length, 3);
+  assert.equal(attempts[2].n, 1, "the new generation starts its own attempt sequence");
+  assert.notEqual(attempts[2].key, attempts[0].key, "recorded once, under its own key");
+});
+
+// ── Single-flight generation against the real 0070 SQL (PGlite) ─────────────
+
+const { createSupabaseLite } = await import("./helpers/pglite-supabase.mjs");
+const LEASE_RPCS = new Set(["claim_plan_slot_generation", "plan_slot_lease_held", "release_plan_slot_generation"]);
+const RACE_OWNER = "5a1b2c3d-0000-4000-8000-000000000001";
+const RACE_PLAN = "5a1b2c3d-0000-4000-8000-0000000000aa";
+
+async function raceFixture() {
+  const { db } = await createSupabaseLite();
+  await db.query("insert into auth.users(id) values ($1)", [RACE_OWNER]);
+  const business = await db.query("insert into public.businesses(owner_user_id, brand_name) values ($1, 'Race Studio') returning id", [RACE_OWNER]);
+  await db.query(`insert into public.marketing_plans(id, owner_user_id, business_id, status, business_goal, weekly_strategy, content_frequency, valid_from, valid_until)
+    values ($1, $2, $3, 'active', 'Grow', 'Rolling plan', 'Daily', '2026-09-12', '2026-09-18')`, [RACE_PLAN, RACE_OWNER, business.rows[0].id]);
+  const seed = adminSeed({ preferredChannels: ["TikTok"], plans: [{ id: RACE_PLAN, owner_user_id: RACE_OWNER, business_id: BUSINESS, status: "active", created_at: NOW.toISOString(), planned_posts: [] }] });
+  seed.businesses[0].owner_user_id = RACE_OWNER;
+  const admin = createMemoryAdmin(seed);
+  admin.rpc = async (name, args) => {
+    if (!LEASE_RPCS.has(name)) return { data: null, error: { message: "RPC not configured in this test" } };
+    const params = Object.values(args);
+    const placeholders = params.map((_, index) => `$${index + 1}`).join(", ");
+    try {
+      const result = await db.query(name === "claim_plan_slot_generation"
+        ? `select * from public.${name}(${placeholders})`
+        : `select public.${name}(${placeholders}) as value`, params);
+      return { data: name === "claim_plan_slot_generation" ? result.rows : result.rows[0].value, error: null };
+    } catch (error) {
+      return { data: null, error: { message: error.message } };
+    }
+  };
+  let calls = 0;
+  const provider = {
+    async structured(request) {
+      calls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 5)); // let the other Build interleave mid-generation
+      return structuredProvider().structured(request);
+    },
+  };
+  return { db, admin, provider, calls: () => calls };
+}
+
+test("two simultaneous Builds on a real database make seven generation calls, not fourteen", async () => {
+  const { admin, provider, calls } = await raceFixture();
+  const run = () => service.runOwnerWorkflow(admin, {
+    ownerId: RACE_OWNER, now: NOW, trigger: "replenish",
+    planningDeps: { provider, performanceContext: async () => null },
+    slotLeaseWait: { pollMs: 5, maxWaitMs: 5_000 },
+  });
+  const [first, second] = await Promise.all([run(), run()]);
+  assert.equal(calls(), 7, "exactly one paid generation per slot");
+  assert.equal(first.created + second.created, 7);
+  assert.equal(first.failures.length + second.failures.length, 0, "the waiting Build reuses the winner's drafts");
+  assert.equal(first.created + first.reused, 7);
+  assert.equal(second.created + second.reused, 7);
+  const drafts = admin.tables.get("mara_drafts").filter((draft) => draft.source_plan_id === RACE_PLAN);
+  assert.equal(drafts.length, 7);
+  assert.equal(new Set(drafts.map((draft) => draft.source_plan_item_key)).size, 7);
+});
+
+test("a crashed worker's lease expires and the slot is recovered; a stale worker is fenced out", async () => {
+  const { db, admin, provider, calls } = await raceFixture();
+  const slotKey = "2026-09-12|tiktok_video";
+  // A worker crashed while holding today's slot.
+  const crashed = await db.query("select * from public.claim_plan_slot_generation($1, $2, $3, 60)", [RACE_OWNER, RACE_PLAN, slotKey]);
+  const held = await service.runOwnerWorkflow(admin, {
+    ownerId: RACE_OWNER, now: NOW, trigger: "replenish",
+    planningDeps: { provider, performanceContext: async () => null }, slotLeaseWait: { pollMs: 5, maxWaitMs: 20 },
+  });
+  assert.equal(calls(), 6, "the held slot is not generated while its lease is live");
+  assert.deepEqual(held.failures.map((failure) => [failure.slot, failure.code]), [["2026-09-12", "slot_in_progress"]]);
+
+  await db.query("update public.plan_slot_generation_leases set leased_until = now() - interval '1 second' where slot_key = $1", [slotKey]);
+  const recovered = await service.runOwnerWorkflow(admin, {
+    ownerId: RACE_OWNER, now: NOW, trigger: "replenish",
+    planningDeps: { provider, performanceContext: async () => null }, slotLeaseWait: { pollMs: 5, maxWaitMs: 20 },
+  });
+  assert.equal(recovered.created, 1);
+  assert.equal(calls(), 7);
+  const stale = await db.query("select public.plan_slot_lease_held($1, $2, $3, $4, $5) as held",
+    [RACE_OWNER, RACE_PLAN, slotKey, crashed.rows[0].lease_id, crashed.rows[0].fence]);
+  assert.equal(stale.rows[0].held, false, "the crashed worker can no longer pass the write fence");
+  const fence = await db.query("select fence from public.plan_slot_generation_leases where slot_key = $1", [slotKey]);
+  assert.equal(Number(fence.rows[0].fence), 2);
+});
+
+test("a worker that loses its lease mid-generation writes nothing", async () => {
+  const created = [];
+  const ports = {
+    ...createPlannerStore().ports,
+    async claimSlot() {
+      return { status: "claimed", lease: { async verify() { throw new Error("slot_lease_lost"); }, async release() {} } };
+    },
+    async createDraft(input) { created.push(input); throw new Error("must not write"); },
+  };
+  const result = await rolling.ensureRollingPlan(ports, baseInput({ selectedChannels: ["tiktok"], trigger: "replenish" }));
+  assert.equal(created.length, 0);
+  assert.ok(result.failures.length > 0 && result.failures.every((failure) => failure.code === "slot_lease_lost"));
+});
+
+test("a lease store failure fails closed: no generation starts", async () => {
+  let generated = 0;
+  const ports = {
+    ...createPlannerStore().ports,
+    async claimSlot() { throw new Error("slot_lease_unavailable"); },
+    async generateContent() { generated += 1; throw new Error("must not generate"); },
+  };
+  const result = await rolling.ensureRollingPlan(ports, baseInput({ selectedChannels: ["tiktok"], trigger: "replenish" }));
+  assert.equal(generated, 0);
+  assert.ok(result.failures.every((failure) => failure.code === "slot_lease_unavailable"));
+});
+
+for (const [label, change] of [
+  ["an emergency pause", (business) => { business.automation_paused_at = NOW.toISOString(); }],
+  ["a switch to Manual", (business) => { business.automation_level = "manual"; }],
+  ["a downgrade to Free", (business) => { business.plan = "free"; }],
+]) {
+  test(`${label} during a scheduled run stops further generations and draft writes`, async () => {
+    const admin = createMemoryAdmin(adminSeed({ preferredChannels: ["TikTok"] }));
+    let calls = 0;
+    const base = structuredProvider();
+    const provider = {
+      async structured(request) {
+        calls += 1;
+        // The owner acts while MARA is generating the second slot.
+        if (calls === 2) change(admin.tables.get("businesses")[0]);
+        return base.structured(request);
+      },
+    };
+    const result = await service.runOwnerWorkflow(admin, {
+      ownerId: OWNER, now: NOW, trigger: "scheduled", planningDeps: { provider, performanceContext: async () => null },
+    });
+    assert.equal(calls, 2, "no generation starts after the change");
+    assert.equal(result.created, 1, "the in-flight generation is not written");
+    assert.equal(admin.tables.get("mara_drafts").length, 1);
+    assert.equal(result.failures.length, 6);
+    assert.ok(result.failures.every((failure) => failure.stage === "authorization"));
+    const outcome = (await import("../lib/voom/workflow/marketing-plan.ts")).planReplenishOutcome(result, { today: DATE, planValidUntil: null });
+    assert.equal(outcome.state, "failed", "a half-built plan is never reported as complete");
+    assert.equal(admin.tables.get("marketing_plans")[0].planned_posts.length, 1, "the plan shows only what was really persisted");
+  });
+}
+
+test("the coordinator reports an interrupted run as partial, not filled", async () => {
+  const admin = createMemoryAdmin(adminSeed({ preferredChannels: ["TikTok"] }));
+  const network = installLocalAiFetch();
+  let requests = 0;
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (...args) => {
+    requests += 1;
+    if (requests === 3) admin.tables.get("businesses")[0].automation_paused_at = NOW.toISOString();
+    return fetch(...args);
+  };
+  try {
+    const result = await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+    const action = result.actionsTaken.find((entry) => entry.type.startsWith("gap_filling") || entry.type === "fill_calendar_gaps");
+    assert.equal(action.type, "gap_filling_partial");
+    assert.equal(action.details.gapsFilled, 2);
+    assert.equal(action.details.gapsRemaining, 5);
+  } finally {
+    globalThis.fetch = fetch;
+    network.restore();
+  }
+});
+
+// ── Rolling windows with owner posts, and failed publishing ─────────────────
+
+function ownerPost(id, localDateValue, zone, status = "approved") {
+  return {
+    id, owner_user_id: OWNER, source_plan_id: null, source_plan_item_key: null,
+    kind: "tiktok_video", social_channel: "tiktok", social_format: "video", channel: "TikTok · 9:16",
+    title: "Owner's own post", content: "Made in Studio.", status, created_at: NOW.toISOString(),
+    proposed_publish_at: timezone.localToUtcIso(localDateValue, 17 * 60, zone),
+  };
+}
+
+for (const zone of ["Australia/Sydney", "America/Los_Angeles", "Asia/Dubai"]) {
+  test(`28 days with the owner's own off-pattern posts never exceed the cadence in ANY 7-day window (${zone})`, async (t) => {
+    const network = installLocalAiFetch();
+    t.after(network.restore);
+    for (const [frequency, cadence] of [["Weekly", "weekly"], ["3x per week", "3x_week"], ["5x per week", "5x_week"]]) {
+      const start = timezone.localDate(NOW, zone);
+      const seeded = [3, 10, 11, 23].map((offset, index) => ownerPost(`own-${index}`, timezone.addDays(start, offset), zone));
+      const admin = createMemoryAdmin(adminSeed({
+        preferredChannels: ["TikTok"], drafts: seeded, businessOverrides: { content_frequency: frequency, timezone: zone },
+      }));
+      for (let day = 0; day < 28; day += 1) {
+        await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: new Date(NOW.getTime() + day * DAY_MS), trigger: "scheduled" });
+      }
+      const drafts = admin.tables.get("mara_drafts");
+      const dates = drafts.map((draft) => timezone.isoToLocalDate(draft.proposed_publish_at, zone));
+      const ownerDates = seeded.map((post) => timezone.isoToLocalDate(post.proposed_publish_at, zone));
+      assert.equal(new Set(dates).size, dates.length, `${cadence}: one item per date`);
+      for (let offset = -6; offset < 28; offset += 1) {
+        const from = timezone.addDays(start, offset);
+        const to = timezone.addDays(from, 6);
+        const inWindow = dates.filter((date) => date >= from && date <= to).length;
+        // The owner may schedule more than the cadence themselves; MARA must
+        // never ADD to a window that is already at (or over) the cadence.
+        const ownerOnly = ownerDates.filter((date) => date >= from && date <= to).length;
+        assert.ok(inWindow <= Math.max(PER_WEEK[cadence], ownerOnly), `${zone} ${cadence}: ${from}..${to} holds ${inWindow}`);
+      }
+      // Weekly: every pattern date's window already holds an owner post, so
+      // there is genuinely no room; 3x/5x still have room and must use it.
+      if (cadence !== "weekly") assert.ok(drafts.some((draft) => draft.source_plan_id), `${cadence}: MARA still plans where there is room`);
+      else assert.ok(drafts.every((draft) => !draft.source_plan_id), "weekly: nothing added to already-full windows");
+    }
+  });
+}
+
+test("a failed TikTok publish is held for the owner: not coverage, not re-planned, not retried", async (t) => {
+  const network = installLocalAiFetch();
+  t.after(network.restore);
+  const failedDate = "2026-09-14";
+  const failed = ownerPost("failed-tiktok", failedDate, TZ, "approved");
+  const seed = adminSeed({ preferredChannels: ["TikTok"], drafts: [failed], businessOverrides: { content_frequency: "3x per week" } });
+  seed.tiktok_publish_queue = [{ id: "tq-1", owner_user_id: OWNER, draft_id: "failed-tiktok", status: "failed", scheduled_at: failed.proposed_publish_at }];
+  const admin = createMemoryAdmin(seed);
+  const result = await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+  const gapDates = result.evaluation.gaps.map((gap) => gap.date);
+  assert.ok(!gapDates.includes(failedDate), "never silently re-planned on the failed date");
+  assert.equal(gapDates.length, 2, "the failed publish does not count toward the cadence");
+  const action = result.actionsTaken.find((entry) => entry.type === "fill_calendar_gaps");
+  assert.deepEqual(action.details.heldForOwner, [failedDate]);
+  assert.equal(admin.tables.get("tiktok_publish_queue")[0].status, "failed", "the failed job is never re-armed");
+  const onFailedDate = admin.tables.get("mara_drafts").filter((draft) => timezone.isoToLocalDate(draft.proposed_publish_at, TZ) === failedDate);
+  assert.equal(onFailedDate.length, 1, "no duplicate post on the failed date");
+});
+
+test("Autopilot never re-approves or re-syncs already-approved work (a failed Instagram job is not re-armed)", async () => {
+  const { store, ports } = createPlannerStore();
+  let reapprovals = 0;
+  let approvals = 0;
+  ports.autoApproveAndSchedule = async () => { reapprovals += 1; return { approved: true }; };
+  ports.requestApproval = async () => { approvals += 1; };
+  await rolling.ensureRollingPlan(ports, baseInput({ mode: "autopilot", trigger: "replenish" }));
+  const firstRun = reapprovals;
+  for (const item of store.drafts.values()) { item.status = "approved"; item.protected = true; }
+  await rolling.ensureRollingPlan(ports, baseInput({ mode: "autopilot", trigger: "replenish" }));
+  assert.equal(reapprovals, firstRun, "no second approval/queue sync for approved items");
+  assert.equal(approvals, 0);
 });

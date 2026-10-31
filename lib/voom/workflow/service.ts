@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AiError, createAiProvider, type AiProvider } from "@/lib/ai";
 import { evaluateAutopilotRecommendation } from "@/lib/mara/autopilot-safety";
@@ -10,13 +11,15 @@ import type { PerformancePlanContext } from "@/lib/performance/plan-context";
 import { mayAutomaticallyGeneratePaidMedia, normalizeAutomationMode, type AutomationModeValue, type WorkflowTrigger } from "@/lib/voom/automation";
 import { canUseAutomationMode, normalizePlan } from "@/lib/billing/plans";
 import { assertAutonomousWorkAllowed } from "@/lib/voom/automation-safety";
-import { CADENCE_LABELS, normalizeCadence, type Cadence, type ContentType } from "@/lib/voom/cadence";
+import { CADENCE_LABELS, cadenceAnchorDate, normalizeCadence, type Cadence, type ContentType } from "@/lib/voom/cadence";
 import { accountTimezone, formatLocalTime, localDate } from "@/lib/voom/timezone";
 import { ensureWorkflowMedia, type WorkflowMediaDeps } from "./media";
 import type { TrendPromptContext } from "@/lib/trends/opportunity";
 import { checkTrendGroundedContent, checkTrendUsage } from "@/lib/trends/claim-check";
 import { loadOwnerTrendPromptContext, type TrendWorkflowClient } from "@/lib/trends/workflow-context";
 import { loadBusinessTrendIdeas } from "@/lib/trends/business-trends";
+import { buildMarketingState } from "@/lib/coordinator/state";
+import { identifyCalendarGaps } from "@/lib/coordinator/engine";
 import { MAX_TREND_IDEAS_PER_RUN } from "@/lib/trends/relevance";
 import type { TrendRpcClient } from "@/lib/trends/supabase-rpc";
 import { buildPlannedContentPayload, plannedContentJsonSchema, plannedContentSchema, plannedContentSystemPrompt } from "./prompt";
@@ -90,6 +93,13 @@ export interface WorkflowRunInput {
   mediaDeps?: Partial<WorkflowMediaDeps>;
   /** Actual local-date gaps from the coordinator; when supplied, no other date is generated. */
   targetDates?: string[];
+  /** See RollingPlanInput.creatableDates. Replenish derives it when omitted. */
+  creatableDates?: string[];
+  /**
+   * Test seam only: how long a run waits for another worker that holds a
+   * slot's generation lease. Production uses the defaults below.
+   */
+  slotLeaseWait?: { pollMs: number; maxWaitMs: number };
   /** Other channel commitments in the coordinator's authoritative horizon. */
   channelCoverage?: ChannelCoverage[];
   /**
@@ -175,6 +185,22 @@ export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInp
   }
   const goal = String(business.main_goal ?? "Grow awareness");
   const selectedChannels = normalizeSelectedSocialChannels(business.preferred_channels);
+  // The cadence pattern is pinned to the active plan's start so every run, on
+  // any day, plans the same dates (the coordinator resolves the same anchor).
+  const { data: activePlan, error: activePlanError } = await admin.from("marketing_plans").select("created_at")
+    .eq("owner_user_id", input.ownerId).eq("status", "active")
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (activePlanError) throw new Error("plan_read_failed");
+  const anchorDate = cadenceAnchorDate(activePlan?.created_at, timeZone, localDate(now, timeZone));
+  // An explicit Replenish fills only dates that keep every rolling 7-day
+  // window within the cadence, using the same evaluation as scheduled runs
+  // (published, approved and later-scheduled work all count). Coordinator runs
+  // pass their own gap dates instead.
+  let creatableDates = input.creatableDates;
+  if (creatableDates === undefined && input.targetDates === undefined) {
+    const state = await buildMarketingState(admin, input.ownerId, String(business.id), now);
+    creatableDates = identifyCalendarGaps({ ...state, cadence }).map((gap) => gap.date);
+  }
 
   const ports = await buildWorkflowPorts(admin, {
     ownerId: input.ownerId,
@@ -191,6 +217,7 @@ export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInp
     channelCoverage: input.channelCoverage,
     mediaDeps: input.mediaDeps,
     planningDeps: input.planningDeps,
+    slotLeaseWait: input.slotLeaseWait,
   });
   return ensureRollingPlan(ports, {
     now,
@@ -201,6 +228,8 @@ export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInp
     selectedChannels,
     targetDates: input.targetDates,
     channelCoverage: input.channelCoverage,
+    cadenceAnchorDate: anchorDate,
+    creatableDates,
     stage: input.stage,
     trigger,
   });
@@ -226,7 +255,13 @@ interface PortContext {
   mediaDeps?: Partial<WorkflowMediaDeps>;
   /** Test seam only; production uses the real provider and stored snapshots. */
   planningDeps?: WorkflowPlanningDeps;
+  /** Test seam only; see WorkflowRunInput.slotLeaseWait. */
+  slotLeaseWait?: { pollMs: number; maxWaitMs: number };
 }
+
+/** Lease held while one worker generates one slot; longer than a full retried generation. */
+export const SLOT_LEASE_SECONDS = 180;
+const SLOT_LEASE_WAIT = { pollMs: 1_000, maxWaitMs: 20_000 };
 
 /**
  * Returned by the paid-media / approval ports when the central policy forbids
@@ -316,6 +351,13 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
         valid_from: validFrom,
         valid_until: validUntil,
       }).select("id").single();
+      if (error?.code === "23505") {
+        // A concurrent run (double click, or cron + Build) created the one
+        // active plan first; reuse it instead of failing this run.
+        const { data: winner } = await admin.from("marketing_plans").select("id")
+          .eq("owner_user_id", context.ownerId).eq("status", "active").limit(1).maybeSingle();
+        if (winner?.id) return String(winner.id);
+      }
       if (error || !created) throw new Error("plan_store_failed");
       return String(created.id);
     },
@@ -364,7 +406,7 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
     async detachDrafts(planId, draftIds) {
       if (!draftIds.length) return;
       const { error } = await admin.from("mara_drafts").update({ source_plan_id: null, source_plan_item_key: null })
-        .eq("owner_user_id", context.ownerId).eq("source_plan_id", planId).eq("status", "draft").in("id", draftIds);
+        .eq("owner_user_id", context.ownerId).eq("source_plan_id", planId).in("status", ["draft", "rejected"]).in("id", draftIds);
       if (error) throw new Error("plan_reconcile_failed");
     },
 
@@ -567,7 +609,73 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
         .eq("owner_user_id", context.ownerId).eq("id", planId);
       if (error) throw new Error("plan_items_save_failed");
     },
+
+    async claimSlot(planId, slot) {
+      // Fail closed: without a durable lease no paid generation starts.
+      const { data, error } = await admin.rpc("claim_plan_slot_generation", {
+        p_owner_user_id: context.ownerId,
+        p_plan_id: planId,
+        p_slot_key: slot.slotKey,
+        p_lease_seconds: SLOT_LEASE_SECONDS,
+      });
+      // The function returns a set: one row when claimed, none when held.
+      // Anything else is an unknown state and starts no generation.
+      if (error || !Array.isArray(data)) throw new Error("slot_lease_unavailable");
+      const row = data[0] as { lease_id?: string; fence?: number | string } | undefined;
+      if (!row) return { status: "held" };
+      if (!row.lease_id) throw new Error("slot_lease_unavailable");
+      const leaseId = String(row.lease_id);
+      const fence = Number(row.fence);
+      const lease = {
+        async verify() {
+          const { data: held, error: heldError } = await admin.rpc("plan_slot_lease_held", {
+            p_owner_user_id: context.ownerId, p_plan_id: planId, p_slot_key: slot.slotKey, p_lease_id: leaseId, p_fence: fence,
+          });
+          if (heldError || held !== true) throw new Error("slot_lease_lost");
+        },
+        async release() {
+          await admin.rpc("release_plan_slot_generation", {
+            p_owner_user_id: context.ownerId, p_plan_id: planId, p_slot_key: slot.slotKey, p_lease_id: leaseId,
+          });
+        },
+      };
+      // A worker that finished this slot before our claim already persisted
+      // it: reuse that draft instead of generating again.
+      const existing = await readSlotItem(admin, context.ownerId, planId, slot.slotKey);
+      if (existing) {
+        await lease.release().catch(() => undefined);
+        return { status: "exists", item: existing };
+      }
+      return { status: "claimed", lease };
+    },
+
+    async awaitSlotItem(planId, slot) {
+      const wait = context.slotLeaseWait ?? SLOT_LEASE_WAIT;
+      for (let waited = 0; waited <= wait.maxWaitMs; waited += wait.pollMs) {
+        const item = await readSlotItem(admin, context.ownerId, planId, slot.slotKey);
+        if (item) return item;
+        await new Promise((resolve) => setTimeout(resolve, wait.pollMs));
+      }
+      return null;
+    },
+
+    async assertStillAuthorized() {
+      // Scheduled runs act on the owner's standing authorization, so a pause,
+      // downgrade or mode change mid-run stops them. An explicit Replenish is
+      // the owner's own request; its paid media and approvals re-check at
+      // their own boundaries.
+      if (context.trigger !== "scheduled") return;
+      await assertAutonomousWorkAllowed(admin, context.ownerId, context.mode);
+    },
   };
+}
+
+async function readSlotItem(admin: AdminClient, ownerId: string, planId: string, slotKey: string): Promise<WorkflowItem | null> {
+  const { data, error } = await admin.from("mara_drafts")
+    .select("id,kind,social_channel,social_format,title,content,content_meta,proposed_publish_at,status,source_plan_item_key,content_version")
+    .eq("owner_user_id", ownerId).eq("source_plan_id", planId).eq("source_plan_item_key", slotKey).maybeSingle();
+  if (error) throw new Error("plan_items_read_failed");
+  return data ? toWorkflowItem(data, { protected: data.status === "approved" }) : null;
 }
 
 /** Approves a workflow draft and advances it into Scheduled. */
@@ -834,7 +942,10 @@ export async function generateWorkflowPlannedContent(input: {
       ...(input.ownerId ? { usage: {
         ownerId: input.ownerId,
         businessId: input.businessId ?? null,
-        operationKey: `workflow-plan:${input.businessId ?? input.ownerId}:${slot.channel}:${slot.format}:${slot.publishAt}`,
+        // One key per generation call: a replacement for a rejected idea, a
+        // re-run after a failed save or a trend fallback is a separate paid
+        // call and must be recorded, not merged into the slot's first attempt.
+        operationKey: `workflow-plan:${input.businessId ?? input.ownerId}:${slot.channel}:${slot.format}:${slot.publishAt}:${randomUUID()}`,
         operationType: "mara_workflow_plan",
         category: "recommendation" as const,
       } } : {}),

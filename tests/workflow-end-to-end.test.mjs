@@ -122,6 +122,9 @@ function createPorts(store, options = {}) {
       }
       store.media.set(item.draftId, { status: "completed" });
       store.assets.add(item.draftId);
+      // Mirrors lib/voom/workflow/media.ts: a newly completed visual re-syncs
+      // an already-approved item into its calendar slot and publish queue.
+      if (store.drafts.get(item.draftId)?.status === "approved") approveItem(store, item.draftId);
       return { ok: true, state: "completed" };
     },
 
