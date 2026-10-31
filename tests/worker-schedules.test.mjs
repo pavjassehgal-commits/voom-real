@@ -123,6 +123,8 @@ test('PR branch cannot auto-deploy and all existing Vercel settings remain uncha
   // Later PR branches add only their own opt-out (Previews share Production data).
   assert.equal(vercel.git.deploymentEnabled['fix/mara-automation-launch'],false);
   delete vercel.git.deploymentEnabled['fix/mara-automation-launch'];
+  assert.equal(vercel.git.deploymentEnabled['fix/automation-mode-normalization'],false);
+  delete vercel.git.deploymentEnabled['fix/automation-mode-normalization'];
   assert.deepEqual(vercel,{
     git:{deploymentEnabled:Object.fromEntries([
       'codex/linkedin-production-release','codex/linkedin-marketing-plan','codex/marketing-plan-action-handoff',

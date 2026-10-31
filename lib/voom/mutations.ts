@@ -6,6 +6,8 @@ import { createAdminClient } from "@/utils/supabase/admin";
 import { getCurrentUser } from "./server-data";
 import { normalizeMediaSpendSettings, type MediaSpendSettings } from "@/lib/mara/media-spend";
 import { normalizeWebsiteUrl, WEBSITE_NOT_SAVED_NOTICE } from "./website";
+import { onboardingAutomationMode } from "./automation";
+import { canUseAutomationMode, normalizePlan } from "@/lib/billing/plans";
 import type { BusinessProfileInput, OnboardingInput } from "./types";
 
 /** `notice` is a non-fatal message worth showing (the save itself succeeded). */
@@ -31,6 +33,17 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
     .upsert({ user_id: user.id, display_name: input.displayName.trim() || null }, { onConflict: "user_id" });
   if (profileError) return { ok: false, error: saveError(profileError) };
 
+  // The answer saves only a mode the account's plan includes (a new account is
+  // Free, so only Manual). Anything else — or an unreadable plan — saves no
+  // mode at all: the owner then chooses one in Automations, where the plan is
+  // checked again. Migration 0071 enforces the same rule in the database.
+  const requestedMode = onboardingAutomationMode(input.automationLevel);
+  const { data: currentPlan, error: planError } = requestedMode
+    ? await supabase.from("businesses").select("plan").eq("owner_user_id", user.id).maybeSingle()
+    : { data: null, error: null };
+  const onboardingMode = requestedMode && !planError
+    && canUseAutomationMode(normalizePlan((currentPlan as { plan?: string | null } | null)?.plan), requestedMode)
+    ? requestedMode : null;
   const { error: businessError } = await supabase.from("businesses").upsert(
     {
       owner_user_id: user.id,
@@ -43,7 +56,10 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
       preferred_channels: input.preferredChannels,
       monthly_ad_budget: input.monthlyAdBudget || null,
       content_frequency: input.contentFrequency || null,
-      automation_level: input.automationLevel || null,
+      // Onboarding saves the canonical mode its answer describes (Manual or
+      // Assisted — never Autopilot). An unknown or skipped answer leaves the
+      // stored mode untouched rather than inventing one.
+      ...(onboardingMode ? { automation_level: onboardingMode } : {}),
       publishing_permission: input.publishingPermission || null,
       onboarding_completed: true,
     },
@@ -109,7 +125,10 @@ export async function saveBrandSettings(input: BusinessProfileInput): Promise<Sa
       preferred_channels: input.preferredChannels,
       monthly_ad_budget: input.monthlyAdBudget || null,
       content_frequency: input.contentFrequency || null,
-      automation_level: input.automationLevel || null,
+      // The automation mode is deliberately NOT written here. It changes only
+      // through the Automations control (/api/automation-mode), which checks
+      // the plan entitlement; re-saving the brand profile must never replace
+      // it with a stale or client-supplied value.
       publishing_permission: input.publishingPermission || null,
     },
     { onConflict: "owner_user_id" },

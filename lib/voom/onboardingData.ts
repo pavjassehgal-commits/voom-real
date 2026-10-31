@@ -48,11 +48,15 @@ export const Q_BUDGET = ["AED 0 — organic only", "Under AED 1,000", "AED 1,000
 
 export const Q_FREQ = ["A few times a month", "2–3 times a week", "Daily", "Multiple times a day"];
 
+// Each answer saves a canonical mode (see onboardingAutomationMode): the first
+// is Manual, the rest start in Assisted. Autopilot is never switched on from
+// onboarding — it needs the plan-checked Automations control — so the hints
+// say exactly what happens next.
 export const Q_AUTO: [string, string, string][] = [
-  ["🙋", "I decide everything", "MARA only suggests ideas"],
-  ["✍️", "MARA drafts, I approve", "Nothing goes out unapproved"],
-  ["⚡", "MARA drafts and schedules", "I can edit before it publishes"],
-  ["🤖", "MARA runs it end-to-end", "Within the rules I set"],
+  ["🙋", "I decide everything", "Manual — MARA only suggests ideas"],
+  ["✍️", "MARA drafts, I approve", "Assisted — nothing goes out unapproved"],
+  ["⚡", "MARA drafts and schedules", "Starts in Assisted — you approve every post"],
+  ["🤖", "MARA runs it end-to-end", "Starts in Assisted — turn on Autopilot in Automations"],
 ];
 
 export const Q_PERM: [string, string, string][] = [

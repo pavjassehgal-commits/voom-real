@@ -27,18 +27,26 @@ function announceSavedMode(mode: AutomationModeValue) {
 
 export function AutomationMode({
   initial,
+  confirmed: initiallyConfirmed = true,
   plan = "free",
   compact = false,
   describe = false,
   showPlanSummary = true,
 }: {
   initial: AutomationModeValue;
+  /**
+   * False when the stored value is an onboarding answer or nothing at all
+   * (see automationModeState). Scheduled planning stays off until the owner
+   * confirms a mode here; confirming saves the canonical, plan-checked value.
+   */
+  confirmed?: boolean;
   plan?: PlanId;
   compact?: boolean;
   describe?: boolean;
   showPlanSummary?: boolean;
 }) {
   const [mode, setMode] = useState(initial);
+  const [confirmed, setConfirmed] = useState(initiallyConfirmed);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -50,7 +58,8 @@ export function AutomationMode({
 
   async function choose(next: AutomationModeValue) {
     const gesture = beginHapticGesture(); // synchronous: the click that chose this mode
-    if (next === mode || busy) return;
+    // Re-choosing the shown mode is how an unconfirmed account confirms it.
+    if ((next === mode && confirmed) || busy) return;
     if (!isModeAllowed(next)) {
       haptic("warning", gesture);
       setError(
@@ -68,7 +77,7 @@ export function AutomationMode({
       body: JSON.stringify({ mode: next }),
     });
     const body = (await response.json()) as { error?: string; mode?: string };
-    if (response.ok) setMode(next);
+    if (response.ok) { setMode(next); setConfirmed(true); }
     else setError(body.error ?? "Voom couldn't save that mode.");
     // The server echoes the saved mode; fall back to the mode we asked for.
     if (response.ok) announceSavedMode(storedAutomationMode(body.mode) ?? next);
@@ -91,7 +100,7 @@ export function AutomationMode({
               key={value}
               size="sm"
               variant={mode === value ? "primary" : "plain"}
-              aria-pressed={mode === value}
+              aria-pressed={mode === value && confirmed}
               disabled={busy || !allowed}
               onClick={() => void choose(value)}
               className={compact ? "px-2.5" : undefined}
@@ -103,6 +112,14 @@ export function AutomationMode({
           );
         })}
       </div>
+      {!confirmed && (
+        <div role="status" className="mt-2 flex min-w-0 max-w-full flex-wrap items-center gap-2 rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 text-xs leading-relaxed text-text">
+          <span className="min-w-0 flex-1">{`Confirm your automation mode. Voom reads your setup as ${AUTOMATION_MODE_LABELS[mode]}; scheduled planning stays off until you confirm or choose a mode.`}</span>
+          <Btn size="sm" variant="primary" disabled={busy || !isModeAllowed(mode)} onClick={() => void choose(mode)}>
+            {`Confirm ${AUTOMATION_MODE_LABELS[mode]}`}
+          </Btn>
+        </div>
+      )}
       {error && <p role="alert" className="mt-1.5 min-w-0 max-w-full break-words text-xs text-red">{error}</p>}
       {/* One text node: the server and the client must render identical text. */}
       {showPlanSummary && <p className="mt-2 min-w-0 max-w-full break-words text-[11px] leading-relaxed text-text-3">

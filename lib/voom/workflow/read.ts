@@ -5,6 +5,7 @@ import { LINKEDIN_STATUS_LABELS } from "@/lib/linkedin/status";
 
 import { accountTimezone, formatLocalTime, isoToLocalDate, localDate, relativeDayLabel } from "@/lib/voom/timezone";
 import { CADENCE_LABELS, DEFAULT_HORIZON_DAYS, isWithinHorizon, normalizeCadence, type Cadence } from "@/lib/voom/cadence";
+import { normalizeAutomationMode } from "@/lib/voom/automation";
 import type { AdminClient } from "@/lib/post/server-data";
 import { classifyReelProduction, type MaraProductionOption, type ReelProductionMethod } from "@/lib/mara/reel-production";
 import {
@@ -328,8 +329,7 @@ export async function loadWorkflowSnapshot(
   const cadence = normalizeCadence(business?.content_frequency);
   
   const planId = normalizePlan((business as { plan?: string | null } | null)?.plan);
-  let mode = business?.automation_level === "manual" || business?.automation_level === "autopilot"
-    ? business.automation_level : "assisted";
+  let mode = normalizeAutomationMode(business?.automation_level);
   if (!canUseAutomationMode(planId, mode)) {
     mode = planId === "pro" ? "assisted" : "manual";
   }

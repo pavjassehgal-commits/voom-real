@@ -121,6 +121,8 @@ function makeFakeDb(initialRow) {
             return { error: null, data: { id: "row-1" } };
           },
           update: async () => ({ error: null, data: [] }),
+          // Onboarding reads the account's plan before choosing a mode to save.
+          select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: table === "businesses" ? { plan: row.plan ?? "free" } : null, error: fake.planReadError ?? null }) }) }),
         };
       },
       auth: {
@@ -246,7 +248,9 @@ test("no other Settings-saved field can be silently reset by load-then-save", as
   assert.deepEqual(saved.preferred_channels, row.preferred_channels);
   assert.equal(saved.monthly_ad_budget, row.monthly_ad_budget);
   assert.equal(saved.content_frequency, row.content_frequency);
-  assert.equal(saved.automation_level, row.automation_level);
+  // The automation mode is not part of the Settings save at all (only the
+  // plan-checked Automations control writes it), so it cannot be reset here.
+  assert.equal("automation_level" in saved, false);
   assert.equal(saved.publishing_permission, row.publishing_permission);
 
   // And the reload must show exactly what was saved.
@@ -276,4 +280,59 @@ test("Settings form binds the persisted description and never hardcodes an empty
 
   // The single mapping lives in the pure module and loads the column.
   assert.match(brandState, /desc: business\.brand_description \?\? ""/);
+});
+
+
+// ── Automation mode on onboarding: canonical, plan-entitled, never escalated ──
+
+function onboardingInput(automationLevel) {
+  return {
+    displayName: "Alex", brandName: "Bean & Co.", brandDescription: "", industry: "", targetCustomer: [], mainGoal: "",
+    brandPersonality: [], preferredChannels: ["Instagram"], monthlyAdBudget: "", contentFrequency: "Daily",
+    automationLevel, publishingPermission: "", website: "",
+  };
+}
+
+for (const [plan, answer, expected] of [
+  ["free", "I decide everything", "manual"],
+  ["free", "MARA drafts, I approve", undefined],
+  ["free", "MARA runs it end-to-end", undefined],
+  ["free", "autopilot", undefined],
+  ["pro", "MARA drafts, I approve", "assisted"],
+  ["pro", "MARA drafts and schedules", "assisted"],
+  ["pro", "autopilot", "assisted"],
+  ["max", "MARA runs it end-to-end", "assisted"],
+  ["max", "autopilot", "assisted"],
+]) {
+  test(`onboarding on ${plan}: "${answer}" saves ${expected ?? "no mode"}`, async () => {
+    const fake = makeFakeDb(businessRow({ plan, automation_level: null }));
+    assert.equal((await saveOnboarding(onboardingInput(answer))).ok, true);
+    const saved = fake.calls.businessesUpsert[0];
+    assert.equal(saved.automation_level, expected, "only a canonical, plan-included mode is ever written");
+    assert.notEqual(saved.automation_level, "autopilot", "onboarding never activates Autopilot");
+    assert.notEqual(saved.automation_level, answer === "autopilot" ? "x" : answer, "the raw answer is never stored");
+  });
+}
+
+test("onboarding fails closed: an unreadable plan or a skipped answer writes no mode", async () => {
+  const fake = makeFakeDb(businessRow({ plan: "max", automation_level: "assisted" }));
+  fake.planReadError = { code: "PGRST000", message: "unavailable" };
+  assert.equal((await saveOnboarding(onboardingInput("MARA drafts, I approve"))).ok, true);
+  assert.equal("automation_level" in fake.calls.businessesUpsert[0], false);
+  const skipped = makeFakeDb(businessRow({ plan: "max", automation_level: "autopilot" }));
+  assert.equal((await saveOnboarding(onboardingInput(""))).ok, true);
+  assert.equal("automation_level" in skipped.calls.businessesUpsert[0], false, "an existing mode is left as it is");
+  assert.equal(skipped.row.automation_level, "autopilot");
+});
+
+test("editing unrelated Settings never changes an existing canonical mode", async () => {
+  for (const mode of ["manual", "assisted", "autopilot"]) {
+    const fake = makeFakeDb(businessRow({ plan: "max", automation_level: mode }));
+    const payload = settingsPayloadFromBrand(brandFromBusiness(fake.row), "Alex");
+    payload.industry = "Salon / Spa";
+    payload.automationLevel = mode === "autopilot" ? "manual" : "autopilot"; // a stale or modified client value
+    assert.equal((await saveBrandSettings(payload)).ok, true);
+    assert.equal("automation_level" in fake.calls.businessesUpsert[0], false);
+    assert.equal(fake.row.automation_level, mode, `${mode} is unchanged`);
+  }
 });

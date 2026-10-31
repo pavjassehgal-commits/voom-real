@@ -29,7 +29,7 @@ import type {
 import { saveOnboarding as saveOnboardingAction, saveBrandSettings as saveBrandSettingsAction, saveMediaSpendSettings as saveMediaSpendAction, restartOnboarding as restartOnboardingAction } from "./mutations";
 import { normalizeMediaSpendSettings, type MediaSpendSettings } from "@/lib/mara/media-spend";
 import { brandFromBusiness, deriveHandle, type Brand } from "./brand-state";
-import { AUTOMATION_MODE_EVENT, storedAutomationMode, type AutomationModeValue } from "./automation";
+import { AUTOMATION_MODE_EVENT, storedAutomationMode } from "./automation";
 import { applyThemeToDocument, initialTheme, persistTheme, readStoredTheme, subscribeToTheme, themeSnapshot, type ThemeValue } from "./theme";
 
 const NAV_PATHS: Record<string, string> = {
@@ -96,11 +96,12 @@ interface VoomState {
   igConnected: boolean;
   plan: "free" | "pro" | "max";
   /**
-   * The account's SAVED automation mode (`businesses.automation_level`), or
-   * null when nothing is stored. Deliberately not derived from `plan`: billing
-   * tier and automation state are two different facts.
+   * The account's stored automation value (`businesses.automation_level`)
+   * exactly as saved — a canonical mode, an unconfirmed onboarding answer, or
+   * null. Read it through `automationModeState`. Deliberately not derived from
+   * `plan`: billing tier and automation state are two different facts.
    */
-  automationMode: AutomationModeValue | null;
+  automationMode: string | null;
   brand: Brand;
   /** AI Media Spending settings — the live value the settings screen edits. */
   mediaSpend: MediaSpendSettings;
@@ -138,7 +139,7 @@ function initialState(init: { displayName: string | null; email: string | null; 
     menuOpen: false,
     igConnected: false,
     plan: normalizePlan(init.business?.plan),
-    automationMode: storedAutomationMode(init.business?.automation_level),
+    automationMode: init.business?.automation_level ?? null,
     brand: brandFromBusiness(init.business),
     mediaSpend: normalizeMediaSpendSettings(init.business),
     onboard: { ...emptyOnboard(), displayName: init.displayName?.trim() ?? "" },

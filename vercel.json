@@ -11,7 +11,8 @@
       "codex/youtube-resumable-uploads": false,
       "fix/instagram-token-renewal": false,
       "codex/scheduled-worker-config-drift": false,
-      "fix/mara-automation-launch": false
+      "fix/mara-automation-launch": false,
+      "fix/automation-mode-normalization": false
     }
   },
   "crons": [
