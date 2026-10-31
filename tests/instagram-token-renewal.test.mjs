@@ -376,7 +376,13 @@ test("the route gates on VERCEL_ENV, builds the admin client only inside the aut
   assert.match(route, /secret: process\.env\.CRON_SECRET,/);
   assert.ok(route.indexOf("run: async () =>") < route.indexOf("createAdminClient()"), "admin client only inside run");
   assert.equal((route.match(/createAdminClient\(\)/g) ?? []).length, 1);
-  assert.match(schedule, /'voom-instagram-token-refresh-6h'[\s\S]*cron\.schedule\('voom-instagram-token-refresh-6h', '41 \*\/6 \* \* \*', \$\$select voom_ops\.call_worker\('\/api\/cron\/instagram-token-refresh'\)\$\$\)/);
+  const {readWorkerSchedule,renderWorkerCommand}=await import('../supabase/ops/validate-worker-schedules.mjs');
+  const scheduleConfig=readWorkerSchedule(schedule);
+  const renewalJob=scheduleConfig.workers.find(worker=>worker.name==='voom-instagram-token-refresh-6h');
+  assert.equal(renewalJob.schedule,'41 */6 * * *');
+  assert.match(renderWorkerCommand(scheduleConfig,renewalJob),/net\.http_post/);
+  assert.match(renderWorkerCommand(scheduleConfig,renewalJob),/vault\.decrypted_secrets/);
+  assert.doesNotMatch(schedule,/voom_ops\.call_worker\s*\(/);
   const config = JSON.parse(vercel);
   assert.equal(config.git.deploymentEnabled["fix/instagram-token-renewal"], false, "no automatic Preview deployments that share the Production database");
   assert.ok(!(config.crons ?? []).some((cron) => cron.path.includes("instagram-token-refresh")), "scheduled by Supabase Cron, not Vercel");
