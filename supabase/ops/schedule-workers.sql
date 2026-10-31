@@ -1,105 +1,102 @@
--- Voom production worker schedule (Supabase Cron → voom.today).
---
--- NOT a migration: run this once in the Supabase SQL editor of the PRODUCTION
--- project after the app is live on https://voom.today. It is idempotent —
--- re-running replaces the jobs with the same names.
---
--- Prerequisites
---   1. Database → Extensions: enable `pg_cron` and `pg_net`.
---   2. Store the SAME value you set as CRON_SECRET in Vercel in Vault:
---        select vault.create_secret('<CRON_SECRET>', 'voom_cron_secret');
---      (to rotate: select vault.update_secret(id, '<new>') ... ; then update
---       CRON_SECRET in Vercel and redeploy.)
---   3. If you ever change the domain, edit v_base below and re-run.
---
--- The daily planning job (/api/cron/weekly-plans) stays in vercel.json.
--- Every route below fails closed: 503 without CRON_SECRET, 401 on mismatch.
+-- Voom Production worker schedule. MANUAL OPS FILE, NOT A MIGRATION.
+-- Separate approval + Production identity verification required before execution.
+-- Existing secure jobs are NEVER rewritten/re-enabled/renamed. Missing jobs only
+-- are created; conflicting names/routes/configuration abort the whole transaction.
+-- See docs/scheduled-workers.md. No helper function or extension is installed.
+-- Requires pg_cron, pg_net and exactly one nonempty Vault secret named
+-- voom_instagram_cron_secret (the existing Production CRON_SECRET reference).
+-- Do not paste/print the secret. pg_net's internal request queue contains headers:
+-- keep database access restricted; Vault prevents literals in cron.job, not that queue.
 
-create extension if not exists pg_cron;
-create extension if not exists pg_net;
+begin;
+set local lock_timeout = '3s';
+set local statement_timeout = '30s';
 
-create schema if not exists voom_ops;
-revoke all on schema voom_ops from public, anon, authenticated;
-
--- Calls one worker route with the Bearer secret read from Vault at run time,
--- so the secret never appears in cron.job or in this file.
-create or replace function voom_ops.call_worker(p_path text)
-returns bigint
-language plpgsql
-security definer
-set search_path = pg_catalog, public
-as $$
+do $schedule$
 declare
-  v_base constant text := 'https://voom.today';
-  v_secret text;
+  worker record;
+  existing record;
+  parts text[];
+  command text;
+  count_jobs integer;
+  -- Accept ONLY the verified direct POST/Vault shape, not arbitrary SQL with
+  -- a trusted substring. Whitespace outside literals may vary; Bearer space matters.
+  shape constant text := $shape$^\s*select\s+net\.http_post\(\s*url\s*:=\s*'([^']+)'\s*,\s*headers\s*:=\s*jsonb_build_object\(\s*'Authorization'\s*,\s*'Bearer '\s*\|\|\s*\(\s*select\s+decrypted_secret\s+from\s+vault\.decrypted_secrets\s+where\s+name\s*=\s*'voom_instagram_cron_secret'\s*\)\s*\)\s*,\s*body\s*:=\s*'\{\}'::jsonb\s*(?:,\s*timeout_milliseconds\s*:=\s*([0-9]+)\s*)?\)\s*;?\s*$$shape$;
 begin
-  select decrypted_secret into v_secret
-    from vault.decrypted_secrets
-   where name = 'voom_cron_secret'
-   limit 1;
-  if v_secret is null then
-    raise exception 'voom_cron_secret is missing from Vault';
+  if to_regclass('cron.job') is null or to_regclass('vault.decrypted_secrets') is null
+    or to_regprocedure('net.http_post(text,jsonb,jsonb,jsonb,integer)') is null
+    or to_regprocedure('cron.schedule(text,text,text)') is null then
+    raise exception 'Required pg_cron/pg_net/Vault objects are missing; no jobs changed';
   end if;
-  return net.http_get(
-    url := v_base || p_path,
-    headers := jsonb_build_object('Authorization', 'Bearer ' || v_secret),
-    timeout_milliseconds := 290000
-  );
-end;
-$$;
+  if (select count(*) from vault.decrypted_secrets where name='voom_instagram_cron_secret')<>1
+    or not exists(select 1 from vault.decrypted_secrets where name='voom_instagram_cron_secret'
+      and decrypted_secret is not null and length(btrim(decrypted_secret))>0) then
+    raise exception 'Required Vault reference is missing, empty or ambiguous; no jobs changed';
+  end if;
 
-revoke all on function voom_ops.call_worker(text) from public, anon, authenticated;
-
--- Remove any previous copies of these jobs before (re)creating them.
-do $$
-declare
-  v_name text;
-begin
-  foreach v_name in array array[
-    'voom-instagram-publish-5m',
-    'voom-media-generation-2m',
-    'voom-email-flows-15m',
-    'voom-instagram-performance-6h',
-    'voom-youtube-publish-5m',
-    'voom-youtube-reconcile-10m',
-    'voom-youtube-performance-1h',
-    'voom-tiktok-publish-5m',
-    'voom-tiktok-reconcile-10m',
-    'voom-instagram-token-refresh-6h'
-  ] loop
-    if exists (select 1 from cron.job where jobname = v_name) then
-      perform cron.unschedule(v_name);
+  -- Serialize against other job creates/edits (including another run of this file).
+  -- No HTTP call is executed here: the command below is stored text for pg_cron.
+  lock table cron.job in share row exclusive mode;
+  for worker in
+    select * from (values
+      -- BEGIN WORKER MANIFEST: existing Production names/timings, not old aliases.
+      ('voom-instagram-publish-5m', '*/5 * * * *', '/api/cron/instagram-publish', 'https://voom-real.vercel.app', null::integer, false),
+      ('voom-media-generation-2m', '*/2 * * * *', '/api/cron/media-generation', 'https://voom-real.vercel.app', null::integer, false),
+      ('voom-instagram-performance-sync', '0 */6 * * *', '/api/cron/instagram-performance', 'https://voom-real.vercel.app', null::integer, false),
+      ('voom-email-flows-15m', '*/15 * * * *', '/api/cron/email-flows', 'https://voom-real.vercel.app', 310000, false),
+      ('voom-youtube-publish-5m', '*/5 * * * *', '/api/cron/youtube-publish', 'https://voom-real.vercel.app', null::integer, false),
+      ('voom-youtube-reconcile-5m', '*/5 * * * *', '/api/cron/youtube-reconcile', 'https://voom-real.vercel.app', null::integer, false),
+      ('voom-youtube-performance-hourly', '0 * * * *', '/api/cron/youtube-performance', 'https://voom-real.vercel.app', 310000, false),
+      ('voom-tiktok-publish-5m', '*/5 * * * *', '/api/cron/tiktok-publish', 'https://voom-real.vercel.app', null::integer, false),
+      ('voom-tiktok-reconcile-5m', '*/5 * * * *', '/api/cron/tiktok-reconcile', 'https://voom-real.vercel.app', null::integer, false),
+      -- Renewal: retain the original repository's 290 s default for NEW installs.
+      -- Its corrected live command is preserved, including its actual timeout.
+      ('voom-instagram-token-refresh-6h', '41 */6 * * *', '/api/cron/instagram-token-refresh', 'https://voom.today', 290000, true)
+      -- END WORKER MANIFEST
+    ) as manifest(jobname, cadence, endpoint, base_url, timeout_ms, preserve_existing_timeout)
+  loop
+    select count(*) into count_jobs from cron.job where jobname=worker.jobname;
+    if count_jobs>1 then raise exception 'Duplicate managed job name; no jobs changed'; end if;
+    -- A differently named job already calling this route is NOT a missing job:
+    -- stop rather than create a duplicate or silently replace an old alias.
+    if exists(select 1 from cron.job where position(worker.endpoint in cron.job.command)>0
+      and jobname is distinct from worker.jobname) then
+      raise exception 'Worker route already scheduled under another name; no jobs changed';
     end if;
+    if count_jobs=1 then
+      select * into existing from cron.job where jobname=worker.jobname;
+      parts:=regexp_match(existing.command,shape);
+      if parts is null or existing.schedule<>worker.cadence or not existing.active
+        or existing.database<>current_database() or existing.username<>current_user then
+        raise exception 'Managed worker configuration differs; no jobs changed';
+      end if;
+      if parts[1] not in ('https://voom.today'||worker.endpoint,'https://voom-real.vercel.app'||worker.endpoint)
+        or (not worker.preserve_existing_timeout and parts[2]::integer is distinct from worker.timeout_ms)
+        or (worker.preserve_existing_timeout and parts[2] is not null and parts[2]::integer not between 1 and 310000) then
+        raise exception 'Managed endpoint/timeout differs; no jobs changed';
+      end if;
+      -- NO cron.schedule on an existing name: no schedule/command/id/active changes.
+      continue;
+    end if;
+
+    -- Explicit per-name approval is required even to create a MISSING job.
+    -- Default reruns are validation-only when the managed jobs already exist.
+    if not (worker.jobname=any(string_to_array(coalesce(current_setting('voom_ops.create_jobs',true),''),','))) then
+      raise exception 'Missing managed job requires explicit per-name creation approval; no jobs changed';
+    end if;
+    command:=format($command$select net.http_post(
+  url := %L,
+  headers := jsonb_build_object('Authorization', 'Bearer ' ||
+    (select decrypted_secret from vault.decrypted_secrets where name = 'voom_instagram_cron_secret')),
+  body := '{}'::jsonb%s
+);$command$,worker.base_url||worker.endpoint,
+      case when worker.timeout_ms is null then '' else format(', timeout_milliseconds := %s',worker.timeout_ms) end);
+    perform cron.schedule(worker.jobname,worker.cadence,command);
   end loop;
 end;
-$$;
+$schedule$;
+commit;
 
--- Publishing (claimed atomically in Postgres; overlapping runs are safe).
-select cron.schedule('voom-instagram-publish-5m',   '*/5 * * * *',  $$select voom_ops.call_worker('/api/cron/instagram-publish')$$);
-select cron.schedule('voom-youtube-publish-5m',     '1-59/5 * * * *', $$select voom_ops.call_worker('/api/cron/youtube-publish')$$);
-select cron.schedule('voom-tiktok-publish-5m',      '2-59/5 * * * *', $$select voom_ops.call_worker('/api/cron/tiktok-publish')$$);
-
--- Provider outcome reconciliation.
-select cron.schedule('voom-youtube-reconcile-10m',  '3-59/10 * * * *', $$select voom_ops.call_worker('/api/cron/youtube-reconcile')$$);
-select cron.schedule('voom-tiktok-reconcile-10m',   '4-59/10 * * * *', $$select voom_ops.call_worker('/api/cron/tiktok-reconcile')$$);
-
--- Async video generation polling (README: every 2 minutes).
-select cron.schedule('voom-media-generation-2m',    '*/2 * * * *',  $$select voom_ops.call_worker('/api/cron/media-generation')$$);
-
--- Lifecycle email flows (README: every 15 minutes; matches EMAIL_FLOW_CRON_CADENCE_MINUTES).
-select cron.schedule('voom-email-flows-15m',        '*/15 * * * *', $$select voom_ops.call_worker('/api/cron/email-flows')$$);
-
--- Read-only performance collectors.
-select cron.schedule('voom-instagram-performance-6h', '17 */6 * * *', $$select voom_ops.call_worker('/api/cron/instagram-performance')$$);
-select cron.schedule('voom-youtube-performance-1h',   '23 * * * *',   $$select voom_ops.call_worker('/api/cron/youtube-performance')$$);
-
--- Instagram long-lived token renewal (migration 0068). Renews tokens with
--- fewer than 30 days left; many retries fit inside that window.
-select cron.schedule('voom-instagram-token-refresh-6h', '41 */6 * * *', $$select voom_ops.call_worker('/api/cron/instagram-token-refresh')$$);
-
--- Check:   select jobname, schedule, active from cron.job where jobname like 'voom-%' order by jobname;
--- History: select j.jobname, d.status, d.start_time, d.return_message
---            from cron.job_run_details d join cron.job j using (jobid)
---           where j.jobname like 'voom-%' order by d.start_time desc limit 50;
--- HTTP results: select id, status_code, left(content::text, 200), created
---                 from net._http_response order by created desc limit 20;
+-- LinkedIn and daily planning/collection remain in vercel.json, not duplicated here.
+-- Inspect only jobname/schedule/active and sanitized HTTP status/error metadata.
+-- Do not dump Vault values or net.http_request_queue headers into logs or tickets.

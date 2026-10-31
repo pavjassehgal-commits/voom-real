@@ -40,12 +40,14 @@ compare-and-swap and could restore the pre-renewal token.
    (SHA-256 `b9d0c720f25e3610b5b0d271857abcdc7c66c9f0e085815c10de36184729ab84`); stop the schedule first.
 2. Merge and deploy the code. No new environment variables: it reuses
    `META_*`, `INSTAGRAM_TOKEN_ENCRYPTION_KEY*` and `CRON_SECRET`.
-3. Add only the new job in the Production SQL editor (do not re-run the whole
-   ops file; Production job names differ):
-
-   ```sql
-   select cron.schedule('voom-instagram-token-refresh-6h', '41 */6 * * *', $$select voom_ops.call_worker('/api/cron/instagram-token-refresh')$$);
-   ```
+3. Keep the corrected existing Production renewal job unchanged. Its direct
+   `net.http_post` command reads `voom_instagram_cron_secret` from Vault; do not
+   reference a custom worker helper or paste a bare `cron.schedule` over it.
+   For any separately approved missing installation, follow
+   [the guarded scheduling runbook](scheduled-workers.md): compare the inventory,
+   authorize only the exact missing job name and preserve all other jobs. The ops
+   file now rejects unexpected definitions rather than replacing them; it is not
+   executed by deployment or migration. No worker needs manually triggering.
 
 4. Verify after the first run: the worker returns `renewed: 1` for the
    existing connection, and Channels shows a new expiry about 60 days out.
