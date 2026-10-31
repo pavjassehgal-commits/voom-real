@@ -56,6 +56,7 @@ import {
 } from "@/lib/voom/onboardingData";
 import { AVOID_RULES, type BrandSectionId, type BrandSectionValues } from "@/lib/brand/sections";
 import { canUseAutomationMode, getPlanConfig } from "@/lib/billing/plans";
+import { beginHapticGesture, haptic } from "@/lib/voom/haptics";
 import { BrandHub } from "@/components/voom/brand/BrandHub";
 import { Icon } from "../icons";
 import { Btn, Chip, Input, Orb, Tag, Textarea } from "../ui/primitives";
@@ -226,9 +227,13 @@ export function OnboardingWizard({ visionEnabled = false }: { visionEnabled?: bo
   }
 
   async function next() {
+    // main's haptics (merged 2026-11-01): taken synchronously from the click that called
+    // us, so a scripted or timer-generated click gets no vibration; a real one warns once.
+    const gesture = beginHapticGesture();
     const blocker = stepBlocker(st, onboard);
     if (blocker) {
       toast(blocker, "err");
+      haptic("warning", gesture);
       return;
     }
     if (st === STEP_ASSETS) {

@@ -38,6 +38,22 @@ Environment: Node v26.0.0, npm 11.12.1, macOS.
 - Rule of thumb: pass count ≥ the latest row below, fail = 0, typecheck clean, lint errors = 0,
   lint warnings ≤ the latest row below. If a task legitimately adds or removes tests, record the
   new numbers here with the date.
+- **After the 2026-11-01 merge with `main`** (`handover/merge-plan.md` B4) the suite is 2316 tests
+  and the expected result is **2290 pass / 20 fail / 4 skipped / 2 todo**. The 20 are: (a) the 12
+  parked trend failures, now `trends-universal` (6), `trends-demo` (4), `trends-gp-replenish` (2);
+  (b) 5 failures that are **identical on a plain checkout of `main` at `ea1676b`** (proved
+  2026-11-01 in a sibling worktree): `approval-state-lockdown` "every cron worker uses the
+  constant-time Bearer check" (main's LinkedIn cron route), `linkedin-production-release` (main's
+  `vercel.json` lists more branches than its test), `perf-regression` ×2 (storage signing is no
+  longer one batched call), `product-truth-cleanup` (expects four channels, main added LinkedIn);
+  all 12 trend failures fail the same way there too; (c) 3 in `rendered-surface-cleanup.test.mjs`
+  that failed once under full-suite load and pass alone (5/5) and in two other full runs: a
+  concurrency flake, like the perf one above. None of the 20 touches Brand Kit v2 or the merge
+  work. The 2 todo are main's two visual wizard assertions parked until Phase C
+  (`onboarding-icons`, `redesign-batch-4a`). Hang note: `tests/motion-system.test.mjs` hung the
+  whole run at the merge because its page script looked for the wizard's `<footer>` and our wizard
+  had none; fixed by giving our wizard that footer (with `data-toast-clearance`). The helper's
+  missing page-script timeout (above) is what turned a failing lookup into a hang.
 
 ## History
 | Date | Tests pass / fail / skip | Typecheck | Lint err / warn | Change |
@@ -57,4 +73,5 @@ Environment: Node v26.0.0, npm 11.12.1, macOS.
 | 2026-10-27 | 1749 / **9** / 4 | clean | 0 / 16 | Brand Kit v2 slice 6: MARA writes three sample captions to sort, on the voice screen and the Brand page (+10 tests); token cap raised after the browser check; History line now names only the fields that changed (+1 test, 1 assertion reordered). Same 9 parked trend failures. See DECISIONS 2026-10-27. |
 | 2026-10-28 | 1752 / **9** / 4 | clean | 0 / 16 | Brand images: leftover files swept after Finish and after a Brand page images save; colours go with the logo (+3 tests, 1 extended). Same 9 parked trend failures. See DECISIONS 2026-10-28. |
 | 2026-10-28 | 1761 / **9** / 4 | clean | 0 / 16 | Slice 5b: MARA looks at an uploaded photo, with a brand hint, before suggesting its caption, and the caption serves the owner's "What is this post for?" line (+9 tests; 2 existing assertions reworded for the seen path). Same 9 parked trend failures. See DECISIONS 2026-10-28 (slice 5b). |
+| 2026-11-01 | 2290 / **20** / 4 (+2 todo) | clean | 0 / 15 | Merged GitHub `main` (73 commits, head `ea1676b`: redesign, LinkedIn, native TikTok/Shorts videos, YouTube uploads, cost tracking, automation safety) into Gurnoor's branch; our migration 0059 renumbered 0075. 26 conflicts resolved per `handover/merge-plan.md` B2; 8 of our tests and 7 of main's re-pointed at the merged shape; wizard footer gained `data-toast-clearance` and the haptic warning. The 20 failures: 12 parked trend + 5 identical on plain `main` + 3 cleanup flake (Notes above). See DECISIONS 2026-10-31 and 2026-11-01. |
 | 2026-10-29 | 1773 / **9** / 4 | clean | 0 / 16 | Brand Kit v2 slice 7: MARA reads the website in place from a "Read my website" button (text plus one homepage screenshot for the look, side by side), drafts the description with the text model, shows the read's state on screens 2 and 3 with "Try again" / "Back to the website", colours kept per source with the owner choosing which leads (+12 tests; 6 existing assertions reworded for the new colour shape, the website field's copy and the flow). Two new dependencies (`puppeteer-core`, `@sparticuz/chromium`). Same 9 parked trend failures. See DECISIONS 2026-10-28 (slice 7) and its 2026-10-29 notes. |
