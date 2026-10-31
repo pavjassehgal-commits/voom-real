@@ -27,6 +27,9 @@ If you ever find yourself editing code to make production work, stop: that is a 
 - `next-session.md` (this folder): the status board for the next working session: where the
   branch is, what is next in agreed order, open items with their triggers, environment facts,
   and the checklist for pulling `main`. Updated at the end of every task.
+- `merge-plan.md` (this folder): the step-by-step for merging GitHub `main` (the other developer's
+  67 commits of 2026-10-16 to 10-31) into Gurnoor's branch: backups, the second worktree folder,
+  the 33 overlapping files with a rule each, migration 0059 → 0069, the "nothing vanished" check.
 - `ARCHITECTURE.md` (repo root): how the app is built.
 - `DECISIONS.md` (repo root): why things are the way they are.
 - `docs/deploy-voom-today.md`: the original deploy runbook; `production-setup.md` here is the
