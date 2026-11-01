@@ -171,6 +171,22 @@ test('idle or invalid connections are rechecked without uploads; transient error
   await privacy.runYouTubePrivacyMaintenance({db:admin,config,client});assert.equal(calls,2);
   assert.deepEqual((await q('select authorization_checked_at from youtube_connections where owner_user_id=$1',[A]))[0].authorization_checked_at,before);
 });
+test('pre-0065 connections are re-verified before the 28-day sweep instead of being erased unverified',async t=>{
+  const admin=await fixture(t);
+  // A long-standing connection as 0065 leaves it: never checked, connected 40 days ago.
+  await q("update youtube_connections set authorization_checked_at=null, connected_at=now()-interval '40 days' where owner_user_id=$1",[A]);
+  await q("update youtube_connections set authorization_checked_at=now() where owner_user_id=$1",[B]);
+  let calls=0;const valid={getMyChannel:async()=>{calls++;return {channelId:`channel-${A}`,title:'t',handle:null,thumbnailUrl:null,uploadsPlaylistId:null};}};
+  await privacy.runYouTubePrivacyMaintenance({db:admin,config,client:valid});
+  assert.equal(calls,1);assert.equal(await count('youtube_connections'),1,'a still-valid grant survives the first sweep');
+  assert.ok((await q('select authorization_checked_at from youtube_connections where owner_user_id=$1',[A]))[0].authorization_checked_at);
+  assert.equal(await count('youtube_deletion_events'),0);
+  // An unverifiable legacy grant still expires under the 28-day rule.
+  await q("update youtube_connections set authorization_checked_at=null where owner_user_id=$1",[A]);
+  const down={getMyChannel:async()=>{throw new YouTubeApiError('server','channel');}};
+  await privacy.runYouTubePrivacyMaintenance({db:admin,config,client:down});
+  assert.equal(await count('youtube_connections'),0);assert.equal(await count('youtube_connections',B),1);
+});
 test('revocation ciphertext expires after six days even when provider configuration is disabled',async t=>{
   const admin=await fixture(t);await privacy.eraseYouTubeData(admin,A);
   const [deadline]=await q("select extract(epoch from expires_at-clock_timestamp())::int seconds from youtube_revocation_tasks");

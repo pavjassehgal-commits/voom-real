@@ -109,6 +109,10 @@ test("Privacy Policy truthfully covers current Voom data flows", async () => {
   assert.match(privacy, /Groq, OpenAI, Google \(Gemini\), NVIDIA/);
   assert.match(privacy, /Supabase/);
   assert.match(privacy, /Vercel/);
+  // The independent YouTube deletion register (Cloudflare) is disclosed with its minimal contents.
+  assert.match(privacy, /Cloudflare/);
+  assert.match(privacy, /minimal deletion record/);
+  assert.match(privacy, /never holds YouTube tokens, channel or video IDs/);
   assert.match(privacy, /row-level security/);
   assert.match(privacy, /Retention/);
   assert.match(privacy, /Security/);

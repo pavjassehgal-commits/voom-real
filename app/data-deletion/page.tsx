@@ -95,6 +95,12 @@ export default function DataDeletionPage() {
           videos on YouTube itself, use YouTube directly.
         </p>
         <p>
+          To prove the deletion and re-apply it if our main database is ever
+          restored from a backup, a minimal deletion record (your Voom account
+          ID, the request type and its dates; no YouTube tokens, channel or
+          video IDs) is kept separately with Cloudflare.
+        </p>
+        <p>
           If Google revocation temporarily fails, a server-only encrypted
           revocation task is retried without allowing publishing. Its retry
           credential expires after six days and is cleared by maintenance; unconfirmed

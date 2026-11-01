@@ -95,42 +95,23 @@ export function guardYouTubeClient(client: YouTubeClient, db: SupabaseClient, ow
   } });
 }
 
-/** Reuses /api/cron/youtube-reconcile: no new scheduled job or publishing call. */
-export async function runYouTubePrivacyMaintenance(input: {
-  db?: SupabaseClient; config?: YouTubeConfig | null; client?: YouTubeClient; now?: Date;
-} = {}) {
-  const db = input.db ?? (await import("@/utils/supabase/admin")).createAdminClient();
-  const config = input.config === undefined ? readYouTubeConfig() : input.config;
-  const now = input.now ?? new Date();
-  const prepared = await db.rpc("prepare_youtube_deletion_events", { p_limit: 25 });
-  if (prepared.error) throw new Error("youtube_deletion_prepare_failed");
-  await deliverDeletionEvents(db, undefined, createDeletionTransport());
-  // Only independently recorded intents may erase; credential expiry still runs.
-  const pruned = await db.rpc("prune_youtube_api_data", { p_limit: 25 });
-  if (pruned.error) throw new Error("youtube_retention_failed");
-  const delivery = await deliverDeletionEvents(db, undefined, createDeletionTransport());
-  const backlog = await db.rpc("youtube_privacy_backlog");
-  if (backlog.error) throw new Error("youtube_privacy_backlog_unavailable");
-  let operatorAttention = delivery.pending > 0 || delivery.unalerted > 0
-    || Number(backlog.data?.overdueErasures)>0 || Number(backlog.data?.expiredRevocations)>0;
-  // Cross-heartbeat with the independent register; a broken register or alert
-  // path is escalated through VOOM's own email provider. Inert until approved.
-  const registerProblem = await checkDeletionRegister()
-    ?? (delivery.unalerted > 0 ? "deletion_alert_undelivered" : null);
-  if (registerProblem) { operatorAttention = true; await sendFallbackDeletionAlert(registerProblem); }
-  // A single owner's pending revocation must not stall everyone else's reconciliation.
-  if (!config) return { erased: Number(pruned.data ?? 0), verified: 0, revocations: null, operatorAttention };
-  const client = input.client ?? new YouTubeClient(config);
-  const key = youTubeKeyRing(config);
-  const revocations = await retryYouTubeRevocations(db,key,client);
-  const due = await db.from("youtube_connections").select("owner_user_id,id,authorization_epoch,authorization_checked_at")
-    .eq("status","connected").or(`authorization_checked_at.is.null,authorization_checked_at.lt.${new Date(now.getTime()-86400_000).toISOString()}`)
-    .order("authorization_checked_at",{ascending:true}).limit(2);
-  if (due.error) throw new Error("youtube_authorization_scan_failed");
-  let verified = 0;
+/** Never-verified (pre-0065) connections first, then the oldest checks; bounded per run. */
+async function revalidateYouTubeAuthorizations(db: SupabaseClient, client: YouTubeClient, key: YouTubeKeyInput, now: Date, limit = 10) {
+  const select = "owner_user_id,id,authorization_epoch,authorization_checked_at";
+  const never = await db.from("youtube_connections").select(select).eq("status","connected").is("authorization_checked_at",null).limit(limit);
+  if (never.error) throw new Error("youtube_authorization_scan_failed");
+  const rows = [...(never.data ?? [])];
+  if (rows.length < limit) {
+    const stale = await db.from("youtube_connections").select(select).eq("status","connected")
+      .lt("authorization_checked_at",new Date(now.getTime()-86400_000).toISOString())
+      .order("authorization_checked_at",{ascending:true}).limit(limit-rows.length);
+    if (stale.error) throw new Error("youtube_authorization_scan_failed");
+    rows.push(...(stale.data ?? []));
+  }
+  let verified = 0, attention = false;
   // Dynamically imported to keep the credential layer's dependency acyclic.
   const { getYouTubeServerCredentials } = await import("./data.ts");
-  for (const row of due.data ?? []) {
+  for (const row of rows) {
     try {
       const credentials = await getYouTubeServerCredentials(db,String(row.owner_user_id),key,client);
       const guarded = guardYouTubeClient(client,db,String(row.owner_user_id),credentials.authorizationEpoch);
@@ -145,11 +126,47 @@ export async function runYouTubePrivacyMaintenance(input: {
       // Missing channels/401 are authorization failures; 429/5xx/network are NOT.
       if (reason instanceof YouTubeApiError && reason.reason === "no_channel") {
         try { await eraseYouTubeData(db,String(row.owner_user_id),false,`${row.id}:${row.authorization_epoch}`); }
-        catch { operatorAttention = true; } // Retain the block/request; retry, never claim completion.
+        catch { attention = true; } // Retain the block/request; retry, never claim completion.
       }
       // Do not advance the date on uncertain reads. The 28-day fail-closed TTL remains.
     }
   }
+  return { verified, attention };
+}
+
+/** Reuses /api/cron/youtube-reconcile: no new scheduled job or publishing call. */
+export async function runYouTubePrivacyMaintenance(input: {
+  db?: SupabaseClient; config?: YouTubeConfig | null; client?: YouTubeClient; now?: Date;
+} = {}) {
+  const db = input.db ?? (await import("@/utils/supabase/admin")).createAdminClient();
+  const config = input.config === undefined ? readYouTubeConfig() : input.config;
+  const now = input.now ?? new Date();
+  const client = config ? input.client ?? new YouTubeClient(config) : null;
+  const key = config ? youTubeKeyRing(config) : null;
+  // Re-verify BEFORE the 28-day sweep: a still-valid grant (including connections
+  // that predate 0065 and were never checked) is refreshed instead of being
+  // erased unverified. Unverifiable grants still expire through the sweep.
+  const revalidation = client && key ? await revalidateYouTubeAuthorizations(db, client, key, now) : { verified: 0, attention: false };
+  const prepared = await db.rpc("prepare_youtube_deletion_events", { p_limit: 25 });
+  if (prepared.error) throw new Error("youtube_deletion_prepare_failed");
+  await deliverDeletionEvents(db, undefined, createDeletionTransport());
+  // Only independently recorded intents may erase; credential expiry still runs.
+  const pruned = await db.rpc("prune_youtube_api_data", { p_limit: 25 });
+  if (pruned.error) throw new Error("youtube_retention_failed");
+  const delivery = await deliverDeletionEvents(db, undefined, createDeletionTransport());
+  const backlog = await db.rpc("youtube_privacy_backlog");
+  if (backlog.error) throw new Error("youtube_privacy_backlog_unavailable");
+  let operatorAttention = revalidation.attention || delivery.pending > 0 || delivery.unalerted > 0
+    || Number(backlog.data?.overdueErasures)>0 || Number(backlog.data?.expiredRevocations)>0;
+  // Cross-heartbeat with the independent register; a broken register or alert
+  // path is escalated through VOOM's own email provider. Inert until approved.
+  const registerProblem = await checkDeletionRegister()
+    ?? (delivery.unalerted > 0 ? "deletion_alert_undelivered" : null);
+  if (registerProblem) { operatorAttention = true; await sendFallbackDeletionAlert(registerProblem); }
+  // A single owner's pending revocation must not stall everyone else's reconciliation.
+  if (!client || !key) return { erased: Number(pruned.data ?? 0), verified: 0, revocations: null, operatorAttention };
+  const revocations = await retryYouTubeRevocations(db,key,client);
+  const verified = revalidation.verified;
   // Authorization checks above may themselves discover a new erasure request.
   // Report its delivery failure now, not only on the next natural cron run.
   const finalDelivery = await deletionDeliveryBacklog(db);

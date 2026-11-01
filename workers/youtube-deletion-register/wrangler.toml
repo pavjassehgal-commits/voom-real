@@ -55,3 +55,33 @@ REQUIRE_VOOM_HEARTBEAT = "false"
 
 [env.staging.observability]
 enabled = true
+
+# ---------------------------------------------------------------------------
+# PRODUCTION — not created yet. Deploy ONLY with --env production after approval.
+# Fill database_id from `wrangler d1 create voom-ydr-production`; set real alert
+# recipients (named by the owner) and RESEND_API_KEY as a secret before deploying.
+# The top-level config above has a placeholder database_id, so a deploy without
+# --env fails instead of creating an unintended Worker.
+[env.production]
+name = "voom-ydr-production-8a50fc"
+account_id = "87dffc51b11e876e35a70f87e2a25d12"
+workers_dev = true
+preview_urls = false
+
+[env.production.triggers]
+crons = ["17 * * * *"]
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "voom-ydr-production"
+database_id = "REPLACE_AFTER_PRODUCTION_D1_CREATE"
+
+[env.production.vars]
+ALERT_FROM = "REPLACE: verified Resend sender"
+ALERT_TO = "REPLACE: primary operator inbox"
+ALERT_ESCALATE_TO = "REPLACE: deputy inbox"
+DAILY_WRITE_BUDGET = "100000"
+REQUIRE_VOOM_HEARTBEAT = "false"
+
+[env.production.observability]
+enabled = true

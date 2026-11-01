@@ -262,6 +262,11 @@ export default function PrivacyPage() {
               scheduled background jobs (such as publish queue processing and
               planning runs) that keep the Service available.
             </>,
+            <>
+              <b className="text-text">Cloudflare</b> — an independent
+              YouTube deletion record kept separately from our main database,
+              and alerts if a deletion is delayed (see Retention).
+            </>,
           ]}
         />
         <p>
@@ -369,6 +374,15 @@ export default function PrivacyPage() {
           request; ownership verification does not restart that deadline. We verify
           ownership promptly and never ask you for passwords or OAuth tokens.
           Deleting Voom data does not delete anything held by YouTube itself.
+        </p>
+        <p>
+          <b>Deletion record:</b> so that a YouTube deletion can be proven and
+          re-applied if our main database is ever restored from a backup, Voom
+          keeps a minimal deletion record with Cloudflare, separate from that
+          database. It holds only your Voom account ID, the type of request
+          (deletion or retention clean-up) and its dates. It never holds
+          YouTube tokens, channel or video IDs, content or contact details, and
+          it is kept only as long as needed for that purpose.
         </p>
         <p>
           For other Voom data, we keep it while your account is active so the Service can
