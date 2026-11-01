@@ -21,7 +21,7 @@ import { getYouTubeQueueItemsForDrafts } from "@/lib/youtube/publish-queue";
 import { youTubeQueueLabel } from "@/lib/social/server-drafts";
 import { normalizeSelectedSocialChannels, parseWorkflowSlotIdentity, type PlannedContentType } from "./channel-planner";
 import { getInstagramConnection } from "@/lib/instagram/data";
-import { hasPublishPermission } from "@/lib/instagram/publishing";
+import { instagramPublishReadiness, type InstagramConnectionIssue } from "@/lib/instagram/publish-readiness";
 import {
   contentTypeLabel,
   deriveWorkflowStatus,
@@ -111,6 +111,7 @@ export interface WorkflowView {
   queueStatus: string | null;
   approvalGranted?: boolean;
   connectionReady?: boolean;
+  connectionIssue?: InstagramConnectionIssue | null;
   /** Safe metadata from the private stored asset; never exposes its storage path. */
   mediaDisplayName: string | null;
   /** Reel production facts (Instagram Reels only). */
@@ -466,7 +467,9 @@ export async function loadWorkflowSnapshot(
     const draftStatus = String(row.status ?? "draft") as "draft" | "approved" | "rejected";
     const approvalGranted = draftStatus === "approved" && Number(row.approved_content_version) > 0
       && row.approved_content_version === row.content_version;
-    const connectionReady = instagramConnection.connected && hasPublishPermission(instagramConnection.scopes);
+    const connectionReadiness = instagramPublishReadiness(instagramConnection, now);
+    const connectionReady = connectionReadiness === "ready";
+    const connectionIssue = connectionReadiness === "ready" ? null : connectionReadiness;
     const facts = {
       draftStatus,
       hasMedia,
@@ -476,7 +479,7 @@ export async function loadWorkflowSnapshot(
       mediaErrorCode: media?.errorCode ?? null,
       mediaType: media?.mediaType ?? null,
       publishStatus: isInstagram ? (instagramRow?.status ?? null) : null,
-      ...(isInstagram ? { connectionReady, approvalValid: approvalGranted } : {}),
+      ...(isInstagram ? { connectionReady, connectionIssue, approvalValid: approvalGranted } : {}),
       awaitingApproval: isInstagram && approvalIds.has(draftId),
       publishAt,
       now,
@@ -534,7 +537,8 @@ export async function loadWorkflowSnapshot(
       localTime: publishAt ? formatLocalTime(publishAt, timeZone) : "",
       dayLabel: publishAt ? relativeDayLabel(isoToLocalDate(publishAt, timeZone), now, timeZone) : "",
       status,
-      statusLabel: nativeStatusLabel,
+      statusLabel: isInstagram && status === "needs_connection" && connectionIssue === "expired"
+        ? "Connection expired" : nativeStatusLabel,
       failedStage: status === "failed"
         ? (draftStatus === "rejected" ? "rejected" : nativeMedia ? "media" : !isInstagram ? "publishing" : failureStage(facts))
         : failureStage(facts),
@@ -552,7 +556,7 @@ export async function loadWorkflowSnapshot(
       mediaFromMara: asset?.origin === "mara" || (nativeVideo && contentMeta.maraGeneratedVideo === true && hasMedia),
       queueStatus,
       approvalGranted,
-      ...(isInstagram ? { connectionReady } : {}),
+      ...(isInstagram ? { connectionReady, connectionIssue } : {}),
       production,
     });
   }

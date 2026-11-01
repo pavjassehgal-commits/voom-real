@@ -5,6 +5,7 @@ export type TodayItem = {
   slotDate: string;
   localDate: string;
   status: string;
+  connectionIssue?: string | null;
   channelLabel: string;
   contentTypeLabel: string;
   concept: string;
@@ -126,6 +127,8 @@ export function buildTodayView<T extends TodayItem>(
       ? { state: "action" as const, title: "Something needs attention", detail: `${summary.failed.length} item${summary.failed.length === 1 ? " stopped" : "s stopped"} safely and can be reviewed.`, href: "/app/calendar" }
       : summary.waitingForMedia.length
         ? { state: "action" as const, title: "Media is not ready", detail: `${summary.waitingForMedia.length} scheduled item${summary.waitingForMedia.length === 1 ? " is" : "s are"} safely held until its visual is ready.`, href: "/app/calendar" }
+        : summary.needsPreparation?.some(item => item.connectionIssue === "expired")
+          ? { state: "action" as const, title: "Instagram connection expired", detail: "Reconnect Instagram before publishing. Approved content and saved jobs are unchanged; review their time and status after reconnecting.", href: "/app/instagram" }
         : summary.needsPreparation?.length
           ? { state: "action" as const, title: "Content needs preparation", detail: `${summary.needsPreparation.length} item${summary.needsPreparation.length === 1 ? " needs" : "s need"} media, connection or scheduling. Open the plan for the next step.`, href: "/app/plan" }
         : summary.needsApproval.length

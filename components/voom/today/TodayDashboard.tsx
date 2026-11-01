@@ -144,7 +144,7 @@ export function TodayDashboard({
 function Notices({ view }: { view: View }) {
   const notices: { id: string; title: string; detail: string; href: string; cta: string }[] = [];
   if (view.attention.state === "action") {
-    notices.push({ id: `attention-${view.days[0]?.date ?? ""}`, title: view.attention.title, detail: view.attention.detail, href: view.attention.href, cta: view.attention.href === "/app/approvals" ? "Review approvals" : view.attention.href === "/app/plan" ? "Review marketing plan" : "Open calendar" });
+    notices.push({ id: `attention-${view.days[0]?.date ?? ""}`, title: view.attention.title, detail: view.attention.detail, href: view.attention.href, cta: view.attention.href === "/app/instagram" ? "Reconnect Instagram" : view.attention.href === "/app/approvals" ? "Review approvals" : view.attention.href === "/app/plan" ? "Review marketing plan" : "Open calendar" });
   }
   if (view.coverage.state === "gaps" || view.coverage.state === "empty") {
     notices.push({ id: `coverage-${view.days[0]?.date ?? ""}`, title: view.coverage.title, detail: view.coverage.detail, href: "/app/plan", cta: "Review marketing plan" });

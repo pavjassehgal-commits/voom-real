@@ -102,6 +102,8 @@ function InstagramPlanItemCard({
     localTime: item.localTime,
     hasMedia: item.hasMedia,
     connectionReady: item.connectionReady,
+    connectionIssue: item.connectionIssue,
+    queueStatus: item.queueStatus,
     mediaFromMara: item.mediaFromMara,
     mediaStatus: item.mediaStatus,
     production,

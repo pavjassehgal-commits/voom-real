@@ -2,6 +2,7 @@ import "server-only";
 import type { AdminClient } from "@/lib/post/server-data";
 import { addDays, formatLocalTime, isoToLocalDate, localToUtcIso } from "./timezone";
 import type { TodayItem } from "./today-view";
+import { instagramPublishReadiness } from "@/lib/instagram/publish-readiness";
 
 const CHANNELS = ["instagram", "tiktok", "youtube", "linkedin"] as const;
 type ScheduledJob = { id: string; draft_id: string; status: string; scheduled_at: string; approved_content_version?: number; channel: typeof CHANNELS[number] };
@@ -10,7 +11,7 @@ type ScheduledJob = { id: string; draft_id: string; status: string; scheduled_at
  * No calendar projections, held jobs, stale approvals or disconnected accounts
  * count as scheduled. All reads remain owner-scoped; read failures fail closed.
  */
-export async function loadTodayScheduledItems(admin: AdminClient, ownerId: string, today: string, timeZone: string): Promise<TodayItem[]> {
+export async function loadTodayScheduledItems(admin: AdminClient, ownerId: string, today: string, timeZone: string, now: Date = new Date()): Promise<TodayItem[]> {
   const start = localToUtcIso(today, 0, timeZone);
   const end = localToUtcIso(addDays(today, 7), 0, timeZone);
   const jobs = await Promise.all(CHANNELS.map(async channel => {
@@ -28,8 +29,12 @@ export async function loadTodayScheduledItems(admin: AdminClient, ownerId: strin
       .eq("owner_user_id", ownerId).in("id", ids),
     admin.from("post_draft_assets").select("draft_id,status,storage_path")
       .eq("owner_user_id", ownerId).in("draft_id", ids),
-    ...CHANNELS.map(channel => admin.from(`${channel}_connections`).select("status,scopes")
-      .eq("owner_user_id", ownerId).eq("status", "connected")),
+    ...CHANNELS.map(channel => {
+      const query = channel === "instagram"
+        ? admin.from("instagram_connections").select("status,scopes,token_expires_at")
+        : admin.from(`${channel}_connections`).select("status,scopes");
+      return query.eq("owner_user_id", ownerId).eq("status", "connected");
+    }),
   ]);
   if ([drafts, assets, ...connections].some(read => read.error)) throw new Error("today_schedule_read_failed");
   const byDraft = new Map((drafts.data ?? []).map(draft => [String(draft.id), draft]));
@@ -37,6 +42,8 @@ export async function loadTodayScheduledItems(admin: AdminClient, ownerId: strin
     && typeof asset.storage_path === "string" && asset.storage_path.startsWith(`${ownerId}/`)).map(asset => String(asset.draft_id)));
   const permitted = new Set(CHANNELS.filter((channel, index) => (connections[index].data ?? []).some(connection => {
     const scopes = Array.isArray(connection.scopes) ? connection.scopes : [];
+    if (channel === "instagram") return instagramPublishReadiness({ status: connection.status, scopes,
+      tokenExpiresAt: "token_expires_at" in connection ? connection.token_expires_at as string | null : null }, now) === "ready";
     const permission = { instagram: "instagram_business_content_publish", tiktok: "video.publish", youtube: "https://www.googleapis.com/auth/youtube.upload", linkedin: "w_member_social" }[channel];
     return scopes.includes(permission) || channel === "youtube" && scopes.includes("youtube.upload");
   })));

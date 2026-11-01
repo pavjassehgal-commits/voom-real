@@ -18,6 +18,7 @@ import {
   type WorkflowStatus,
 } from "./state.ts";
 import type { MaraProductionOption, ReelProductionMethod } from "@/lib/mara/reel-production";
+import type { InstagramConnectionIssue } from "@/lib/instagram/publish-readiness";
 
 export type PlanActionId =
   | "produce_with_mara"
@@ -97,6 +98,8 @@ export interface PlanItemFacts {
   localTime?: string;
   hasMedia: boolean;
   connectionReady?: boolean;
+  connectionIssue?: InstagramConnectionIssue | null;
+  queueStatus?: string | null;
   /** True when the stored media came from MARA (regeneratable). */
   mediaFromMara?: boolean;
   /** Latest mara_media_generations status, when any — drives retry safety. */
@@ -137,9 +140,11 @@ export function planItemActions(item: PlanItemFacts): PlanItemActions {
       };
     case "needs_connection":
       return {
-        stage: item.stage, stageLabel: WORKFLOW_STATUS_LABELS.needs_connection,
-        headline: "Approved inside Voom, but Instagram publishing is blocked. Check the proposed time and connect Instagram with publishing permission.",
-        actions: [{ id: "connect_channel", label: "Connect Instagram", tone: "primary" }, { id: "change_time", label: "Change time", tone: "outline" }], explanation,
+        stage: item.stage, stageLabel: item.connectionIssue === "expired" ? "Connection expired" : WORKFLOW_STATUS_LABELS.needs_connection,
+        headline: item.connectionIssue === "expired"
+          ? `Instagram authorization has expired. Reconnect Instagram before publishing. Your approval${item.queueStatus === "scheduled" ? " and saved publishing job are" : " is"} unchanged; review the time and job status after reconnecting.`
+          : "Approved inside Voom, but Instagram publishing is blocked. Check the proposed time and connect Instagram with publishing permission.",
+        actions: [{ id: "connect_channel", label: item.connectionIssue === "expired" ? "Reconnect Instagram" : "Connect Instagram", tone: "primary" }, { id: "change_time", label: "Change time", tone: "outline" }], explanation,
       };
     case "planned":
     case "needs_content":
@@ -488,6 +493,7 @@ function explanationWhy(item: PlanItemFacts): string | null {
 }
 
 function explanationAutoPublish(item: PlanItemFacts): string {
+  if (item.stage === "needs_connection" && item.connectionIssue === "expired") return "Blocked — Instagram authorization has expired. A saved job is not currently eligible for publishing. Reconnect Instagram, then review its time and status; Voom has not cancelled or replaced it.";
   if (["approved", "ready_to_schedule", "needs_connection"].includes(item.stage)) return "No — approval alone is not an active publishing job. Resolve the missing setup and schedule explicitly.";
   if (item.stage === "missed") return "No. Voom never publishes hours late on its own — you choose Post now or a new time.";
   if (item.stage === "waiting_for_media") return "Not yet — it is scheduled, but it cannot publish until the visual is ready. It posts at the scheduled time as soon as the media is stored.";

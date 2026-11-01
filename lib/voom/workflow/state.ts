@@ -42,6 +42,7 @@ import {
   isBeyondVideoJobHardTimeout,
   isTimedOutVideoGeneration,
 } from "@/lib/mara/video-job";
+import type { InstagramConnectionIssue } from "@/lib/instagram/publish-readiness";
 
 export const WORKFLOW_STATUSES = [
   "planned",
@@ -109,6 +110,7 @@ export interface WorkflowFacts {
   publishStatus: PublishStatusFact | null;
   /** Owner-scoped connection/permission read; unknown never implies ready. */
   connectionReady?: boolean;
+  connectionIssue?: InstagramConnectionIssue | null;
   /** False when a persisted approval no longer covers the current content. */
   approvalValid?: boolean;
   /** True when an approval action is still open for this item. */
@@ -242,6 +244,10 @@ export function deriveWorkflowStatus(facts: WorkflowFacts): WorkflowStatus {
 
   if (facts.publishStatus === "published") return "published";
   if (facts.publishStatus === "publishing") return "publishing";
+  // The job may still be persisted, but expired authorization cannot deliver
+  // it. Surface reconnection without cancelling the job or its approval.
+  if (facts.draftStatus === "approved" && facts.connectionIssue === "expired"
+    && facts.approvalValid !== false && facts.publishStatus !== "cancelled") return "needs_connection";
   if (facts.publishStatus === "failed" || facts.publishStatus === "permission_required") return "failed";
   // A stopped video generation keeps the precedence a media failure always
   // had — it is only named truthfully when the reason was the hard timeout.
