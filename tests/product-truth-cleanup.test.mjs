@@ -116,7 +116,10 @@ function makeFakes({ rpcError = null, adminThrows = false } = {}) {
           if (table === "businesses") calls.businessesUpsert.push(payload);
           return { error: null, data: { id: "row-1" } };
         },
-        update: async () => ({ error: null, data: [] }),
+        update: payload => {
+          const query = { eq: () => query, select: () => query, maybeSingle: async () => { if (table === "businesses") calls.businessesUpsert.push(payload); return { error: null, data: { id: "row-1" } }; } };
+          return query;
+        },
         // Onboarding reads the account's plan before choosing a mode to save.
         select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { plan: "free" }, error: null }) }) }),
       };
@@ -310,7 +313,7 @@ test("a failed website write can never fail onboarding — it surfaces as a noti
 
 test("the onboarding save runs after the business row exists (the RPC requires it)", async () => {
   const mutations = await read("lib/voom/mutations.ts");
-  const businessesIndex = mutations.indexOf('from("businesses").upsert');
+  const businessesIndex = mutations.indexOf('from("businesses").update(businessValues)');
   const websiteIndex = mutations.indexOf("saveOnboardingWebsite(user.id, input.website)");
   assert.ok(businessesIndex > 0 && websiteIndex > businessesIndex);
   assert.match(mutations, /rpc\("upsert_email_brand"/);

@@ -20,6 +20,8 @@ import { getTikTokQueueItemsForDrafts } from "@/lib/tiktok/publish-queue";
 import { getYouTubeQueueItemsForDrafts } from "@/lib/youtube/publish-queue";
 import { youTubeQueueLabel } from "@/lib/social/server-drafts";
 import { normalizeSelectedSocialChannels, parseWorkflowSlotIdentity, type PlannedContentType } from "./channel-planner";
+import { getInstagramConnection } from "@/lib/instagram/data";
+import { instagramPublishReadiness, type InstagramConnectionIssue } from "@/lib/instagram/publish-readiness";
 import {
   contentTypeLabel,
   deriveWorkflowStatus,
@@ -107,6 +109,9 @@ export interface WorkflowView {
   mediaFromMara: boolean;
   /** Latest durable channel queue status for this draft, if any. */
   queueStatus: string | null;
+  approvalGranted?: boolean;
+  connectionReady?: boolean;
+  connectionIssue?: InstagramConnectionIssue | null;
   /** Safe metadata from the private stored asset; never exposes its storage path. */
   mediaDisplayName: string | null;
   /** Reel production facts (Instagram Reels only). */
@@ -348,7 +353,7 @@ export async function loadWorkflowSnapshot(
   if (!snapshot.planId) return snapshot;
 
   const { data: drafts } = await admin.from("mara_drafts")
-    .select("id,kind,social_channel,social_format,title,content,content_meta,proposed_publish_at,status,source_plan_id,source_plan_item_key")
+    .select("id,kind,social_channel,social_format,title,content,content_meta,proposed_publish_at,status,source_plan_id,source_plan_item_key,content_version,approved_content_version")
     .eq("owner_user_id", ownerId).eq("source_plan_id", snapshot.planId)
     .order("proposed_publish_at", { ascending: true });
 
@@ -373,7 +378,7 @@ export async function loadWorkflowSnapshot(
   const youtubeIds = rows.filter((row) => pairForDraftRow(row)?.channel === "youtube").map((row) => String(row.id));
   const tiktokIds = rows.filter((row) => pairForDraftRow(row)?.channel === "tiktok").map((row) => String(row.id));
   const linkedinIds = rows.filter((row) => pairForDraftRow(row)?.channel === "linkedin").map((row) => String(row.id));
-  const [assets, generations, instagramQueue, calendar, approvals, productionActions, youtubeQueue, tiktokQueue, linkedinQueue] = await Promise.all([
+  const [assets, generations, instagramQueue, calendar, approvals, productionActions, youtubeQueue, tiktokQueue, linkedinQueue, instagramConnection] = await Promise.all([
     admin.from("post_draft_assets").select("draft_id,mime_type,origin,storage_path,display_name,status").eq("owner_user_id", ownerId).in("draft_id", ids),
     admin.from("mara_media_generations").select("draft_id,status,media_type,error_code,created_at,updated_at").eq("owner_user_id", ownerId).in("draft_id", ids).order("updated_at", { ascending: true }),
     admin.from("instagram_publish_queue").select("draft_id,status,instagram_media_id,failure_message,scheduled_at").eq("owner_user_id", ownerId).in("draft_id", ids),
@@ -387,6 +392,7 @@ export async function loadWorkflowSnapshot(
     getTikTokQueueItemsForDrafts(admin, ownerId, tiktokIds),
     linkedinIds.length ? admin.from("linkedin_publish_queue").select("draft_id,status")
       .eq("owner_user_id", ownerId).in("draft_id", linkedinIds) : Promise.resolve({ data: [], error: null }),
+    getInstagramConnection(admin, ownerId, true),
   ]);
   if (assets.error || generations.error || instagramQueue.error || calendar.error || approvals.error || productionActions.error || linkedinQueue.error) {
     throw new Error("workflow_snapshot_read_failed");
@@ -459,6 +465,11 @@ export async function loadWorkflowSnapshot(
       ? (instagramRow?.status ?? null)
       : (linkedinRow?.status ?? socialQueue?.status ?? null);
     const draftStatus = String(row.status ?? "draft") as "draft" | "approved" | "rejected";
+    const approvalGranted = draftStatus === "approved" && Number(row.approved_content_version) > 0
+      && row.approved_content_version === row.content_version;
+    const connectionReadiness = instagramPublishReadiness(instagramConnection, now);
+    const connectionReady = connectionReadiness === "ready";
+    const connectionIssue = connectionReadiness === "ready" ? null : connectionReadiness;
     const facts = {
       draftStatus,
       hasMedia,
@@ -468,6 +479,7 @@ export async function loadWorkflowSnapshot(
       mediaErrorCode: media?.errorCode ?? null,
       mediaType: media?.mediaType ?? null,
       publishStatus: isInstagram ? (instagramRow?.status ?? null) : null,
+      ...(isInstagram ? { connectionReady, connectionIssue, approvalValid: approvalGranted } : {}),
       awaitingApproval: isInstagram && approvalIds.has(draftId),
       publishAt,
       now,
@@ -525,7 +537,8 @@ export async function loadWorkflowSnapshot(
       localTime: publishAt ? formatLocalTime(publishAt, timeZone) : "",
       dayLabel: publishAt ? relativeDayLabel(isoToLocalDate(publishAt, timeZone), now, timeZone) : "",
       status,
-      statusLabel: nativeStatusLabel,
+      statusLabel: isInstagram && status === "needs_connection" && connectionIssue === "expired"
+        ? "Connection expired" : nativeStatusLabel,
       failedStage: status === "failed"
         ? (draftStatus === "rejected" ? "rejected" : nativeMedia ? "media" : !isInstagram ? "publishing" : failureStage(facts))
         : failureStage(facts),
@@ -542,6 +555,8 @@ export async function loadWorkflowSnapshot(
       mediaDisplayName: hasMedia && typeof asset?.display_name === "string" ? asset.display_name : null,
       mediaFromMara: asset?.origin === "mara" || (nativeVideo && contentMeta.maraGeneratedVideo === true && hasMedia),
       queueStatus,
+      approvalGranted,
+      ...(isInstagram ? { connectionReady, connectionIssue } : {}),
       production,
     });
   }
@@ -625,6 +640,7 @@ export function todaySummary(snapshot: WorkflowSnapshot) {
   return {
     publishingToday: itemsForToday(snapshot).filter((item) => item.status !== "failed" && item.status !== "missed"),
     needsApproval: items.filter((item) => item.status === "needs_approval"),
+    needsPreparation: items.filter((item) => ["needs_content", "needs_connection", "ready_to_schedule", "approved"].includes(item.status)),
     generating: items.filter((item) => item.status === "generating"),
     // Scheduled but CANNOT publish until the visual is ready — surfaced as its
     // own truthful bucket, never folded into "Scheduled". A timed-out

@@ -235,12 +235,14 @@ function seedIncident(options = {}) {
       id: DRAFT, owner_user_id: OWNER, source_plan_id: "plan-1", kind: "reel",
       title: "SynraPay Global Reach Showcase", content: "Show the Global Reach milestone.",
       status: options.draftStatus ?? "approved", source_plan_item_key: "2026-09-13",
+      content_version: 1, approved_content_version: 1,
       proposed_publish_at: SCHEDULED, conversation_id: "conv-1",
       media_brief: "Clean 9:16 global reach visual.", created_at: CREATED_AT,
     }],
     post_draft_assets: assets,
     mara_media_generations: generations,
     instagram_publish_queue: queue,
+    instagram_connections: [{ owner_user_id: OWNER, status: "connected", scopes: ["instagram_business_content_publish"] }],
     content_calendar_items: [{ id: "cal-1", owner_user_id: OWNER, source_draft_id: DRAFT }],
     mara_pending_actions: [],
   }));
@@ -427,7 +429,7 @@ test("1c. a pending video beyond the hard timeout is 'Generation timed out'", ()
   // A stored visual always wins: the timed-out job simply did not replace it.
   assert.equal(
     state.deriveWorkflowStatus(facts({ hasMedia: true, mediaStatus: "failed", mediaErrorCode: "provider_timeout" })),
-    "scheduled",
+    "approved",
   );
   assert.notEqual(state.deriveWorkflowStatus(facts({ hasMedia: true })), "media_timed_out");
   // A different failure reason stays a plain failure, never "timed out".
@@ -918,6 +920,7 @@ test("6a. the item is held until an asset exists, then it is plainly scheduled",
     origin: "mara", storage_path: `${OWNER}/post-assets/asset-1.mp4`, status: "uploaded",
   });
   fresh.status = "completed";
+  db.tables.get("instagram_publish_queue")[0].status = "scheduled";
   snapshot = await readModel.loadWorkflowSnapshot(db, OWNER, { now: new Date(NOW.getTime() + 7 * 60_000) });
   assert.equal(snapshot.items[0].status, "scheduled");
   assert.equal(snapshot.items[0].hasMedia, true);
@@ -935,6 +938,7 @@ test("6b. an upload replacement is the other way out and needs no provider", asy
     id: "asset-2", owner_user_id: OWNER, draft_id: DRAFT, mime_type: "video/mp4",
     origin: "user", storage_path: `${OWNER}/post-assets/asset-2.mp4`, status: "uploaded",
   });
+  db.tables.get("instagram_publish_queue")[0].status = "scheduled";
   const snapshot = await readModel.loadWorkflowSnapshot(db, OWNER, { now: NOW });
   assert.equal(snapshot.items[0].status, "scheduled");
   assert.equal(snapshot.items[0].hasMedia, true);

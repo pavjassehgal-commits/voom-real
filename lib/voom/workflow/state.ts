@@ -42,6 +42,7 @@ import {
   isBeyondVideoJobHardTimeout,
   isTimedOutVideoGeneration,
 } from "@/lib/mara/video-job";
+import type { InstagramConnectionIssue } from "@/lib/instagram/publish-readiness";
 
 export const WORKFLOW_STATUSES = [
   "planned",
@@ -52,6 +53,9 @@ export const WORKFLOW_STATUSES = [
   "media_timed_out",
   "ready_for_review",
   "needs_approval",
+  "approved",
+  "needs_connection",
+  "ready_to_schedule",
   "scheduled",
   "publishing",
   "published",
@@ -62,13 +66,16 @@ export type WorkflowStatus = (typeof WORKFLOW_STATUSES)[number];
 
 export const WORKFLOW_STATUS_LABELS: Record<WorkflowStatus, string> = {
   planned: "Planned",
-  needs_content: "Needs content",
+  needs_content: "Needs media",
   generating: "Generating",
   waiting_for_media: "Waiting for media",
   media_delayed: "Media generation delayed",
   media_timed_out: "Generation timed out",
   ready_for_review: "Ready for review",
   needs_approval: "Needs approval",
+  approved: "Approved",
+  needs_connection: "Needs connection",
+  ready_to_schedule: "Ready to schedule",
   scheduled: "Scheduled",
   publishing: "Publishing",
   published: "Published",
@@ -101,6 +108,11 @@ export interface WorkflowFacts {
   mediaType?: string | null;
   /** Latest instagram_publish_queue status for this draft, if any. */
   publishStatus: PublishStatusFact | null;
+  /** Owner-scoped connection/permission read; unknown never implies ready. */
+  connectionReady?: boolean;
+  connectionIssue?: InstagramConnectionIssue | null;
+  /** False when a persisted approval no longer covers the current content. */
+  approvalValid?: boolean;
   /** True when an approval action is still open for this item. */
   awaitingApproval: boolean;
   /** The absolute UTC publish instant (draft proposed_publish_at / queue row). */
@@ -232,6 +244,10 @@ export function deriveWorkflowStatus(facts: WorkflowFacts): WorkflowStatus {
 
   if (facts.publishStatus === "published") return "published";
   if (facts.publishStatus === "publishing") return "publishing";
+  // The job may still be persisted, but expired authorization cannot deliver
+  // it. Surface reconnection without cancelling the job or its approval.
+  if (facts.draftStatus === "approved" && facts.connectionIssue === "expired"
+    && facts.approvalValid !== false && facts.publishStatus !== "cancelled") return "needs_connection";
   if (facts.publishStatus === "failed" || facts.publishStatus === "permission_required") return "failed";
   // A stopped video generation keeps the precedence a media failure always
   // had — it is only named truthfully when the reason was the hard timeout.
@@ -266,15 +282,20 @@ export function deriveWorkflowStatus(facts: WorkflowFacts): WorkflowStatus {
   if (facts.mediaStatus === "queued" || facts.mediaStatus === "generating" || facts.mediaStatus === "processing") return "generating";
 
   if (facts.draftStatus === "approved") {
+    if (facts.approvalValid === false) return facts.hasMedia ? "ready_for_review" : "needs_content";
     // Scheduled, but the schedule already expired without a publish: the item
     // must surface as missed rather than sit as a fake "upcoming" schedule.
-    if (isPast(facts.publishAt ?? null, now) && facts.publishStatus !== "published") return "missed";
+    if (facts.publishStatus && isPast(facts.publishAt ?? null, now)) return "missed";
     // A withdrawn queue row (never enqueued, cancelled) is equally a dead
     // schedule: truthfully missed, never silently "upcoming".
     if (facts.publishStatus === "cancelled" && facts.publishAt && isPast(facts.publishAt, now)) return "missed";
     if (facts.publishStatus === "cancelled") return "missed";
-    return "scheduled";
+    if (!facts.hasMedia) return "needs_content";
+    if (facts.connectionReady === false) return "needs_connection";
+    if (facts.publishStatus === "scheduled") return "scheduled";
+    return facts.connectionReady === true ? "ready_to_schedule" : "approved";
   }
+  if (!facts.hasMedia && facts.awaitingApproval) return "needs_content";
   if (facts.awaitingApproval) return "needs_approval";
   if (facts.hasMedia) return "ready_for_review";
   if (facts.mediaStatus === "cancelled" || facts.mediaStatus === "pending_confirmation") return "needs_content";

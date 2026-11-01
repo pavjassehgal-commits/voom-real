@@ -3,6 +3,7 @@ import { isSocialVideoDraftKind, normalizePostFormat, normalizeSchedule, postApp
 import { APPROVAL_CONTENT_CHANGED, approvePostDraft, getPostDraft, normalizeMediaBrief, rejectPostDraft, savePostDraft } from "@/lib/post/server-data";
 import { checkScheduleInstant } from "@/lib/voom/schedule-guard";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { postApprovalMessage } from "@/lib/post/approval-message";
 
 export const runtime = "nodejs";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -29,6 +30,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   let body: Record<string, unknown>;
   try { body = await request.json(); } catch { return Response.json({ error: "That request was not valid." }, { status: 400 }); }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return Response.json({ error: "That request was not valid." }, { status: 400 });
+  }
 
   const admin = createAdminClient();
   // TikTok/YouTube drafts share mara_drafts but are approved, scheduled and
@@ -54,7 +58,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
     try {
       const post = await approvePostDraft(admin, user.id, id, expected === undefined ? undefined : { expectedContentVersion: expected });
-      return Response.json({ post, message: post?.scheduledAt ? "Approved. Voom will automatically publish this to Instagram at the scheduled time." : "Approved inside Voom. Add a schedule so Voom can auto-publish it." });
+      if (!post) return Response.json({ error: "Approval could not be verified. Refresh this post." }, { status: 503 });
+      return Response.json({ post, message: await postApprovalMessage(admin, user.id, post) });
     } catch (err) {
       if (err instanceof Error && err.message === APPROVAL_CONTENT_CHANGED) {
         const post = await getPostDraft(admin, user.id, id).catch(() => null);

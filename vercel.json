@@ -12,7 +12,8 @@
       "fix/instagram-token-renewal": false,
       "codex/scheduled-worker-config-drift": false,
       "fix/mara-automation-launch": false,
-      "fix/automation-mode-normalization": false
+      "fix/automation-mode-normalization": false,
+      "codex/mara-launch-readiness": false
     }
   },
   "crons": [

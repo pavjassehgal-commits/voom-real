@@ -11,6 +11,7 @@ import { getYouTubeConnection } from "@/lib/youtube/data";
 import { getOperatingData } from "@/lib/voom/operating-data";
 import { buildTodayMetrics } from "@/lib/voom/today-metrics";
 import { buildTodayView } from "@/lib/voom/today-view";
+import { loadTodayScheduledItems } from "@/lib/voom/today-schedule";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
 
@@ -30,10 +31,11 @@ export default async function TodayPage() {
   // The performance report was read once by the shared operating-data read and
   // is shared with the coordinator; awaiting it here fails exactly as this
   // page's own load did if the read is unavailable.
-  const channelsRead = readChannels(data.user.id);
-  const performance = await data.performance;
-  const channels = await channelsRead;
-  const view = buildTodayView(data.snapshot, data.summary, data.coordinator);
+  const [performance, channels, scheduledItems] = await Promise.all([
+    data.performance, readChannels(data.user.id),
+    loadTodayScheduledItems(createAdminClient(), data.user.id, data.snapshot.today, data.snapshot.timeZone),
+  ]);
+  const view = buildTodayView(data.snapshot, data.summary, data.coordinator, scheduledItems);
   const displayName = readDisplayName(data.user.email);
   const now = new Date();
   const timeZone = data.snapshot.timeZone;

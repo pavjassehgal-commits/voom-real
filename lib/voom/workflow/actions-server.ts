@@ -40,6 +40,7 @@ import {
 import { mediaOutcomeMessage, produceWorkflowMedia } from "./media";
 import { isPostDraftKind } from "@/lib/post/core";
 import { parseWorkflowSlotIdentity } from "./channel-planner";
+import { postApprovalMessage } from "@/lib/post/approval-message";
 
 export type ActionResult = { ok: true; message: string } | { ok: false; error: string };
 
@@ -164,9 +165,10 @@ export async function approvePlanItem(draftId: string): Promise<ActionResult> {
   if (!ctx) return { ok: false, error: "Your session has expired. Please log in again." };
   const draft = await loadOwnedDraft(ctx.admin, ctx.userId, draftId);
   if (!draft) return { ok: false, error: "That plan item was not found." };
-  if (String(draft.status) === "approved") return { ok: true, message: "Already approved and scheduled." };
   try {
-    const view = await approvePostDraft(ctx.admin, ctx.userId, draftId);
+    const view = String(draft.status) === "approved"
+      ? await syncPostToCalendar(ctx.admin, ctx.userId, draftId)
+      : await approvePostDraft(ctx.admin, ctx.userId, draftId);
     if (!view) return { ok: false, error: "That plan item was not found." };
   } catch {
     return { ok: false, error: "Voom couldn't approve that item safely. Nothing was published — please retry." };
@@ -174,7 +176,8 @@ export async function approvePlanItem(draftId: string): Promise<ActionResult> {
   await resolveOpenApprovalCard(ctx.admin, ctx.userId, draftId);
   revalidate();
   const post = await getPostDraft(ctx.admin, ctx.userId, draftId);
-  return { ok: true, message: post?.visualReady ? "Approved and scheduled. Voom publishes it at the scheduled time." : "Approved. Its schedule is held while the visual finishes generating." };
+  if (!post) return { ok: false, error: "Approval was saved, but this item could not be reloaded. Refresh to verify its state." };
+  return { ok: true, message: await postApprovalMessage(ctx.admin, ctx.userId, post) };
 }
 
 /** Resolves the item's open approval card, if any (approval happened in place). */

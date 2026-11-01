@@ -42,6 +42,7 @@ export function nativeVideoDb(db) {
         eq(key, value) { filters.push(`${ident(key)}=${bind(value)}`); return chain; },
         in(key, list) { filters.push(`${ident(key)} in (${list.map(bind).join(',')})`); return chain; },
         gte(key, value) { filters.push(`${ident(key)}>=${bind(value)}`); return chain; },
+        lt(key, value) { filters.push(`${ident(key)}<${bind(value)}`); return chain; },
         or(expression) {
           const match = expression.match(/^updated_at\.is\.null,updated_at\.lte\.(.+)$/);
           assert.ok(match); filters.push(`(updated_at is null or updated_at<=${bind(match[1])})`); return chain;
@@ -53,6 +54,7 @@ export function nativeVideoDb(db) {
         upsert(row, options) { insert = row; conflict = options.onConflict.split(',').map(ident); return chain; },
         delete() { deleting = true; return chain; },
         maybeSingle() { single = true; return chain; },
+        single() { single = true; return chain; },
         async then(resolve, reject) {
           try {
             assert.match(columns, /^(\*|[a-z_,]+)$/);
@@ -63,7 +65,7 @@ export function nativeVideoDb(db) {
               const update = conflict ? ` on conflict (${conflict.join(',')}) do update set ${Object.keys(insert).map(key => `${ident(key)}=excluded.${ident(key)}`).join(',')}` : '';
               sql = `insert into ${table} (${Object.keys(insert).map(ident).join(',')}) values (${Object.values(insert).map(bind).join(',')})${update} returning ${columns}`;
             } else if (patch) {
-              const assignments = Object.entries(patch).map(([key, value]) => `${ident(key)}=${bind(value && typeof value === 'object' ? JSON.stringify(value) : value)}`).join(',');
+              const assignments = Object.entries(patch).map(([key, value]) => `${ident(key)}=${bind(value && typeof value === 'object' && !Array.isArray(value) ? JSON.stringify(value) : value)}`).join(',');
               sql = `update ${table} set ${assignments}${filters.length ? ` where ${filters.join(' and ')}` : ''} returning ${columns}`;
             } else {
               sql = `select ${count ? 'count(*)::int as count' : columns} from ${table}${filters.length ? ` where ${filters.join(' and ')}` : ''}${order}${limit}`;
