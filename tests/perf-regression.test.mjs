@@ -276,7 +276,9 @@ test("workspace screens do not hard-reload to move between app routes", async ()
 test("Today derives from the one shared operating read", async () => {
   const page = await read("app/app/(shell)/today/page.tsx");
   assert.match(page, /getOperatingData/);
-  assert.match(page, /await data\.performance/, "Today must consume the shared performance read");
+  // The shared report is awaited inside the page's one parallel wave (with the
+  // channel and scheduled-job reads), never re-loaded.
+  assert.match(page, /await Promise\.all\(\[\s*data\.performance,/, "Today must consume the shared performance read");
   assert.doesNotMatch(page, /loadPerformanceReport/, "Today must not trigger a second performance read");
 });
 
