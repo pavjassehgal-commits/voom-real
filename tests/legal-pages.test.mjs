@@ -79,6 +79,8 @@ test("legal shell is Voom-styled, mobile responsive, and cross-links the three p
 
 test("Privacy Policy truthfully covers current Voom data flows", async () => {
   const privacy = await flatRead("app/privacy/page.tsx");
+  // YouTube API Services Developer Policies III.A.2.b: the policy must say the app uses YouTube API Services.
+  assert.match(privacy, /Voom uses YouTube API Services\./);
   // Every category of data the product actually handles today.
   assert.match(privacy, /Account and business data/);
   assert.match(privacy, /Connected social accounts/);

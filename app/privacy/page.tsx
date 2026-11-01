@@ -105,6 +105,15 @@ export default function PrivacyPage() {
 
       <LegalSection title="Google API Services and Limited Use disclosure">
         <p>
+          <b>Voom uses YouTube API Services.</b> When you connect a YouTube
+          channel, Voom uses them only to upload the videos you approve and
+          schedule in Voom, and to read your channel identity, each uploaded
+          video&apos;s processing and privacy status, and public statistics
+          (views, likes, comments) for videos Voom published. Voom does not
+          edit or delete existing videos on your channel and does not read
+          revenue or analytics reports.
+        </p>
+        <p>
           Voom&apos;s use and transfer to any other app of information received
           from Google APIs will adhere to the{" "}
           <a

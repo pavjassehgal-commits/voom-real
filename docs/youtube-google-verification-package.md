@@ -1,100 +1,136 @@
-# YouTube — Google OAuth verification package (draft)
+# YouTube — Google OAuth verification package
 
-Prepared November 1, 2026 on `fix/youtube-compliance-launch`. This is a
-preparation pack. It submits nothing, changes no Google Cloud Console setting,
-and contains no secret. Every Console item below is an **account-owner action**.
+Updated November 1, 2026. This is a preparation pack: it submits nothing and changes no
+Google Cloud setting. It contains no secret. Re-check the linked Google pages
+immediately before submitting.
 
-## 1. What Google currently requires (official sources, checked 2026-11-01)
+## 1. Current official rules (checked 2026-11-01)
 
-| Question | Current official answer | Source |
+| Question | Answer | Source |
 |---|---|---|
-| Are uploads from an unverified/unaudited API project forced to private? | **No.** The videos.insert reference states that videos uploaded from unverified API projects are not restricted to private viewing mode. Uploads may still default to private based on creator account settings. | developers.google.com/youtube/v3/docs/videos/insert (updated 2026-10-15) |
-| When is a YouTube API Services Compliance Audit required? | To obtain quota beyond the default allocation, and for periodic/change-of-control audits Google initiates. Default: 100 `videos.insert` calls/day, 100 `search.list`, 10,000 units/day for other methods. | developers.google.com/youtube/v3/guides/quota_and_compliance_audits (updated 2026-10-15) |
-| Data freshness | Authorized Data: delete or refresh after 30 calendar days (III.E.4.c). Non-authorized data and statistics: at most 30 days (III.E.4.b/d). | YouTube API Services Developer Policies (updated 2026-10-15) |
-| Deletion deadlines | In-app revocation: revoke the token right away and delete Authorized Data within 7 calendar days (III.D.2.c.1). Revocation via Google settings: within 30 days (III.D.2.c.2). User deletion request: as soon as possible, within 7 days (III.E.4.g). | Developer Policies |
-| Disclosures | Link the YouTube Terms of Service and bind users to it (III.A.1); privacy policy links the Google Privacy Policy (III.A.2.c) and explains revocation via the Google security settings page (III.A.2.h). | Developer Policies |
-| Google OAuth sensitive-scope verification | Verified domains (Search Console), privacy policy hosted on the homepage domain and identical to the consent-screen link, a demo video of the full OAuth grant showing the exact scopes, and a written scope justification explaining why narrower scopes are insufficient. | support.google.com/cloud/answer/13464321 |
+| Are uploads from an unverified/unaudited project forced to private? | **No.** "Videos uploaded from unverified API projects are not restricted to private viewing mode." Creator account settings can still make an upload private. | YouTube Data API `videos.insert` (updated 2026-10-15) |
+| Is a YouTube API compliance audit required to launch? | **No.** It is needed only for quota beyond the default (100 `videos.insert`/day per project, plus 10,000 units for other methods). | Quota and compliance audits (updated 2026-10-15) |
+| Is Google OAuth verification required? | **Yes.** The two YouTube scopes need data-access verification for a public External app. App name and logo show on the consent screen only after branding verification, which must come first. A compliant result is valid for 7 days to publish. | Google Auth Platform branding/verification help |
+| Privacy policy | Hosted on a verified domain you own, in a dedicated HTML page linked from the homepage. It must disclose how Google user data is accessed, used, stored and shared, and not be a template. | Google Cloud help 13806988 |
+| YouTube-specific policy | Must say the app uses YouTube API Services, link the Google Privacy Policy, explain revocation through Google security settings, and give a contact. Terms must link the YouTube Terms and bind users to them. Deletion within 7 days of a request or in-app revocation. | YouTube API Services Developer Policies III.A, III.D.2.c, III.E.4 |
 
-**Conclusion for VOOM.** A compliance audit is **not** a prerequisite for
-public uploads under current documentation. It is needed only if VOOM needs more
-than the default daily quota (100 uploads/day across all customers). OAuth
-consent-screen verification for the two YouTube scopes **is** required for a
-public launch beyond test users. The app previously told customers that Google
-locks unaudited uploads to private; this branch corrects that copy (see §7).
-Re-check both pages immediately before submission, since Google updates them.
+## 2. Readiness
 
-## 2. App identity and domain checklist (owner, in Google Cloud Console)
+### READY (verified)
+- **Homepage:** `https://voom.today/` is public and explains the product (plan, create, schedule and publish across Instagram, TikTok, YouTube and email). It links Privacy, Terms and Data Deletion.
+- **Live Terms** bind users to the YouTube Terms (`youtube.com/t/terms`).
+- **Live Privacy:**
+  - links the Google Privacy Policy and Google permissions settings;
+  - includes the Limited Use statement;
+  - lists the contact email;
+  - describes YouTube access.
+- **Least-privilege scopes** (`lib/youtube/scopes.ts`): exactly `youtube.upload` and `youtube.readonly`. No `youtube`, `youtube.force-ssl`, analytics, profile or email scopes.
+- **OAuth flow:**
+  - server-side authorization code exchange, with a single-use owner-bound state;
+  - offline access with consent (needed for scheduled uploads);
+  - the callback is pinned to the initiating origin (`docs/youtube-canonical-oauth.md`).
+- **The client is YouTube-only:** VOOM has no Google Sign-In (no `signInWithOAuth`/Google provider in the code), so `GOOGLE_CLIENT_ID` serves only YouTube. `include_granted_scopes=true` therefore cannot merge unrelated sign-in scopes.
+- **In-app copy:**
+  - The connect modal states what VOOM will and won't do: upload approved videos, read identity, status and statistics, never edit or delete videos, keep tokens on the server.
+  - Applied privacy is reported truthfully. There is no stale "unaudited = private" claim (fixed in 9cdf214).
 
-- [ ] OAuth consent screen: app name "VOOM" (match the product name exactly), support email, logo matching the site, developer contact.
-- [ ] Support email: the legal pages currently publish a personal Gmail address (`lib/legal/contact.ts`). Google accepts it, but a staffed address on the verified domain is strongly preferred. Owner decision.
-- [ ] Authorized domain `voom.today` verified in Google Search Console by a project Owner/Editor.
-- [ ] Homepage `https://voom.today/`, Privacy Policy `https://voom.today/privacy`, Terms `https://voom.today/terms`: publicly reachable without sign-in, same domain, and the consent-screen links identical to them.
-- [ ] Authorized redirect URI equals the deployed `YOUTUBE_REDIRECT_URI` value — expected `https://voom.today/api/integrations/youtube/callback`. Remove stale preview/localhost URIs from the **production** client. (Value not read here; the owner compares it in Console and Vercel.)
-- [ ] Confirm whether `GOOGLE_CLIENT_ID` is shared with Google sign-in. The connect URL sends `include_granted_scopes=true`, so a shared client would merge sign-in scopes into the grant. Least privilege favors a **dedicated YouTube OAuth client**, or removing that parameter. Owner decision; no code change made.
-- [ ] Publishing status "In production"; user type External.
-- [ ] Scopes registered on the consent screen: exactly the two below, nothing else.
+### FIXABLE (done on `fix/youtube-oauth-verification`, on top of 74445d0)
+- **Done:** the privacy policy now states explicitly that **"Voom uses YouTube API Services"** and what for (policy III.A.2.b). This was missing both live and on the branch. A test covers it.
+- **Blocking dependency (code ready, not deployed):**
+  - **The gap:** the live Data Deletion page still promises "30 days after verification" and an email-only process. That doesn't meet Google's 7-day rule.
+  - **The fix is ready:** the corrected pages (7-day YouTube deletion, in-app deletion, the VOOM-data vs YouTube-videos distinction) are on the compliance branch.
+  - **Why it can't ship alone:** those pages must deploy **together with** the behaviour they describe: 0065, 0069, the deletion register and the app release. Publishing the text early would make the policy inaccurate, and Google checks that consistency.
 
-## 3. Scope justifications (paste-ready draft)
+### OWNER ACTION
+1. **Release the compliance work** (0065 + 0069 + Cloudflare register + this branch) after eSmart review of the pages. Submit verification only after this is live.
+2. **Google Cloud Console** (Google Auth Platform) for the existing project. Check and record:
+   - Audience: **External**, publishing status **In production**. In Testing, only listed test users can connect and their grants expire after 7 days.
+   - Branding:
+     - app name **Voom**, exactly as on the homepage;
+     - a logo matching the site;
+     - user support email and developer contact;
+     - App home page `https://voom.today/`, Privacy `https://voom.today/privacy`, Terms `https://voom.today/terms`;
+     - Authorized domain `voom.today`.
+   - Domain: verify `voom.today` in Google Search Console as an Owner/Editor of the project.
+   - Data access: exactly `.../auth/youtube.upload` and `.../auth/youtube.readonly`. Remove anything else.
+   - Clients → the Web client matching Vercel Production `GOOGLE_CLIENT_ID`:
+     - Authorized redirect URI exactly `https://voom.today/api/integrations/youtube/callback`;
+     - remove obsolete hosts from the Production client once the Production env matches.
+   - APIs: **YouTube Data API v3** enabled. Note any warnings on the Verification Center page.
+3. **Support email:** the policies publish a personal Gmail. Google accepts it, but a staffed `@voom.today` address reads better to reviewers (update `lib/legal/contact.ts` if changed).
+4. **Submit:** first branding verification, then data-access verification with the justifications (section 3) and the demo video (section 5).
+5. **Quota audit:** only if more than 100 uploads/day are needed.
 
-**`https://www.googleapis.com/auth/youtube.upload`** — VOOM lets a channel
-owner schedule a video or Short they have written and explicitly approved in
-VOOM, then uploads it to their own channel with `videos.insert` at the
-scheduled time. This is the narrowest scope that permits `videos.insert`. VOOM
-never edits, deletes or comments on existing videos. For that reason we do not
-request `youtube` or `youtube.force-ssl`.
+## 3. Scope justifications (paste-ready)
 
-**`https://www.googleapis.com/auth/youtube.readonly`** — used for three read-only purposes:
-(1) `channels.list?mine=true`, to show the user which channel they connected and
-to re-validate the authorization periodically;
-(2) `videos.list` status/processingDetails, so VOOM reports "Published" only after
-YouTube confirms processing;
-(3) public statistics (views, likes, comments) on the user's own VOOM-uploaded
-videos, shown in Performance and kept for at most 28 days.
-`youtube.upload` cannot read any of this, and there is no narrower read scope.
-VOOM requests no analytics, monetary, profile or email scopes.
+**`https://www.googleapis.com/auth/youtube.upload`**: Voom is a marketing workspace. A channel
+owner writes or uploads a video in Voom, approves it and schedules it. At the scheduled time,
+Voom uploads it to that owner's channel with `videos.insert` (resumable upload). This is
+the narrowest scope that permits `videos.insert`. Voom never edits, deletes or comments
+on existing videos, so it does not request `youtube` or `youtube.force-ssl`.
 
-## 4. Consent and in-app copy
+**`https://www.googleapis.com/auth/youtube.readonly`**: used read-only for three purposes:
+1. `channels.list?mine=true`, to show the owner which channel is connected and to
+   periodically re-check that the authorization is still valid.
+2. `videos.list` status/processing details, so Voom reports "Published" only after
+   YouTube confirms the upload was processed, and shows the privacy YouTube applied.
+3. Public statistics (views, likes, comments) for videos Voom uploaded, shown on the
+   owner's Performance page and kept no longer than 28 days.
 
-- Before the Google redirect, the connect modal states what VOOM will do (upload approved videos, read channel identity, video status and public statistics) and what it will not do (edit or delete existing videos, read revenue).
-- Disconnect modal: "Disconnect and delete data". It deletes VOOM's stored YouTube data and asks Google to revoke access, and states that videos on YouTube are not deleted. Independent revocation through Google Security Settings is explained in the Privacy Policy, not in the modal.
-- Data deletion: `/data-deletion`, and authenticated `DELETE /api/integrations/youtube/data`, delete VOOM's stored YouTube API data without deleting the VOOM account.
+`youtube.upload` cannot read any of this, and no narrower read scope exists. Voom requests
+no YouTube Analytics, monetary, profile or email scopes.
 
-## 5. Demo-video storyboard (≈3–4 minutes, unlisted YouTube link)
+## 4. Consent-screen and in-app wording
 
-1. Browser address bar on `https://voom.today` (show the domain); open Privacy Policy and scroll to the YouTube section, the Google Privacy Policy link and the YouTube ToS link.
-2. Sign in with the reviewer test account; open Connections → YouTube → Connect.
-3. Google consent screen: pause on the app name, the **full scope list (exactly the two scopes)** and the account chooser. Use a test channel.
-4. Back in VOOM: the connected channel identity is shown, read via `youtube.readonly`.
-5. Create or open a short draft video, approve it, and schedule it a few minutes ahead. Show the privacy selector set to **private** for the demo.
-6. Show the queue moving to uploading → processing → Published only after YouTube confirms. Open the video on YouTube Studio for the test channel.
-7. Performance: the statistics shown for that video.
-8. Disconnect: show the modal text ("does not delete videos on YouTube"), confirm, and show the connection removed. Then show `myaccount.google.com/permissions` no longer listing VOOM.
-9. Show the data-deletion page.
+- **Consent screen:** app name "Voom"; the homepage, privacy and terms links above; and
+  the support email. Google renders the scope descriptions itself; Voom cannot change them.
+- **Before redirecting to Google (connect modal, already live):** Voom will upload videos only
+  after you approve and schedule them; read your channel identity and each uploaded video's
+  processing status; and read public statistics for videos Voom published. It never edits or
+  deletes your existing videos, and tokens stay encrypted on Voom's server.
+- **Disconnect (compliance release):** "Disconnect and delete data". Voom deletes its
+  stored YouTube data and asks Google to revoke access; videos on YouTube are not deleted.
 
-Record with a test channel only. Do not show customer data, tokens, Vercel/Supabase dashboards or environment values.
+## 5. Demo video storyboard (record AFTER the compliance release is live)
 
-## 6. Test account and reviewer instructions (owner provides)
+Use a dedicated test Google account and test channel, about 4 minutes, uploaded as unlisted.
+Show only genuinely live behaviour. Don't show dashboards, environment values, tokens
+or customer data, and don't claim the deletion register is operational before it is.
 
-- [ ] A dedicated reviewer VOOM account, with a plan entitled to scheduling, and a dedicated test Google account and channel. Credentials go only in the Google form's private field, never in this repository.
-- [ ] Reviewer steps: sign in → Connections → Connect YouTube → create/approve a draft → schedule → observe the upload → disconnect.
-- [ ] State that uploads go to the reviewer's own channel, and suggest private privacy.
+1. **Domain and policies.** Address bar `https://voom.today`. Open Privacy and scroll to:
+   "Voom uses YouTube API Services"; the Google Privacy Policy link; Google security
+   settings; the 7-day deletion. Open Terms (the YouTube ToS link).
+2. **Sign in** with the reviewer VOOM account, then Connections → YouTube → **Connect YouTube**.
+   Pause on the pre-consent explanation.
+3. **Google consent screen.** Show the URL bar (accounts.google.com), the app name and the
+   **complete scope list**. Select the test channel's account and allow.
+4. **Connected.** The channel title and handle shown come from `channels.list` (readonly scope).
+5. **Upload and schedule.**
+   - Create a short video post (upload a test MP4), with title and description, privacy **private**, and the made-for-kids declaration.
+   - Approve it and schedule it 2–3 minutes ahead.
+6. **Upload executes.** The queue goes from scheduled to uploading, processing and
+   **Published** (after YouTube confirms). Open YouTube Studio for the test channel and show
+   the video with the same title (`videos.insert`, `youtube.upload`).
+7. **Performance.** The video's public statistics in Voom (`youtube.readonly`).
+8. **Disconnect.** Connections → YouTube → Disconnect: show the modal text ("Your videos on
+   YouTube are not deleted"), confirm, and show the disconnected state.
+9. **Revocation.** Open `https://myaccount.google.com/permissions` and show that Voom no
+   longer has access (or show removing it there).
+10. **Data deletion.** Show the `/data-deletion` page: 7-day YouTube deletion, in-app
+    deletion, and the email route.
 
-## 7. Changes made on this branch for accuracy
+## 6. Reviewer instructions and test accounts (owner provides)
 
-- Removed claims that Google locks unaudited-project uploads to private:
-  - YouTube hub banner;
-  - Connections detail;
-  - editor privacy hint;
-  - provider note on applied privacy;
-  - config and type comments.
-- The banner now discloses the default daily upload quota instead.
-- `YOUTUBE_PROJECT_AUDITED` remains a server flag; it no longer drives privacy wording.
-- The provider-applied privacy is still read back from YouTube and stored. VOOM still never claims a public publication that did not happen.
+- A dedicated reviewer VOOM account, on a plan that includes scheduling. Credentials go only in Google's private submission field, never in this repo.
+- A test Google account with a test YouTube channel, phone-verified so uploads aren't limited.
+- Reviewer steps: sign in → Connections → Connect YouTube → create a video post (sample MP4 provided) → approve → schedule → watch it publish → Performance → Disconnect.
+- Note: uploads go only to the reviewer's own connected channel; use private privacy. Voom requests no other Google data.
 
-## 8. Outstanding Google / account-owner actions
+## 7. Submission order
 
-1. All Console items in §2, including the decision on the dedicated client vs `include_granted_scopes`.
-2. Approve and publish the updated Privacy/Terms/Data-deletion pages, after eSmart review per `youtube-compliance-release.md`, **before** submitting. The consent-screen links must point at the final text.
-3. Record the demo video (§5) and submit OAuth verification.
-4. Only if more than 100 uploads/day are needed: submit the YouTube API Services Audit and Quota Extension Form.
-5. Deletion-delivery register and alert destinations, named handlers and restore procedure (see `youtube-deletion-delivery.md`). These are not Google requirements for verification, but they are needed to *operate* the 7-day deadlines reliably.
+1. Compliance release live, with the updated policy pages published.
+2. Console branding, domain verification and redirect URI clean-up (section 2, owner action 2).
+3. Branding verification.
+4. Record the demo (section 5).
+5. Data-access verification with section 3.
+6. Publish within 7 days of a compliant result.
