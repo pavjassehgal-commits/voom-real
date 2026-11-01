@@ -7,6 +7,7 @@ main = "src/index.ts"
 compatibility_date = "2026-08-01"
 workers_dev = true
 preview_urls = false
+send_metrics = false
 
 [triggers]
 crons = ["17 * * * *"] # hourly watchdog (1 of the 5 Free-plan cron triggers)
@@ -25,4 +26,32 @@ REQUIRE_VOOM_HEARTBEAT = "false" # set "true" once Production sends heartbeats
 # RETENTION_DAYS: intentionally unset. Nothing is purged until an approved period is configured.
 
 [observability]
+enabled = true
+
+# ---------------------------------------------------------------------------
+# STAGING ONLY — isolated Worker, D1 database and tokens. Deploy with --env staging.
+# No email key/recipients: alerts are recorded but never emailed from staging
+# until a real-alert test is separately approved.
+[env.staging]
+name = "voom-ydr-staging-9b81c8"
+account_id = "87dffc51b11e876e35a70f87e2a25d12"
+workers_dev = true
+preview_urls = false
+
+[env.staging.triggers]
+crons = ["17 * * * *"]
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "voom-ydr-staging"
+database_id = "741cb589-dcaf-454c-b37f-40267e71de64"
+
+[env.staging.vars]
+ALERT_FROM = ""
+ALERT_TO = ""
+ALERT_ESCALATE_TO = ""
+DAILY_WRITE_BUDGET = "100000"
+REQUIRE_VOOM_HEARTBEAT = "false"
+
+[env.staging.observability]
 enabled = true
