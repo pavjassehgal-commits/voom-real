@@ -5,6 +5,7 @@ import { YouTubeApiError, YouTubeClient } from "./client.ts";
 import { readYouTubeConfig, youTubeKeyRing, type YouTubeConfig } from "./config.ts";
 import { deletionDeliveryBacklog, deliverDeletionEvents } from "./deletion-delivery.ts";
 import { createDeletionTransport } from "./deletion-transport.ts";
+import { checkDeletionRegister, sendFallbackDeletionAlert } from "./deletion-register.ts";
 
 type Revocation = { id: string; claim: string; encrypted_token: string; iv: string; auth_tag: string; expires_at: string };
 
@@ -112,6 +113,11 @@ export async function runYouTubePrivacyMaintenance(input: {
   if (backlog.error) throw new Error("youtube_privacy_backlog_unavailable");
   let operatorAttention = delivery.pending > 0 || delivery.unalerted > 0
     || Number(backlog.data?.overdueErasures)>0 || Number(backlog.data?.expiredRevocations)>0;
+  // Cross-heartbeat with the independent register; a broken register or alert
+  // path is escalated through VOOM's own email provider. Inert until approved.
+  const registerProblem = await checkDeletionRegister()
+    ?? (delivery.unalerted > 0 ? "deletion_alert_undelivered" : null);
+  if (registerProblem) { operatorAttention = true; await sendFallbackDeletionAlert(registerProblem); }
   // A single owner's pending revocation must not stall everyone else's reconciliation.
   if (!config) return { erased: Number(pruned.data ?? 0), verified: 0, revocations: null, operatorAttention };
   const client = input.client ?? new YouTubeClient(config);

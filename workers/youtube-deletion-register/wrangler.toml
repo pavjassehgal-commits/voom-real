@@ -1,0 +1,28 @@
+# VOOM YouTube deletion register — Cloudflare Workers Free + D1.
+# NOT deployed. Fill database_id after `wrangler d1 create`, never commit secrets.
+# Secrets (wrangler secret put): JOURNAL_TOKEN, ALERT_TOKEN, REPLAY_TOKEN,
+#   RESEND_API_KEY, and optionally *_TOKEN_NEXT during rotation.
+name = "voom-youtube-deletion-register"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+workers_dev = true
+preview_urls = false
+
+[triggers]
+crons = ["17 * * * *"] # hourly watchdog (1 of the 5 Free-plan cron triggers)
+
+[[d1_databases]]
+binding = "DB"
+database_name = "voom-youtube-deletion-register"
+database_id = "REPLACE_AFTER_D1_CREATE"
+
+[vars]
+ALERT_FROM = "REPLACE: verified Resend sender, e.g. VOOM Alerts <alerts@voom.today>"
+ALERT_TO = "REPLACE: primary operator inbox(es), comma-separated"
+ALERT_ESCALATE_TO = "REPLACE: deputy inbox(es) for urgent alerts"
+DAILY_WRITE_BUDGET = "100000"
+REQUIRE_VOOM_HEARTBEAT = "false" # set "true" once Production sends heartbeats
+# RETENTION_DAYS: intentionally unset. Nothing is purged until an approved period is configured.
+
+[observability]
+enabled = true

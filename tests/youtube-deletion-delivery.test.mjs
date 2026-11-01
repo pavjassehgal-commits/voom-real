@@ -18,6 +18,9 @@ function receiver(){
   const records=new Map(),calls=[];let failJournal=false,failAlert=false,lostAck=false,failCompletion=false;
   return {records,calls,set journalFailure(v){failJournal=v;},set alertFailure(v){failAlert=v;},set lostAck(v){lostAck=v;},set completionFailure(v){failCompletion=v;},
     async request(url,init){
+      // Healthy register liveness endpoints (cross-heartbeat), kept out of the delivery call log.
+      if(String(url).endsWith('/v1/heartbeat'))return Response.json({ok:true});
+      if(String(url).endsWith('/v1/health'))return Response.json({watchdogLastRunAt:new Date().toISOString(),voomLastHeartbeatAt:null,pendingAlertEmails:0});
       calls.push({url,id:init.headers['Idempotency-Key'],body:JSON.parse(init.body)});
       assert.equal(init.redirect,'error');assert.equal(init.cache,'no-store');assert.ok(init.signal);
       const body=JSON.parse(init.body),alert=url.includes('alerts.example');
