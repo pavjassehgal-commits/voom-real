@@ -30,8 +30,8 @@ enabled = true
 
 # ---------------------------------------------------------------------------
 # STAGING ONLY — isolated Worker, D1 database and tokens. Deploy with --env staging.
-# No email key/recipients: alerts are recorded but never emailed from staging
-# until a real-alert test is separately approved.
+# Alerts email the owner's monitored inbox only once RESEND_API_KEY is set as a
+# staging secret; subjects carry "STAGING" so tests are never mistaken for Production.
 [env.staging]
 name = "voom-ydr-staging-9b81c8"
 account_id = "87dffc51b11e876e35a70f87e2a25d12"
@@ -47,9 +47,10 @@ database_name = "voom-ydr-staging"
 database_id = "741cb589-dcaf-454c-b37f-40267e71de64"
 
 [env.staging.vars]
-ALERT_FROM = ""
-ALERT_TO = ""
+ALERT_FROM = "VOOM Alerts <no-reply@voom.today>"
+ALERT_TO = "no-reply@voom.today"
 ALERT_ESCALATE_TO = ""
+ALERT_ENVIRONMENT = "STAGING"
 DAILY_WRITE_BUDGET = "100000"
 REQUIRE_VOOM_HEARTBEAT = "false"
 
@@ -77,9 +78,9 @@ database_name = "voom-ydr-production"
 database_id = "REPLACE_AFTER_PRODUCTION_D1_CREATE"
 
 [env.production.vars]
-ALERT_FROM = "REPLACE: verified Resend sender"
-ALERT_TO = "REPLACE: primary operator inbox"
-ALERT_ESCALATE_TO = "REPLACE: deputy inbox"
+ALERT_FROM = "VOOM Alerts <no-reply@voom.today>"
+ALERT_TO = "no-reply@voom.today"
+ALERT_ESCALATE_TO = "" # add a deputy inbox when one exists
 DAILY_WRITE_BUDGET = "100000"
 REQUIRE_VOOM_HEARTBEAT = "false"
 

@@ -123,9 +123,20 @@ test("alerts: recorded first, acknowledged only after Resend accepts; duplicates
   assert.equal(r.emails.length, 1);
   const mail = JSON.stringify(r.emails[0].body);
   assert.match(mail, /capture_failed/); assert.doesNotMatch(mail, /operator@example.com.*operator@example.com/);
+  assert.equal(r.emails[0].body.subject, "[VOOM YouTube deletion] capture_failed", "Production subject carries no environment label");
   assert.deepEqual(await json(await r.post("/v1/alerts", body, { token: r.secrets.ALERT_TOKEN })), ok);
   assert.equal(r.emails.length, 1, "a delivered alert is not emailed twice");
   assert.equal((await r.post("/v1/alerts", { ...body, code: "nonsense", eventId: `${id}:nonsense` }, { token: r.secrets.ALERT_TOKEN })).status, 422);
+});
+
+test("staging alerts are labelled in the subject; a single shared inbox receives one copy", async () => {
+  const w = await startRegister({ ALERT_ENVIRONMENT: "STAGING", ALERT_TO: "no-reply@voom.example.com", ALERT_ESCALATE_TO: "no-reply@voom.example.com" });
+  try {
+    const id = crypto.randomUUID();
+    assert.equal((await w.post("/v1/alerts", alert(id, "capture_failed"), { token: w.secrets.ALERT_TOKEN })).status, 200);
+    assert.equal(w.emails[0].body.subject, "[VOOM YouTube deletion · STAGING] capture_failed");
+    assert.deepEqual(w.emails[0].body.to, ["no-reply@voom.example.com"]);
+  } finally { await w.dispose(); }
 });
 
 test("alert email outage: VOOM is told 503 (keeps retrying), the alert stays pending, the watchdog delivers it later", async () => {

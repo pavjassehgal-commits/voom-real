@@ -39,6 +39,8 @@ export interface Env {
   ALERT_FROM?: string;
   ALERT_TO?: string;
   ALERT_ESCALATE_TO?: string;
+  /** Non-production label shown in the alert subject (e.g. "STAGING"); empty in Production. */
+  ALERT_ENVIRONMENT?: string;
   /** Approved retention in whole days. Unset = keep everything (no purge). */
   RETENTION_DAYS?: string;
   /** Daily D1 rows-written allowance to warn against (Free plan: 100000). */
@@ -241,6 +243,7 @@ const ALERT_TEXT: Record<string, string> = {
 async function emailAlert(env: Env, row: AlertRow, now: number) {
   const to = (env.ALERT_TO ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const escalate = row.urgent ? (env.ALERT_ESCALATE_TO ?? "").split(",").map((s) => s.trim()).filter(Boolean) : [];
+  const label = (env.ALERT_ENVIRONMENT ?? "").replace(/[^A-Za-z0-9 -]/g, "").trim().slice(0, 20);
   let accepted = false;
   if (env.RESEND_API_KEY && env.ALERT_FROM && to.length) {
     try {
@@ -249,7 +252,7 @@ async function emailAlert(env: Env, row: AlertRow, now: number) {
         headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json", "Idempotency-Key": `vdr-alert-${await sha256(row.alert_id)}` },
         body: JSON.stringify({
           from: env.ALERT_FROM, to: [...new Set([...to, ...escalate])],
-          subject: `${row.urgent ? "URGENT " : ""}[VOOM YouTube deletion] ${row.code}`,
+          subject: `${row.urgent ? "URGENT " : ""}[VOOM YouTube deletion${label ? ` · ${label}` : ""}] ${row.code}`,
           text: [ALERT_TEXT[row.code] ?? "Deletion register alert.", "", `Alert: ${row.alert_id}`, `Request: ${row.request_id}`,
             `Original receipt: ${row.received_at ?? "n/a"}`, "", "Follow docs/youtube-deletion-register-runbook.md. Look up the request in the register (D1) — this email intentionally contains no personal data."].join("\n"),
         }),
