@@ -38,14 +38,14 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
   // mode at all: the owner then chooses one in Automations, where the plan is
   // checked again. Migration 0071 enforces the same rule in the database.
   const requestedMode = onboardingAutomationMode(input.automationLevel);
-  const { data: currentPlan, error: planError } = requestedMode
-    ? await supabase.from("businesses").select("plan").eq("owner_user_id", user.id).maybeSingle()
-    : { data: null, error: null };
+  const { data: currentPlan, error: planError } = await supabase.from("businesses")
+    .select("plan").eq("owner_user_id", user.id).maybeSingle();
+  // Do not guess whether to insert when the owner-scoped read is unavailable.
+  if (planError) return { ok: false, error: saveError(planError) };
   const onboardingMode = requestedMode && !planError
     && canUseAutomationMode(normalizePlan((currentPlan as { plan?: string | null } | null)?.plan), requestedMode)
     ? requestedMode : null;
-  const { error: businessError } = await supabase.from("businesses").upsert(
-    {
+  const businessValues = {
       owner_user_id: user.id,
       brand_name: input.brandName.trim() || null,
       brand_description: input.brandDescription.trim() || null,
@@ -60,12 +60,20 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
       // Assisted — never Autopilot). An unknown or skipped answer leaves the
       // stored mode untouched rather than inventing one.
       ...(onboardingMode ? { automation_level: onboardingMode } : {}),
-      publishing_permission: input.publishingPermission || null,
+      ...(input.publishingPermission ? { publishing_permission: input.publishingPermission } : {}),
       onboarding_completed: true,
-    },
-    { onConflict: "owner_user_id" },
-  );
+    };
+  // INSERT guards run before ON CONFLICT. An upsert of an existing Pro
+  // business without a plan would therefore validate Assisted against the
+  // candidate row's default Free plan. Never send or trust a client plan:
+  // update the existing owner row under RLS; only genuinely new rows insert.
+  const saved = currentPlan
+    ? await supabase.from("businesses").update(businessValues)
+        .eq("owner_user_id", user.id).select("id").maybeSingle()
+    : await supabase.from("businesses").insert(businessValues).select("id").single();
+  const businessError = saved.error;
   if (businessError) return { ok: false, error: saveError(businessError) };
+  if (!saved.data) return { ok: false, error: GENERIC_ERROR };
 
   const websiteSaved = await saveOnboardingWebsite(user.id, input.website);
 

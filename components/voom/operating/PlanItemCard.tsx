@@ -53,8 +53,9 @@ export function PlanItemCard(props: {
 
 /** How close this exact item is to being publishable, from its own real fields. */
 export function readinessSteps(item: WorkflowView): { label: string; done: boolean }[] {
-  const approved = ["scheduled", "publishing", "published", "missed"].includes(item.status);
-  const scheduled = Boolean(item.publishAt) && approved;
+  const approved = item.approvalGranted === true;
+  const scheduled = Boolean(item.publishAt) && ["scheduled", "publishing", "published"].includes(item.status)
+    && ["scheduled", "publishing", "published", "claimed", "submitting", "uploading", "posting", "provider_processing"].includes(item.queueStatus ?? "");
   if (item.channel === "linkedin") return [
     { label: "Text", done: Boolean(item.caption.trim()) },
     { label: "Approved", done: approved },
@@ -100,6 +101,7 @@ function InstagramPlanItemCard({
     dayLabel: item.dayLabel,
     localTime: item.localTime,
     hasMedia: item.hasMedia,
+    connectionReady: item.connectionReady,
     mediaFromMara: item.mediaFromMara,
     mediaStatus: item.mediaStatus,
     production,
@@ -150,6 +152,9 @@ function InstagramPlanItemCard({
     const size = dense ? "sm" : "sm";
     if (action.disabled) {
       return <span key={action.id} className="inline-flex items-center gap-1.5 rounded-[10px] border border-line bg-surface-2 px-3 py-2 text-[12.5px] font-semibold text-text-3 line-through" title={action.disabledReason}>{action.label}</span>;
+    }
+    if (action.id === "connect_channel") {
+      return <Link key={action.id} href="/app/instagram" className="inline-flex items-center rounded-xl border border-line px-3 py-2 text-sm font-semibold text-text">{action.label}</Link>;
     }
     if (action.id === "film_yourself") {
       return <Btn key={action.id} variant={action.tone === "primary" ? "primary" : "outline"} size={size} disabled={busy !== null} onClick={() => void run(action.id, () => choosePlanItemProduction(item.draftId, "film_yourself"))}>
@@ -242,7 +247,7 @@ function InstagramPlanItemCard({
             <div className="min-w-0 space-y-1.5 text-[12.5px] leading-relaxed text-text-2">
               {resolved2.explanation.why && <ExplainLine icon="spark" label="Why" text={resolved2.explanation.why} />}
               <ExplainLine icon="film" label="Made" text={`${resolved2.explanation.what} · by ${resolved2.explanation.who}`} />
-              <ExplainLine icon="clock" label="Publishes" text={resolved2.explanation.when ?? "Not scheduled yet"} />
+              <ExplainLine icon="clock" label={item.status === "scheduled" ? "Publishes" : "Proposed time"} text={resolved2.explanation.when ?? "Not scheduled yet"} />
               <ExplainLine icon="shield" label="Approval" text={resolved2.explanation.approval} />
               <ExplainLine icon="bolt" label="Automatic" text={resolved2.explanation.autoPublish} />
               {item.caption && <p className="line-clamp-4 whitespace-pre-wrap rounded-xl bg-surface-2 px-3 py-2 text-[12px] leading-relaxed text-text-3">{item.caption}</p>}

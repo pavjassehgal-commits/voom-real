@@ -227,8 +227,8 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
     return { ok: true, body: JSON.stringify(savePayload(check.publishAt)) };
   }
 
-  function savePayload(scheduledAt: string | null): string {
-    return JSON.stringify({
+  function savePayload(scheduledAt: string | null) {
+    return {
       action: "save",
       concept,
       ...(isStory
@@ -241,7 +241,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
       format,
       scheduledAt,
       brief: mediaBrief,
-    });
+    };
   }
 
   function submitSave() {

@@ -13,6 +13,9 @@ export type TodayItem = {
   statusLabel?: string;
   mediaPreviewUrl?: string | null;
   caption?: string;
+  publishingJobKey?: string;
+  publishAt?: string;
+  calendarItemId?: string | null;
 };
 
 export type TodaySnapshotInput<T extends TodayItem = TodayItem> = {
@@ -23,6 +26,7 @@ export type TodaySnapshotInput<T extends TodayItem = TodayItem> = {
 
 export type TodaySummaryInput<T extends TodayItem = TodayItem> = {
   needsApproval: T[];
+  needsPreparation?: T[];
   waitingForMedia: T[];
   failed: T[];
   missed: T[];
@@ -53,6 +57,7 @@ export type TodayCoverageDay = {
   monthDay: string;
   dayNumber: string;
   items: TodayItem[];
+  scheduledItems: TodayItem[];
   covered: boolean;
 };
 
@@ -65,12 +70,13 @@ export function buildTodayView<T extends TodayItem>(
   snapshot: TodaySnapshotInput<T>,
   summary: TodaySummaryInput<T>,
   coordinator: TodayCoordinatorInput,
+  scheduledJobs: TodayItem[] = [],
 ) {
-  const snapshotIds = new Set(snapshot.items.map((item) => item.draftId));
+  const snapshotIds = new Set(snapshot.items.flatMap((item) => [item.draftId, ...(item.calendarItemId ? [item.calendarItemId] : [])]));
   const commitmentItems: TodayItem[] = (coordinator?.state?.commitments ?? [])
-    .filter((commitment) => commitment.channel !== "email" && !snapshotIds.has(commitment.sourceId))
+    .filter((commitment) => commitment.channel !== "email" && !snapshotIds.has(commitment.sourceId) && !snapshotIds.has(commitment.id))
     .map((commitment) => ({
-      draftId: commitment.sourceId || commitment.id,
+      draftId: commitment.id || commitment.sourceId,
       slotDate: commitment.localDate,
       localDate: commitment.localDate,
       status: commitment.status,
@@ -83,6 +89,12 @@ export function buildTodayView<T extends TodayItem>(
       mediaPreviewUrl: null,
     }));
   const allCommitments: TodayItem[] = [...snapshot.items, ...commitmentItems];
+  const seenJobs = new Set<string>();
+  const scheduled = scheduledJobs.filter(item => {
+    if (!item.publishingJobKey || item.status !== "scheduled" || seenJobs.has(item.draftId)) return false;
+    seenJobs.add(item.draftId);
+    return true;
+  });
   const days: TodayCoverageDay[] = Array.from({ length: 7 }, (_, index) => {
     const date = addDays(snapshot.today, index);
     const items = allCommitments.filter((item) => item.slotDate === date || item.localDate === date);
@@ -93,6 +105,7 @@ export function buildTodayView<T extends TodayItem>(
       monthDay: new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short", day: "numeric" }).format(new Date(`${date}T12:00:00Z`)),
       dayNumber: String(Number(date.slice(-2))),
       items,
+      scheduledItems: scheduled.filter(item => item.localDate === date),
       covered: items.length > 0,
     };
   });
@@ -113,17 +126,19 @@ export function buildTodayView<T extends TodayItem>(
       ? { state: "action" as const, title: "Something needs attention", detail: `${summary.failed.length} item${summary.failed.length === 1 ? " stopped" : "s stopped"} safely and can be reviewed.`, href: "/app/calendar" }
       : summary.waitingForMedia.length
         ? { state: "action" as const, title: "Media is not ready", detail: `${summary.waitingForMedia.length} scheduled item${summary.waitingForMedia.length === 1 ? " is" : "s are"} safely held until its visual is ready.`, href: "/app/calendar" }
+        : summary.needsPreparation?.length
+          ? { state: "action" as const, title: "Content needs preparation", detail: `${summary.needsPreparation.length} item${summary.needsPreparation.length === 1 ? " needs" : "s need"} media, connection or scheduling. Open the plan for the next step.`, href: "/app/plan" }
         : summary.needsApproval.length
           ? { state: "action" as const, title: `${summary.needsApproval.length} item${summary.needsApproval.length === 1 ? " needs" : "s need"} your approval`, detail: "Review the prepared content before Voom schedules it.", href: "/app/approvals" }
           : { state: "clear" as const, title: "You’re all caught up.", detail: "Nothing needs your attention right now.", href: "/app/plan" };
 
   const coordinatorInsight = coordinator?.needs.find((need) => !["nothing_needed", "pending_approval", "content_calendar_gap"].includes(need.type)) ?? null;
 
-  const coordinatorNext = commitmentItems
-    .filter((item) => item.localDate >= snapshot.today && ["scheduled", "publishing"].includes(item.status))
-    .sort((a, b) => `${a.localDate} ${a.localTime}`.localeCompare(`${b.localDate} ${b.localTime}`))[0] ?? null;
+  const scheduledNext = scheduled
+    .filter((item) => item.localDate >= snapshot.today)
+    .sort((a, b) => (a.publishAt ?? `${a.localDate} ${a.localTime}`).localeCompare(b.publishAt ?? `${b.localDate} ${b.localTime}`))[0] ?? null;
 
-  return { days, coverage, attention, next: summary.next ?? coordinatorNext, coordinatorInsight };
+  return { days, coverage, attention, next: summary.next?.status === "publishing" ? summary.next : scheduledNext, coordinatorInsight };
 }
 
 function shortDate(date: string) {

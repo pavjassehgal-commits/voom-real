@@ -438,7 +438,7 @@ test("posts can be saved as a draft, scheduled, and approved without publishing"
   assert.match(route, /approvePostDraft\(admin, user\.id, id, expected === undefined \? undefined : \{ expectedContentVersion: expected \}\)/);
   assert.match(route, /postApprovalBlockers\(\{ caption: existing\.caption, hasVisual: existing\.visualReady, kind: existing\.kind \}\)/);
   assert.match(route, /checkScheduleInstant/);
-  assert.match(route, /Voom will automatically publish this to Instagram at the scheduled time\./);
+  assert.match(route, /postApprovalMessage\(admin, user\.id, post\)/, "publish claims require persisted queue evidence");
   const data = await read("lib/post/server-data.ts");
   assert.match(data, /status: "approved"/);
   assert.match(data, /approval_origin: options\?\.approvalOrigin \?\? "user"/);
@@ -561,7 +561,11 @@ test("no test executes a provider, so no real paid generation runs in the suite"
     const source = await read(`tests/${name}`);
     // The upload route's behavioural suite substitutes auth/storage and
     // rejects external HTTP; all other Post Studio suites remain source-only.
-    if (name === "youtube-native-upload.test.mjs") {
+    if (name === "mara-launch-post-api.test.mjs") {
+      assert.match(source, /registerHooks/);
+      assert.match(source, /External HTTP forbidden in post save tests/);
+      assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media"|generate\/route)/);
+    } else if (name === "youtube-native-upload.test.mjs") {
       assert.match(source, /registerHooks/);
       assert.match(source, /globalThis\.fetch=async\(\)=>\{throw new Error\('External HTTP forbidden/);
       assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media"|generate\/route)/);

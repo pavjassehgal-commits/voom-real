@@ -31,7 +31,8 @@ export type PlanActionId =
   | "reschedule"
   | "cancel_schedule"
   | "retry_media"
-  | "choose_production";
+  | "choose_production"
+  | "connect_channel";
 
 export interface PlanAction {
   id: PlanActionId;
@@ -95,6 +96,7 @@ export interface PlanItemFacts {
   dayLabel?: string;
   localTime?: string;
   hasMedia: boolean;
+  connectionReady?: boolean;
   /** True when the stored media came from MARA (regeneratable). */
   mediaFromMara?: boolean;
   /** Latest mara_media_generations status, when any — drives retry safety. */
@@ -126,6 +128,19 @@ export function planItemActions(item: PlanItemFacts): PlanItemActions {
   };
 
   switch (item.stage) {
+    case "approved":
+    case "ready_to_schedule":
+      return {
+        stage: item.stage, stageLabel: WORKFLOW_STATUS_LABELS[item.stage],
+        headline: "Approved, but no active publishing job is confirmed. Schedule this item explicitly; nothing has been published.",
+        actions: [{ id: "approve_schedule", label: "Schedule approved post", tone: "primary" }, { id: "change_time", label: "Change time", tone: "outline" }], explanation,
+      };
+    case "needs_connection":
+      return {
+        stage: item.stage, stageLabel: WORKFLOW_STATUS_LABELS.needs_connection,
+        headline: "Approved inside Voom, but Instagram publishing is blocked. Check the proposed time and connect Instagram with publishing permission.",
+        actions: [{ id: "connect_channel", label: "Connect Instagram", tone: "primary" }, { id: "change_time", label: "Change time", tone: "outline" }], explanation,
+      };
     case "planned":
     case "needs_content":
       return { stage: item.stage, stageLabel: WORKFLOW_STATUS_LABELS[item.stage], headline: headlineProduce(item), actions: produceActions(item), explanation };
@@ -260,9 +275,11 @@ function produceActions(item: PlanItemFacts): PlanAction[] {
 }
 
 function reviewActions(item: PlanItemFacts): PlanAction[] {
+  if (!item.hasMedia) return produceActions(item);
   const actions: PlanAction[] = [
-    { id: "approve_schedule", label: "Approve & schedule", hint: item.publishAt ? `Schedules for ${item.dayLabel ?? ""} ${item.localTime ?? ""}`.trim() : undefined, tone: "primary" },
+    { id: "approve_schedule", label: item.connectionReady === false ? "Approve inside Voom" : "Approve & schedule", hint: item.connectionReady === false ? "Connection is required before publishing can be scheduled." : item.publishAt ? `Schedules for ${item.dayLabel ?? ""} ${item.localTime ?? ""}`.trim() : undefined, tone: "primary" },
   ];
+  if (item.connectionReady === false) actions.push({ id: "connect_channel", label: "Connect Instagram", tone: "outline" });
   if (item.contentType === "reel" && !item.hasMedia) {
     actions.push({ id: "choose_production", label: "Production options", hint: "Create with MARA, film it yourself, or upload a clip.", tone: "outline" });
   }
@@ -471,6 +488,7 @@ function explanationWhy(item: PlanItemFacts): string | null {
 }
 
 function explanationAutoPublish(item: PlanItemFacts): string {
+  if (["approved", "ready_to_schedule", "needs_connection"].includes(item.stage)) return "No — approval alone is not an active publishing job. Resolve the missing setup and schedule explicitly.";
   if (item.stage === "missed") return "No. Voom never publishes hours late on its own — you choose Post now or a new time.";
   if (item.stage === "waiting_for_media") return "Not yet — it is scheduled, but it cannot publish until the visual is ready. It posts at the scheduled time as soon as the media is stored.";
   if (item.stage === "media_delayed") return "No — publishing stays blocked until a real visual exists. Retry the generation, upload a replacement, or cancel the schedule.";

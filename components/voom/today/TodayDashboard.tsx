@@ -87,7 +87,7 @@ export function TodayDashboard({
   /** The account's plan, so the compact control locks only the modes it really excludes. */
   automationPlan?: PlanId;
 }) {
-  const todayCount = view.days[0]?.items.length ?? 0;
+  const todayCount = view.days[0]?.scheduledItems.length ?? 0;
   return (
     <div className="today-v3 relative flex min-w-0 flex-col gap-5">
       <header className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -144,7 +144,7 @@ export function TodayDashboard({
 function Notices({ view }: { view: View }) {
   const notices: { id: string; title: string; detail: string; href: string; cta: string }[] = [];
   if (view.attention.state === "action") {
-    notices.push({ id: `attention-${view.days[0]?.date ?? ""}`, title: view.attention.title, detail: view.attention.detail, href: view.attention.href, cta: view.attention.href === "/app/approvals" ? "Review approvals" : "Open calendar" });
+    notices.push({ id: `attention-${view.days[0]?.date ?? ""}`, title: view.attention.title, detail: view.attention.detail, href: view.attention.href, cta: view.attention.href === "/app/approvals" ? "Review approvals" : view.attention.href === "/app/plan" ? "Review marketing plan" : "Open calendar" });
   }
   if (view.coverage.state === "gaps" || view.coverage.state === "empty") {
     notices.push({ id: `coverage-${view.days[0]?.date ?? ""}`, title: view.coverage.title, detail: view.coverage.detail, href: "/app/plan", cta: "Review marketing plan" });
@@ -289,16 +289,16 @@ function WeekCard({ days }: { days: TodayCoverageDay[] }) {
       <CardHead icon="cal" title="This week" id="today-week" href="/app/calendar" cta="View calendar" />
       <ol className="mt-4 grid grid-cols-7 gap-1 sm:gap-1.5" aria-label="Posts committed over the next seven days">
         {days.map((day, index) => {
-          const count = day.items.length;
+          const count = day.scheduledItems.length;
           return (
             <li key={day.date} className={cx("flex min-w-0 flex-col items-center rounded-[14px] px-0.5 py-2.5 text-center", index === 0 && "border border-[var(--brand-line)] bg-[var(--brand-soft-2)]")} aria-current={index === 0 ? "date" : undefined}>
               <Bars count={count} />
               <span className="mt-2 text-[12.5px] font-semibold text-text sm:text-[13px]">{day.weekday}</span>
               <span className="text-[11px] text-text-3 sm:text-[12px]">{day.monthDay}</span>
               <span className={cx("mt-2.5 text-[17px] font-bold leading-none", count ? "text-text" : "text-text-3")}>{count}</span>
-              <span className="mt-0.5 text-[11px] text-text-3">{count === 1 ? "post" : "posts"}</span>
+              <span className="mt-0.5 text-[11px] text-text-3">scheduled</span>
               <span className="mt-2 flex min-h-[22px] flex-wrap justify-center gap-1">
-                {count ? uniqueChannels(day.items).map((label) => <ChannelGlyph key={label} channelLabel={label} size={18} />)
+                {count ? uniqueChannels(day.scheduledItems).map((label) => <ChannelGlyph key={label} channelLabel={label} size={18} />)
                   : <Link href="/app/plan" aria-label={`Plan content for ${day.weekday} ${day.monthDay}`} className="grid h-[22px] w-[22px] place-items-center rounded-full border border-dashed border-line-2 text-text-3 transition hover:border-[var(--brand-line)] hover:text-[var(--brand-ink)]"><Icon name="plus" size={12} /></Link>}
               </span>
             </li>

@@ -121,8 +121,9 @@ function makeFakeDb(initialRow) {
             return { error: null, data: { id: "row-1" } };
           },
           update: (patch) => {
-            const done = () => { if (table === "businesses") Object.assign(row, patch); return { error: null, data: [] }; };
-            return { eq: async () => done(), then: (resolve, reject) => Promise.resolve(done()).then(resolve, reject) };
+            const done = () => { if (table === "businesses") { calls.businessesUpsert.push(patch); Object.assign(row, patch); } return { error: null, data: { id: row.id } }; };
+            const query = { eq: () => query, select: () => query, maybeSingle: async () => done(), then: (resolve, reject) => Promise.resolve(done()).then(resolve, reject) };
+            return query;
           },
           // Onboarding reads the account's plan before choosing a mode to save.
           select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: table === "businesses" ? { plan: row.plan ?? "free" } : null, error: fake.planReadError ?? null }) }) }),
@@ -317,11 +318,11 @@ for (const [plan, answer, expected] of [
   });
 }
 
-test("onboarding fails closed: an unreadable plan or a skipped answer writes no mode", async () => {
+test("onboarding fails closed: an unreadable plan saves nothing; a skipped answer preserves the mode", async () => {
   const fake = makeFakeDb(businessRow({ plan: "max", automation_level: "assisted" }));
   fake.planReadError = { code: "PGRST000", message: "unavailable" };
-  assert.equal((await saveOnboarding(onboardingInput("MARA drafts, I approve"))).ok, true);
-  assert.equal("automation_level" in fake.calls.businessesUpsert[0], false);
+  assert.equal((await saveOnboarding(onboardingInput("MARA drafts, I approve"))).ok, false);
+  assert.equal(fake.calls.businessesUpsert.length, 0);
   const skipped = makeFakeDb(businessRow({ plan: "max", automation_level: "autopilot" }));
   assert.equal((await saveOnboarding(onboardingInput(""))).ok, true);
   assert.equal("automation_level" in skipped.calls.businessesUpsert[0], false, "an existing mode is left as it is");
