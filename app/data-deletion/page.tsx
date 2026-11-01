@@ -32,8 +32,9 @@ export default function DataDeletionPage() {
 
       <LegalSection title="How to request deletion">
         <LegalNote>
-          There is no automated deletion endpoint and no self-service delete
-          button today. Requests are reviewed and carried out by a person.
+          Full-account deletion requests are reviewed and carried out by a
+          person. YouTube disconnection removes the related YouTube API data
+          automatically; it is not a full Voom account deletion.
         </LegalNote>
         <p>
           Email us at <LegalEmailLink /> from the email address associated with
@@ -56,11 +57,49 @@ export default function DataDeletionPage() {
 
       <LegalSection title="Processing timeframe">
         <p>
-          Once a request is verified, we aim to complete it within{" "}
+          <b>YouTube API data:</b> We handle deletion requests as soon as
+          possible and within seven calendar days of the request, including when you request
+          account deletion; ownership verification does not restart that deadline.
+          We promptly verify ownership without asking for
+          passwords or tokens. Disconnecting YouTube in Voom blocks further
+          access and initiates removal of its stored API data. If removal fails,
+          access remains blocked while maintenance retries it. Confirmed
+          invalid Google authorization also triggers removal, with continued
+          authorization checked by the existing YouTube maintenance worker.
+        </p>
+        <p>
+          For other Voom account data, once a request is verified, we aim to complete it within{" "}
           <b className="text-text">30 days</b>, and we will email you at the
           account address to confirm what was deleted. If a request is unclear
           or needs verification, we will contact you first, and the 30-day
           clock starts once the request is verified.
+        </p>
+      </LegalSection>
+
+      <LegalSection title="YouTube data and original content">
+        <p>
+          YouTube data deletion removes stored channel details, encrypted
+          publishing credentials, OAuth state, upload sessions and publishing
+          history, returned YouTube video references and performance snapshots.
+          Your own Voom drafts, captions, schedules and original uploaded or
+          generated media are preserved unless you request their deletion too.
+          Previous YouTube approvals are withdrawn so unsent drafts need fresh
+          review after reconnection. Other platforms and other customers are not affected.
+        </p>
+        <p>
+          A minimal Voom-only draft/action identifier may remain to prevent a
+          previously submitted or uncertain video from being uploaded again;
+          it contains no YouTube video ID, channel ID or analytics. Reconnecting
+          does not restore erased history or automatically resubmit old jobs.
+          A video already sent to YouTube may finish processing there. To delete
+          videos on YouTube itself, use YouTube directly.
+        </p>
+        <p>
+          If Google revocation temporarily fails, a server-only encrypted
+          revocation task is retried without allowing publishing. Its retry
+          credential expires after six days and is cleared by maintenance; unconfirmed
+          revocation is flagged for operator attention. You can also revoke
+          access directly in your Google Account permissions settings.
         </p>
       </LegalSection>
 

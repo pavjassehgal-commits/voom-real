@@ -174,8 +174,8 @@ export class YouTubeClient {
   /**
    * Explicit revocation (Google's documented endpoint). Best-effort by
    * design: Voom's local disconnect NEVER depends on it succeeding — the
-   * tokens are destroyed locally first, and revocation failure is reported
-   * truthfully instead of blocking the disconnect.
+   * publishing access is blocked first. Pending revocation credentials stay
+   * isolated in the leased retry outbox, not in the publishing connection.
    */
   async revokeToken(token: string): Promise<boolean> {
     try {
@@ -185,7 +185,10 @@ export class YouTubeClient {
         body: new URLSearchParams({ token }),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
-      return response.ok;
+      if (response.ok) return true;
+      const result = await response.json().catch(()=>null);
+      // Already revoked/invalid is terminal success, not an endless retry.
+      return response.status === 400 && result?.error === "invalid_token";
     } catch {
       return false;
     }

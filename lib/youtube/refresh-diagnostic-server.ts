@@ -77,9 +77,20 @@ export async function runOwnerRefreshDiagnostic(request: Request) {
       // Observe the existing encrypted persistence RPC, without changing its
       // behavior or exposing the resulting access token outside this closure.
       const trackedDb = new Proxy(db, { get(object, key) {
+        if (key === "from") return (table: string) => {
+          if (!["youtube_privacy_controls","youtube_connections"].includes(table)) throw new Error("diagnostic_database_action_not_allowed");
+          let columns: string | undefined;
+          let owner: string | undefined;
+          const guarded={
+            select(value: string) { if(!["blocked","id,authorization_epoch,status"].includes(value)) throw new Error("diagnostic_database_action_not_allowed"); columns=value; return guarded; },
+            eq(column: string,value: string) { if(column!=="owner_user_id" || value!==target.owner) throw new Error("diagnostic_database_action_not_allowed"); owner=value; return guarded; },
+            async maybeSingle() { await requireOriginalConnection(); if(!columns || owner!==target.owner) throw new Error("diagnostic_database_action_not_allowed"); return object.from(table).select(columns).eq("owner_user_id",owner).maybeSingle(); },
+          };
+          return guarded;
+        };
         if (key !== "rpc") throw new Error("diagnostic_database_action_not_allowed");
         return (name: string, args: Record<string, unknown>) => {
-          if (args.p_owner_user_id !== target.owner || !["get_youtube_connection_secret", "update_youtube_access_token", "set_youtube_connection_status"].includes(name)) {
+          if (args.p_owner_user_id !== target.owner || !["get_youtube_connection_secret", "update_youtube_access_token", "set_youtube_connection_status","request_youtube_erasure","erase_youtube_data"].includes(name)) {
             throw new Error("diagnostic_database_action_not_allowed");
           }
           const rpc = object.rpc(name, args);

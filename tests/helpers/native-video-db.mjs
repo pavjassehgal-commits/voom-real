@@ -27,7 +27,7 @@ export function nativeVideoDb(db) {
   const admin = {
     objects,
     errors,
-    async rpc(name, args) {
+    async rpc(name, args = {}) {
       const values = Object.values(args);
       const result = await execute(`select public.${ident(name)}(${Object.keys(args).map((k, i) => `${ident(k)} => $${i + 1}`).join(',')}) as value`, values);
       return { data: result.data?.[0]?.value ?? null, error: result.error };
@@ -40,12 +40,14 @@ export function nativeVideoDb(db) {
       const chain = {
         select(cols, options) { columns = cols; count = options?.head === true; return chain; },
         eq(key, value) { filters.push(`${ident(key)}=${bind(value)}`); return chain; },
+        is(key, value) { assert.equal(value,null); filters.push(`${ident(key)} is null`); return chain; },
+        gt(key, value) { filters.push(`${ident(key)}>${bind(value)}`); return chain; },
         in(key, list) { filters.push(`${ident(key)} in (${list.map(bind).join(',')})`); return chain; },
         gte(key, value) { filters.push(`${ident(key)}>=${bind(value)}`); return chain; },
         lt(key, value) { filters.push(`${ident(key)}<${bind(value)}`); return chain; },
         or(expression) {
-          const match = expression.match(/^updated_at\.is\.null,updated_at\.lte\.(.+)$/);
-          assert.ok(match); filters.push(`(updated_at is null or updated_at<=${bind(match[1])})`); return chain;
+          const match = expression.match(/^(updated_at|authorization_checked_at)\.is\.null,\1\.(lt|lte)\.(.+)$/);
+          assert.ok(match); filters.push(`(${match[1]} is null or ${match[1]}${match[2]==='lt'?'<':'<='}${bind(match[3])})`); return chain;
         },
         order(key, options) { order = ` order by ${ident(key)} ${options?.ascending === false ? 'desc' : 'asc'}`; return chain; },
         limit(number) { assert.ok(Number.isInteger(number)); limit = ` limit ${number}`; return chain; },

@@ -69,7 +69,7 @@ function adapter(db) {
         p_owner_user_id: "uuid", p_channel_id: "text", p_channel_title: "text", p_channel_handle: "text",
         p_thumbnail_url: "text", p_scopes: "text[]", p_encrypted_refresh_token: "text", p_refresh_iv: "text",
         p_refresh_auth_tag: "text", p_refresh_key_version: "smallint", p_encrypted_access_token: "text",
-        p_access_iv: "text", p_access_auth_tag: "text", p_access_key_version: "smallint", p_access_token_expires_at: "timestamptz",
+        p_access_iv: "text", p_access_auth_tag: "text", p_access_key_version: "smallint", p_access_token_expires_at: "timestamptz", p_state_hash: "text",
       };
       const entries = Object.entries(args);
       const params = entries.map(([k], i) => { assert.ok(types[k]); return `${k} => $${i + 1}::${types[k]}`; });

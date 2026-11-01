@@ -274,8 +274,8 @@ async function tikTokConnectionView(
  *     actually granted — never an assumed capability;
  *   - the provider bag carries only sanitized metadata (channel id, granted
  *     scopes, expiry, explicit defaults, audit state) — never tokens;
- *   - Google's unaudited-project restriction is surfaced plainly instead of
- *     promising public publishing Google would lock to private.
+ *   - an unaudited project's default daily upload quota is surfaced plainly,
+ *     and the privacy YouTube actually applied is always what Voom reports.
  */
 async function youTubeConnectionView(
   db: SupabaseClient,
@@ -323,7 +323,7 @@ async function youTubeConnectionView(
   const connected = status === "connected" && scopes.includes(YOUTUBE_UPLOAD_SCOPE);
   const auditNote = projectAudited
     ? null
-    : " Google locks uploads from unaudited API projects to private viewing mode; Voom reports the privacy YouTube actually applied.";
+    : " Voom's Google API project uses YouTube's default daily upload quota until it completes YouTube's API compliance audit; Voom reports the privacy YouTube actually applied.";
   return {
     channel: "youtube",
     state: connected ? "connected" : "disconnected",

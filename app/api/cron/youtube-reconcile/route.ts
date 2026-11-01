@@ -2,6 +2,7 @@ import { runYouTubeReconciliation } from "@/lib/youtube/reconcile";
 import { bearerMatches } from "@/utils/bearer-auth";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { cleanupYouTubeUploads } from "@/lib/youtube/upload-server";
+import { runYouTubePrivacyMaintenance } from "@/lib/youtube/privacy";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -28,10 +29,19 @@ export async function GET(request: Request) {
     return Response.json({ error: "Unauthorized." }, { status: 401 });
   }
   try {
-    const result = await runYouTubeReconciliation();
+    const started = Date.now();
+    // Fail closed before provider reconciliation if retention cannot run.
+    // Privacy shares the existing 240 s inner budget, not a second budget.
+    const privacy = await runYouTubePrivacyMaintenance();
+    const result = await runYouTubeReconciliation({
+      pollingBudgetMs: Math.max(1000, 240_000 - (Date.now() - started)),
+    });
     // A storage-cleanup outage must retain media, not interrupt publishing.
     const uploadCleanup = await cleanupYouTubeUploads(createAdminClient()).catch(()=>({deferred:true}));
-    return Response.json({...result,uploadCleanup}, { headers: { "Cache-Control": "no-store" } });
+    return Response.json({ ...result, privacy, uploadCleanup }, {
+      status: privacy.operatorAttention ? 503 : 200,
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch {
     return Response.json({ error: "YouTube reconciliation could not complete safely." }, { status: 503 });
   }

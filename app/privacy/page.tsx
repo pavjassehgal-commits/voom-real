@@ -70,6 +70,15 @@ export default function PrivacyPage() {
           channel, and does not request monetary or revenue analytics scopes.
         </p>
         <p>
+          For YouTube, we store your channel ID, title, handle and thumbnail
+          URL where available, granted permissions, connection status and token
+          expiry information. For videos submitted through Voom, we store your
+          chosen publishing settings, upload-processing records, returned video
+          IDs and provider status. We also store dated view, like and comment
+          counts where available. Original media and drafts you supply to Voom
+          are separate from information retrieved from Google APIs.
+        </p>
+        <p>
           <b>TikTok:</b> When you connect TikTok through TikTok&apos;s OAuth,
           Voom requests only <b>user.info.basic</b> (your TikTok account ID,
           display name, and avatar) and <b>video.publish</b> (to post videos
@@ -284,6 +293,28 @@ export default function PrivacyPage() {
           credentials locally, stops all future publishing and data
           synchronization, and withdraws pending unpublished items from the queue.
         </p>
+        <p>
+          <b>YouTube disconnection blocks access and initiates deletion:</b>{" "}
+          channel details, publishing-queue history, video references and
+          performance snapshots are removed from Voom. If removal cannot be
+          completed, access remains blocked while maintenance retries it. Original drafts and
+          uploaded or generated media stay unless you separately request their
+          deletion; prior YouTube approvals are withdrawn. An upload already submitted to YouTube may finish there;
+          disconnecting does not cancel or delete a video on YouTube. Voom keeps
+          only its own draft/action identifiers needed to prevent an erased or
+          uncertain submission from being uploaded again automatically, not the
+          deleted YouTube video or channel identifiers.
+        </p>
+        <p>
+          Voom requests Google token revocation immediately. If Google is
+          temporarily unavailable, encrypted credentials are isolated from
+          publishing for retries by the existing maintenance worker. The retry
+          credential expires after six days and is cleared by maintenance.
+          Unconfirmed revocation requires operator
+          attention; you can independently revoke access in Google Security
+          Settings. No further YouTube access is allowed while the connection
+          is disconnected or erasure is pending.
+        </p>
         <LegalNote>
           Disconnecting an integration disables Voom&apos;s future access to your
           account, but does not automatically delete or remove content that has
@@ -310,7 +341,28 @@ export default function PrivacyPage() {
 
       <LegalSection title="Retention">
         <p>
-          We keep your data while your account is active so the Service can
+          <b>YouTube-specific retention:</b> Voom blocks access and initiates
+          removal of stored YouTube API data when you disconnect in Voom or a
+          confirmed invalid authorization is detected. An incomplete deletion
+          remains blocked for maintenance recovery. Its existing YouTube reconciliation worker
+          also checks idle connected accounts for continued authorization and
+          refreshes channel details. If authorization cannot be verified for
+          28 days, the retained connection and related API data are removed.
+          Performance snapshots expire after 28 days; stale provider evidence
+          not rechecked within 28 days is removed as well. A temporary network
+          error is not treated as proof that you revoked consent.
+        </p>
+        <p>
+          You can request deletion of your stored YouTube data without deleting
+          your Voom account by emailing <LegalEmailLink /> from your account
+          address. YouTube-data deletion requests and account deletion are
+          handled as soon as possible and within seven calendar days of the
+          request; ownership verification does not restart that deadline. We verify
+          ownership promptly and never ask you for passwords or OAuth tokens.
+          Deleting Voom data does not delete anything held by YouTube itself.
+        </p>
+        <p>
+          For other Voom data, we keep it while your account is active so the Service can
           function, until you delete it or ask us to delete it. Stored social
           OAuth tokens are deleted or invalidated when you disconnect an
           integration or when they expire. When data is deleted at your
