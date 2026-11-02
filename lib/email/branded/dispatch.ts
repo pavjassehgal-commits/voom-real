@@ -39,8 +39,11 @@ import { runEmailQualityChecks, type QualityFailure, type QualityResult } from "
 import { renderEmail } from "./renderer";
 import { isUnsubscribeMintingConfigured, mintUnsubscribeToken, unsubscribeUrl } from "./unsubscribe";
 import { domainOf } from "./identity";
+import { dispatchSafeMarketingEmail } from "../marketing-safety";
+import { createAdminClient } from "@/utils/supabase/admin";
 
 export interface BrandedSendDeps extends ProviderDomainOptions {
+  admin?: SupabaseClient;
   /** Provider test seam. Production uses the configured Resend client. */
   client?: ResendApiClient | null;
   /** Provider-neutral test seam. Takes precedence over the legacy client. */
@@ -96,9 +99,14 @@ export interface PrepareBrandedSendInput {
   firstName?: string | null;
   /** An optional MARA-proposed design; validated and refused on any issue. */
   proposedDesign?: unknown;
+  sourceKind?: "campaign" | "flow";
+  sourceId?: string;
 }
 
 export interface BrandedSendPayload {
+  ownerId: string;
+  sourceKind?: "campaign" | "flow";
+  sourceId?: string;
   to: string;
   from: string;
   fromName: string;
@@ -110,6 +118,7 @@ export interface BrandedSendPayload {
   text: string;
   idempotencyKey: string;
   unsubscribeUrl: string;
+  oneClickUnsubscribeUrl: string;
   design: EmailDesignSpec;
   layoutReason: string;
   designSource: "compiled" | "proposed";
@@ -183,6 +192,9 @@ export async function prepareEmailPreview(
 
   const senderRead = await readBusinessSender(admin, ownerId, deps);
   const brand = await loadEmailBrandProfile(admin, ownerId);
+  if (senderRead.identity?.legal_name && senderRead.identity.postal_address) {
+    brand.footerLine = [senderRead.identity.legal_name, senderRead.identity.postal_address, senderRead.sender?.replyTo, brand.footerLine].filter(Boolean).join(" · ");
+  }
   const to = input.recipientEmail ?? "preview@yourbusiness.example";
 
   const compiled = compileOrPropose({
@@ -238,6 +250,9 @@ export async function prepareEmailPreview(
     referencedAssetIds: referenced,
     resolvedAssetIds: brand.assets.map((asset) => asset.assetId),
   });
+  if (senderRead.sender?.mode !== "business_verified") quality.failures.push({ code: "sender_domain_not_verified", message: "Verify your business's own sending domain before sending marketing email." });
+  if (!senderRead.identity?.legal_name || !senderRead.identity.postal_address || !senderRead.sender?.replyTo) quality.failures.push({ code: "sender_information_required", message: "Add your legal/business name, postal address and contact reply email." });
+  quality.ok = quality.failures.length === 0;
 
   return {
     sender,
@@ -279,13 +294,21 @@ export async function prepareBrandedSend(
   const senderRead = await readBusinessSender(admin, ownerId, {
     client: deps.client ?? null,
     providerDomains: deps.providerDomains ?? undefined,
+    txt: deps.txt,
   });
   if (!senderRead.sender) {
     return { ok: false, code: "sender_unresolvable", message: "No sending identity is configured on the server.", terminal: true };
   }
+  if (senderRead.sender.mode !== "business_verified") {
+    return { ok: false, code: "sender_domain_not_verified", message: "Verify a sending domain owned by your business before sending marketing email.", terminal: true };
+  }
+  if (!senderRead.identity?.legal_name?.trim() || !senderRead.identity?.postal_address?.trim() || !senderRead.sender.replyTo) {
+    return { ok: false, code: "sender_information_required", message: "Add your real legal/business name, postal address and contact reply email before sending.", terminal: true };
+  }
 
   // 2) Brand profile + assets.
   const brand = await loadEmailBrandProfile(admin, ownerId);
+  brand.footerLine = [senderRead.identity.legal_name, senderRead.identity.postal_address, senderRead.sender.replyTo, brand.footerLine].filter(Boolean).join(" · ");
 
   // 3) Design: MARA's validated proposal, or the deterministic compiler.
   const compileInput = {
@@ -318,6 +341,8 @@ export async function prepareBrandedSend(
   }
   const token = mintUnsubscribeToken(ownerId, input.to);
   const unsubscribeLink = unsubscribeUrl(deps.siteUrl ? new URL(deps.siteUrl) : resolveSiteUrl(null), token);
+  const oneClickLink = new URL(unsubscribeLink);
+  oneClickLink.pathname = "/api/unsubscribe";
 
   // 5) Render — the same deterministic renderer the preview uses.
   const rendered = renderEmail({
@@ -354,6 +379,9 @@ export async function prepareBrandedSend(
   return {
     ok: true,
     payload: {
+      ownerId,
+      sourceKind: input.sourceKind,
+      sourceId: input.sourceId,
       to: input.to,
       from: senderRead.sender.from,
       fromName: senderRead.sender.fromName,
@@ -365,6 +393,7 @@ export async function prepareBrandedSend(
       text: rendered.text,
       idempotencyKey: input.idempotencyKey,
       unsubscribeUrl: unsubscribeLink,
+      oneClickUnsubscribeUrl: oneClickLink.toString(),
       design,
       layoutReason: compiled.layoutReason,
       designSource: compiled.source,
@@ -408,16 +437,7 @@ export async function dispatchBrandedEmail(
   ambiguous: boolean;
 }> {
   const provider = deps.provider ?? createResendDeliveryProvider(deps.client ?? undefined);
-  return provider.send({
-    from: payload.from,
-    to: payload.to,
-    replyTo: payload.replyTo,
-    subject: payload.subject,
-    preheader: payload.preheader,
-    html: payload.html,
-    text: payload.text,
-    idempotencyKey: payload.idempotencyKey,
-  });
+  return dispatchSafeMarketingEmail(deps.admin ?? createAdminClient(), payload, provider);
 }
 
 // Re-exported for callers that only need the resolver pieces.
