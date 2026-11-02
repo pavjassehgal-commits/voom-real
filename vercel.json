@@ -14,7 +14,8 @@
       "fix/mara-automation-launch": false,
       "fix/automation-mode-normalization": false,
       "codex/mara-launch-readiness": false,
-      "codex/email-commercial-safety": false
+      "codex/email-commercial-safety": false,
+      "email-safety-staging": false
     }
   },
   "crons": [
