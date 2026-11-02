@@ -12,7 +12,8 @@ const png = size => sharp(source).resize(size, size).png().toBuffer();
 await writeFile(new URL("app/icon.png", root), await png(64));
 await writeFile(new URL("app/apple-icon.png", root), await png(180));
 const sizes = [16, 32, 48, 64];
-const frames = await Promise.all(sizes.map(png));
+// Turbopack's ICO decoder requires RGBA PNG frames, even for opaque artwork.
+const frames = await Promise.all(sizes.map(size => sharp(source).resize(size, size).ensureAlpha().png().toBuffer()));
 const header = Buffer.alloc(6 + sizes.length * 16);
 header.writeUInt16LE(1, 2); header.writeUInt16LE(sizes.length, 4);
 let offset = header.length;

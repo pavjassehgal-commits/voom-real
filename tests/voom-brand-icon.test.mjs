@@ -20,13 +20,24 @@ test('modern and Apple icons are exact resizes, not different artwork',async()=>
     assert.deepEqual(actual,await sharp(original).resize(size,size).png().toBuffer());
   }
 });
-test('legacy favicon contains only matching, decodable official-icon frames',async()=>{
+test('legacy favicon uses Turbopack-compatible RGBA frames with unchanged official-icon pixels',async()=>{
   const ico=await read('app/favicon.ico');assert.equal(ico.readUInt16LE(2),1);assert.equal(ico.readUInt16LE(4),4);
+  let expectedStart=6+4*16;
   for(let i=0;i<4;i++){
-    const pos=6+i*16,size=[16,32,48,64][i];assert.equal(ico[pos],size);
+    const pos=6+i*16,size=[16,32,48,64][i];assert.equal(ico[pos],size);assert.equal(ico[pos+1],size);
+    assert.equal(ico.readUInt16LE(pos+4),1);assert.equal(ico.readUInt16LE(pos+6),32);
     const length=ico.readUInt32LE(pos+8),start=ico.readUInt32LE(pos+12),frame=ico.subarray(start,start+length);
-    assert.deepEqual(frame,await sharp(original).resize(size,size).png().toBuffer());
+    assert.equal(start,expectedStart);assert.equal(frame.length,length);expectedStart+=length;
+    assert.equal(frame[24],8,'PNG bit depth must be 8');
+    assert.equal(frame[25],6,'PNG color type must be RGBA, not RGB (Turbopack ICO requirement)');
+    const meta=await sharp(frame).metadata();
+    assert.equal(meta.width,size);assert.equal(meta.height,size);assert.equal(meta.channels,4);assert.equal(meta.hasAlpha,true);
+    assert.deepEqual(frame,await sharp(original).resize(size,size).ensureAlpha().png().toBuffer());
+    assert.deepEqual(await sharp(frame).removeAlpha().raw().toBuffer(),await sharp(original).resize(size,size).raw().toBuffer(),'RGB pixels must not change');
+    const pixels=await sharp(frame).raw().toBuffer();
+    for(let a=3;a<pixels.length;a+=4)assert.equal(pixels[a],255,'artwork must remain fully opaque');
   }
+  assert.equal(expectedStart,ico.length);
 });
 test('website, legal pages and social metadata share the canonical icon with no theme-specific replacement',async()=>{
   const logo=String(await read('components/voom/shell/VoomLogo.tsx'));
