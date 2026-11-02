@@ -9,11 +9,15 @@
  * component as the last wizard screen (slice 3): it hides History and the
  * operating section and offers "Looks right" instead. "How we sound" can ask
  * MARA for three sample captions to sort (slice 6, `VoiceSamplesWriter`).
+ *
+ * Look (Phase C, 2026-11-02): each section is a `voom-card` like the redesigned
+ * pages; the buttons, chips, tags and fields are the shared primitives main's
+ * own shell still uses.
  */
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { Icon } from "@/components/voom/icons";
 import { AutomationMode } from "@/components/voom/operating/AutomationMode";
-import { Btn, Card, Chip, Field, Input, Tag, Textarea } from "@/components/voom/ui/primitives";
+import { Btn, Chip, Field, Input, Tag, Textarea } from "@/components/voom/ui/primitives";
 import { BrandAssetsEditor } from "@/components/voom/brand/BrandAssetsEditor";
 import { requestVoiceSamples, sortSample, VoiceSampleCards, voiceSamplesMessage, WritingSamplesPanel, type SampleVerdict } from "@/components/voom/brand/VoiceSamples";
 import { saveBrandSection } from "@/lib/brand/actions";
@@ -246,22 +250,22 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
   return (
     <div>
       {mode === "hub" ? (
-        <div className="mb-4 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">
-          <b className="text-text">Edits apply from the next generation.</b> Posts and plans MARA already wrote are not rewritten.
+        <div className="mb-4 flex items-start gap-2.5 rounded-[14px] border border-line bg-surface px-4 py-3 text-[13px] leading-relaxed text-text-2">
+          <Icon name="info" size={16} className="mt-0.5 shrink-0 text-text-3" />
+          <span><b className="font-semibold text-text">Edits apply from the next generation.</b> Posts and plans MARA already wrote are not rewritten.</span>
         </div>
       ) : null}
-      {error ? <div role="alert" className="mb-3.5 rounded-xl border border-red-900/40 bg-red-950/30 px-3.5 py-2.5 text-sm text-red-300">{error}</div> : null}
-      {notice ? <div role="status" className="mb-3.5 rounded-xl border border-emerald-900/40 bg-emerald-950/30 px-3.5 py-2.5 text-sm text-emerald-300">{notice}</div> : null}
+      {error ? <div role="alert" className="mb-3.5 rounded-[12px] border border-[var(--red)]/25 bg-[var(--red-soft)] px-4 py-3 text-[13.5px] text-[var(--red)]">{error}</div> : null}
+      {notice ? <div role="status" className="mb-3.5 rounded-[12px] border border-[var(--green)]/25 bg-[var(--green-soft)] px-4 py-3 text-[13.5px] text-[var(--green)]">{notice}</div> : null}
 
       {sections.map((section) => {
         const isEditing = editing === section.id;
         return (
-          <section key={section.id} data-brand-section={section.id}>
-          <Card className="mb-3.5 p-4">
-            <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <h2 className="font-display text-lg font-semibold">{section.title}</h2>
-                <p className="text-[12.5px] text-text-3">{section.intro}</p>
+          <section key={section.id} data-brand-section={section.id} className="voom-card mb-4 p-5 sm:p-6">
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="text-[17px] font-semibold tracking-[-0.01em] text-text">{section.title}</h2>
+                <p className="mt-0.5 text-[13px] text-text-2">{section.intro}</p>
               </div>
               {isEditing ? (
                 <div className="flex gap-2">
@@ -291,7 +295,6 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
             ) : (
               <SectionView id={section.id} values={values} plan={plan} automation={automation} mode={mode} onConfirmFact={oneTapConfirm} previews={previews} />
             )}
-          </Card>
           </section>
         );
       })}
@@ -303,9 +306,9 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
           </div>
         ) : null
       ) : (
-        <Card className="mb-3.5 p-4">
-          <h2 className="font-display text-lg font-semibold">History</h2>
-          <p className="mb-3 text-[12.5px] text-text-3">Every save keeps the version before it. Open one to see what changed.</p>
+        <section className="voom-card mb-4 p-5 sm:p-6" aria-labelledby="brand-history">
+          <h2 id="brand-history" className="text-[17px] font-semibold tracking-[-0.01em] text-text">History</h2>
+          <p className="mb-3 mt-0.5 text-[13px] text-text-2">Every save keeps the version before it. Open one to see what changed.</p>
           {versions.length === 0 ? (
             <p className="text-[13.5px] text-text-3">No versions yet. Your first edit here, or your next Settings save, creates version 1.</p>
           ) : (
@@ -339,7 +342,7 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
               })}
             </ul>
           )}
-        </Card>
+        </section>
       )}
     </div>
   );

@@ -1,4 +1,4 @@
-import { PageHead } from "@/components/voom/shell/AppShell";
+import { PageHeader } from "@/components/voom/redesign/ui";
 import { BrandHub } from "@/components/voom/brand/BrandHub";
 import { isAiVisionConfigured } from "@/lib/ai";
 import { signBrandAssetUrls } from "@/lib/brand/asset-storage";
@@ -17,7 +17,8 @@ export const dynamic = "force-dynamic";
  * editable in place, with the version history. Reads the newest kit version
  * through the user-scoped client (RLS) and falls back to the `businesses` row
  * for the core fields, so accounts from before Brand Kit v2 see their real
- * values.
+ * values. Laid out with the redesign's page pieces (Phase C, 2026-11-02):
+ * `PageHeader` and `voom-card` sections, like Settings and Automations.
  */
 export default async function BrandPage() {
   const [user, business] = await Promise.all([getCurrentUser(), getBusinessRecord()]);
@@ -34,10 +35,10 @@ export default async function BrandPage() {
   }
 
   return (
-    <div className="mx-auto max-w-[820px]">
-      <PageHead
+    <div className="mx-auto min-w-0 max-w-[880px]">
+      <PageHeader
         title="Brand"
-        description="Everything MARA knows about your brand, in plain words. Edit any section in place."
+        subtitle="Everything MARA knows about your brand, in plain words. Edit any section in place."
       />
       <BrandHub
         mode="hub"

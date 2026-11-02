@@ -158,7 +158,9 @@ prop that hides History and the gallery in onboarding.
 
 ## OnboardingWizard.tsx: keep, change, drop (slice 3)
 - Keep: `StepName`, `StepDescribe`, `QBlock`, `IndustryPicks`, `RadioTile`, the header progress
-  bar, the footer, the `need[]` validation pattern, `AnalyzingScreen`.
+  bar, the footer, the `need[]` validation pattern, `AnalyzingScreen`. (Phase C of
+  `handover/merge-plan.md`, 2026-11-02: the look moved to `main`'s redesign; `AnalyzingScreen`
+  was replaced by `main`'s `SetupComplete` summary and deleted.)
 - Change: `LAST_STEP` and `OB_STEPS` to 12 entries; remove the header Skip and add a per-screen
   Skip to the footer; `StepBasics` loses the website field (moved to screen 2) and gains prefill
   badges; `StepAudienceGoal` gains "MARA's guess" highlighting; `StepVoiceChannels` splits into

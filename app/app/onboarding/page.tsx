@@ -1,4 +1,3 @@
-import { redirect } from "next/navigation";
 import { OnboardingWizard } from "@/components/voom/onboarding/OnboardingWizard";
 import { isAiVisionConfigured } from "@/lib/ai";
 import { getBusinessRecord } from "@/lib/voom/server-data";
@@ -7,15 +6,15 @@ import { getBusinessRecord } from "@/lib/voom/server-data";
 // server action from this page and can take longer than the platform default.
 export const maxDuration = 60;
 
-// Merge note (2026-11-01): main's redesigned wizard dropped this redirect and passes
-// `completedOnServer` so its "Your workspace is ready" summary can show after the save
-// revalidates /app. Our 11-screen wizard (Brand Kit v2) is kept as is; adopting their
-// SetupComplete screen and that pattern is Phase C of handover/merge-plan.md.
+/**
+ * Setup. A finished account opening this page is sent on to the app by the
+ * wizard itself (see `completedOnServer`), not by a server redirect here:
+ * saving setup revalidates /app, which re-renders this page inside the save
+ * action's own response — a server redirect at that moment would throw the
+ * owner to Today before the "Your workspace is ready" summary could show
+ * (main's pattern, adopted in Phase C of handover/merge-plan.md, 2026-11-02).
+ */
 export default async function OnboardingPage() {
   const business = await getBusinessRecord();
-  if (business?.onboarding_completed) {
-    redirect("/app");
-  }
-
-  return <OnboardingWizard visionEnabled={isAiVisionConfigured()} />;
+  return <OnboardingWizard visionEnabled={isAiVisionConfigured()} completedOnServer={Boolean(business?.onboarding_completed)} />;
 }

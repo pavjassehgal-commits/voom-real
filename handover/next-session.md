@@ -6,9 +6,10 @@ the status board for Gurnoor and for whichever AI tool opens the repo next. It i
 on purpose: a merge from `main` can touch `ARCHITECTURE.md`, `DECISIONS.md` and `AGENTS.md`, and
 this file must survive that untouched.
 
-Last updated: 2026-11-01, at the end of the merge with GitHub `main` (Phase B of
-`handover/merge-plan.md`). **The next task is Phase C: make our Brand page and onboarding belong
-to the redesign.** Slice 8 (Instagram import) follows Phase C.
+Last updated: 2026-11-02, at the end of Phase C of `handover/merge-plan.md` (our Brand page and
+onboarding in the redesign; `handover/phase-c-plan.md`, `DECISIONS.md` 2026-11-02). **The next
+task is slice 8, Instagram import, plan first.** Before that, Gurnoor's browser check of Phase C
+and the commit (section 1).
 
 ---
 
@@ -17,23 +18,29 @@ to the redesign.** Slice 8 (Instagram import) follows Phase C.
 - **Folder and branch:** work happens in `Desktop/voom/voom-merge` on branch
   `merge-main-2026-10-31` (rename later if wanted; Gurnoor's call). It contains everything from
   `gurnoor-dev` (17 commits) plus GitHub `main` at `ea1676b` (73 commits), merged on 2026-11-01:
-  merge commit `a958352`, follow-ups `bfaa2a3`, `665caa5`, then the B8 docs commit. The old
-  folder `voom-real-main` (branch `gurnoor-dev`, tag `pre-merge-2026-10-31`) is the fallback;
-  keep it until Phase C is done, then retire it. A plain copy of `main` sits in
-  `../voom-main-check` (detached); remove it with `git worktree remove ../voom-main-check` when no
-  longer needed.
-- **Pushed?** The branch is pushed by the B8 command (`git push -u origin merge-main-2026-10-31`).
-  If `git status` says "ahead of origin", push.
-- Latest checks (2026-11-01, full run on `665caa5`):
+  merge commit `a958352`, follow-ups `bfaa2a3`, `665caa5`, `07cc603` (B8 docs), then the Phase C
+  commit of 2026-11-02. Phase C is done, so the old folder `voom-real-main` (branch `gurnoor-dev`,
+  tag `pre-merge-2026-10-31`) can be retired when Gurnoor is comfortable: `git worktree remove
+  ../voom-real-main` from this folder (the branch and tag stay in git). The `voom-main-check`
+  worktree was removed on 2026-11-01.
+- **Pushed?** If `git status` says "ahead of origin", push (`git push`).
+- **Phase C browser check:** Gurnoor had not yet run it when this was written. The list: all 11
+  screens at desktop and phone width, "Read my website" (eatlexis.com), Finish setup → "Your
+  workspace is ready" → Go to dashboard, then `/app/onboarding` again as a finished account (should
+  land on Today after a blank instant), the Brand page, and a post with Existing content in Post
+  Studio. Anything off: fix it as a small follow-up, then the pull request (section 2).
+- Latest checks (2026-11-02, full run after Phase C):
 
   | Check | Result | Meaning |
   |---|---|---|
-  | `npm test` | 2316 tests: 2290 pass / 20 fail / 4 skipped / 2 todo (about 130 s) | The 20 are named in `docs/baseline.md` Notes: 12 parked trend tests, 5 of `main`'s own tests that fail identically on plain `main`, 3 flaky cleanup tests. The 2 todo are `main`'s visual wizard assertions, back in Phase C. |
+  | `npm test` | 2315 tests: 2292 pass / 19 fail / 4 skipped / 0 todo (about 120 s) | The 19 are named in `docs/baseline.md` Notes: 14 parked trend tests (2 more aged out with the date on 2026-11-02), 5 of `main`'s own tests that fail identically on plain `main`. The 3 cleanup flakes did not show this run; when they do, 22. |
   | `npm run typecheck` | clean | |
   | `npm run lint` | 0 errors / 15 warnings | Pre-existing. New work must not add one. |
 
-  `docs/baseline.md` has the rule: pass count never drops, fail stays at the named 20 (17 if the
-  cleanup flake does not show), lint errors 0, warnings 15 or fewer.
+  `docs/baseline.md` has the rule: pass count never drops, fail stays at the named tests, lint
+  errors 0, warnings 15 or fewer. Trend tests pin October dates against the real clock, so more of
+  them may age out as days pass; a new trend failure is that, not a regression, if it fails the
+  same way alone and names a 2026-10 date.
 
 ### What this branch holds
 
@@ -42,6 +49,7 @@ to the redesign.** Slice 8 (Instagram import) follows Phase C.
 | `gurnoor-dev`, 10-16 to 10-29 | Agent rules, architecture map, decisions log, baseline; forgot-password and Google sign-in; delete post and cancel approval; Brand Kit v2 slices 1 to 7 (table below) | `DECISIONS.md` 2026-10-15 to 10-28 |
 | `main`, 10-16 to 10-31 | The Figma redesign of every screen (shell, Today, Create, Content, Marketing Plan, Approvals, Automations, MARA, Calendar, Contacts, Channels, Performance, Settings, homepage, login, signup, motion, haptics, notifications); LinkedIn personal text publishing; native TikTok/Shorts plan videos; YouTube MP4 and resumable uploads; Instagram token renewal; AI usage and cost tracking; automation emergency pause and approval integrity; rolling cadence windows and slot leases | `handover/merge-plan.md` section 0 table; `docs/*.md` from `main` (`mara-automation-launch.md`, `scheduled-workers.md`, `linkedin-personal-publishing.md`, `native-plan-video-generation.md`) |
 | The merge itself, 11-01 | 26 conflicts resolved, our migration 0059 renumbered **0075**, 15 tests re-pointed, wizard footer with toast clearance and the haptic warning | `DECISIONS.md` 2026-11-01 |
+| Phase C, 11-02 | Brand page on `PageHeader` + `voom-card`; the 11-screen wizard in `main`'s setup layout with the 3D icons (Manual / Assisted / Autopilot reuse main's automation icons), inspiration chips, `SetupComplete` at the end with Edit links to the Brand page, `completedOnServer` bypass in the wizard (page no longer redirects); `AnalyzingScreen` deleted; 3 tests back to original intent; `ARCHITECTURE.md` full pass ("What `main` built") | `handover/phase-c-plan.md`, `DECISIONS.md` 2026-11-02 |
 
 ### Brand Kit v2: slices built, one line each
 
@@ -59,9 +67,10 @@ The design and the full detail per slice: `docs/brand-kit-v2-design.md`, section
 | fix | 10-28 | Leftover image files swept after Finish and Brand page saves; colours go with the logo | `tests/brand-assets.test.mjs` |
 | 7 | 10-29 | "Read my website": text read plus one homepage screenshot for colours and look; MARA drafts the description; colours kept per source | `tests/brand-website.test.mjs` |
 
-All of it was browser-checked again by Gurnoor on 2026-11-01 inside the merged app (B7): the 11
-screens, "Read my website", Finish, `/app/brand`, the Brand entry in the new sidebar, Google and
-Forgot password on login. It works, and looks like the old design inside the new shell.
+All of it was browser-checked by Gurnoor on 2026-11-01 inside the merged app (B7), before the
+Phase C restyle: the 11 screens, "Read my website", Finish, `/app/brand`, the Brand entry in the
+new sidebar, Google and Forgot password on login. The Phase C look is checked by the tests
+(2026-11-02) and awaits Gurnoor's browser pass (section 1).
 
 ---
 
@@ -70,22 +79,10 @@ Forgot password on login. It works, and looks like the old design inside the new
 Each task follows `AGENTS.md`: a short plan first, wait for Gurnoor's OK, build, `npm test` plus a
 browser check, update the docs, print the git commands for Gurnoor.
 
-1. **Phase C of `handover/merge-plan.md`: our screens in the redesign.** Not merge work; product
-   work with its own plan. Scope, from the merge plan section C:
-   - The Brand page (`/app/brand`) built from `main`'s shell pieces (`components/voom/redesign/ui.tsx`,
-     `voom-card`, `PageHeader`), same spacing as their pages.
-   - Our 11 onboarding screens restyled with their components and layout (sticky header, art
-     column), their 3D icons for our chips where an icon exists
-     (`public/redesign/onboarding-icons/`, `components/voom/onboarding/onboardingIcons.tsx`; the
-     three automation modes Manual / Assisted / Autopilot have no icon yet), their `SetupComplete`
-     screen replacing our `AnalyzingScreen` at the end, with its client-side completion bypass
-     (`completedOnServer`) replacing the page's server redirect. Then the two `todo` tests
-     (`tests/onboarding-icons.test.mjs`, `tests/redesign-batch-4a.test.mjs`) and the re-pointed
-     ones (`onboarding-completion`, `toast-stacking`, `redesign-batch-4a` setup test) return to
-     their original intent.
-   - The Post Studio bits we added (purpose line, "MARA saw", Existing content switch) checked in
-     their restyled editor.
-   - `ARCHITECTURE.md` full pass describing what `main` built.
+1. **Finish Phase C:** Gurnoor's browser check (section 1), any small fix it turns up, then the
+   first **pull request from `merge-main-2026-10-31` to `main`** so the other developer sees the
+   Brand Kit work (Phase D habit, section 6, step 6). Gurnoor opens it on GitHub; the AI tool
+   prints nothing for it beyond a suggested title and description.
 2. **Slice 8: Instagram import.** Design: `docs/brand-kit-v2-design.md`, section "Instagram
    import (slice 8)" and build-order item 8. Not yet planned in detail; the plan is the first step.
 3. **Slice 9 (optional): the brand kit everywhere** (Reel and Story visuals, campaigns, the
@@ -117,9 +114,10 @@ then Stripe billing.
 
 | Item | What | Trigger / when | Recorded in |
 |---|---|---|---|
-| Parked trend test failures (12) | `tests/trends-universal.test.mjs` (6), `trends-demo` (4), `trends-gp-replenish` (2): fixtures pin October dates against the real clock; all 12 fail identically on plain `main`. Not brand work. | Gurnoor parked them until the trend feature is understood. | `DECISIONS.md` 2026-10-23 and 2026-11-01, `docs/baseline.md` |
+| Parked trend test failures (14) | `tests/trends-universal.test.mjs` (6), `trends-demo` (4), `trends-gp-replenish` (2), `trends-wikidata-activation` (2, since 2026-11-02): fixtures pin October dates against the real clock; the first 12 fail identically on plain `main`. Not brand work. More may age out as days pass. | Gurnoor parked them until the trend feature is understood. | `DECISIONS.md` 2026-10-23 and 2026-11-01, `docs/baseline.md` |
 | `main`'s own 5 red tests | `approval-state-lockdown` (its LinkedIn cron route lacks the Bearer check), `linkedin-production-release` (its `vercel.json`), `perf-regression` ×2 (storage signing), `product-truth-cleanup` (four channels vs LinkedIn). Identical on plain `main` at `ea1676b`. | Tell the other developer, or fix on a later merge if `main` fixes them first. | `docs/baseline.md` Notes |
-| Browser-test helper: leak and no timeout | `tests/helpers/rendered-surface.mjs` leaves one Chrome profile folder per scenario in the system temp dir (803 folders, 4.2 GB since 10-22; Gurnoor has not yet said whether to delete them) and has no limit on page scripts, so a script waiting for a missing element hangs `npm test` (happened at the merge). `tests/rendered-surface-cleanup.test.mjs` is a concurrency flake for the same reason. | Fix as a small task when a hang or disk space bites again; a per-scenario timeout plus cleanup of the temp folder. | `docs/baseline.md` Notes, `DECISIONS.md` 2026-10-17 and 2026-11-01 |
+| Browser-test helper: leak and no timeout | `tests/helpers/rendered-surface.mjs` leaves one Chrome profile folder per scenario in the system temp dir (803 folders, 4.2 GB, deleted by hand on 2026-11-01 with Gurnoor's OK; they come back a few per run) and has no limit on page scripts, so a script waiting for a missing element hangs `npm test` (happened at the merge). `tests/rendered-surface-cleanup.test.mjs` is a concurrency flake for the same reason. | Fix as a small task when a hang or disk space bites again; a per-scenario timeout plus cleanup of the temp folder. | `docs/baseline.md` Notes, `DECISIONS.md` 2026-10-17 and 2026-11-01 |
+| Wizard cards without 3D icons | The six avoid-rules and the LinkedIn "coming soon" channel card are plain white cards; every other answer has the designers' icon. | If the designers draw them, or if Gurnoor wants placeholders. | `DECISIONS.md` 2026-11-02 |
 | LinkedIn not configured on dev | The five `LINKEDIN_*` vars (`.env.example`) are unset; the Channels card says "not configured", nothing publishes. | When LinkedIn is to be tested; `docs/linkedin-personal-publishing.md`. | `handover/changes-log.md` 2026-11-01 |
 | Worker schedules not re-run on dev | `main` rewrote `supabase/ops/schedule-workers.sql`. | Before relying on scheduled publishing on dev; before production. | `handover/changes-log.md` 2026-11-01 |
 | New branch on GitHub with migrations 0071 and 0072 | `fix/automation-mode-normalization` (3 commits) is not on `main` yet. When it lands, the next routine merge brings two more migrations to run on dev. | The next merge of `main` (Phase D habit, every 2 or 3 days). | `DECISIONS.md` 2026-11-01 |
@@ -190,4 +188,4 @@ repeat, Gurnoor running the git lines, the AI tool resolving conflicts and readi
 4. New `main` migrations: apply them to the dev project (SQL editor) and add a changes-log row.
 5. Update section 1 here and add a `docs/baseline.md` row if the counts changed.
 6. When a slice is done, open a pull request from this branch to `main` so the other developer
-   sees our work.
+   sees our work. The first one is due after Phase C's browser check (section 2, item 1).

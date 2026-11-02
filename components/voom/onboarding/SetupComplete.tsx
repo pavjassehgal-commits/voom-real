@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useVoomState } from "@/lib/voom/store";
+import { AUTOMATION_CHOICES } from "@/lib/voom/onboardingData";
 import { Icon } from "../icons";
 import { ChannelGlyph } from "../redesign/ui";
 import { VoomLogo } from "../shell/VoomLogo";
@@ -18,10 +19,15 @@ type PlanItem = { draftId: string; concept: string; channelLabel: string; dayLab
  * real plan items when there are any and otherwise says plainly that the
  * first plan is built from Marketing Plan. The reference's "Invite your team"
  * step is not shown: Voom has no team seats.
+ *
+ * Brand Kit v2 (Phase C, 2026-11-02): the answers live on the Brand page
+ * (/app/brand), so every Edit link goes there, and the automation card shows
+ * the mode's title (the wizard saves the mode value, DECISIONS 2026-10-22).
  */
 export function SetupComplete({ skipped }: { skipped: boolean }) {
   const { onboard, displayName } = useVoomState();
   const [items, setItems] = useState<PlanItem[] | null>(null);
+  const automation = AUTOMATION_CHOICES.find((choice) => choice.value === onboard.auto)?.title ?? onboard.auto;
 
   useEffect(() => {
     let active = true;
@@ -40,7 +46,7 @@ export function SetupComplete({ skipped }: { skipped: boolean }) {
     { icon: "share", label: "Channels", value: onboard.channels.join(", ") || "None chosen yet", note: "Connect each from Channels" },
     // Brand Kit v2 onboarding (2026-10-24) dropped the publishing-permission and ad-budget
     // questions (nothing reads them), so this summary has no row for either.
-    { icon: "sparkles", label: "MARA", value: onboard.auto || "Not chosen", note: "Change it any time on the Automations page" },
+    { icon: "sparkles", label: "MARA", value: automation || "Not chosen", note: "Change it any time on the Automations page" },
     { icon: "comment", label: "Brand voice", value: join(onboard.tone) || "Not chosen", note: "Shapes every caption" },
     { icon: "contacts", label: "Audience", value: onboard.customer.slice(0, 2).join(", ") || "Not chosen", note: onboard.goal ? `Goal: ${onboard.goal.toLowerCase()}` : "No goal chosen" },
     { icon: "folder", label: "Business", value: onboard.name.trim() || "Name not set", note: join([onboard.industry, onboard.site.trim()]) || "No category chosen" },
@@ -64,7 +70,7 @@ export function SetupComplete({ skipped }: { skipped: boolean }) {
             <span className="voom-create-btn mx-auto grid h-14 w-14 place-items-center rounded-[16px] text-white shadow-[0_14px_30px_-14px_rgba(134,69,250,.9)]"><Icon name="check" size={26} /></span>
             <h1 className="mt-5 text-[clamp(1.75rem,3.4vw,2.35rem)] font-bold tracking-[-0.04em] text-text">Your workspace is ready{name ? `, ${name}` : ""}</h1>
             <p className="mx-auto mt-2 max-w-[520px] text-[15px] leading-relaxed text-text-2">
-              {skipped ? "You skipped the questions — tell MARA about your brand any time in Settings." : "MARA has everything it needs to plan your first week. Here’s what you told us — you can change any of it in Settings."}
+              {skipped ? "You skipped the questions — tell MARA about your brand any time on your Brand page." : "MARA has everything it needs to plan your first week. Here’s what you told us — you can change any of it on your Brand page."}
             </p>
           </div>
 
@@ -77,7 +83,7 @@ export function SetupComplete({ skipped }: { skipped: boolean }) {
                       <span className="grid h-7 w-7 place-items-center rounded-[8px] bg-[var(--brand-soft)] text-[var(--brand-ink)]"><Icon name={card.icon} size={14} /></span>
                       {card.label}
                     </span>
-                    <Link href="/app/settings" className="text-[12px] font-semibold text-[var(--brand)] hover:underline" aria-label={`Edit ${card.label} in Settings`}>Edit</Link>
+                    <Link href="/app/brand" className="text-[12px] font-semibold text-[var(--brand)] hover:underline" aria-label={`Edit ${card.label} on the Brand page`}>Edit</Link>
                   </div>
                   <p className="mt-3 line-clamp-2 text-[14px] font-semibold leading-snug text-text">{card.value}</p>
                   <p className="mt-1 line-clamp-2 text-[12px] text-text-2">{card.note}</p>

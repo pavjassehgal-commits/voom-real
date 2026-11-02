@@ -31,11 +31,23 @@
  * at a homepage screenshot). "Send to MARA" waits for it briefly and sends
  * the description and the site's text together; the site's colours become
  * the website palette, used only when nothing else is.
+ *
+ * Look (Phase C of handover/merge-plan.md, 2026-11-02): the redesign's setup
+ * layout from `main` (Figma "Setup", Batch 4A): sticky header with the step
+ * list, a sticky intro column with the designers' artwork on large screens,
+ * white answer cards with their 3D icons (components/voom/onboarding/onboardingIcons.tsx),
+ * a light footer that clears the notifications, and main's `SetupComplete`
+ * summary at the end. A finished account opening setup directly is sent on
+ * by the wizard itself (`completedOnServer`), decided once at mount, so the
+ * save's own revalidated render never tears the summary down.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useVoomActions, useVoomState } from "@/lib/voom/store";
 import { BrandAssetsEditor } from "@/components/voom/brand/BrandAssetsEditor";
 import { detectIndustry } from "@/lib/voom/demoData";
+import { cx } from "@/lib/voom/cx";
 import { brandLearnedIsEmpty } from "@/lib/brand/extract";
 import { extractBrandDescription, type ExtractBrandResult } from "@/lib/brand/extract-actions";
 import { checkWebsiteUrl, WEBSITE_READ_MESSAGES } from "@/lib/brand/website";
@@ -56,12 +68,14 @@ import {
 } from "@/lib/voom/onboardingData";
 import { AVOID_RULES, type BrandSectionId, type BrandSectionValues } from "@/lib/brand/sections";
 import { canUseAutomationMode, getPlanConfig } from "@/lib/billing/plans";
-import { beginHapticGesture, haptic } from "@/lib/voom/haptics";
+import { beginHapticGesture, haptic, type HapticGesture } from "@/lib/voom/haptics";
 import { BrandHub } from "@/components/voom/brand/BrandHub";
 import { Icon } from "../icons";
-import { Btn, Chip, Input, Orb, Tag, Textarea } from "../ui/primitives";
-import { AnalyzingScreen } from "./AnalyzingScreen";
-import Logo from "@/app/components/Logo";
+import { ChannelGlyph } from "../redesign/ui";
+import { VoomLogo } from "../shell/VoomLogo";
+import { Btn, Orb, Tag } from "../ui/primitives";
+import { SetupComplete } from "./SetupComplete";
+import { OnboardingIcon } from "./onboardingIcons";
 
 export const LAST_STEP = OB_STEPS.length - 1;
 
@@ -91,11 +105,39 @@ export function stepBlocker(step: number, onboard: { displayName: string; desc: 
   return null;
 }
 
-export function OnboardingWizard({ visionEnabled = false }: { visionEnabled?: boolean } = {}) {
+/**
+ * Each screen's title, intro line and artwork (the intro column). The artwork
+ * is the reference's five panels (public/redesign/setup-art-*.webp), shared
+ * between screens of the same kind.
+ */
+const INTRO: { title: string; text: string; art: string }[] = [
+  { title: "What should MARA call you?", text: "This is how she'll greet you — nothing else changes because of it.", art: "mara" },
+  { title: "Give MARA your brand", text: "Anything here saves you typing later. All optional: skip it and add images on your Brand page any time.", art: "voice" },
+  { title: "Describe your brand in your own words.", text: "Write it however you'd explain it to a customer. MARA reads this before she asks anything else.", art: "voice" },
+  { title: "The basics", text: "So MARA writes as you, not about you.", art: "business" },
+  { title: "Who you serve, and why", text: "MARA uses these to choose the angle for every post.", art: "audience" },
+  { title: "How you sound", text: "These shape the words MARA chooses. Skip it and she keeps a neutral tone until you tell her otherwise.", art: "voice" },
+  { title: "What you DON'T want", text: "Hard rules MARA will never break. Tap what applies; add anything specific below.", art: "voice" },
+  { title: "How often should MARA post?", text: "This sets how many slots MARA plans each week. You can change it any time.", art: "budget" },
+  { title: "How much should MARA do?", text: "This decides what MARA does on her own. It is the one setting that changes what runs on a schedule.", art: "mara" },
+  { title: "Your Brand Brief", text: "This is what MARA will work from, and your Brand page after setup. Edit anything that's off; add what you offer and the facts she may state.", art: "business" },
+  { title: "Your channels", text: "Pick where MARA should plan content. Connect the accounts after setup; nothing is published anywhere until you approve it.", art: "voice" },
+];
+
+export function OnboardingWizard({ visionEnabled = false, completedOnServer = false }: { visionEnabled?: boolean; completedOnServer?: boolean } = {}) {
   const { onboard, onboardStep, igConnected, onboardSaving, onboardError } = useVoomState();
   const { setOnboardField, setOnboardStep, applyLearned, markLearnedFailed, applyWebsiteRead, applyWebsiteLook, applyWebsiteDescriptionDraft, finishOnboarding, toast, goTo } = useVoomActions();
-  const [analyzing, setAnalyzing] = useState(false);
+  const [complete, setComplete] = useState<null | { skipped: boolean }>(null);
   const [reading, setReading] = useState(false);
+  const router = useRouter();
+  // What the server said when this wizard FIRST mounted. A finished account
+  // opening setup directly is sent on to the app. Later re-renders — such as
+  // the one the save action's revalidation triggers once onboarding_completed
+  // turns true — must not redirect, or the completion summary never shows.
+  const [finishedBeforeMount] = useState(completedOnServer);
+  useEffect(() => {
+    if (finishedBeforeMount) router.replace("/app");
+  }, [finishedBeforeMount, router]);
   // The newest answers, for code that runs after an await.
   const latest = useRef(onboard);
   useEffect(() => { latest.current = onboard; });
@@ -237,18 +279,21 @@ export function OnboardingWizard({ visionEnabled = false }: { visionEnabled?: bo
       return;
     }
     if (st === STEP_ASSETS) {
+      haptic("light", gesture);
       leaveAssets();
       return;
     }
     if (st === STEP_DESCRIBE) {
+      haptic("light", gesture);
       await sendToMara();
       return;
     }
     if (st < LAST_STEP) {
+      haptic("light", gesture);
       setOnboardStep(st + 1);
       return;
     }
-    await finish();
+    await finish(false, gesture);
   }
 
   function back() {
@@ -270,76 +315,232 @@ export function OnboardingWizard({ visionEnabled = false }: { visionEnabled?: bo
       setOnboardStep(st + 1);
       return;
     }
-    await finish();
+    await finish(false);
   }
 
-  async function finish() {
-    const ok = await finishOnboarding(false);
-    if (ok) setAnalyzing(true);
+  // There is no global Skip, so `skipped` is always false here; the parameter keeps the
+  // save path's signature. Default gesture: evaluated synchronously when Skip's click calls us.
+  async function finish(skipped: boolean, gesture: HapticGesture = beginHapticGesture()) {
+    const ok = await finishOnboarding(skipped);
+    haptic(ok ? "success" : "error", gesture);
+    if (ok) setComplete({ skipped });
   }
 
-  if (analyzing) {
-    return <AnalyzingScreen onDone={() => goTo("dash")} />;
-  }
+  if (complete) return <SetupComplete skipped={complete.skipped} />;
+  if (finishedBeforeMount) return null;
 
   const busy = onboardSaving || reading;
   const continueLabel = onboardSaving ? "Saving…" : reading ? "Reading…" : st === LAST_STEP ? "Finish setup" : st === STEP_DESCRIBE ? "Send to MARA" : st === STEP_BRIEF ? "Looks right" : "Continue";
+  const intro = INTRO[st] ?? INTRO[0];
 
   return (
-    <div className="flex min-h-dvh flex-col bg-bg">
-      <div className="flex items-center justify-between border-b border-line bg-surface px-6 py-5">
-        <Logo />
-        <div className="hidden items-center gap-1.5 md:flex">
-          {OB_STEPS.map((s, i) => (
-            <div key={s} className={`h-[5px] rounded-full transition-all ${i <= st ? "voom-grad w-10" : "w-7 bg-surface-3"}`} title={s} />
-          ))}
+    <div className="voom-public flex min-h-dvh flex-col">
+      <header className="sticky top-0 z-30 border-b border-[var(--line)] bg-white/90 backdrop-blur-[12px]">
+        <div className="flex h-[60px] items-center justify-between gap-3 px-4 sm:px-6 lg:h-[72px]">
+          <VoomLogo size={28} />
+          <ol className="hidden items-start gap-2 xl:flex" aria-label="Setup progress">
+            {OB_STEPS.map((label, index) => (
+              <li key={label} className="w-[74px] text-center" aria-current={index === st ? "step" : undefined} title={label}>
+                <span className={cx("block h-[4px] rounded-full", index < st ? "bg-[#9a7cf6]" : index === st ? "bg-[linear-gradient(90deg,#8645fa,#b14cf0)]" : "bg-[var(--surface-3)]")} />
+                <span className={cx("mt-1.5 block truncate text-[11px]", index === st ? "font-semibold text-[var(--brand)]" : "text-text-3")}>
+                  {index < st && <Icon name="check" size={10} className="mr-0.5 inline align-[-1px]" />}
+                  {index + 1}. {label}
+                </span>
+              </li>
+            ))}
+          </ol>
+          <span className="text-[13px] text-text-2">
+            Step {st + 1} of {OB_STEPS.length}
+          </span>
         </div>
-        <span className="text-[13px] text-text-3">
-          Step {st + 1} of {OB_STEPS.length}
-        </span>
-      </div>
+        <div className="h-[3px] bg-[var(--surface-3)] xl:hidden" aria-hidden="true">
+          <div className="h-full bg-[linear-gradient(90deg,#8645fa,#b14cf0)] transition-all" style={{ width: `${((st + 1) / OB_STEPS.length) * 100}%` }} />
+        </div>
+      </header>
 
-      <div className="flex flex-1 items-start justify-center px-5 py-9">
-        <div className="w-full max-w-[640px]">
-          {onboardError && (
-            <div role="alert" className="mb-5 rounded-xl border border-red-900/40 bg-red-950/30 px-3.5 py-2.5 text-sm text-red-300">
-              {onboardError}
-            </div>
-          )}
-          {st === 0 && <StepName />}
-          {st === 1 && <StepAssets visionEnabled={visionEnabled} onRead={() => { void startWebsiteRead(true); }} onRetryLook={() => startWebsiteLook(latest.current.website.url)} />}
-          {st === 2 && <StepDescribe words={words} reading={reading} onReadAgain={() => { void startWebsiteRead(true); }} onBackToWebsite={() => setOnboardStep(STEP_ASSETS)} />}
-          {st === 3 && <StepBasics />}
-          {st === 4 && <StepAudienceGoal />}
-          {st === 5 && <StepVoice />}
-          {st === 6 && <StepAvoid />}
-          {st === 7 && <StepPace />}
-          {st === 8 && <StepAutomation />}
-          {st === 9 && <StepBrief />}
-          {st === 10 && <StepChannels igConnected={igConnected} />}
+      <main className="voom-setup-wash relative flex-1">
+        <div className="mx-auto grid w-full max-w-[1320px] gap-5 px-4 pb-8 pt-5 sm:gap-8 sm:px-6 sm:pt-6 lg:grid-cols-[minmax(240px,300px)_minmax(0,1fr)] lg:gap-12 lg:px-10 lg:pb-6 lg:pt-10 xl:gap-14">
+          <StepIntro index={st} title={intro.title} text={intro.text} art={intro.art} />
+          <div className="min-w-0 pb-4">
+            {onboardError && (
+              <div role="alert" className="mb-5 rounded-[12px] border border-[var(--red)]/25 bg-[var(--red-soft)] px-4 py-3 text-[13.5px] text-[var(--red)]">
+                {onboardError}
+              </div>
+            )}
+            {st === 0 && <StepName />}
+            {st === 1 && <StepAssets visionEnabled={visionEnabled} onRead={() => { void startWebsiteRead(true); }} onRetryLook={() => startWebsiteLook(latest.current.website.url)} />}
+            {st === 2 && <StepDescribe words={words} reading={reading} onReadAgain={() => { void startWebsiteRead(true); }} onBackToWebsite={() => setOnboardStep(STEP_ASSETS)} />}
+            {st === 3 && <StepBasics />}
+            {st === 4 && <StepAudienceGoal />}
+            {st === 5 && <StepVoice />}
+            {st === 6 && <StepAvoid />}
+            {st === 7 && <StepPace />}
+            {st === 8 && <StepAutomation />}
+            {st === 9 && <StepBrief />}
+            {st === 10 && <StepChannels igConnected={igConnected} />}
+          </div>
         </div>
-      </div>
+      </main>
 
       {/* `data-toast-clearance` (main's toast system, merged 2026-11-01): notifications
-          stack above this bar instead of covering Back, Skip and Continue. */}
-      <footer data-toast-clearance className="sticky bottom-0 flex justify-between gap-3 border-t border-line bg-surface px-6 py-4">
-        <Btn variant="ghost" onClick={back} disabled={onboardSaving || reading}>
-          <Icon name="back" size={16} /> Back
-        </Btn>
-        <div className="flex items-center gap-2">
-          {SKIPPABLE_STEPS.includes(st) ? (
-            <Btn variant="ghost" onClick={() => void skip()} disabled={busy}>
-              Skip this step
-            </Btn>
-          ) : null}
-          <Btn variant="primary" onClick={() => void next()} disabled={busy}>
-            {continueLabel} {!busy && <Icon name="arrow" size={16} />}
-          </Btn>
+          stack above this bar instead of covering Back, Skip and Continue. Continue
+          stays the footer's last button (tests/motion-system.test.mjs clicks it). */}
+      <footer data-toast-clearance className="sticky bottom-0 z-30 border-t border-[var(--line)] bg-white/95 backdrop-blur-[12px]">
+        <div className="flex items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
+          <button type="button" onClick={back} disabled={onboardSaving || reading} className={QUIET_BTN}>
+            <Icon name="back" size={16} /> Back
+          </button>
+          <div className="flex items-center gap-2">
+            {SKIPPABLE_STEPS.includes(st) ? (
+              <button type="button" onClick={() => void skip()} disabled={busy} className={QUIET_BTN}>
+                Skip this step
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void next()}
+              disabled={busy}
+              className="voom-create-btn inline-flex h-11 items-center gap-2 rounded-full px-6 text-[14px] font-semibold text-white shadow-[0_10px_22px_-14px_rgba(134,69,250,.9)] transition hover:brightness-[1.05] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)] focus-visible:ring-offset-1 disabled:cursor-not-allowed"
+            >
+              {continueLabel} {!busy && <Icon name="arrow" size={16} />}
+            </button>
+          </div>
         </div>
       </footer>
     </div>
   );
 }
+
+/* ── Shared looks (main's setup design) ─────────────────────────────────── */
+
+const QUIET_BTN = "inline-flex h-11 items-center gap-2 rounded-[12px] border border-[var(--line)] bg-white px-4 text-[14px] font-semibold text-text transition hover:bg-[var(--surface-2)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)] focus-visible:ring-offset-1 disabled:cursor-not-allowed";
+const FIELD = "h-12 w-full rounded-[12px] border border-[var(--line)] bg-white px-4 text-[14.5px] text-text outline-none transition placeholder:text-text-3 focus:border-[var(--brand-line)] focus:ring-4 focus:ring-[var(--brand-soft)]";
+const AREA = "w-full resize-y rounded-[14px] border border-[var(--line)] bg-white px-4 py-3.5 text-[14.5px] leading-[1.65] text-text outline-none transition placeholder:text-text-3 focus:border-[var(--brand-line)] focus:ring-4 focus:ring-[var(--brand-soft)] disabled:opacity-60";
+/** MARA's own notes: the panel with her orb. */
+const MARA_PANEL = "rounded-[16px] border border-[#cfc4ff] bg-white/85 p-4";
+/** A plain note (what happened, what to do). */
+const NOTE = "rounded-[12px] border border-[var(--line)] bg-white/80 px-4 py-3 text-[13px] leading-relaxed text-text-2";
+/** Something went wrong but the owner can carry on. */
+const WARN = "rounded-[12px] border border-[var(--amber)]/30 bg-[var(--amber-soft)] px-4 py-3 text-[13px] leading-relaxed text-text-2";
+
+/** The reference gives each answer icon its own pastel tile. */
+const TINTS = ["bg-[#e8f3ff]", "bg-[#fff4e0]", "bg-[#ffece9]", "bg-[#e9f8ee]", "bg-[#f1ecff]", "bg-[#fff0f6]"];
+const tint = (index: number) => TINTS[index % TINTS.length];
+
+function StepIntro({ index, title, text, art }: { index: number; title: string; text: string; art: string }) {
+  return (
+    // On large screens this column is sticky and exactly as tall as the space
+    // between the sticky header and the sticky footer: 73px header + 40px top
+    // padding above, 24px bottom padding + 73px footer below (210px in all),
+    // so it ends ~17px above the footer and adds no scroll of its own. The artwork
+    // takes only what is left after the text, so on short screens it shrinks
+    // — down to nothing — instead of sliding under the footer.
+    <div className="min-w-0 lg:sticky lg:top-[112px] lg:flex lg:h-[calc(100dvh-210px)] lg:min-h-[220px] lg:flex-col lg:self-start">
+      <span className="inline-flex w-fit shrink-0 rounded-full bg-[#ece8ff] px-3 py-1 text-[12px] font-semibold text-[#4b38c9]">Step {index + 1}</span>
+      <h1 className="mt-3 shrink-0 text-[clamp(1.6rem,6vw,1.85rem)] font-bold leading-[1.1] tracking-[-0.035em] text-text lg:mt-4 lg:text-[clamp(1.9rem,2.6vw,2.35rem)]">{title}</h1>
+      <p className="mt-2 max-w-[520px] shrink-0 text-[14px] leading-[1.6] text-text-2 lg:mt-3 lg:max-w-[300px] lg:text-[14.5px]">{text}</p>
+      {/* Decorative: native 640×530 crop, never wider than 360px (≈1.8× density) nor taller than 300px. */}
+      <div className="relative mt-6 hidden min-h-0 w-full max-w-[360px] flex-1 lg:block lg:max-h-[300px]">
+        <Image
+          src={`/redesign/setup-art-${art}.webp`}
+          alt=""
+          width={640}
+          height={530}
+          unoptimized
+          priority
+          className="absolute inset-0 h-full w-full select-none object-contain object-left-top"
+        />
+      </div>
+    </div>
+  );
+}
+
+function QBlock({ title, help, children }: { title: ReactNode; help?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="mb-7 last:mb-0">
+      <h2 className="text-[15px] font-semibold text-text">{title}</h2>
+      {help && <p className="mt-1 text-[13px] text-text-2">{help}</p>}
+      <div className="mt-3">{children}</div>
+    </section>
+  );
+}
+
+/** A selectable answer card: icon tile, label, optional hint, and a check or radio mark. */
+function OptionCard({ active, onClick, icon, label, hint, extra, mark = "check", compact, tint, disabled, title }: {
+  active: boolean; onClick: () => void; icon?: ReactNode; label: string; hint?: string; extra?: ReactNode;
+  mark?: "check" | "radio" | "box"; compact?: boolean; tint?: string; disabled?: boolean; title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      disabled={disabled}
+      title={title}
+      data-haptic="light"
+      className={cx(
+        "relative flex w-full min-w-0 items-center gap-3 rounded-[14px] border bg-white text-left transition hover:border-[var(--brand-line)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)] disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:border-[var(--line)]",
+        compact ? "px-3.5 py-3 sm:py-3.5" : "px-4 py-3 sm:py-4",
+        active ? "border-[#b9a8ff] bg-[#f5f2ff] shadow-[0_0_0_1px_#b9a8ff]" : "border-[var(--line)]",
+      )}
+    >
+      {icon && <span className={cx("grid h-10 w-10 shrink-0 place-items-center rounded-[12px] sm:h-11 sm:w-11", tint ?? "bg-[var(--surface-2)]")} aria-hidden="true">{icon}</span>}
+      <span className="min-w-0 flex-1 pr-6">
+        <span className="block text-[14px] font-semibold leading-snug text-text">{label}</span>
+        {hint && <span className="mt-0.5 block text-[12.5px] leading-snug text-text-2">{hint}</span>}
+        {extra && <span className="mt-2 block">{extra}</span>}
+      </span>
+      <Mark kind={mark} active={active} />
+    </button>
+  );
+}
+
+function Mark({ kind, active }: { kind: "check" | "radio" | "box"; active: boolean }) {
+  const base = "absolute right-3 top-3 grid h-[18px] w-[18px] place-items-center";
+  if (kind === "radio") {
+    return <span className={cx(base, "rounded-full border-[1.5px]", active ? "border-[var(--brand)]" : "border-[var(--line-2)]")} aria-hidden="true">{active && <span className="h-2 w-2 rounded-full bg-[var(--brand)]" />}</span>;
+  }
+  return (
+    <span className={cx(base, kind === "box" ? "rounded-[5px]" : "rounded-full", "border-[1.5px]", active ? "border-[var(--brand)] bg-[var(--brand)] text-white" : "border-[var(--line-2)]")} aria-hidden="true">
+      {active && <Icon name="check" size={11} />}
+    </span>
+  );
+}
+
+/** Centred radio tile with the icon on top (the reference's stacked layout, used for the pace). */
+function TileChoice({ label, hint, active, onClick }: { label: string; hint?: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      data-haptic="light"
+      className={cx(
+        "relative flex min-w-0 flex-col items-center rounded-[14px] border bg-white px-2.5 pb-3.5 pt-5 text-center transition sm:px-3 sm:pb-4 hover:border-[var(--brand-line)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)]",
+        active ? "border-[#b9a8ff] bg-[#f5f2ff] shadow-[0_0_0_1px_#b9a8ff]" : "border-[var(--line)]",
+      )}
+    >
+      <span className="absolute left-3 top-3"><Mark kind="radio" active={active} /></span>
+      <OnboardingIcon label={label} size={30} />
+      <span className="mt-2.5 text-[13.5px] font-semibold leading-snug text-text sm:text-[14px]">{label}</span>
+      {hint && <span className="mt-1 text-[12px] leading-snug text-text-2">{hint}</span>}
+    </button>
+  );
+}
+
+/** MARA speaking: her orb beside a short paragraph. */
+function MaraNote({ children, role }: { children: ReactNode; role?: "status" }) {
+  return (
+    <div role={role} className={MARA_PANEL}>
+      <div className="flex items-start gap-2.5">
+        <Orb size="sm" className="mt-0.5" />
+        <p className="text-[13.5px] leading-[1.6] text-text">{children}</p>
+      </div>
+    </div>
+  );
+}
+
+/* ── Screens ────────────────────────────────────────────────────────────── */
 
 /** The website read's state under the field on screen 2 (slice 7). */
 function WebsiteReadStatus({ website, draftReady, onRetry, onRetryLook }: { website: OnboardingWebsiteRead; draftReady: boolean; onRetry: () => void; onRetryLook: () => void }) {
@@ -351,14 +552,14 @@ function WebsiteReadStatus({ website, draftReady, onRetry, onRetryLook }: { webs
         <span>Read {pages} page{pages === 1 ? "" : "s"}.{draftReady ? " Drafted your description for the next screen." : ""}</span>
         {website.lookStatus === "ready" ? <span>Took one look at the homepage: its colours are under your logo.</span> : null}
         {website.lookStatus === "" ? <span>Looking at the homepage for its colours…</span> : null}
-        {website.lookStatus === "failed" ? <><span className="text-amber-300">Couldn&apos;t take a look at the homepage for its colours.</span><Btn variant="ghost" size="sm" onClick={onRetryLook}>Try the look again</Btn></> : null}
+        {website.lookStatus === "failed" ? <><span className="text-[var(--amber)]">Couldn&apos;t take a look at the homepage for its colours.</span><Btn variant="ghost" size="sm" onClick={onRetryLook}>Try the look again</Btn></> : null}
         {website.lookStatus === "off" ? <span>Image reading is off, so no colours from the site.</span> : null}
       </span>
     );
   }
   if (website.status === "failed") {
     return (
-      <span role="alert" className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-amber-300">
+      <span role="alert" className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-[var(--amber)]">
         {website.reason}
         <Btn variant="ghost" size="sm" onClick={onRetry}>Try again</Btn>
       </span>
@@ -367,58 +568,47 @@ function WebsiteReadStatus({ website, draftReady, onRetry, onRetryLook }: { webs
   return null;
 }
 
-function Title({ children, sub }: { children: string; sub: string }) {
-  return (
-    <>
-      <h1 className="font-display text-2xl font-bold tracking-tight sm:text-[26px]">{children}</h1>
-      <p className="my-2 text-[15px] text-text-2">{sub}</p>
-    </>
-  );
-}
-
 function StepName() {
   const { onboard } = useVoomState();
   const { setOnboardField } = useVoomActions();
   return (
-    <div>
-      <Title sub="This is how she'll greet you — nothing else changes because of it.">What should MARA call you?</Title>
-      <label className="mt-4 block">
-        <span className="mb-1.5 block text-[12.5px] font-semibold text-text-2">Your name</span>
-        <input
-          className="h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[15.5px]"
-          placeholder="e.g. Alex"
-          autoFocus
-          value={onboard.displayName}
-          onChange={(e) => setOnboardField("displayName", e.target.value)}
-        />
-      </label>
-    </div>
+    <QBlock title="Your name" help="MARA uses it in greetings only.">
+      <input
+        className={cx(FIELD, "max-w-[460px]")}
+        placeholder="e.g. Alex"
+        autoFocus
+        aria-label="Your name"
+        value={onboard.displayName}
+        onChange={(e) => setOnboardField("displayName", e.target.value)}
+      />
+    </QBlock>
   );
 }
 
-function QBlock({ title, help, children }: { title: string; help?: string; children: React.ReactNode }) {
-  return (
-    <div className="mb-6.5">
-      <label className="mb-1 block text-[13.5px] font-semibold">{title}</label>
-      {help ? <p className="mb-2.5 text-[12.5px] text-text-3">{help}</p> : <div className="h-2" />}
-      {children}
-    </div>
-  );
-}
+/** The reference's "Need inspiration?" prompts under the description box, each with its icon. */
+const INSPIRATION = [
+  "What you sell",
+  "Your unique value",
+  "Your target customers",
+  "Your brand values",
+  "Your story or inspiration",
+  "What makes you different",
+  "Online or offline presence",
+  "Anything else",
+];
 
 function StepDescribe({ words, reading, onReadAgain, onBackToWebsite }: { words: number; reading: boolean; onReadAgain: () => void; onBackToWebsite: () => void }) {
   const { onboard } = useVoomState();
   const { setOnboardField } = useVoomActions();
   const site = onboard.website;
   return (
-    <div>
-      <Title sub="Write it however you'd explain it to a customer. MARA reads this before she asks anything else.">Describe your brand in your own words.</Title>
+    <div className="max-w-[680px]">
       {site.status === "reading" ? (
-        <p role="status" className="mb-2 rounded-xl border border-brand bg-[var(--brand-soft)] px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">
+        <p role="status" className={cx(MARA_PANEL, "mb-3 text-[13px] leading-relaxed text-text-2")}>
           <b className="text-text">MARA is reading your website…</b> the draft will appear here while the box is still empty. Write your own meanwhile if you prefer.
         </p>
       ) : site.status === "failed" ? (
-        <div role="alert" className="mb-2 rounded-xl border border-amber/35 bg-amber/10 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">
+        <div role="alert" className={cx(WARN, "mb-3")}>
           <b className="text-text">I couldn&apos;t read your website.</b> {site.reason}
           <span className="mt-2 flex flex-wrap gap-2">
             <Btn variant="outline" size="sm" onClick={onReadAgain}>Try reading again</Btn>
@@ -426,38 +616,44 @@ function StepDescribe({ words, reading, onReadAgain, onBackToWebsite }: { words:
           </span>
         </div>
       ) : onboard.descFromWebsite ? (
-        <p className="mb-2 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">
+        <p className={cx(NOTE, "mb-3")}>
           <b className="text-text">From your website.</b> Edit it or write your own.
         </p>
       ) : site.status === "ready" && !onboard.desc.trim() ? (
-        <p className="mb-2 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">
+        <p className={cx(NOTE, "mb-3")}>
           <b className="text-text">Your website was read,</b> but MARA could not write a draft from it. Write a few lines yourself.
         </p>
       ) : null}
-      <Textarea
-        rows={9}
-        className="text-[15.5px] leading-[1.65]"
+      <textarea
+        rows={8}
+        aria-label="Describe your brand"
+        className={AREA}
         placeholder="For example: We're a small café near the marina. We roast our own beans, most of our customers are regulars who work nearby, and weekends are our busiest time. We want more people to know we do brunch."
         value={onboard.desc}
         disabled={reading}
         onChange={(e) => setOnboardField("desc", e.target.value)}
       />
-      <div className="mt-2.5 flex items-center justify-between">
-        <span className="text-xs text-text-3">
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <span className="text-[12.5px] text-text-3">
           <span>{words}</span> words — a few sentences is plenty
         </span>
-        <span className="text-xs text-text-3">MARA reads it once and fills in what she can on the next screens.</span>
+        <span className="text-[12.5px] text-text-3">MARA reads it once and fills in what she can on the next screens.</span>
       </div>
       {reading ? (
-        <div role="status" className="mt-4 rounded-2xl border border-brand bg-[var(--brand-soft)] p-4">
-          <div className="flex items-start gap-2.5">
-            <Orb size="sm" className="mt-0.5" />
-            <p className="text-[13.5px] leading-[1.6]">
-              <b>MARA is reading your description…</b> a few seconds at most. She fills in what she can and marks it as her guess for you to check.
-            </p>
-          </div>
+        <div className="mt-4">
+          <MaraNote role="status">
+            <b>MARA is reading your description…</b> a few seconds at most. She fills in what she can and marks it as her guess for you to check.
+          </MaraNote>
         </div>
       ) : null}
+      <h3 className="mt-7 text-[14.5px] font-semibold text-text">Need inspiration? You can mention:</h3>
+      <ul className="mt-3 flex flex-wrap gap-2">
+        {INSPIRATION.map((label, index) => (
+          <li key={label} className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-white px-3.5 py-2 text-[13px] text-text">
+            <span className={cx("grid h-7 w-7 shrink-0 place-items-center rounded-full", tint(index))} aria-hidden="true"><OnboardingIcon label={label} size={18} /></span>{label}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -466,66 +662,6 @@ function StepDescribe({ words, reading, onReadAgain, onBackToWebsite }: { words:
 const GUESS_HELP = "MARA's guess from your description is highlighted. Change it if she got it wrong.";
 const GUESS_HELP_WEBSITE = "MARA's guess from your description and website is highlighted. Change it if she got it wrong.";
 const guessHelp = (onboard: { learnedWith: string }) => (onboard.learnedWith === "description+website" ? GUESS_HELP_WEBSITE : GUESS_HELP);
-
-function AudienceChips({ selected, onToggle }: { selected: string[]; onToggle: (value: string) => void }) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      {Q_CUSTOMER.map((c) => (
-        <Chip key={c} active={selected.includes(c)} onClick={() => onToggle(c)}>
-          {c}
-        </Chip>
-      ))}
-    </div>
-  );
-}
-
-function GoalPicks({ value, onPick }: { value: string; onPick: (goal: string) => void }) {
-  return (
-    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-      {Q_GOAL.map(([emoji, name]) => (
-        <button
-          key={name}
-          onClick={() => onPick(name)}
-          className={`rounded-[14px] border-[1.5px] p-3.5 text-left transition hover:-translate-y-0.5 ${value === name ? "border-brand bg-[var(--brand-soft)]" : "border-line"}`}
-        >
-          <span className="mb-1.5 block text-[22px]">{emoji}</span>
-          <b className="text-[13.5px]">{name}</b>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function ToneChips({ selected, onToggle }: { selected: string[]; onToggle: (value: string) => void }) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      {OB_TONE.map((t) => (
-        <Chip key={t} active={selected.includes(t)} onClick={() => onToggle(t)}>
-          {t}
-        </Chip>
-      ))}
-    </div>
-  );
-}
-
-function IndustryPicks() {
-  const { onboard } = useVoomState();
-  const { setOnboardField } = useVoomActions();
-  return (
-    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-      {Q_INDUSTRY.map(([emoji, name]) => (
-        <button
-          key={name}
-          onClick={() => setOnboardField("industry", name)}
-          className={`rounded-[14px] border-[1.5px] p-3.5 text-left transition hover:-translate-y-0.5 ${onboard.industry === name ? "border-brand bg-[var(--brand-soft)]" : "border-line"}`}
-        >
-          <span className="mb-1.5 block text-[22px]">{emoji}</span>
-          <b className="text-[13.5px]">{name}</b>
-        </button>
-      ))}
-    </div>
-  );
-}
 
 /**
  * "Give MARA your brand" (slice 5). Everything optional. The website keeps its
@@ -542,40 +678,42 @@ function StepAssets({ visionEnabled, onRead, onRetryLook }: { visionEnabled: boo
   const readThis = site.status === "ready" && check?.ok === true && site.url === check.url.href;
   return (
     <div>
-      <Title sub="Anything here saves you typing later. All optional: skip it and add images on your Brand page any time.">Give MARA your brand</Title>
-      <label className="mb-5 mt-4 block">
-        <span className="mb-1.5 block text-[12.5px] font-semibold text-text-2">
-          Website <span className="text-text-3">(optional)</span>
-        </span>
+      <QBlock title={<>Website <span className="text-text-3">(optional)</span></>}>
         <div className="flex flex-wrap gap-2">
-          <input
-            className="h-[46px] min-w-[220px] flex-1 rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px]"
-            placeholder="https://yourbusiness.ae"
-            inputMode="url"
-            value={onboard.site}
-            onChange={(e) => setOnboardField("site", e.target.value)}
-          />
-          <Btn variant="outline" disabled={!readable || readingThis} onClick={onRead}>
+          <span className="relative min-w-[220px] flex-1">
+            <Icon name="link" size={16} className="pointer-events-none absolute left-4 top-4 text-text-3" />
+            <input
+              className={cx(FIELD, "pl-11")}
+              placeholder="https://yourbusiness.ae"
+              inputMode="url"
+              aria-label="Website"
+              value={onboard.site}
+              onChange={(e) => setOnboardField("site", e.target.value)}
+            />
+          </span>
+          <button type="button" className={cx(QUIET_BTN, "h-12")} disabled={!readable || readingThis} onClick={onRead}>
             {readingThis ? "Reading…" : readThis ? "Read again" : "Read my website"}
-          </Btn>
+          </button>
         </div>
-        <span className="mt-1.5 block text-xs text-text-3">
+        <span className="mt-2 block text-[12.5px] leading-relaxed text-text-3">
           MARA reads your public pages once, to understand what the business is and how it looks. Give it when you first set up, or again when the business or the site has changed. It is also the website link in your marketing emails (Settings → Email identity). Not read yet when you press Continue? She reads it in the background.
         </span>
         <WebsiteReadStatus website={site} draftReady={onboard.descFromWebsite} onRetry={onRead} onRetryLook={onRetryLook} />
-      </label>
-      <BrandAssetsEditor
-        assets={onboard.assets}
-        colours={onboard.colours}
-        previews={onboard.assetPreviews}
-        visionEnabled={visionEnabled}
-        onAdd={addOnboardAsset}
-        onText={setOnboardAssetText}
-        onRemove={removeOnboardAsset}
-        onColours={(colours) => setOnboardField("colours", colours)}
-      />
+      </QBlock>
+      <div className="rounded-[18px] border border-[var(--line)] bg-white p-4 sm:p-5">
+        <BrandAssetsEditor
+          assets={onboard.assets}
+          colours={onboard.colours}
+          previews={onboard.assetPreviews}
+          visionEnabled={visionEnabled}
+          onAdd={addOnboardAsset}
+          onText={setOnboardAssetText}
+          onRemove={removeOnboardAsset}
+          onColours={(colours) => setOnboardField("colours", colours)}
+        />
+      </div>
       {onboard.assets.some((asset) => asset.kind === "logo") || onboard.colours ? (
-        <p className="mt-3 text-[12px] text-text-3">
+        <p className="mt-3 text-[12.5px] text-text-3">
           Your logo and colours also go to your marketing emails, unless you already set them in Settings → Email identity.
         </p>
       ) : null}
@@ -592,38 +730,30 @@ function StepBasics() {
   );
   return (
     <div>
-      <Title sub="So MARA writes as you, not about you.">The basics</Title>
       {onboard.learnedNote === "failed" ? (
-        <p className="mb-4 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">
+        <p className={cx(NOTE, "mb-5")}>
           MARA couldn&apos;t read your description just now, so pick these yourself. Nothing else changes.
         </p>
       ) : onboard.learned ? (
-        <div className="mb-4 rounded-2xl border border-brand bg-[var(--brand-soft)] p-4">
-          <div className="flex items-start gap-2.5">
-            <Orb size="sm" className="mt-0.5" />
-            <p className="text-[13.5px] leading-[1.6]">
-              {onboard.learnedWith === "description+website"
-                ? "I read your description and your website and filled in what I could, here and on the next screens. My guesses are marked; change anything I got wrong."
-                : "I read your description and filled in what I could, here and on the next screens. My guesses are marked; change anything I got wrong."}
-              {onboard.learnedWith !== "description+website" && (onboard.website.status === "failed" || onboard.website.status === "empty") ? ` I couldn't use your website: ${onboard.website.reason.replace(/, so MARA used your description only\.$/, ".")}` : ""}
-              {onboard.learnedWith !== "description+website" && onboard.website.status === "reading" ? " Your website is still being read; it was not ready in time, so I used your description." : ""}
-            </p>
-          </div>
+        <div className="mb-5">
+          <MaraNote>
+            {onboard.learnedWith === "description+website"
+              ? "I read your description and your website and filled in what I could, here and on the next screens. My guesses are marked; change anything I got wrong."
+              : "I read your description and filled in what I could, here and on the next screens. My guesses are marked; change anything I got wrong."}
+            {onboard.learnedWith !== "description+website" && (onboard.website.status === "failed" || onboard.website.status === "empty") ? ` I couldn't use your website: ${onboard.website.reason.replace(/, so MARA used your description only\.$/, ".")}` : ""}
+            {onboard.learnedWith !== "description+website" && onboard.website.status === "reading" ? " Your website is still being read; it was not ready in time, so I used your description." : ""}
+          </MaraNote>
         </div>
       ) : null}
-      <div className="mb-4 flex flex-wrap gap-3">
-        <label className="min-w-[200px] flex-1">
-          <span className="mb-1.5 block text-[12.5px] font-semibold text-text-2">Business name</span>
-          <input
-            className="h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px]"
-            placeholder="Your business name"
-            value={onboard.name}
-            onChange={(e) => setOnboardField("name", e.target.value)}
-          />
-        </label>
-      </div>
-      <QBlock title="What kind of business is this?" help={guessed ? guessHelp(onboard) : "Pick the closest match."}>
-        <IndustryPicks />
+      <QBlock title="1. What is your business name?" help="This will be used by MARA to personalise content ideas.">
+        <input className={cx(FIELD, "max-w-[460px]")} placeholder="Your business name" aria-label="Business name" value={onboard.name} onChange={(e) => setOnboardField("name", e.target.value)} />
+      </QBlock>
+      <QBlock title="2. What kind of business is this?" help={guessed ? guessHelp(onboard) : "Pick the closest match."}>
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+          {Q_INDUSTRY.map(([, name], index) => (
+            <OptionCard key={name} tint={tint(index)} icon={<OnboardingIcon label={name} />} label={name} mark="radio" active={onboard.industry === name} onClick={() => setOnboardField("industry", name)} />
+          ))}
+        </div>
       </QBlock>
     </div>
   );
@@ -634,16 +764,34 @@ function StepAudienceGoal() {
   const { toggleOnboardArray, setOnboardField } = useVoomActions();
   return (
     <div>
-      <Title sub="MARA uses these to choose the angle for every post.">Who you serve, and why</Title>
-      <QBlock title="Who is your target customer?" help={onboard.fromMara.includes("audience") ? guessHelp(onboard) : "Choose all that apply. Leave it empty and MARA writes for a broad audience."}>
-        <AudienceChips selected={onboard.customer} onToggle={(c) => toggleOnboardArray("customer", c)} />
+      <QBlock title="1. Who is your target customer?" help={onboard.fromMara.includes("audience") ? guessHelp(onboard) : "Choose all that apply. Leave it empty and MARA writes for a broad audience."}>
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+          {Q_CUSTOMER.map((c, index) => (
+            <OptionCard key={c} tint={tint(index)} icon={<OnboardingIcon label={c} />} label={c} mark="box" compact active={onboard.customer.includes(c)} onClick={() => toggleOnboardArray("customer", c)} />
+          ))}
+        </div>
       </QBlock>
-      <QBlock title="What is your main marketing goal?" help={onboard.fromMara.includes("goal") ? guessHelp(onboard) : "Pick the one that matters most right now."}>
-        <GoalPicks value={onboard.goal} onPick={(goal) => setOnboardField("goal", goal)} />
+      <QBlock title="2. What is your main marketing goal?" help={onboard.fromMara.includes("goal") ? guessHelp(onboard) : "Pick the one that matters most right now."}>
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+          {Q_GOAL.map(([, name], index) => (
+            <OptionCard key={name} tint={tint(index + 2)} icon={<OnboardingIcon label={name} />} label={name} mark="radio" compact active={onboard.goal === name} onClick={() => setOnboardField("goal", name)} />
+          ))}
+        </div>
       </QBlock>
     </div>
   );
 }
+
+const TONE_HINT: Record<string, string> = {
+  Friendly: "Warm, approachable and friendly",
+  Premium: "High-end, elegant and exclusive",
+  Playful: "Fun, energetic and creative",
+  Professional: "Trustworthy, expert and reliable",
+  Bold: "Confident, strong and impactful",
+  Calm: "Simple, clear and soothing",
+  Traditional: "Classic, established and familiar",
+  Modern: "Fresh, current and forward-looking",
+};
 
 /**
  * "How you sound" (slice 6): the personality chips, then three captions MARA
@@ -706,22 +854,25 @@ function StepVoice() {
 
   return (
     <div>
-      <Title sub="These shape the words MARA chooses. Skip it and she keeps a neutral tone until you tell her otherwise.">How you sound</Title>
-      <QBlock title="What is your brand personality?" help={onboard.fromMara.includes("personality") ? `${guessHelp(onboard)} Up to three.` : "Choose up to three."}>
-        <ToneChips selected={onboard.tone} onToggle={(t) => toggleOnboardArray("tone", t, 3)} />
+      <QBlock title="1. What is your brand personality?" help={onboard.fromMara.includes("personality") ? `${guessHelp(onboard)} Up to three.` : `Choose up to three. ${onboard.tone.length} of 3 picked.`}>
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+          {OB_TONE.map((t, index) => (
+            <OptionCard key={t} tint={tint(index + 1)} icon={<OnboardingIcon label={t} />} label={t} hint={TONE_HINT[t]} active={onboard.tone.includes(t)} onClick={() => toggleOnboardArray("tone", t, 3)} />
+          ))}
+        </div>
       </QBlock>
       {writing ? (
         <WritingSamplesPanel />
       ) : onboard.samples.length ? (
-        <QBlock title="Three captions MARA wrote from what she knows so far" help="Tap what sounds like you and what doesn't. Nothing is used unless you say so.">
+        <QBlock title="2. Three captions MARA wrote from what she knows so far" help="Tap what sounds like you and what doesn't. Nothing is used unless you say so.">
           <VoiceSampleCards samples={onboard.samples} liked={onboard.liked} disliked={onboard.disliked} onSort={sort} />
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-            <span className="text-[12px] text-text-3">Kept so far: {onboard.liked.length} sound like you · {onboard.disliked.length} not you</span>
+            <span className="text-[12.5px] text-text-3">Kept so far: {onboard.liked.length} sound like you · {onboard.disliked.length} not you</span>
             <Btn variant="ghost" size="sm" onClick={() => void write()}>Try 3 more</Btn>
           </div>
         </QBlock>
       ) : onboard.samplesNote === "failed" ? (
-        <div className="rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">
+        <div className={NOTE}>
           I couldn&apos;t write sample captions just now. I&apos;ll show you samples on your Brand page.
           <Btn variant="ghost" size="sm" className="ml-2" onClick={() => void write()}>Try again</Btn>
         </div>
@@ -741,8 +892,8 @@ function ListInput({ value, separator, rows, placeholder, onChange }: { value: s
     onChange((separator === "line" ? raw.split("\n") : raw.split(",")).map((part) => part.trim()).filter(Boolean));
   };
   return separator === "line"
-    ? <Textarea rows={rows ?? 3} value={text} placeholder={placeholder} onChange={(e) => handle(e.target.value)} />
-    : <Input value={text} placeholder={placeholder} onChange={(e) => handle(e.target.value)} />;
+    ? <textarea className={AREA} rows={rows ?? 3} value={text} placeholder={placeholder} onChange={(e) => handle(e.target.value)} />
+    : <input className={FIELD} value={text} placeholder={placeholder} onChange={(e) => handle(e.target.value)} />;
 }
 
 function StepAvoid() {
@@ -750,58 +901,41 @@ function StepAvoid() {
   const { toggleOnboardArray, setOnboardField } = useVoomActions();
   return (
     <div>
-      <Title sub="Hard rules MARA will never break. Tap what applies; add anything specific below.">What you DON&apos;T want</Title>
-      <QBlock title="Tap everything that applies">
+      <QBlock title="1. Tap everything that applies">
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
           {AVOID_RULES.map((rule) => (
-            <button
-              key={rule}
-              onClick={() => toggleOnboardArray("rules", rule)}
-              className={`rounded-[14px] border-[1.5px] p-3.5 text-left transition hover:-translate-y-0.5 ${onboard.rules.includes(rule) ? "border-brand bg-[var(--brand-soft)]" : "border-line"}`}
-            >
-              <b className="text-[13.5px]">{rule}</b>
-            </button>
+            <OptionCard key={rule} label={rule} mark="box" compact active={onboard.rules.includes(rule)} onClick={() => toggleOnboardArray("rules", rule)} />
           ))}
         </div>
       </QBlock>
-      <QBlock title="Words, topics or emoji to ban" help="Comma-separated. MARA never uses them, in any casing.">
-        <ListInput value={onboard.words} separator="comma" placeholder="cheap, discount, 🔥" onChange={(words) => setOnboardField("words", words)} />
+      <QBlock title="2. Words, topics or emoji to ban" help="Comma-separated. MARA never uses them, in any casing.">
+        <ListInput value={onboard.words} separator="comma" placeholder="cheap, discount, fire emoji" onChange={(words) => setOnboardField("words", words)} />
       </QBlock>
-      <QBlock title="Anything specific MARA should know or do?" help="Optional. Facts she may state, things to always mention, how to sign off.">
-        <Textarea rows={3} value={onboard.notes} placeholder="For example: we're family-run, always say 'roastery' not 'coffee shop', never mention competitors." onChange={(e) => setOnboardField("notes", e.target.value)} />
+      <QBlock title="3. Anything specific MARA should know or do?" help="Optional. Facts she may state, things to always mention, how to sign off.">
+        <textarea className={AREA} rows={3} value={onboard.notes} placeholder="For example: we're family-run, always say 'roastery' not 'coffee shop', never mention competitors." onChange={(e) => setOnboardField("notes", e.target.value)} />
       </QBlock>
     </div>
   );
 }
 
-function RadioTile({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button onClick={onClick} className={`rounded-[14px] border-[1.5px] p-3.5 text-left transition ${active ? "border-brand bg-[var(--brand-soft)]" : "border-line"}`}>
-      <span className="flex items-center gap-2.5">
-        <span
-          className="h-4 w-4 flex-none rounded-full border-2"
-          style={{ borderColor: active ? "var(--brand)" : "var(--line-2)", background: active ? "var(--brand)" : "transparent", boxShadow: "inset 0 0 0 2.5px var(--surface)" }}
-        />
-        <b className="text-[13.5px]">{label}</b>
-      </span>
-    </button>
-  );
-}
+const FREQ_HINT: Record<string, string> = {
+  "A few times a month": "Keep a light presence",
+  "2–3 times a week": "Recommended for steady growth",
+  Daily: "Stay active and visible",
+  "Multiple times a day": "For high-engagement brands",
+};
 
 function StepPace() {
   const { onboard } = useVoomState();
   const { setOnboardField } = useVoomActions();
   return (
-    <div>
-      <Title sub="This sets how many slots MARA plans each week. You can change it any time.">How often should MARA post?</Title>
-      <QBlock title="Posting pace" help="2–3 times a week is preselected; skipping keeps it.">
-        <div className="flex flex-col gap-2">
-          {Q_FREQ.map((v) => (
-            <RadioTile key={v} label={v} active={onboard.freq === v} onClick={() => setOnboardField("freq", v)} />
-          ))}
-        </div>
-      </QBlock>
-    </div>
+    <QBlock title="Posting pace" help="2–3 times a week is preselected; skipping keeps it.">
+      <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-4">
+        {Q_FREQ.map((v) => (
+          <TileChoice key={v} label={v} hint={FREQ_HINT[v]} active={onboard.freq === v} onClick={() => setOnboardField("freq", v)} />
+        ))}
+      </div>
+    </QBlock>
   );
 }
 
@@ -814,29 +948,29 @@ function StepAutomation() {
   const fallback = plan === "pro" ? "Assisted" : "Manual";
   return (
     <div>
-      <Title sub="This decides what MARA does on her own. It is the one setting that changes what runs on a schedule.">How much should MARA do?</Title>
       <QBlock title="Choose a level" help={`You're on the ${planName} plan. Each card says which plan it needs.`}>
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-          {AUTOMATION_CHOICES.map((choice) => {
+          {AUTOMATION_CHOICES.map((choice, index) => {
             const allowed = canUseAutomationMode(plan, choice.value);
             return (
-              <button
+              <OptionCard
                 key={choice.value}
+                tint={tint(index + 1)}
+                icon={<OnboardingIcon label={choice.title} />}
+                label={choice.title}
+                hint={choice.sub}
+                extra={<Tag tone={allowed ? "t-green" : "t-grey"}>{allowed ? "Included in your plan" : `Needs the ${choice.plan}`}</Tag>}
+                mark="radio"
+                active={onboard.auto === choice.value}
                 onClick={() => setOnboardField("auto", choice.value)}
-                className={`rounded-[14px] border-[1.5px] p-3.5 text-left transition hover:-translate-y-0.5 ${onboard.auto === choice.value ? "border-brand bg-[var(--brand-soft)]" : "border-line"}`}
-              >
-                <span className="mb-1.5 block text-[22px]">{choice.emoji}</span>
-                <b className="text-[13.5px]">{choice.title}</b>
-                <span className="mt-0.5 block text-[11.5px] text-text-3">{choice.sub}</span>
-                <span className="mt-2 block"><Tag tone={allowed ? "t-green" : "t-grey"}>{allowed ? "Included in your plan" : `Needs the ${choice.plan}`}</Tag></span>
-              </button>
+              />
             );
           })}
         </div>
       </QBlock>
       {blocked ? (
-        <div className="rounded-2xl border border-amber/35 bg-amber/10 p-4 text-[13px] leading-relaxed text-text-2">
-          You&apos;re on the {planName} plan, so MARA runs <b>{fallback}</b> until you upgrade. We&apos;ll remember that you wanted {chosen?.title}.
+        <div className={WARN}>
+          You&apos;re on the {planName} plan, so MARA runs <b className="text-text">{fallback}</b> until you upgrade. We&apos;ll remember that you wanted {chosen?.title}.
         </div>
       ) : null}
     </div>
@@ -903,17 +1037,13 @@ function StepBrief() {
 
   return (
     <div>
-      <Title sub="This is what MARA will work from, and your Brand page after setup. Edit anything that's off; add what you offer and the facts she may state.">Your Brand Brief</Title>
-      <div className="mb-4 rounded-2xl border border-brand bg-[var(--brand-soft)] p-4">
-        <div className="flex items-start gap-2.5">
-          <Orb size="sm" className="mt-0.5" />
-          <p className="text-[13.5px] leading-[1.6]">
-            {drafted
-              ? "I drafted the Brand Brief and what you offer from your description. Edit anything that's off; what you change here is what I'll work from."
-              : "Write a few lines in the Brand Brief box or leave it, and I'll work from your description."}
-            {onboard.factsUnconfirmed.length ? " Under Facts, tap Confirm on each claim that's true; I never state the others." : ""}
-          </p>
-        </div>
+      <div className="mb-5">
+        <MaraNote>
+          {drafted
+            ? "I drafted the Brand Brief and what you offer from your description. Edit anything that's off; what you change here is what I'll work from."
+            : "Write a few lines in the Brand Brief box or leave it, and I'll work from your description."}
+          {onboard.factsUnconfirmed.length ? " Under Facts, tap Confirm on each claim that's true; I never state the others." : ""}
+        </MaraNote>
       </div>
       <BrandHub
         mode="onboarding"
@@ -965,61 +1095,63 @@ function StepChannels({ igConnected }: { igConnected: boolean }) {
     return () => { active = false; };
   }, []);
 
-  const social: { key: keyof typeof CHANNEL_STATUS_ENDPOINTS; icon: string; name: string; desc: string; page: string; background: string }[] = [
-    { key: "instagram", icon: "ig", name: "Instagram", desc: "Professional account · posts, Reels and Stories publish through your connected account.", page: "the Instagram page", background: "linear-gradient(45deg,#f9ce34,#ee2a7b,#6228d7)" },
-    { key: "tiktok", icon: "film", name: "TikTok", desc: "Videos publish through Voom's durable TikTok queue — Published only after TikTok confirms.", page: "the TikTok page", background: "#010101" },
+  const social: { key: keyof typeof CHANNEL_STATUS_ENDPOINTS; name: string; desc: string; page: string }[] = [
+    { key: "instagram", name: "Instagram", desc: "Professional account · posts, Reels and Stories publish through your connected account.", page: "the Instagram page" },
+    { key: "tiktok", name: "TikTok", desc: "Videos publish through Voom's durable TikTok queue — Published only after TikTok confirms.", page: "the TikTok page" },
   ];
 
   return (
     <div>
-      <Title sub="Pick where MARA should plan content. Connect the accounts after setup; nothing is published anywhere until you approve it.">Your channels</Title>
-      <QBlock title="Which channels should MARA plan for?" help="Skip it and MARA plans nothing until you choose a channel on your Brand page.">
-        <div className="flex flex-wrap gap-2">
+      <QBlock title="1. Which channels should MARA plan for?" help="Skip it and MARA plans nothing until you choose a channel on your Brand page.">
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
           {ONBOARDING_CHANNELS.map(({ label, available }) => (
-            available ? (
-              <Chip key={label} active={onboard.channels.includes(label)} onClick={() => toggleOnboardArray("channels", label)}>
-                {label}
-              </Chip>
-            ) : (
-              <Chip key={label} disabled title="Coming soon">
-                {label} · Coming soon
-              </Chip>
-            )
+            <OptionCard
+              key={label}
+              icon={<ChannelGlyph channel={label} size={26} />}
+              label={label}
+              hint={available ? undefined : "Coming soon"}
+              title={available ? undefined : "Coming soon"}
+              mark="box"
+              compact
+              disabled={!available}
+              active={available && onboard.channels.includes(label)}
+              onClick={() => toggleOnboardArray("channels", label)}
+            />
           ))}
         </div>
       </QBlock>
-      {social.map(({ key, icon, name, desc, page, background }) => {
-        const state = status[key];
-        const connected = key === "instagram" ? igConnected || state?.connected === true : state?.connected === true;
-        return (
-          <div key={name} className="mb-2.5 flex items-center justify-between gap-3 rounded-[var(--r-lg)] border border-line bg-surface p-4">
-            <div className="flex items-center gap-2.5">
-              <div className="grid h-10 w-10 flex-none place-items-center rounded-xl text-white" style={{ background }}>
-                <Icon name={icon} />
+      <QBlock title="2. Where each one connects">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          {social.map(({ key, name, desc, page }) => {
+            const state = status[key];
+            const connected = key === "instagram" ? igConnected || state?.connected === true : state?.connected === true;
+            return (
+              <div key={name} className="flex gap-4 rounded-[18px] border border-[var(--line)] bg-white p-5">
+                <span className="grid h-14 w-14 shrink-0 place-items-center rounded-[16px] bg-[var(--surface-2)] shadow-[0_8px_18px_-12px_rgba(44,38,92,.45)]"><ChannelGlyph channel={key} size={34} /></span>
+                <div className="min-w-0">
+                  <b className="text-[16px] font-semibold text-text">{name}</b>
+                  <p className="mt-1.5 text-[13px] leading-relaxed text-text-2">{desc}</p>
+                  <div className="mt-3">
+                    {connected ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--green-soft)] px-3 py-1 text-[12px] font-semibold text-[var(--green)]"><Icon name="check" size={12} /> Connected</span>
+                    ) : state && !state.configured ? (
+                      <span className="inline-flex rounded-full bg-[var(--amber-soft)] px-3 py-1 text-[12px] font-semibold text-[var(--amber)]">Not configured on this server yet</span>
+                    ) : (
+                      <span className="inline-flex rounded-[9px] border border-[var(--line)] px-3 py-1.5 text-[12px] font-medium text-text-2">Connect after setup from {page}</span>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div>
-                <b className="text-[14px]">{name}</b>
-                <div className="text-[12.5px] text-text-3">{desc}</div>
-              </div>
-            </div>
-            {connected ? (
-              <Tag tone="t-green"><Icon name="check" size={12} /> Connected</Tag>
-            ) : state && !state.configured ? (
-              <Tag tone="t-amber">Not configured on this server yet</Tag>
-            ) : (
-              <span className="flex-none text-right text-[12px] text-text-3">Connect after setup from {page}</span>
-            )}
-          </div>
-        );
-      })}
-      <div className="mt-2.5 rounded-2xl border border-brand bg-[var(--brand-soft)] p-4">
-        <div className="flex items-start gap-2.5">
-          <Orb size="sm" className="mt-0.5" />
-          <p className="text-[13.5px] leading-[1.6]">
-            You can plan, draft and approve content before anything is connected. Approval never publishes on its own — each
-            channel reports Published only after the provider itself confirms.
-          </p>
+            );
+          })}
         </div>
+      </QBlock>
+      <div className="flex items-start gap-3 rounded-[18px] border-[1.5px] border-[#c9a6f5] bg-white/85 p-5">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--brand-soft)] text-[var(--brand)]"><Icon name="sparkles" size={17} /></span>
+        <p className="text-[13.5px] leading-[1.6] text-text-2">
+          <b className="font-semibold text-text">You can plan, draft and approve content before anything is connected.</b>{" "}
+          Approval never publishes on its own — each channel reports Published only after the provider itself confirms.
+        </p>
       </div>
     </div>
   );

@@ -54,6 +54,15 @@ Environment: Node v26.0.0, npm 11.12.1, macOS.
   whole run at the merge because its page script looked for the wizard's `<footer>` and our wizard
   had none; fixed by giving our wizard that footer (with `data-toast-clearance`). The helper's
   missing page-script timeout (above) is what turned a failing lookup into a hang.
+- **After Phase C (2026-11-02)** the suite is 2315 tests (the re-pointed `onboarding-completion`
+  test went back to main's single original test) and the expected result is
+  **2292 pass / 19 fail / 4 skipped / 0 todo** (17 fail when the two tests below still pass on a
+  machine whose clock is earlier). The 19 are: (a) **14** parked trend failures: the 12 above plus
+  2 in `trends-wikidata-activation` that aged out on 2026-11-02 (its fixture's Judo event ends
+  2026-10-31, so the collector now keeps 1 of 2 records; same date-fixture cause, nothing to do
+  with brand work); (b) the same 5 of `main`'s own tests; (c) the 3 `rendered-surface-cleanup`
+  flakes did not show in this run. The two former todo tests (`onboarding-icons` emoji check,
+  `redesign-batch-4a` artwork) pass for real now.
 
 ## History
 | Date | Tests pass / fail / skip | Typecheck | Lint err / warn | Change |
@@ -73,5 +82,6 @@ Environment: Node v26.0.0, npm 11.12.1, macOS.
 | 2026-10-27 | 1749 / **9** / 4 | clean | 0 / 16 | Brand Kit v2 slice 6: MARA writes three sample captions to sort, on the voice screen and the Brand page (+10 tests); token cap raised after the browser check; History line now names only the fields that changed (+1 test, 1 assertion reordered). Same 9 parked trend failures. See DECISIONS 2026-10-27. |
 | 2026-10-28 | 1752 / **9** / 4 | clean | 0 / 16 | Brand images: leftover files swept after Finish and after a Brand page images save; colours go with the logo (+3 tests, 1 extended). Same 9 parked trend failures. See DECISIONS 2026-10-28. |
 | 2026-10-28 | 1761 / **9** / 4 | clean | 0 / 16 | Slice 5b: MARA looks at an uploaded photo, with a brand hint, before suggesting its caption, and the caption serves the owner's "What is this post for?" line (+9 tests; 2 existing assertions reworded for the seen path). Same 9 parked trend failures. See DECISIONS 2026-10-28 (slice 5b). |
+| 2026-11-02 | 2292 / **19** / 4 | clean | 0 / 15 | Phase C of `handover/merge-plan.md`: our Brand page and 11-screen wizard in the redesign (main's setup layout, 3D icons, SetupComplete at the end, `completedOnServer` bypass); `AnalyzingScreen` deleted; the 2 todo tests pass again (+2). The 19: 14 parked trend (2 more aged out with the date, Notes above) + 5 identical on plain `main`; no cleanup flake this run. See DECISIONS 2026-11-02. |
 | 2026-11-01 | 2290 / **20** / 4 (+2 todo) | clean | 0 / 15 | Merged GitHub `main` (73 commits, head `ea1676b`: redesign, LinkedIn, native TikTok/Shorts videos, YouTube uploads, cost tracking, automation safety) into Gurnoor's branch; our migration 0059 renumbered 0075. 26 conflicts resolved per `handover/merge-plan.md` B2; 8 of our tests and 7 of main's re-pointed at the merged shape; wizard footer gained `data-toast-clearance` and the haptic warning. The 20 failures: 12 parked trend + 5 identical on plain `main` + 3 cleanup flake (Notes above). See DECISIONS 2026-10-31 and 2026-11-01. |
 | 2026-10-29 | 1773 / **9** / 4 | clean | 0 / 16 | Brand Kit v2 slice 7: MARA reads the website in place from a "Read my website" button (text plus one homepage screenshot for the look, side by side), drafts the description with the text model, shows the read's state on screens 2 and 3 with "Try again" / "Back to the website", colours kept per source with the owner choosing which leads (+12 tests; 6 existing assertions reworded for the new colour shape, the website field's copy and the flow). Two new dependencies (`puppeteer-core`, `@sparticuz/chromium`). Same 9 parked trend failures. See DECISIONS 2026-10-28 (slice 7) and its 2026-10-29 notes. |

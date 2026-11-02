@@ -9,11 +9,10 @@ const iconsSource = read("components/voom/onboarding/onboardingIcons.tsx");
 const map = Object.fromEntries([...iconsSource.matchAll(/^\s*(?:"([^"]+)"|(\w+)): "([\w-]+)",$/gm)].map((m) => [m[1] ?? m[2], m[3]]));
 
 /**
- * Merged 2026-11-01 (handover/merge-plan.md, Phase C): the Brand Kit v2 wizard kept its
- * own 11 screens; the designers' icons are wired into it in Phase C. Until then this
- * file checks that the icon set covers every answer OUR wizard offers (budget and
- * publishing permission are no longer asked; the three automation modes Manual /
- * Assisted / Autopilot still need icons), and the wizard check below is a todo.
+ * The designers' 3D icons in the Brand Kit v2 wizard (Phase C of
+ * handover/merge-plan.md, 2026-11-02). Every answer our wizard offers has one:
+ * budget and publishing permission are no longer asked, and the three
+ * automation modes Manual / Assisted / Autopilot reuse main's matching artwork.
  */
 test("every setup answer has one of the designers' extracted icons, and every file exists", () => {
   const labels = [
@@ -22,8 +21,12 @@ test("every setup answer has one of the designers' extracted icons, and every fi
     ...data.Q_GOAL.map(([, name]) => name),
     ...data.OB_TONE,
     ...data.Q_FREQ,
+    ...data.AUTOMATION_CHOICES.map((choice) => choice.title),
   ];
-  for (const label of labels) {
+  const wizard = read("components/voom/onboarding/OnboardingWizard.tsx");
+  const inspiration = [...wizard.slice(wizard.indexOf("const INSPIRATION = ["), wizard.indexOf("];", wizard.indexOf("const INSPIRATION = ["))).matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  assert.equal(inspiration.length, 8);
+  for (const label of [...labels, ...inspiration]) {
     assert.ok(map[label], `no icon mapped for "${label}"`);
     assert.ok(existsSync(new URL(`../public/redesign/onboarding-icons/${map[label]}.webp`, import.meta.url)), `missing file for "${label}"`);
   }
@@ -32,8 +35,9 @@ test("every setup answer has one of the designers' extracted icons, and every fi
   }
 });
 
-test("the setup wizard shows no emoji icons any more", { todo: "Phase C of handover/merge-plan.md: the Brand Kit v2 wizard adopts the extracted icons" }, () => {
+test("the setup wizard shows no emoji icons any more", () => {
   const wizard = read("components/voom/onboarding/OnboardingWizard.tsx");
   assert.doesNotMatch(wizard, /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u, "emoji glyphs are replaced by the extracted icons");
   assert.match(wizard, /<OnboardingIcon label=\{name\} \/>/);
+  assert.match(wizard, /<OnboardingIcon label=\{choice\.title\} \/>/, "the automation modes use the icons too");
 });

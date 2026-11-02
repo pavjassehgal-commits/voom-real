@@ -57,11 +57,15 @@ export const ONBOARDING_ICONS: Record<string, string> = {
   "2–3 times a week": "freq-week",
   Daily: "freq-daily",
   "Multiple times a day": "freq-many",
-  // Automation level
+  // Automation level (main's four labels, and Brand Kit v2's three modes, which reuse
+  // the matching artwork: Phase C, 2026-11-02)
   "I decide everything": "auto-decide",
   "MARA drafts, I approve": "auto-approve",
   "MARA drafts and schedules": "auto-schedule",
   "MARA runs it end-to-end": "auto-end-to-end",
+  Manual: "auto-decide",
+  Assisted: "auto-approve",
+  Autopilot: "auto-end-to-end",
   // Publishing permission
   "Yes — always ask first": "perm-ask-first",
   "Ask for paid ads only": "perm-paid-ads",

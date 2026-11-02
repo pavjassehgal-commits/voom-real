@@ -13,7 +13,8 @@ the habit that stops this from being painful again.
 **Status 2026-11-01: Phases A and B are done** (merge commit `a958352`, follow-ups `bfaa2a3`,
 `665caa5` and the B8 docs commit). What was decided and found is in `DECISIONS.md` 2026-11-01;
 the expected test result is in `docs/baseline.md`. One change against the text below: our
-migration is **0075**, not 0071 (B3 note). Phase C is next; `handover/next-session.md` leads.
+migration is **0075**, not 0071 (B3 note). **Phase C was done on 2026-11-02** (`handover/phase-c-plan.md`,
+`DECISIONS.md` 2026-11-02). Phase D is the standing habit; `handover/next-session.md` leads.
 
 ---
 
