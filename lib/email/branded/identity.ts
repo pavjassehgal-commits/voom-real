@@ -18,6 +18,9 @@
  * unreachable, every domain is treated as unverified and the safe fallback is
  * used. Voom never claims a domain is verified unless provider-backed state
  * confirms it, at resolve time.
+ * Commercial safety additionally requires an owner/business-bound registry
+ * record and fresh independent DNS challenge. Global provider verification
+ * alone NEVER authorizes a sending address; unverified previews cannot send.
  */
 
 import "server-only";
@@ -25,6 +28,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ResendApiClient, ResendConfig } from "@/lib/email/core";
 import type { EmailIdentityRow, ProviderDomainMap, ProviderDomainStatus } from "./types";
+import { checkOwnedDomain } from "../domains";
 
 export interface ResolvedSenderIdentity {
   /** Display name for the inbox. Always the business's name when available. */
@@ -49,6 +53,8 @@ export interface ResolveBusinessSenderInput {
   brandName: string;
   /** Live provider state for each domain. Absent = unknown to the provider. */
   providerDomains: ProviderDomainMap;
+  /** Independent owner-bound DNS proof, NOT the global Resend domain status. */
+  ownedDomainVerified?: boolean;
 }
 
 /**
@@ -68,11 +74,12 @@ export interface ResolveBusinessSenderInput {
  */
 export function resolveBusinessSender(input: ResolveBusinessSenderInput): ResolvedSenderIdentity {
   const { config, identity, brandName, providerDomains } = input;
-  const displayName = (identity?.display_name ?? "").trim() || brandName.trim() || config.fromName;
+  const displayName = ((identity?.display_name ?? "").trim() || brandName.trim() || config.fromName).replace(/[\r\n]/g, " ");
+  const headerName = /^[\p{L}\p{N} _'-]+$/u.test(displayName) ? displayName : `"${displayName.replace(/["\\]/g, "\\$&")}"`;
 
   const requested = (identity?.from_address ?? "").trim().toLowerCase();
   const requestedDomain = requested.includes("@") ? requested.slice(requested.indexOf("@") + 1) : "";
-  const verified = requested !== "" && requestedDomain !== "" && providerDomains.get(requestedDomain) === "verified";
+  const verified = input.ownedDomainVerified === true && requested !== "" && requestedDomain !== "" && providerDomains.get(requestedDomain) === "verified";
 
   const replyTo = validateReplyTo(identity?.reply_to);
 
@@ -80,7 +87,7 @@ export function resolveBusinessSender(input: ResolveBusinessSenderInput): Resolv
     return {
       fromName: displayName,
       fromAddress: requested,
-      from: `${displayName} <${requested}>`,
+      from: `${headerName} <${requested}>`,
       replyTo,
       mode: "business_verified",
       domain: requestedDomain,
@@ -90,7 +97,7 @@ export function resolveBusinessSender(input: ResolveBusinessSenderInput): Resolv
   return {
     fromName: displayName,
     fromAddress: config.fromAddress,
-    from: `${displayName} <${config.fromAddress}>`,
+    from: `${headerName} <${config.fromAddress}>`,
     replyTo,
     mode: "voom_fallback",
     domain: domainOf(config.fromAddress),
@@ -128,6 +135,8 @@ export interface ProviderDomainsResult {
 export interface ProviderDomainOptions {
   providerDomains?: ProviderDomainMap | null;
   client?: ResendApiClient | null;
+  /** DNS resolver injection for isolated tests; never accepted from HTTP input. */
+  txt?: (name: string) => Promise<string[][]>;
 }
 
 /**
@@ -180,7 +189,7 @@ export async function loadEmailIdentity(
   ownerId: string,
 ): Promise<EmailIdentityRow | null> {
   const { data, error } = await db.from("voom_email_identities")
-    .select("id,owner_user_id,business_id,display_name,from_address,reply_to,verification_status,last_checked_at,created_at,updated_at")
+    .select("id,owner_user_id,business_id,display_name,from_address,reply_to,legal_name,postal_address,verification_status,last_checked_at,created_at,updated_at")
     .eq("owner_user_id", ownerId)
     .maybeSingle();
   if (error) return null;
@@ -237,16 +246,20 @@ export async function readBusinessSender(
     loadEmailIdentity(db, ownerId),
     db.from("businesses").select("brand_name").eq("owner_user_id", ownerId).maybeSingle(),
   ]);
-  const brandName = String((businessRow as { brand_name?: string | null } | null)?.brand_name ?? "");
-
-  let domains: ProviderDomainMap = new Map();
-  if (providerConfigured) {
-    const provider = await getProviderDomainStatuses(options);
-    if (provider.ok) domains = provider.domains;
-  }
+  const brandName = String(businessRow.data?.brand_name ?? "");
 
   const requested = (identity?.from_address ?? "").trim().toLowerCase();
   const requestedDomain = domainOf(requested);
+  const domains: ProviderDomainMap = new Map();
+  let ownedDomainVerified = false;
+  if (requestedDomain && providerConfigured) {
+    try {
+      ownedDomainVerified = await checkOwnedDomain(db, ownerId, requestedDomain, {
+        client: options.client ?? (await import("../client")).createResendClient(), txt: options.txt,
+      });
+      if (ownedDomainVerified) domains.set(requestedDomain, "verified");
+    } catch { /* Registry/provider/DNS unavailable => never authorize this sender. */ }
+  }
 
   let verification: BusinessSenderRead["verification"] = {
     status: "not_configured",
@@ -256,7 +269,7 @@ export async function readBusinessSender(
   if (requested && providerConfigured) {
     const status = domains.get(requestedDomain);
     verification = {
-      status: status === "verified" ? "verified" : status === "pending" ? "pending" : status === "failed" ? "failed" : "unknown",
+      status: status === "verified" ? "verified" : "unknown",
       domain: requestedDomain,
       providerConfigured,
     };
@@ -265,7 +278,7 @@ export async function readBusinessSender(
   }
 
   const sender = config.fromAddress
-    ? resolveBusinessSender({ config, identity, brandName, providerDomains: domains })
+      ? resolveBusinessSender({ config, identity, brandName, providerDomains: domains, ownedDomainVerified })
     : null;
 
   return { identity, sender, verification };

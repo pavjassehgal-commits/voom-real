@@ -20,6 +20,8 @@ export interface EmailIdentityRow {
   from_address: string | null;
   /** Where customer replies should go. */
   reply_to: string | null;
+  legal_name?: string | null;
+  postal_address?: string | null;
   /**
    * Display hint only. The resolver never trusts this column: a sender is
    * only ever considered "verified" when the provider confirms the domain at

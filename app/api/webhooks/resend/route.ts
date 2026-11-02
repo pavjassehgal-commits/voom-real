@@ -10,6 +10,7 @@ export async function POST(request: Request) {
   if (!config?.webhookSecret) return new Response("Resend webhook is not configured.", { status: 503 });
 
   const payload = await request.text();
+  if (payload.length > 65536) return new Response("Webhook too large.", { status: 413 });
   let event: Record<string, unknown>;
   try {
     event = verifyResendWebhook(payload, request.headers, config.webhookSecret);
@@ -27,6 +28,8 @@ export async function POST(request: Request) {
       eventType: normalized.eventType,
       receivedAt: normalized.receivedAt,
       providerStatus: normalized.status,
+      sourceId: normalized.sourceId,
+      sourceKind: normalized.sourceKind,
     });
   } catch {
     return new Response("Webhook handling failed safely.", { status: 503 });
