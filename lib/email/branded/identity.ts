@@ -26,9 +26,10 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ResendApiClient, ResendConfig } from "@/lib/email/core";
+import type { ResendConfig } from "@/lib/email/core";
 import type { EmailIdentityRow, ProviderDomainMap, ProviderDomainStatus } from "./types";
 import { checkOwnedDomain } from "../domains";
+import type { ResendDomainClient } from "../domain-client";
 
 export interface ResolvedSenderIdentity {
   /** Display name for the inbox. Always the business's name when available. */
@@ -134,7 +135,7 @@ export interface ProviderDomainsResult {
  */
 export interface ProviderDomainOptions {
   providerDomains?: ProviderDomainMap | null;
-  client?: ResendApiClient | null;
+  client?: ResendDomainClient | null;
   /** DNS resolver injection for isolated tests; never accepted from HTTP input. */
   txt?: (name: string) => Promise<string[][]>;
 }
@@ -155,7 +156,7 @@ export async function getProviderDomainStatuses(
     return { domains: options.providerDomains, ok: true };
   }
   try {
-    const api = options.client ?? (await import("@/lib/email/client")).createResendClient();
+    const api = options.client ?? (await import("@/lib/email/client")).createResendDomainClient();
     if (typeof api.request !== "function") {
       // A client without a request surface (e.g. an old test double) can be
       // asked nothing — fail safe, never claim verification.
@@ -255,7 +256,7 @@ export async function readBusinessSender(
   if (requestedDomain && providerConfigured) {
     try {
       ownedDomainVerified = await checkOwnedDomain(db, ownerId, requestedDomain, {
-        client: options.client ?? (await import("../client")).createResendClient(), txt: options.txt,
+        client: options.client ?? (await import("../client")).createResendDomainClient(), txt: options.txt,
       });
       if (ownedDomainVerified) domains.set(requestedDomain, "verified");
     } catch { /* Registry/provider/DNS unavailable => never authorize this sender. */ }

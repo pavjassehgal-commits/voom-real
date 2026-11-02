@@ -102,8 +102,10 @@ test("Resend's delivery_delayed event normalizes to 'delayed', never 'failed'; s
   assert.equal(resend.normalizeResendWebhook({ type: "email.failed", data: { email_id: "e1" } }, headers).status, "failed");
   assert.equal(resend.normalizeResendWebhook({ type: "email.bounced", data: { email_id: "e1" } }, headers).status, "bounced");
   const route = await read("app/api/webhooks/resend/route.ts");
-  assert.match(route, /verifyResendWebhook\(payload, request\.headers, config\.webhookSecret\)/);
-  assert.match(route, /status: 403/, "an invalid signature is refused");
+  const handler = await read("lib/email/webhook-handler.ts");
+  assert.match(route, /verify: verifyResendWebhook/);
+  assert.match(handler, /deps\.verify\(payload, request\.headers, config\.webhookSecret\)/);
+  assert.match(handler, /status: 403/, "an invalid signature is refused");
 });
 
 /* ── Real SQL: recording and owner-scoped reading ─────────────────── */

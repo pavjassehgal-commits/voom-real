@@ -616,7 +616,7 @@ function StepConnect({ igConnected }: { igConnected: boolean }) {
     { key: "instagram", name: "Instagram", desc: "Professional account · posts, Reels and Stories publish through your connected account.", after: "Connect after setup" },
     { key: "tiktok", name: "TikTok", desc: "Videos publish through Voom's durable TikTok queue — Published only after TikTok confirms.", after: "Connect after setup" },
     { key: "youtube", name: "YouTube", desc: "Shorts and full videos publish through Voom's durable YouTube queue — Published only after YouTube confirms.", after: "Connect after setup" },
-    { key: "email", name: "Email", desc: "Campaigns and automated flows. There is no account to connect: set your sender name, sending address and domain in Settings → Email identity. Until your domain is verified, emails send from Voom's managed address with your business name shown.", after: "Set up in Settings" },
+    { key: "email", name: "Email", desc: "Campaigns and automated flows. Set your sender details in Settings → Email identity. Marketing emails require your own verified domain, complete business details and enabled sending. Voom's managed address is for previews only.", after: "Set up in Settings" },
   ];
 
   return (

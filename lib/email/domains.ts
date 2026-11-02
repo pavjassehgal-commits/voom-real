@@ -3,14 +3,14 @@ import { randomBytes } from "node:crypto";
 import { Resolver } from "node:dns/promises";
 import { domainToASCII } from "node:url";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ResendApiClient } from "./core";
+import type { ResendDomainClient } from "./domain-client";
 
 export interface EmailDomainClaim {
   domain: string; owner_user_id: string; business_id: string; challenge: string;
   provider_domain_id: string | null; dns_verified_at: string | null; provider_verified_at: string | null;
 }
 export interface DomainDeps {
-  client: ResendApiClient;
+  client: ResendDomainClient;
   txt?: (name: string) => Promise<string[][]>;
 }
 export const ownershipName = (domain: string) => `_voom-email.${domain}`;
@@ -50,7 +50,7 @@ export async function beginDomainClaim(db: SupabaseClient, owner: string, input:
 }
 
 type ProviderDomain = { id: string; name: string; status: string; records?: unknown[]; capabilities?: { sending?: string } };
-async function getDomain(client: ResendApiClient, id: string): Promise<ProviderDomain> {
+async function getDomain(client: ResendDomainClient, id: string): Promise<ProviderDomain> {
   if (!/^[a-zA-Z0-9-]{8,100}$/.test(id)) throw new Error("invalid_provider_domain");
   const response = await client.request("GET", `domains/${id}`);
   if (!response.ok) throw new Error("domain_provider_unavailable");

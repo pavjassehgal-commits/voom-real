@@ -13,6 +13,15 @@ const claim={domain:'updates.business.example',owner_user_id:A,business_id:'busi
 function registry(rows=[claim],unavailable=false){return {from(){let filters=[];return {select(){return this;},update(){return this;},eq(k,v){filters.push([k,v]);return this;},async maybeSingle(){return {data:rows.find(r=>filters.every(([k,v])=>r[k]===v))??null,error:unavailable?{message:'down'}:null};},then(fn){return Promise.resolve({error:unavailable?{message:'down'}:null}).then(fn);}};}};}
 function domainProvider(remote={id:claim.provider_domain_id,name:claim.domain,status:'verified'}){const calls=[];return {calls,client:{async request(method,path){calls.push({method,path});return Response.json(remote);}}};}
 const txt=async()=>[[`voom-email=${claim.challenge}`]];
+test('onboarding describes verified sender requirements, never a managed-address sending fallback',async()=>{
+  const source=await readFile(new URL('../components/voom/onboarding/OnboardingWizard.tsx',import.meta.url),'utf8');
+  const email=source.split('\n').find(line=>line.includes('key: "email", name: "Email"'));
+  assert.ok(email);
+  assert.match(email,/own verified domain/);
+  assert.match(email,/complete business details and enabled sending/);
+  assert.match(email,/managed address is for previews only/);
+  assert.doesNotMatch(email,/Until your domain is verified, emails send/);
+});
 test.before(()=>{globalThis.fetch=async()=>{throw new Error('No real provider calls allowed');};});
 test('global verified domain alone cannot authorize a business sender',()=>{
   const r=resolveBusinessSender({config:{fromAddress:'no-reply@voom.example',fromName:'Voom'},identity:{from_address:`ceo@${claim.domain}`},brandName:'Other Business',providerDomains:new Map([[claim.domain,'verified']])});

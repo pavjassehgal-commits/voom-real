@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EmailDeliveryProvider, EmailProviderSendResult } from "./provider";
 import type { BrandedSendPayload } from "./branded/dispatch";
+import { deliveryScopeTags } from "./delivery-scope";
 
 const messages: Record<string, string> = {
   marketing_email_disabled: "Marketing sending is awaiting operator activation. Nothing was sent.",
@@ -31,6 +32,9 @@ export async function dispatchSafeMarketingEmail(
   db: SupabaseClient, payload: BrandedSendPayload, provider: EmailDeliveryProvider,
 ): Promise<EmailProviderSendResult> {
   if (!payload.ownerId || !payload.sourceKind || !payload.sourceId) return marketingError("email_source_required");
+  let scopeTags;
+  try { scopeTags = deliveryScopeTags({ ownerId: payload.ownerId, sourceKind: payload.sourceKind, sourceId: payload.sourceId }); }
+  catch { return marketingError("email_delivery_scope_required"); }
   const wire = {
     from: payload.from, to: payload.to, replyTo: payload.replyTo,
     subject: payload.subject, preheader: payload.preheader, html: payload.html, text: payload.text,
@@ -39,7 +43,7 @@ export async function dispatchSafeMarketingEmail(
       "List-Unsubscribe": `<${payload.oneClickUnsubscribeUrl}>`,
       "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
     },
-    tags: [{ name: "voom_delivery", value: payload.sourceId }, { name: "voom_kind", value: payload.sourceKind }],
+    tags: [{ name: "voom_delivery", value: payload.sourceId }, { name: "voom_kind", value: payload.sourceKind }, ...scopeTags],
   };
   if (!payload.oneClickUnsubscribeUrl?.startsWith("https://")) return marketingError("secure_unsubscribe_required");
   const hash = createHash("sha256").update(JSON.stringify(wire)).digest("hex");

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
-import { createResendClient } from "@/lib/email/client";
+import { createResendDomainClient } from "@/lib/email/client";
 import { beginDomainClaim, normalizeSendingDomain, ownershipName, ownershipValue, readDomainClaim, verifyDomainClaim } from "@/lib/email/domains";
 
 export const runtime = "nodejs";
@@ -24,12 +24,14 @@ export async function POST(request: Request) {
       : await readDomainClaim(db, user.id, domain);
     if (!claim) return Response.json({ error: "Start domain setup first." }, { status: 409 });
     const result = parsed.data.action === "verify"
-      ? await verifyDomainClaim(db, user.id, domain, { client: createResendClient() })
+      ? await verifyDomainClaim(db, user.id, domain, { client: createResendDomainClient() })
       : { verified: false, records: [] };
     return Response.json({ domain, ownership: { type: "TXT", name: ownershipName(domain), value: ownershipValue(claim) }, ...result }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const code = error instanceof Error ? error.message : "domain_setup_unavailable";
     const messages: Record<string, string> = {
+      email_domain_credentials_required: "Domain verification is not configured on this server. Nothing was sent; contact support.",
+      email_domain_operation_denied: "Domain setup is awaiting operator configuration. Nothing was sent; contact support.",
       dns_ownership_not_verified: "Add the exact ownership TXT record to your DNS, then check again. No provider domain was changed.",
       domain_unavailable: "This domain cannot be claimed. It may belong to another workspace; contact support rather than creating another identity.",
       managed_domain_reserved: "VOOM's managed domain is reserved. Use a domain your business controls.",

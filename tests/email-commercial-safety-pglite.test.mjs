@@ -213,3 +213,33 @@ test('owner-activated sequence passes the same SQL gate; pausing before dispatch
   assert.equal((await one('select status from public.voom_email_flow_step_runs where id=$1',[run.id])).status,'failed');
   assert.equal((await one("select count(*)::int n from public.voom_email_flow_events where flow_id=$1 and kind='provider_accepted'",[flow.id])).n,acceptedCount);
 });
+
+test('signed scoped HTTP callbacks reconcile one real SQL submission, dedupe and suppress only its owner',async()=>{
+  const {Webhook}=await import('standardwebhooks');
+  const {createResendWebhookHandler}=await import('../lib/email/webhook-handler.ts');
+  const {deliveryScopeTags,readDeliveryScope}=await import('../lib/email/delivery-scope.ts');
+  const {verifyResendWebhook,normalizeResendWebhook}=await import('../lib/email/providers/resend.ts');
+  const {recordDeliveryFromWebhook}=await import('../lib/voom/campaign-delivery.ts');
+  await enable();await db.exec('delete from public.voom_email_business_controls');
+  const p=await ready(),fake=provider(async()=>{throw new Error('lost response');});
+  await dispatchSafeMarketingEmail(client,p,fake);
+  const env={VERCEL_ENV:'preview',EMAIL_DELIVERY_SCOPE:'stage',EMAIL_DELIVERY_SCOPE_SECRET:'synthetic-scope-secret-longer-than-32'};
+  const scope=readDeliveryScope(env),secret='whsec_'+Buffer.from('synthetic-webhook-secret-key').toString('base64');
+  const sqlClient={
+    from(table){assert.equal(table,'voom_email_submissions');const filters=[];return {select(){return this;},eq(k,v){assert(['source_id','source_kind','provider_message_id'].includes(k));filters.push([k,v]);return this;},async maybeSingle(){
+      const rows=(await db.query(`select * from public.voom_email_submissions where ${filters.map(([k],i)=>`${k}=$${i+1}`).join(' and ')}`,filters.map(([,v])=>v))).rows;
+      return {data:rows[0]??null,error:rows.length>1?{message:'ambiguous'}:null};
+    }};},
+    async rpc(name,a){assert.equal(name,'record_marketing_email_webhook');try{return {data:(await one('select public.record_marketing_email_webhook($1,$2,$3,$4,$5,$6,$7) ok',[a.p_event,a.p_message,a.p_type,a.p_status,a.p_received,a.p_source,a.p_kind])).ok,error:null};}catch(error){return {data:null,error};}}
+  };
+  const handler=createResendWebhookHandler({env,config:()=>({webhookSecret:secret}),verify:verifyResendWebhook,normalize:normalizeResendWebhook,db:()=>sqlClient,record:recordDeliveryFromWebhook});
+  const message=crypto.randomUUID(),eventId=`evt-${crypto.randomUUID()}`;
+  const payload=JSON.stringify({type:'email.complained',created_at:new Date().toISOString(),data:{email_id:message,tags:{voom_delivery:p.sourceId,voom_kind:'campaign',...Object.fromEntries(deliveryScopeTags({ownerId:A,sourceKind:'campaign',sourceId:p.sourceId},scope).map(t=>[t.name,t.value]))}}});
+  function request(){const date=new Date();return new Request('https://stage.example/api/webhooks/resend',{method:'POST',headers:{'svix-id':eventId,'svix-timestamp':String(Math.floor(date.getTime()/1000)),'svix-signature':new Webhook(secret).sign(eventId,date,payload)},body:payload});}
+  for(let n=0;n<2;n++)assert.equal((await handler(request())).status,200);
+  assert.equal((await one('select count(*)::int n from public.voom_email_webhook_receipts where event_id=$1',[eventId])).n,1);
+  assert.equal((await one('select state,provider_message_id from public.voom_email_submissions where source_id=$1',[p.sourceId])).provider_message_id,message);
+  assert.equal((await one('select count(*)::int n from public.voom_email_suppressions where owner_id=$1 and email=$2',[A,p.to])).n,1);
+  assert.equal((await one('select count(*)::int n from public.voom_email_suppressions where owner_id=$1 and email=$2',[B,p.to])).n,0);
+  assert.equal(fake.calls.length,1);
+});
