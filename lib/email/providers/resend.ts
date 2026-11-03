@@ -2,6 +2,7 @@ import "server-only";
 
 import { Webhook } from "standardwebhooks";
 import { createResendClient } from "@/lib/email/client";
+import { EmailProviderThrottleError } from "../provider-throttle";
 import type { ResendApiClient } from "@/lib/email/core";
 import type {
   EmailDeliveryProvider,
@@ -23,7 +24,12 @@ export function createResendDeliveryProvider(
           toResendBody(input),
           { headers: { "Idempotency-Key": input.idempotencyKey } },
         );
-      } catch {
+      } catch (error) {
+        if (error instanceof EmailProviderThrottleError) return {
+          ok: false, provider: "resend", providerMessageId: null, providerStatus: null,
+          errorCode: "email_provider_throttled", errorKind: "configuration",
+          errorMessage: "Provider request throttled before submission. Try again later.", ambiguous: false,
+        };
         return {
           ok: false,
           provider: "resend",
@@ -44,14 +50,14 @@ export function createResendDeliveryProvider(
         provider: "resend",
         providerMessageId: messageId,
         providerStatus: firstString(parsed?.last_event) ?? (response.ok ? "accepted" : null),
-        errorCode: response.ok
+        errorCode: response.status >= 500 ? "provider_outcome_ambiguous" : response.ok
           ? accepted ? null : "provider_outcome_ambiguous"
           : `HTTP_${response.status}`,
-        errorKind: response.ok ? accepted ? null : "ambiguous" : "rejected",
+        errorKind: response.status >= 500 ? "ambiguous" : response.ok ? accepted ? null : "ambiguous" : "rejected",
         errorMessage: response.ok
           ? accepted ? null : "The provider response did not include a message identifier."
           : providerErrorMessage(parsed, "The email provider couldn't accept that send."),
-        ambiguous: response.ok && !accepted,
+        ambiguous: response.status >= 500 || (response.ok && !accepted),
       };
     },
   };
@@ -71,7 +77,11 @@ export function normalizeResendWebhook(
 ): NormalizedEmailDeliveryEvent {
   const data = asRecord(event.data);
   const eventType = firstString(event.type) ?? "email.unknown";
+  const tags = asRecord(data?.tags);
+  const sourceId = typeof tags?.voom_delivery === "string" && /^[0-9a-f-]{36}$/i.test(tags.voom_delivery) ? tags.voom_delivery : undefined;
+  const sourceKind = tags?.voom_kind === "campaign" || tags?.voom_kind === "flow" ? tags.voom_kind : undefined;
   return {
+    ...(sourceId && sourceKind ? { sourceId, sourceKind } : {}),
     provider: "resend",
     providerMessageId: firstString(data?.email_id, data?.emailId, data?.id),
     eventId: headers.get("svix-id") ?? firstString(event.id) ?? `resend:${Date.now()}`,
@@ -91,6 +101,8 @@ function toResendBody(input: EmailProviderSendInput): Record<string, unknown> {
     preheader: input.preheader,
   };
   if (input.replyTo) body.reply_to = input.replyTo;
+  if (input.headers) body.headers = input.headers;
+  if (input.tags) body.tags = input.tags;
   return body;
 }
 

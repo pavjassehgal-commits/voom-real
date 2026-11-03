@@ -21,6 +21,8 @@ const patchFields = z
         displayName: z.string().trim().min(1).max(120).nullable().optional(),
         fromAddress: z.string().trim().min(3).max(254).email().nullable().optional(),
         replyTo: z.string().trim().min(3).max(254).email().nullable().optional(),
+        legalName: z.string().trim().min(1).max(160).regex(/^[^\r\n]+$/).optional(),
+        postalAddress: z.string().trim().min(10).max(500).regex(/^[^\r\n]+$/).optional(),
       })
       .strict()
       .optional(),
@@ -65,6 +67,8 @@ export async function GET() {
             displayName: identity.display_name,
             fromAddress: identity.from_address,
             replyTo: identity.reply_to,
+            legalName: identity.legal_name ?? null,
+            postalAddress: identity.postal_address ?? null,
           }
         : null,
       verification: sender.verification,
@@ -120,6 +124,13 @@ export async function PATCH(request: Request) {
       if (error) {
         return Response.json({ error: friendlyIdentityError(error.message) }, { status: 422 });
       }
+      if (identity.legalName !== undefined || identity.postalAddress !== undefined) {
+        const profile = await admin.from("voom_email_identities").update({
+          ...(identity.legalName !== undefined ? { legal_name: identity.legalName } : {}),
+          ...(identity.postalAddress !== undefined ? { postal_address: identity.postalAddress } : {}),
+        }).eq("owner_user_id", user.id);
+        if (profile.error) return Response.json({ error: "Sender information could not be saved. Please retry." }, { status: 503 });
+      }
     }
 
     if (parsed.data.brand) {
@@ -157,6 +168,8 @@ export async function PATCH(request: Request) {
             displayName: identity.display_name,
             fromAddress: identity.from_address,
             replyTo: identity.reply_to,
+            legalName: identity.legal_name ?? null,
+            postalAddress: identity.postal_address ?? null,
           }
         : null,
       verification: sender.verification,

@@ -54,6 +54,7 @@ const RESEND_ENV = {
   EMAIL_WEBHOOK_SECRET: "whsec_test_placeholder",
   // The branded engine fails closed without a signed-unsubscribe secret.
   EMAIL_UNSUBSCRIBE_SECRET: "test_unsubscribe_secret_not_real",
+  NEXT_PUBLIC_SITE_URL: "https://voom.example",
 };
 const savedEnv = {};
 
@@ -165,7 +166,7 @@ function createAdmin(tables, rpcImpl) {
     from(table) { return new Query(table); },
     rpc(name, args = {}) {
       rpcCalls.push({ name, args });
-      if (/media|credit|seedream|seedance|openrouter|reserve/i.test(name)) mediaCalls.push(name);
+      if (/media|credit|seedream|seedance|openrouter|reserve/i.test(name) && name !== "reserve_marketing_email_submission") mediaCalls.push(name);
       const pending = Promise.resolve(rpcImpl(name, args, store));
       // The real client returns a builder: awaitable, and also .single().
       return {
@@ -217,7 +218,7 @@ function dueRun(overrides = {}) {
 function baseTables(overrides = {}) {
   return {
     businesses: [{ id: BIZ, owner_user_id: OWNER, brand_name: "SynraPay", industry: "Fintech", automation_level: "assisted", timezone: "Asia/Dubai", plan: "pro", content_frequency: "3x_week", brand_description: "Payments for small merchants.", target_customer: ["Small merchants"], main_goal: "Adopt the dashboard", brand_personality: ["plain-spoken"], allow_automatic_paid_media: false }],
-    contacts: [{ id: CONTACT_ID, owner_id: OWNER, email: "ada@example.com", email_status: "subscribed", first_name: "Ada", created_at: "2026-09-01T09:00:00Z" }],
+    contacts: [{ id: CONTACT_ID, owner_id: OWNER, email: "ada@example.com", email_status: "subscribed", email_consent_at:"2026-09-01T09:00:00Z",email_consent_source:"manual_attestation", first_name: "Ada", created_at: "2026-09-01T09:00:00Z" }],
     voom_email_flows: [activeWelcomeFlow()],
     voom_email_flow_steps: [
       { id: "step-0", owner_user_id: OWNER, flow_id: FLOW_ID, revision: 1, position: 0, wait_minutes: 0, subject: "Welcome to SynraPay", preview_text: "What to expect.", body: "Hi {firstName},\n\nThanks for subscribing.", cta: "Reply", cta_url: null, content_source: "deterministic" },
@@ -226,6 +227,8 @@ function baseTables(overrides = {}) {
     voom_email_flow_enrollments: [{ id: ENROLLMENT_ID, owner_user_id: OWNER, flow_id: FLOW_ID, contact_id: CONTACT_ID, revision: 1, status: "active", current_position: 0, next_eligible_at: "2026-09-20T07:00:00.000Z" }],
     voom_email_flow_step_runs: [dueRun()],
     voom_email_suppressions: [],
+    voom_email_domains: [{domain:"synrapay.example",owner_user_id:OWNER,business_id:BIZ,challenge:"a".repeat(64),provider_domain_id:"provider-domain-1",dns_verified_at:"2026-11-01",provider_verified_at:"2026-11-01"}],
+    voom_email_identities: [{owner_user_id:OWNER,business_id:BIZ,display_name:"SynraPay",from_address:"hello@synrapay.example",reply_to:"support@synrapay.example",legal_name:"Synthetic SynraPay",postal_address:"123 Example Street, Test City"}],
     voom_email_flow_delivery_events: [],
     campaign_sends: [],
     campaign_recipients: [],
@@ -243,6 +246,7 @@ function createProvider({ ok = true, status = 200, throws = false } = {}) {
     calls,
     client: {
       config: { fromName: "SynraPay", fromAddress: "hello@synrapay.example" },
+      async request(){ return Response.json({id:"provider-domain-1",name:"synrapay.example",status:"verified"}); },
       async post(path, body, init) {
         if (throws) throw new Error("connection_lost_after_submit");
         calls.push({ path, body, headers: init?.headers ?? {} });
@@ -260,6 +264,8 @@ function createProvider({ ok = true, status = 200, throws = false } = {}) {
 function createRpc({ claimKeyMatches = true, advanceOutcome = "advanced", claimError = false } = {}) {
   return async function rpcImpl(name, args, store) {
     switch (name) {
+      case "reserve_marketing_email_submission": return {data:{submit:true,state:"submitting"},error:null};
+      case "record_marketing_email_submission": return {data:{state:args.p_state,messageId:args.p_message},error:null};
       case "enroll_email_flow_contact": {
         const existing = store.voom_email_flow_enrollments.find(
           (row) => row.flow_id === args.p_flow_id && row.contact_id === args.p_contact_id,
@@ -461,11 +467,22 @@ async function runEngine(tables, { provider = createProvider(), claimKeyMatches 
   const admin = createAdmin(tables, createRpc({ claimKeyMatches, claimError }));
   const summary = await engine.runEmailFlowsForOwner(admin, OWNER, {
     now,
-    send: { client: provider.client },
+    send: { client: provider.client, txt: async()=>[[`voom-email=${"a".repeat(64)}`]] },
     maxEnrollmentsPerTick: 5,
   });
   return { admin, summary, provider };
 }
+
+test("marketing result persistence failures never advance the sequence or claim success", async () => {
+  for (const result of [{data:null,error:{message:"storage unavailable"}}, {data:null,error:null}]) {
+    const provider = createProvider();
+    const normalRpc = createRpc();
+    const admin = createAdmin(baseTables(), (name,args,store) => name === "record_email_flow_step_provider_result" ? Promise.resolve(result) : normalRpc(name,args,store));
+    const summary = await engine.runEmailFlowsForOwner(admin, OWNER, {now:NOW,send:{client:provider.client,txt:async()=>[[`voom-email=${"a".repeat(64)}`]]},maxEnrollmentsPerTick:5});
+    assert.equal(provider.calls.length,1);assert.equal(summary.sent,0);assert.equal(summary.failed,1);
+    assert.equal(admin.rpcCalls.filter(call=>call.name === "advance_email_flow_enrollment").length,0);
+  }
+});
 
 test("3a. a consented contact gets exactly one send, keyed for provider idempotency", async () => {
   const { admin, summary, provider } = await runEngine(baseTables());
@@ -551,13 +568,13 @@ test("4a. a run another worker already claimed is never sent again", async () =>
 });
 
 test("4b. a provider failure is recorded and retried a bounded number of times", async () => {
-  const provider = createProvider({ ok: false, status: 500 });
+  const provider = createProvider({ ok: false, status: 429 });
   const { admin, summary } = await runEngine(baseTables(), { provider });
 
   assert.equal(provider.calls.length, 1);
   const record = admin.rpcCalls.find((call) => call.name === "record_email_flow_step_provider_result");
   assert.equal(record.args.p_outcome, "failed");
-  assert.equal(record.args.p_error_code, "HTTP_500");
+  assert.equal(record.args.p_error_code, "HTTP_429");
 
   const retry = admin.rpcCalls.find((call) => call.name === "reschedule_email_flow_step_run");
   assert.ok(retry, "the same run row is put back in the queue");

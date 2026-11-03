@@ -10,6 +10,8 @@ export type AudienceType =
   | "manual";
 
 export interface ContactRecord {
+  email_consent_at?: string | null;
+  email_consent_source?: string | null;
   id: string;
   owner_id: string;
   first_name: string | null;

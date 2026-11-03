@@ -19,6 +19,8 @@ export interface EmailProviderSendInput {
   html: string;
   text: string;
   idempotencyKey: string;
+  headers?: Record<string, string>;
+  tags?: Array<{ name: string; value: string }>;
 }
 
 export type EmailProviderErrorKind =
@@ -58,6 +60,8 @@ export type NormalizedEmailEventStatus =
   | "unknown";
 
 export interface NormalizedEmailDeliveryEvent {
+  sourceKind?: "campaign" | "flow";
+  sourceId?: string;
   provider: EmailDeliveryProviderId;
   providerMessageId: string | null;
   eventId: string;

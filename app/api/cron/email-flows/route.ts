@@ -39,6 +39,8 @@ export async function GET(request: Request) {
 
   try {
     const admin = createAdminClient();
+    const reconciled = await admin.rpc("reconcile_marketing_email_webhooks");
+    if (reconciled.error) throw new Error("email_webhook_reconciliation_failed");
     const result = await runEmailFlowsFleet(admin);
     return Response.json(
       { ...result, cadenceMinutes: EMAIL_FLOW_CRON_CADENCE_MINUTES },

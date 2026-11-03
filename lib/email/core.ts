@@ -44,6 +44,7 @@ export interface ResendAvailability {
 }
 
 export interface ResendClientOptions {
+  beforeRequest?: () => Promise<void>;
   fetch?: ProviderFetch;
   timeoutMs?: number;
 }
@@ -107,6 +108,7 @@ export function createResendApiClient(config: ResendConfig, options: ResendClien
     provider: "resend",
     config,
     async request(method, path, body, init) {
+      await options.beforeRequest?.();
       const headers = new Headers(init?.headers);
       headers.set("Authorization", `Bearer ${config.apiKey}`);
       headers.set("Content-Type", "application/json");

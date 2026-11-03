@@ -59,6 +59,7 @@ function createProvider({ ok = true, status = 200 } = {}) {
     calls,
     client: {
       config: { fromName: ENV.EMAIL_FROM_NAME, fromAddress: ENV.EMAIL_FROM_ADDRESS },
+      async request() { return Response.json({id:"domain-synrapay-1",name:"synrapay.com",status:"verified"}); },
       // No `request` method on purpose: sender verification must fail safe
       // instead of hitting the provider.
       async post(path, body, init) {
@@ -95,7 +96,14 @@ function createAdmin(tables = {}) {
     from(table) {
       let filters = [];
       let limitValue = null;
+      let patch = null;
       const query = {
+        update(value) { patch = value; return query; },
+        then(resolve, reject) {
+          const rows = rowsFor(table, filters);
+          if (patch) rows.forEach(row => Object.assign(row, patch));
+          return Promise.resolve({data:rows,error:null}).then(resolve,reject);
+        },
         select() {
           return query;
         },
@@ -142,6 +150,8 @@ function createAdmin(tables = {}) {
 
   function applyRpc(name, args) {
     switch (name) {
+      case "reserve_marketing_email_submission": return {submit:true,state:"submitting"};
+      case "record_marketing_email_submission": return {state:args.p_state,messageId:args.p_message};
       case "create_email_asset": {
         const row = {
           id: `asset-${(store.voom_email_assets ?? []).length + 1}`,
@@ -263,6 +273,12 @@ function createStorage() {
 const businessTables = {
   businesses: [{ id: "biz-1", owner_user_id: OWNER, brand_name: "SynraPay" }],
 };
+const readyTables = {
+  ...businessTables,
+  voom_email_domains:[{domain:"synrapay.com",owner_user_id:OWNER,business_id:"biz-1",challenge:"a".repeat(64),provider_domain_id:"domain-synrapay-1",dns_verified_at:"2026-11-01",provider_verified_at:"2026-11-01"}],
+  voom_email_identities:[{owner_user_id:OWNER,business_id:"biz-1",display_name:"SynraPay",from_address:"hello@synrapay.com",reply_to:"support@synrapay.com",legal_name:"Synthetic SynraPay",postal_address:"123 Example Street, Test City"}],
+};
+const proofTxt = async () => [[`voom-email=${"a".repeat(64)}`]];
 
 // ─── 1. Sender identity: never spoof, honest fallback ───────────────────────
 
@@ -273,7 +289,7 @@ test("1a. no identity configured → the Voom-managed address carries the busine
 
   assert.equal(read.identity, null);
   assert.equal(read.verification.status, "not_configured");
-  assert.equal(read.sender?.from, `${ENV.EMAIL_FROM_NAME} <${ENV.EMAIL_FROM_ADDRESS}>`);
+  assert.equal(read.sender?.from, `SynraPay <${ENV.EMAIL_FROM_ADDRESS}>`);
 });
 
 test("1b. an unverified business address is NEVER used — even a verified-looking stored status", async () => {
@@ -307,7 +323,7 @@ test("1b. an unverified business address is NEVER used — even a verified-looki
 test("1c. a provider-verified domain → the business address is used, with the business name", async () => {
   const { readBusinessSender } = await import("../lib/email/branded/identity.ts");
   const admin = createAdmin({
-    ...businessTables,
+    ...readyTables,
     voom_email_identities: [
       {
         id: "identity-1",
@@ -323,6 +339,7 @@ test("1c. a provider-verified domain → the business address is used, with the 
   });
   const read = await readBusinessSender(admin, OWNER, {
     providerDomains: new Map([["synrapay.com", "verified"]]),
+    client: createProvider().client, txt: proofTxt,
   });
 
   assert.equal(read.verification.status, "verified");
@@ -880,7 +897,7 @@ test("6d. only the owner's own draft assets can be copied into the public bucket
 
 test("7a. prepare → dispatch: accepted (never 'delivered'), idempotency key on the wire", async () => {
   const { prepareBrandedSend, dispatchBrandedEmail } = await import("../lib/email/branded/dispatch.ts");
-  const admin = createAdmin(businessTables);
+  const admin = createAdmin(readyTables);
   const provider = createProvider();
 
   const prepared = await prepareBrandedSend(
@@ -889,6 +906,7 @@ test("7a. prepare → dispatch: accepted (never 'delivered'), idempotency key on
       ownerId: OWNER,
       to: "ada@example.com",
       idempotencyKey: "flow-attempt-1",
+      sourceKind: "flow", sourceId: "run-1",
       subject: "Welcome to SynraPay",
       body: "Hi {firstName},\n\nThanks for subscribing.",
       cta: "",
@@ -896,16 +914,16 @@ test("7a. prepare → dispatch: accepted (never 'delivered'), idempotency key on
       flowType: "welcome",
       firstName: "Ada",
     },
-    { client: provider.client },
+    { client: provider.client, txt: proofTxt, siteUrl: "https://voom.example" },
   );
 
   assert.equal(prepared.ok, true, JSON.stringify(prepared));
-  assert.equal(prepared.payload.from, `${ENV.EMAIL_FROM_NAME} <${ENV.EMAIL_FROM_ADDRESS}>`);
+  assert.equal(prepared.payload.from, "SynraPay <hello@synrapay.com>");
   assert.match(prepared.payload.text, /^Hi Ada,/);
   assert.ok(!prepared.payload.unsubscribeUrl.includes("ada@example.com"), "the raw address is never exposed in the link");
   assert.ok(prepared.payload.unsubscribeUrl.includes("unsubscribe"));
 
-  const response = await dispatchBrandedEmail(prepared.payload, { client: provider.client });
+  const response = await dispatchBrandedEmail(prepared.payload, { client: provider.client, admin });
   assert.equal(response.ok, true);
   assert.equal(response.providerMessageId, "msg_1");
   assert.equal(response.providerStatus, "accepted", "the provider outcome is 'accepted', full stop");
@@ -919,7 +937,7 @@ test("7a. prepare → dispatch: accepted (never 'delivered'), idempotency key on
 
 test("7b. the quality guard fails closed: a bad email is never dispatched", async () => {
   const { prepareBrandedSend } = await import("../lib/email/branded/dispatch.ts");
-  const admin = createAdmin(businessTables);
+  const admin = createAdmin(readyTables);
   const provider = createProvider();
 
   // Whitespace-only subject → guard failure, terminal, provider untouched.
@@ -936,7 +954,7 @@ test("7b. the quality guard fails closed: a bad email is never dispatched", asyn
       flowType: "welcome",
       firstName: "Ada",
     },
-    { client: provider.client },
+    { client: provider.client, txt: proofTxt },
   );
 
   assert.equal(prepared.ok, false);
@@ -991,9 +1009,9 @@ test("7c-0. the guard catches unresolved tokens and a missing unsubscribe direct
 
 test("7c. campaign and flow sends share the same renderer + resolver", async () => {
   const { prepareBrandedSend } = await import("../lib/email/branded/dispatch.ts");
-  const admin = createAdmin(businessTables);
+  const admin = createAdmin(readyTables);
   const provider = createProvider();
-  const deps = { client: provider.client };
+  const deps = { client: provider.client, txt: proofTxt };
   const content = {
     admin,
     ownerId: OWNER,

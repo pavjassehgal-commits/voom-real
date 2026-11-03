@@ -43,6 +43,8 @@ export async function createContact(
     email,
     phone,
     email_status: input.email_status ?? "unknown",
+    email_consent_source: input.email_status === "subscribed" ? input.source === "csv" ? "csv_attestation" : "manual_attestation" : null,
+    email_consent_at: input.email_status === "subscribed" ? new Date().toISOString() : null,
     sms_status: input.sms_status ?? "unknown",
     tags: input.tags ?? [],
     source: input.source ?? "manual",
@@ -98,7 +100,11 @@ export async function updateContact(
       : null;
   }
   if ("phone" in input) updates.phone = input.phone?.trim() ?? null;
-  if ("email_status" in input) updates.email_status = input.email_status;
+  if ("email_status" in input) {
+    updates.email_status = input.email_status;
+    updates.email_consent_source = input.email_status === "subscribed" ? "manual_attestation" : null;
+    updates.email_consent_at = input.email_status === "subscribed" ? new Date().toISOString() : null;
+  }
   if ("sms_status" in input) updates.sms_status = input.sms_status;
   if ("tags" in input) updates.tags = input.tags;
 
@@ -473,7 +479,10 @@ export async function resolveAudienceChannelEligibility(
   const resolved = await resolveAudienceContacts(db, ownerId, audienceId);
   if (!resolved.ok) return resolved;
 
-  const summary = computeChannelEligibility(resolved.data, channel);
+  const withEvidence = channel === "email"
+    ? resolved.data.filter(contact => contact.email_consent_at && contact.email_consent_source)
+    : resolved.data;
+  const summary = computeChannelEligibility(withEvidence, channel);
   // A subscription is necessary but not sufficient: an address the provider has
   // already bounced or been complained about is suppressed, so the next send
   // never goes to a known-dead destination. Missing 0040 schema → no filtering.
@@ -503,7 +512,7 @@ export async function resolveAudienceChannelEligibility(
       channel,
       totalMembers: resolved.data.length,
       eligibleCount: eligible.length,
-      excludedCount: summary.excluded.length + (summary.eligible.length - eligibleEntries.length),
+      excludedCount: resolved.data.length - withEvidence.length + summary.excluded.length + (summary.eligible.length - eligibleEntries.length),
       duplicateCount: summary.duplicates.length,
       eligible,
     },
@@ -529,9 +538,9 @@ async function loadSuppressedAddresses(
       .select("email")
       .eq("owner_id", ownerId)
       .in("email", unique);
-    if (error) return new Set();
+    if (error) throw new Error("suppression_lookup_failed");
     return new Set(((data ?? []) as Array<{ email: string }>).map((row) => String(row.email).toLowerCase()));
   } catch {
-    return new Set();
+    throw new Error("suppression_lookup_failed");
   }
 }
