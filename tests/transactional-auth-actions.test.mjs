@@ -1,5 +1,6 @@
 import './helpers/server-only-shim.mjs';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {registerHooks} from 'node:module';
 import {test,beforeEach,after} from 'node:test';
 const stub=code=>({url:'data:text/javascript,'+encodeURIComponent(code),shortCircuit:true});
@@ -25,7 +26,7 @@ beforeEach(()=>{
   const call=async(name,args,result)=>{s.calls.push({name,args});return result;};
   s.client={auth:{
     resetPasswordForEmail:(...args)=>call('reset',args,{error:null}),resend:(...args)=>call('resend',args,{error:null}),
-    exchangeCodeForSession:(...args)=>call('exchange',args,{data:{user:{id:s.userId}},error:null}),verifyOtp:(...args)=>call('verify',args,{data:{user:{id:s.userId}},error:null}),
+    exchangeCodeForSession:(...args)=>call('exchange',args,{data:{user:{id:s.userId}},error:null}),verifyOtp:(...args)=>call('verify',args,{data:{user:{id:s.userId}},error:s.verifyError??null}),
     getUser:async()=>({data:{user:s.userId?{id:s.userId}:null},error:null}),getClaims:async()=>({data:{claims:{sub:s.claimsSub,session_id:s.session}},error:null}),
     updateUser:(...args)=>call('update',args,{error:s.updateError}),signOut:(...args)=>call('signout',args,{error:null}),
     signUp:(...args)=>call('signup',args,{data:{session:{user:{id:s.userId}}},error:null}),signInWithPassword:(...args)=>call('login',args,{data:{user:{id:s.userId}},error:null}),
@@ -42,15 +43,34 @@ test('throttled real server action never invokes Supabase and does not reveal th
   s.allowed=false;const state=await actions.requestPasswordReset({},form({email:'owner@example.test'}));assert.equal(state.success,true);assert.equal(s.calls.length,0);
 });
 test('recovery rejects missing secret, both token formats, bad hash, unknown owner and mismatched claims',async()=>{
-  for(const entry of [{},{code:'c',token_hash:'a'.repeat(64)},{token_hash:'invalid'}])assert.ok((await actions.continueRecovery({},form(entry))).error);
+  const hash='a'.repeat(56);
+  for(const entry of [{},{code:'c',token_hash:hash},{token_hash:'invalid'},{token_hash:'123456'},{token_hash:hash+'\n'},{token_hash:'pkce_'},{token_hash:'a'.repeat(257)}]) {
+    assert.ok((await actions.continueRecovery({},form(entry))).error);
+  }
   assert.equal(s.calls.length,0);s.claimsSub='other';assert.ok((await actions.continueRecovery({},form({code:'code'}))).error);assert.equal(s.values.size,0);
 });
 test('recovery exchanges once and creates only an HttpOnly, session-bound ten-minute proof',async()=>{
   await assert.rejects(actions.continueRecovery({},form({code:'synthetic-code',sb_flow_id:'synthetic-flow'})),redirectedTo('/reset-password'));
   assert.equal(s.calls.filter(c=>c.name==='exchange').length,1);const cookie=s.calls.find(c=>c.name==='cookie');assert.equal(cookie.options.httpOnly,true);assert.equal(cookie.options.sameSite,'lax');assert.equal(cookie.options.path,'/reset-password');assert.equal(cookie.options.maxAge,600);
 });
-test('token-hash recovery fixes type to recovery and ignores any client-supplied type',async()=>{
-  await assert.rejects(actions.continueRecovery({},form({token_hash:'a'.repeat(64),type:'signup'})),redirectedTo('/reset-password'));assert.equal(s.calls[0].name,'verify');assert.equal(s.calls[0].args[0].type,'recovery');
+const supabaseRecoveryHash=createHash('sha224').update('owner@example.test123456').digest('hex');
+for(const tokenHash of [supabaseRecoveryHash,'pkce_'+supabaseRecoveryHash,'a'.repeat(64)]) {
+  test('recovery forwards a bounded TokenHash unchanged with the recovery type',async()=>{
+    await assert.rejects(actions.continueRecovery({},form({token_hash:tokenHash,type:'signup'})),redirectedTo('/reset-password'));
+    assert.deepEqual(s.calls[0],{name:'verify',args:[{token_hash:tokenHash,type:'recovery'}]});
+  });
+}
+test('invalid or expired provider tokens never grant recovery proof, and throttling skips verification',async()=>{
+  const input=form({token_hash:supabaseRecoveryHash});
+  s.verifyError={code:'otp_expired',message:'private provider details'};
+  const result=await actions.continueRecovery({},input);
+  assert.match(result.error,/invalid or expired/);
+  assert.doesNotMatch(result.error,/private provider/);
+  assert.deepEqual(s.calls.map(c=>c.name),['verify']);
+  assert.equal(s.values.size,0);
+  s.allowed=false;
+  assert.deepEqual(await actions.continueRecovery({},input),result);
+  assert.equal(s.calls.length,1);
 });
 test('password update refuses unproved, other-session and mismatched-password requests',async()=>{
   const valid=form({password:'synthetic-password-123',confirmPassword:'synthetic-password-123'});

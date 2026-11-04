@@ -36,7 +36,10 @@ export async function continueRecovery(_state: AccountEmailState, form: FormData
     const code = String(form.get("code") || "");
     const hash = String(form.get("token_hash") || "");
     const secret = process.env.VOOM_AUTH_EMAIL_SECRET || "";
-    if (secret.length < 32 || Boolean(code) === Boolean(hash) || code.length > 2048 || (hash && !/^[a-f0-9]{64}$/.test(hash)))
+    // Supabase supplies a hex TokenHash, optionally prefixed with pkce_.
+    // Bound the input without assuming a digest size. Auth validates the token and its lifetime.
+    const malformedHash = hash && (hash.length > 256 || !/^(?:pkce_)?[a-f0-9]{32,256}$/.test(hash));
+    if (secret.length < 32 || Boolean(code) === Boolean(hash) || code.length > 2048 || malformedHash)
         return failure;
     if (!await allowAuthEmail("recovery:" + (hash || code)))
         return failure;
