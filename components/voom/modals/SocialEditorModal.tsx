@@ -272,7 +272,7 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
                 <option value="true">Made for kids</option>
               </select>
             </Field>
-            <Field label="Privacy" hint="The privacy YouTube is asked to apply. Google may lock unaudited API projects to private; Voom shows what YouTube actually applied.">
+            <Field label="Privacy" hint="The privacy YouTube is asked to apply. YouTube may apply a different privacy (for example from channel settings); Voom shows what YouTube actually applied.">
               <select
                 value={privacy}
                 onChange={(e) => setPrivacy(e.target.value)}

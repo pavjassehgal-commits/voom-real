@@ -79,6 +79,8 @@ test("legal shell is Voom-styled, mobile responsive, and cross-links the three p
 
 test("Privacy Policy truthfully covers current Voom data flows", async () => {
   const privacy = await flatRead("app/privacy/page.tsx");
+  // YouTube API Services Developer Policies III.A.2.b: the policy must say the app uses YouTube API Services.
+  assert.match(privacy, /Voom uses YouTube API Services\./);
   // Every category of data the product actually handles today.
   assert.match(privacy, /Account and business data/);
   assert.match(privacy, /Connected social accounts/);
@@ -107,6 +109,10 @@ test("Privacy Policy truthfully covers current Voom data flows", async () => {
   assert.match(privacy, /Groq, OpenAI, Google \(Gemini\), NVIDIA/);
   assert.match(privacy, /Supabase/);
   assert.match(privacy, /Vercel/);
+  // The independent YouTube deletion register (Cloudflare) is disclosed with its minimal contents.
+  assert.match(privacy, /Cloudflare/);
+  assert.match(privacy, /minimal deletion record/);
+  assert.match(privacy, /never holds YouTube tokens, channel or video IDs/);
   assert.match(privacy, /row-level security/);
   assert.match(privacy, /Retention/);
   assert.match(privacy, /Security/);
@@ -185,4 +191,22 @@ test("legal pages stay out of product internals (no AI, media, Instagram, or ree
   }
   assert.doesNotMatch(all, /magic hour/i);
   assert.doesNotMatch(all, /generateVideo|mara_media_generations|instagram_publish_jobs/);
+});
+
+test("YouTube disclosures distinguish seven-day deletion from other data and preserve original content",async()=>{
+  const privacy=await flatRead('app/privacy/page.tsx'),deletion=await flatRead('app/data-deletion/page.tsx');
+  assert.match(privacy,/YouTube-specific retention/);assert.match(privacy,/seven calendar days/);
+  assert.match(privacy,/28 days/);assert.match(privacy,/prior YouTube approvals are withdrawn/);
+  assert.match(privacy,/user-provided|Original media and drafts you supply/);
+  assert.match(deletion,/YouTube API data/);assert.match(deletion,/within seven calendar days/);
+  assert.match(deletion,/For other Voom account data/);assert.match(deletion,/no YouTube video ID, channel ID or analytics/);
+  assert.match(deletion,/does not delete|To delete videos on YouTube itself/i);
+  for(const source of [privacy,deletion]){
+    assert.match(source,/expires after six days/);
+    assert.doesNotMatch(source,/retried[^.]*up to seven days/);
+    assert.match(source,/verification does not restart that deadline/);
+    assert.match(source,/access remains blocked/);
+    assert.doesNotMatch(source,/acknowledge[^.]*24 hours|complete[^.]*48 hours|independent deletion register/i,
+      'unadopted operations must not become public commitments');
+  }
 });

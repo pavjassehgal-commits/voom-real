@@ -1,4 +1,5 @@
 import "server-only";
+import { guardYouTubeClient } from "./privacy.ts";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { YouTubeClient } from "./client.ts";
@@ -102,7 +103,7 @@ export async function runYouTubePerformanceSync(deps: YouTubePerformanceDeps = {
 
   // Per-owner credentials, resolved once. A disconnected/revoked owner is
   // skipped truthfully — no provider call is attempted and no snapshot lies.
-  const credentialsByOwner = new Map<string, { accessToken: string } | null>();
+  const credentialsByOwner = new Map<string, { accessToken: string; authorizationEpoch: string } | null>();
   const businessByOwner = new Map<string, string | null>();
 
   for (const row of rows) {
@@ -113,7 +114,7 @@ export async function runYouTubePerformanceSync(deps: YouTubePerformanceDeps = {
     if (!credentialsByOwner.has(row.owner_user_id)) {
       try {
         const credentials = await getYouTubeServerCredentials(db, row.owner_user_id, keyRing, client);
-        credentialsByOwner.set(row.owner_user_id, { accessToken: credentials.accessToken });
+        credentialsByOwner.set(row.owner_user_id, { accessToken: credentials.accessToken, authorizationEpoch: credentials.authorizationEpoch });
       } catch {
         credentialsByOwner.set(row.owner_user_id, null);
       }
@@ -129,7 +130,7 @@ export async function runYouTubePerformanceSync(deps: YouTubePerformanceDeps = {
 
     let read;
     try {
-      read = await client.getVideo(credentials.accessToken, row.youtube_video_id);
+      read = await guardYouTubeClient(client,db,row.owner_user_id,credentials.authorizationEpoch).getVideo(credentials.accessToken, row.youtube_video_id);
     } catch {
       read = undefined;
     }

@@ -52,7 +52,12 @@ export async function enqueueYouTubePublishItem(
     p_scheduled_at: input.scheduledAt,
     p_waiting_for_media: input.waitingForMedia === true,
   });
-  if (error) throw new Error("youtube_publish_enqueue_failed");
+  if (error) {
+    for (const code of ["youtube_previous_submission_erased_do_not_retry","youtube_data_erased_reconnect_required"]) {
+      if (error.message?.includes(code)) throw new Error(code);
+    }
+    throw new Error("youtube_publish_enqueue_failed");
+  }
   return normalizeRow(data);
 }
 

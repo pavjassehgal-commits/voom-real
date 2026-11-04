@@ -3,24 +3,24 @@ import { readYouTubeConfig, youTubeKeyRing } from "@/lib/youtube/config";
 import { disconnectYouTube } from "@/lib/youtube/data";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { eraseYouTubeData } from "@/lib/youtube/privacy";
 
 export const runtime = "nodejs";
 
 /**
  * Disconnects the YouTube channel.
  *
- * What it does, in the safe order: destroys the encrypted tokens locally
- * (future publishing becomes impossible immediately), marks the connection
- * disconnected, withdraws queue rows that never reached the provider, and
- * then asks Google to revoke the refresh token (best effort — the local
- * destruction never depends on it).
+ * Commits an owner-scoped access block, erases YouTube-derived local data,
+ * and attempts Google revocation through the isolated leased outbox.
+ * A failed purge remains blocked for maintenance recovery; an unconfirmed
+ * revocation is not reported as success. Original drafts/media stay.
  *
  * What it NEVER does: delete or modify a single video on the customer's
  * YouTube channel (no videos.delete path exists anywhere in this
- * integration), or erase Voom history — published queue rows, provider
- * references and performance snapshots all remain.
+ * integration). YouTube-derived history is erased; original drafts/media stay.
  */
-export async function DELETE() {
+export async function DELETE(request: Request) {
+  if (request.headers.get("origin") !== new URL(request.url).origin) return Response.json({error:"Invalid request origin."},{status:403});
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
   const config = readYouTubeConfig();
@@ -31,7 +31,7 @@ export async function DELETE() {
       : // Even unconfigured, the local disconnect must work: it only needs the
         // database. Revocation is impossible without client credentials and
         // is reported truthfully.
-        { disconnected: Boolean((await admin.rpc("disconnect_youtube_connection", { p_owner_user_id: user.id })).data), revokedAtGoogle: false };
+        { disconnected: (await eraseYouTubeData(admin,user.id)).erased, revokedAtGoogle: false };
     return Response.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return Response.json({ error: "YouTube could not be disconnected. Please retry." }, { status: 503 });

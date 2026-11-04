@@ -1,4 +1,5 @@
 import "server-only";
+import { guardYouTubeClient } from "./privacy.ts";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { YouTubeClient } from "./client.ts";
@@ -73,10 +74,9 @@ export interface YouTubeReconcileDeps {
  *                         rewriting the proven publication fact (the
  *                         database guard forbids that anyway).
  *
- *   revoked authorization an invalid_grant from Google marks the connection
- *                         revoked (inside the credential loader) and stops
- *                         future publishing; historical Voom records and
- *                         the customer's YouTube videos are untouched.
+ *   revoked authorization invalid_grant erases API-derived records and stops
+ *                         further access. Original drafts/media and remote
+ *                         YouTube videos are unaffected.
  */
 export async function runYouTubeReconciliation(deps: YouTubeReconcileDeps = {}): Promise<YouTubeReconcileRunResult> {
   const db = deps.db ?? (await import("@/utils/supabase/admin")).createAdminClient();
@@ -120,7 +120,7 @@ export async function runYouTubeReconciliation(deps: YouTubeReconcileDeps = {}):
         code: "youtube_publish_unknown_error",
         message: "YouTube reconciliation did not complete. Please review this item.",
         status: "failed",
-      });
+      }).catch(() => undefined); // Erasure may already have removed this job.
       result.failed += 1;
       result.results.push({ id: row.id, outcome: "failed", code: "youtube_publish_unknown_error" });
     }
@@ -173,7 +173,7 @@ async function recoverAmbiguousRow(
   now: Date,
   ports: YouTubeFlowPorts,
 ): Promise<boolean> {
-  let credentials: { accessToken: string };
+  let credentials: { accessToken: string; authorizationEpoch: string };
   try {
     credentials = await getYouTubeServerCredentials(db, row.owner_user_id, keyRing, client);
   } catch {
@@ -181,7 +181,7 @@ async function recoverAmbiguousRow(
   }
   let channel;
   try {
-    channel = await client.getMyChannel(credentials.accessToken);
+    channel = await guardYouTubeClient(client,db,row.owner_user_id,credentials.authorizationEpoch).getMyChannel(credentials.accessToken);
   } catch {
     return false;
   }
@@ -196,7 +196,7 @@ async function recoverAmbiguousRow(
   if (!channel.uploadsPlaylistId) return false;
   let uploads;
   try {
-    uploads = await client.listRecentUploads(credentials.accessToken, channel.uploadsPlaylistId, 15);
+    uploads = await guardYouTubeClient(client,db,row.owner_user_id,credentials.authorizationEpoch).listRecentUploads(credentials.accessToken, channel.uploadsPlaylistId, 15);
   } catch {
     return false;
   }
@@ -233,7 +233,7 @@ async function verifyPublishedRow(
   timeline: (event: string, detail?: Record<string, unknown>) => void,
 ): Promise<boolean> {
   if (!row.youtube_video_id) return false;
-  let credentials: { accessToken: string };
+  let credentials: { accessToken: string; authorizationEpoch: string };
   try {
     credentials = await getYouTubeServerCredentials(db, row.owner_user_id, keyRing, client);
   } catch {
@@ -244,7 +244,7 @@ async function verifyPublishedRow(
   }
   let read;
   try {
-    read = await client.getVideo(credentials.accessToken, row.youtube_video_id);
+    read = await guardYouTubeClient(client,db,row.owner_user_id,credentials.authorizationEpoch).getVideo(credentials.accessToken, row.youtube_video_id);
   } catch {
     timeline("youtube_verify_skipped", { itemId: row.id, reason: "provider_read_failed" });
     return false;

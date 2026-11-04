@@ -9,13 +9,14 @@ import type { YouTubeKeyRing } from "./crypto.ts";
  * to the browser: the client secret and the token encryption key live only
  * in the server environment, exactly like the Instagram configuration.
  *
- * `projectAudited` reflects Google's documented restriction: videos.insert
- * from API projects created after 2020-07-28 that have NOT passed the
- * YouTube API Services Compliance Audit is locked to private viewing mode.
- * Voom defaults this to FALSE (restricted) — the safe, truthful assumption —
- * and even when it is true, the actual privacy YouTube applied is read back
- * from the provider and stored. Configuration can never make Voom claim a
- * public publication that did not happen.
+ * `projectAudited` records whether the API project has passed the YouTube
+ * API Services Compliance Audit. Google currently requires that audit only
+ * to raise quota above the default allocation; its videos.insert reference
+ * (updated 2026-10-15) states unverified projects are NOT restricted to
+ * private viewing mode. Voom defaults this to FALSE, and in every case the
+ * privacy YouTube actually applied is read back from the provider and stored.
+ * Configuration can never make Voom claim a public publication that did not
+ * happen.
  */
 const configSchema = z.object({
   clientId: z.string().min(1),

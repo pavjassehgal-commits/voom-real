@@ -89,6 +89,15 @@ export default function TermsPage() {
           but does not automatically delete content that has already been
           published to your social accounts.
         </p>
+        <p>
+          For YouTube, disconnecting also removes Voom&apos;s stored YouTube
+          channel details, publication references and performance data; it does
+          not delete your original Voom drafts or uploaded media. An upload
+          already submitted to YouTube may finish processing. Voom does not
+          delete videos on YouTube. Erased submission history is not restored
+          or automatically retried after reconnection. See our Data Deletion
+          information for YouTube-specific deletion and retention rules.
+        </p>
       </LegalSection>
 
       <LegalSection title="Third-party platform rules and API availability">
