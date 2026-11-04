@@ -75,7 +75,7 @@ crons = ["17 * * * *"]
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "voom-ydr-production"
-database_id = "REPLACE_AFTER_PRODUCTION_D1_CREATE"
+database_id = "20c4c662-7e4b-4979-93b9-ae18a47a7e4d"
 
 [env.production.vars]
 ALERT_FROM = "VOOM Alerts <no-reply@voom.today>"
