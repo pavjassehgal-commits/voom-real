@@ -16,12 +16,11 @@
  * Brand page on Save.
  *
  * Look (2026-11-04): the redesign's white cards, fields and pills (FORM, Pill in
- * components/voom/redesign/ui.tsx); the description is a two-line box that wraps.
+ * components/voom/redesign/ui.tsx); the description box grows with its text.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState, type TextareaHTMLAttributes } from "react";
 import { Icon } from "@/components/voom/icons";
-import { Tag } from "@/components/voom/ui/primitives";
-import { FORM, Pill } from "@/components/voom/redesign/ui";
+import { Badge, FORM, Pill } from "@/components/voom/redesign/ui";
 import { cx } from "@/lib/voom/cx";
 import {
   BRAND_ASSET_ACCEPT, BRAND_ASSET_LIMITS, BRAND_COLOUR_SOURCE_LABELS, PAST_POST_CHIPS, brandAssetCount,
@@ -54,6 +53,21 @@ const KIND_LABELS: Record<BrandAssetKind, { title: string; help: string; add: st
   product: { title: "Product or service photos", help: `Up to ${BRAND_ASSET_LIMITS.product}. One line each saying what it is.`, add: "Add product photos", line: "What is this?", placeholder: "e.g. Iced latte in a tall glass" },
   past_post: { title: "Past posts you're proud of", help: `Up to ${BRAND_ASSET_LIMITS.past_post} images from anywhere you've posted before Voom.`, add: "Add past posts", line: "What it shows", placeholder: "e.g. Morning pour-over on the counter" },
 };
+
+/**
+ * A textarea that grows with its text (at least two lines), so a full description is
+ * never hidden below the box's edge. Plain DOM measurement, no library.
+ */
+function GrowingTextarea({ value, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & { value: string }) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "0px";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+  return <textarea ref={ref} rows={2} value={value} {...props} />;
+}
 
 function Thumb({ url, label }: { url?: string; label: string }) {
   return url
@@ -168,15 +182,14 @@ export function BrandAssetsEditor({ assets, colours, previews, visionEnabled, di
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-[13px] font-semibold text-text">{labels.line}</span>
                   <span className="flex items-center gap-1.5">
-                    {reading.has(asset.path) ? <Tag tone="t-grey">MARA is looking…</Tag> : asset.describedBy === "mara" ? <Tag tone="t-brand">MARA&apos;s guess</Tag> : null}
+                    {reading.has(asset.path) ? <Badge tone="t-grey">MARA is looking…</Badge> : asset.describedBy === "mara" ? <Badge tone="t-brand">MARA&apos;s guess</Badge> : null}
                     <button type="button" className={cx(FORM.smallBtn, "h-8 px-2.5 text-[12.5px]")} disabled={disabled} onClick={() => remove(asset)} aria-label={`Remove ${labels.title.toLowerCase()}`}>
                       <Icon name="trash" size={13} /> Remove
                     </button>
                   </span>
                 </div>
-                <textarea
-                  rows={2}
-                  className={cx(FORM.area, "resize-none py-2.5 text-[14px]")}
+                <GrowingTextarea
+                  className={cx(FORM.area, "resize-none py-2.5")}
                   value={asset.description}
                   maxLength={BRAND_ASSET_LIMITS.description}
                   placeholder={labels.placeholder}
@@ -245,7 +258,7 @@ function ColourPicker({ colours, disabled, onColours }: { colours: BrandColours 
     <div className={cx(FORM.card, "mt-3")} data-brand-colours>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <span className="text-[13px] font-semibold text-text">Colours MARA uses</span>
-        {inUse && colours ? <Tag tone={colours.source === "owner" ? "t-grey" : "t-brand"}>{BRAND_COLOUR_SOURCE_LABELS[colours.source]}</Tag> : null}
+        {inUse && colours ? <Badge tone={colours.source === "owner" ? "t-grey" : "t-brand"}>{BRAND_COLOUR_SOURCE_LABELS[colours.source]}</Badge> : null}
       </div>
       {found.length ? (
         <ul className="mb-3 space-y-1.5" data-brand-palettes>
@@ -256,7 +269,7 @@ function ColourPicker({ colours, disabled, onColours }: { colours: BrandColours 
               <li key={which} className="flex flex-wrap items-center gap-2 text-[12.5px]">
                 {[palette.primary, palette.secondary].filter(Boolean).map((hex) => <span key={hex} className="inline-block h-5 w-5 rounded-md border border-line" style={{ backgroundColor: hex! }} title={hex!} />)}
                 <span className="text-text-2">{BRAND_COLOUR_SOURCE_LABELS[which]}</span>
-                {active ? <Tag tone="t-green">In use</Tag> : <button type="button" className={cx(FORM.smallBtn, "h-8 px-2.5 text-[12.5px]")} disabled={disabled} onClick={() => onColours(chooseFoundPalette(colours, which))}>Use these</button>}
+                {active ? <Badge tone="t-green">In use</Badge> : <button type="button" className={cx(FORM.smallBtn, "h-8 px-2.5 text-[12.5px]")} disabled={disabled} onClick={() => onColours(chooseFoundPalette(colours, which))}>Use these</button>}
               </li>
             );
           })}

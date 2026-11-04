@@ -18,7 +18,7 @@
  */
 import { z } from "zod";
 import type { AiProvider } from "@/lib/ai/types";
-import { BRAND_ASSET_LIMITS, PAST_POST_CHIPS, type BrandAssetKind } from "./assets";
+import { BRAND_ASSET_LIMITS, PAST_POST_CHIPS, trimToSentence, type BrandAssetKind } from "./assets";
 
 export interface BrandImageReading {
   description: string;
@@ -29,9 +29,10 @@ export interface BrandImageReading {
 const KNOWN_CHIPS: readonly string[] = PAST_POST_CHIPS;
 
 export const brandImageReadingSchema = z.object({
-  description: z.string().transform((v) => v.trim().slice(0, BRAND_ASSET_LIMITS.description)),
+  // Over the cap, cut at a sentence end (never mid-word; see trimToSentence).
+  description: z.string().transform((v) => trimToSentence(v, BRAND_ASSET_LIMITS.description)),
   chips: z.array(z.string()).transform((items) => [...new Set(items.map((c) => c.trim()).filter((c) => KNOWN_CHIPS.includes(c)))].slice(0, BRAND_ASSET_LIMITS.chips)),
-  look: z.string().transform((v) => v.trim().slice(0, BRAND_ASSET_LIMITS.look)),
+  look: z.string().transform((v) => trimToSentence(v, BRAND_ASSET_LIMITS.look)),
 }).strict();
 
 export const brandImageReadingJsonSchema = {
@@ -42,18 +43,22 @@ export const brandImageReadingJsonSchema = {
     additionalProperties: false,
     required: ["description", "chips", "look"],
     properties: {
-      description: { type: "string", maxLength: BRAND_ASSET_LIMITS.description, description: "One plain line: what the image shows. Visible words exactly as written." },
+      // No maxLength on the two text fields: a hard limit in the schema let the model stop
+      // mid-word at the cap ("WEALTH IN EVERY BREA", 2026-11-04). The prompt asks for a
+      // short line and trimToSentence caps what comes back at a sentence end.
+      description: { type: "string", description: "One plain short sentence: what the image shows, with its main visible words." },
       chips: { type: "array", maxItems: BRAND_ASSET_LIMITS.chips, items: { type: "string", enum: [...PAST_POST_CHIPS] }, description: "Past posts only: style chips that clearly apply. [] otherwise." },
-      look: { type: "string", maxLength: BRAND_ASSET_LIMITS.look, description: "Past posts only: the light, colours and framing in one short line. \"\" otherwise." },
+      look: { type: "string", description: "Past posts only: the light, colours and framing in one short line. \"\" otherwise." },
     },
   },
 } as const;
 
 /**
- * What MARA is asked for, below the storage caps (`BRAND_ASSET_LIMITS`), so a line
- * that runs a little long is still stored whole instead of cut mid-sentence.
+ * What MARA is asked for, well below the storage caps (`BRAND_ASSET_LIMITS`), so a
+ * line that runs long is still stored whole; past the cap, trimToSentence keeps the
+ * last complete sentence (lib/brand/assets.ts).
  */
-const DESCRIPTION_ASK = BRAND_ASSET_LIMITS.description - 30;
+const DESCRIPTION_ASK = BRAND_ASSET_LIMITS.description - 80;
 const LOOK_ASK = BRAND_ASSET_LIMITS.look - 30;
 
 export const BRAND_VISION_SYSTEM_PROMPT = `You are MARA, Voom's practical AI marketing manager, looking at ONE image a small business owner uploaded to their brand kit.
@@ -61,7 +66,7 @@ export const BRAND_VISION_SYSTEM_PROMPT = `You are MARA, Voom's practical AI mar
 Return JSON only, matching the schema you were given.
 - Describe only what is visible. Never guess names, places, prices, awards or claims that are not written in the image.
 - Never identify or name a person, and never guess anyone's age, ethnicity, religion, health or other personal traits. Say "a person" or "two people".
-- Copy any visible words exactly as written.
+- Copy visible words exactly as written, but only the main ones: when the image carries a lot of text, quote the heading or product name, not every line.
 - The payload says what kind of image it is:
   - "logo": description = one short sentence saying what the logo shows, under ${DESCRIPTION_ASK} characters, including its words ("Brown coffee bean above the words Bean & Co."). chips = [], look = "".
   - "product": description = one short sentence saying what the product or service shown is, under ${DESCRIPTION_ASK} characters ("Iced latte in a tall glass"). chips = [], look = "".

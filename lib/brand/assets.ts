@@ -25,9 +25,10 @@ export const BRAND_ASSET_LIMITS = {
   product: 10,
   past_post: 5,
   maxBytes: 10 * 1024 * 1024,
-  // Storage cap. MARA is asked for under 150 (lib/brand/vision.ts), so her line is
-  // never cut mid-sentence (it was, at 120; Gurnoor, 2026-11-02).
-  description: 180,
+  // Storage cap. MARA is asked for well under this (lib/brand/vision.ts) and her line
+  // is cut at a sentence end when it still runs over (`trimToSentence`): a text-heavy
+  // photo was cut mid-word at 120 and again at 180 (Gurnoor, 2026-11-02 and 11-04).
+  description: 240,
   look: 160,
   chips: 6,
 } as const;
@@ -116,6 +117,21 @@ export function isOwnBrandAssetPath(ownerId: string, path: unknown, kind?: Brand
 
 export function isBrandColour(value: unknown): value is string {
   return typeof value === "string" && HEX_RE.test(value);
+}
+
+/**
+ * Caps MARA's text without cutting a word in half. Over the cap, keeps the last
+ * complete sentence that fits; when none fits, the last whole word plus "…".
+ */
+export function trimToSentence(text: string, max: number): string {
+  const whole = text.trim();
+  if (whole.length <= max) return whole;
+  const head = whole.slice(0, max);
+  let cut = -1;
+  for (const match of head.matchAll(/[.!?]["”')]?(?=\s|$)/g)) cut = match.index + match[0].length;
+  if (cut >= Math.ceil(max * 0.3)) return head.slice(0, cut).trim();
+  const space = head.lastIndexOf(" ");
+  return `${(space > 0 ? head.slice(0, space) : head.slice(0, max - 1)).trim()}…`;
 }
 
 const assetSchema = z.object({

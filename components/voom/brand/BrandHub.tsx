@@ -17,8 +17,7 @@
 import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { Icon } from "@/components/voom/icons";
 import { AutomationMode } from "@/components/voom/operating/AutomationMode";
-import { Tag } from "@/components/voom/ui/primitives";
-import { BTN, FORM, Pill } from "@/components/voom/redesign/ui";
+import { BTN, Badge, FORM, Pill } from "@/components/voom/redesign/ui";
 import { cx } from "@/lib/voom/cx";
 import { BrandAssetsEditor } from "@/components/voom/brand/BrandAssetsEditor";
 import { requestVoiceSamples, sortSample, VoiceSampleCards, voiceSamplesMessage, WritingSamplesPanel, type SampleVerdict } from "@/components/voom/brand/VoiceSamples";
@@ -112,7 +111,7 @@ function Para({ children, empty }: { children?: string | string[]; empty: string
 
 function ChipList({ items, empty }: { items: string[]; empty: string }) {
   if (!items.length) return <p className="text-[13.5px] text-text-3">{empty}</p>;
-  return <div className="flex flex-wrap gap-1.5">{items.map((item) => <Tag key={item} tone="t-brand">{item}</Tag>)}</div>;
+  return <div className="flex flex-wrap gap-1.5">{items.map((item) => <Badge key={item} tone="t-brand">{item}</Badge>)}</div>;
 }
 
 function Toggle({ options, selected, onChange, disabled }: { options: readonly string[]; selected: string[]; onChange: (next: string[]) => void; disabled?: boolean }) {
@@ -333,7 +332,7 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
                 return (
                   <li key={entry.version} className="py-2.5">
                     <button type="button" className="flex w-full flex-wrap items-center gap-2 text-left" onClick={() => setOpenVersion(open ? null : entry.version)} aria-expanded={open}>
-                      <Tag tone="t-grey">v{entry.version}</Tag>
+                      <Badge tone="t-grey">v{entry.version}</Badge>
                       <span className="text-[13.5px] font-semibold">{changed}</span>
                       <span className="text-[12.5px] text-text-3">{formatDate(entry.createdAt)} · {SOURCE_LABELS[entry.source] ?? entry.source}</span>
                       <Icon name={open ? "up" : "down"} size={12} className="ml-auto" />
@@ -455,7 +454,7 @@ function SectionView({ id, values, plan, automation, mode, onConfirmFact, previe
               {[colours.primary, colours.secondary].filter(Boolean).map((colour) => (
                 <span key={colour} className="flex items-center gap-1.5"><span className="h-4 w-4 rounded-full border border-line" style={{ background: colour ?? undefined }} /><span className="font-mono text-text-3">{colour}</span></span>
               ))}
-              <Tag tone={colours.source === "logo" ? "t-brand" : "t-grey"}>{colours.source === "logo" ? "Computed from your logo" : "Picked by you"}</Tag>
+              <Badge tone={colours.source === "logo" ? "t-brand" : "t-grey"}>{colours.source === "logo" ? "Computed from your logo" : "Picked by you"}</Badge>
             </div>
           ) : null}
           {groups.map(({ kind, title }) => {
@@ -469,8 +468,8 @@ function SectionView({ id, values, plan, automation, mode, onConfirmFact, previe
                     <li key={asset.path} className="flex gap-3" data-asset={asset.kind}>
                       <AssetThumb url={previews?.[asset.path]} label={asset.description || title} />
                       <div className="min-w-0 text-[13.5px]">
-                        <p>{asset.description || <span className="text-text-3">No description yet.</span>}{asset.describedBy === "mara" ? <Tag tone="t-brand" className="ml-1.5">MARA&apos;s guess</Tag> : null}</p>
-                        {asset.chips.length ? <div className="mt-1 flex flex-wrap gap-1">{asset.chips.map((chip) => <Tag key={chip} tone="t-grey">{chip}</Tag>)}</div> : null}
+                        <p>{asset.description || <span className="text-text-3">No description yet.</span>}{asset.describedBy === "mara" ? <Badge tone="t-brand" className="ml-1.5">MARA&apos;s guess</Badge> : null}</p>
+                        {asset.chips.length ? <div className="mt-1 flex flex-wrap gap-1">{asset.chips.map((chip) => <Badge key={chip} tone="t-grey">{chip}</Badge>)}</div> : null}
                         {asset.look ? <p className="mt-1 text-[12.5px] text-text-3">{asset.look}</p> : null}
                       </div>
                     </li>
@@ -530,7 +529,7 @@ function SectionView({ id, values, plan, automation, mode, onConfirmFact, previe
             : <p className="text-[13.5px] text-text-3">No confirmed facts. MARA states no years, awards or numbers until you add some.</p>}
           {values.facts.unconfirmed.length ? (
             <div>
-              <div className="mb-1 flex items-center gap-2 text-[12px] font-semibold text-text-2">Needs confirmation <Tag tone="t-amber">{values.facts.unconfirmed.length}</Tag></div>
+              <div className="mb-1 flex items-center gap-2 text-[12px] font-semibold text-text-2">Needs confirmation <Badge tone="t-amber">{values.facts.unconfirmed.length}</Badge></div>
               <p className="mb-1.5 text-[12.5px] text-text-3">
                 MARA found these in your description. She never states them until you confirm them{onConfirmFact ? "; Edit removes one for good." : " with Edit."}
               </p>

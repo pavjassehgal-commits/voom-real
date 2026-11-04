@@ -162,11 +162,12 @@ export const BTN = {
  * and light message boxes. Phase C polish, 2026-11-04.
  */
 export const FORM = {
+  // Label, field and hint sizes match the Settings page (BTN.field, its Field helper).
   label: "mb-1.5 block text-[13px] font-semibold text-text",
-  hint: "mt-1.5 block text-[12.5px] leading-relaxed text-text-2",
-  field: "h-11 w-full rounded-[12px] border border-line bg-surface px-3.5 text-[14.5px] text-text outline-none transition placeholder:text-text-3 focus:border-[var(--brand-line)] focus:shadow-[0_0_0_4px_var(--brand-soft)] disabled:opacity-60",
-  area: "w-full resize-y rounded-[14px] border border-line bg-surface px-3.5 py-3 text-[14.5px] leading-[1.6] text-text outline-none transition placeholder:text-text-3 focus:border-[var(--brand-line)] focus:shadow-[0_0_0_4px_var(--brand-soft)] disabled:opacity-60",
-  select: "h-11 w-full appearance-none rounded-[12px] border border-line bg-surface px-3.5 pr-9 text-[14.5px] text-text outline-none transition focus:border-[var(--brand-line)] focus:shadow-[0_0_0_4px_var(--brand-soft)] disabled:opacity-60",
+  hint: "mt-1.5 block text-[12px] leading-relaxed text-text-3",
+  field: "h-11 w-full rounded-[14px] border border-line bg-surface px-3.5 text-[14px] text-text outline-none transition placeholder:text-text-3 focus:border-[var(--brand-line)] focus:shadow-[0_0_0_4px_var(--brand-soft)] disabled:opacity-60",
+  area: "w-full resize-y rounded-[14px] border border-line bg-surface px-3.5 py-3 text-[14px] leading-[1.6] text-text outline-none transition placeholder:text-text-3 focus:border-[var(--brand-line)] focus:shadow-[0_0_0_4px_var(--brand-soft)] disabled:opacity-60",
+  select: "h-11 w-full appearance-none rounded-[14px] border border-line bg-surface px-3.5 pr-9 text-[14px] text-text outline-none transition focus:border-[var(--brand-line)] focus:shadow-[0_0_0_4px_var(--brand-soft)] disabled:opacity-60",
   card: "rounded-[16px] border border-line bg-surface p-4",
   note: "rounded-[12px] border border-line bg-surface px-4 py-3 text-[13px] leading-relaxed text-text-2",
   warn: "rounded-[12px] border border-[var(--amber)]/30 bg-[var(--amber-soft)] px-4 py-3 text-[13px] leading-relaxed text-text-2",
@@ -175,6 +176,25 @@ export const FORM = {
   smallBtn: "inline-flex h-9 items-center justify-center gap-1.5 rounded-[10px] border border-line bg-surface px-3 text-[13px] font-semibold text-text transition hover:border-[var(--line-2)] hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50",
   smallPrimary: "voom-create-btn inline-flex h-9 items-center justify-center gap-1.5 rounded-full px-4 text-[13px] font-semibold text-white transition hover:brightness-[1.04] disabled:cursor-not-allowed disabled:opacity-50",
 } as const;
+
+const BADGE_TONES: Record<string, string> = {
+  "t-brand": "bg-[var(--brand-soft)] text-[var(--brand-ink)]",
+  "t-grey": "bg-surface-2 text-text-3",
+  "t-green": "bg-[var(--green-soft)] text-[var(--green)]",
+  "t-amber": "bg-[var(--amber-soft)] text-[var(--amber)]",
+};
+
+/**
+ * A small round badge ("MARA's guess", "In use", a count), the same shape as the
+ * dashboard's status chips. Tone names match the old `Tag` so screens could swap.
+ */
+export function Badge({ tone = "t-grey", className, children }: { tone?: keyof typeof BADGE_TONES | string; className?: string; children: ReactNode }) {
+  return (
+    <span className={cx("inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-[3px] text-[11.5px] font-semibold", BADGE_TONES[tone] ?? BADGE_TONES["t-grey"], className)}>
+      {children}
+    </span>
+  );
+}
 
 /** A choice pill: white, soft purple with a purple border when chosen. */
 export function Pill({ on, className, children, ...props }: { on?: boolean } & ButtonHTMLAttributes<HTMLButtonElement>) {

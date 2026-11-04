@@ -195,7 +195,14 @@ test("the image list is validated and capped: 1 logo, 10 products, 5 past posts;
 
   assert.equal(assets.cleanBrandAssets([{ ...asset("logo", 1), path: "elsewhere/x.png" }]), null, "one malformed entry refuses the list");
   assert.equal(assets.cleanBrandAssets("nope"), null);
-  assert.deepEqual(assets.cleanBrandAssets([{ ...asset("logo", 1), description: "x".repeat(300) }])[0].description.length, 180);
+  assert.deepEqual(assets.cleanBrandAssets([{ ...asset("logo", 1), description: "x".repeat(300) }])[0].description.length, 240);
+
+  // MARA's over-long line is cut at a sentence, never mid-word (the "BREA" cut of 2026-11-04).
+  const jet = 'A bottle of "BILLIONAIRE VIBES" perfume, sunglasses, a passport, a watch, and a cup of coffee on a table inside a private jet. The text says "BILLIONAIRE VIBES WEALTH IN EVERY BREATH" in gold letters.';
+  assert.equal(assets.trimToSentence(jet, 180), 'A bottle of "BILLIONAIRE VIBES" perfume, sunglasses, a passport, a watch, and a cup of coffee on a table inside a private jet.');
+  assert.equal(assets.trimToSentence(jet, 400), jet, "a line within the cap is kept whole");
+  assert.equal(assets.trimToSentence("word ".repeat(60).trim(), 52), `${"word ".repeat(10).trim()}…`, "no sentence end: last whole word plus an ellipsis");
+  assert.ok(assets.trimToSentence("Short. " + "x".repeat(300), 100).endsWith("…"), "a sentence end very early is ignored in favour of words");
 
   assert.deepEqual(assets.cleanBrandColours({ primary: "#c81e28", secondary: "nope", source: "logo" }), { primary: "#C81E28", secondary: null, source: "logo" });
   assert.equal(assets.cleanBrandColours({ primary: "red" }), null);

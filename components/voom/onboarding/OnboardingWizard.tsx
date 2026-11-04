@@ -71,10 +71,9 @@ import { canUseAutomationMode, getPlanConfig } from "@/lib/billing/plans";
 import { beginHapticGesture, haptic, type HapticGesture } from "@/lib/voom/haptics";
 import { BrandHub } from "@/components/voom/brand/BrandHub";
 import { Icon } from "../icons";
-import { ChannelGlyph, FORM } from "../redesign/ui";
+import { Badge, ChannelGlyph, FORM } from "../redesign/ui";
 import { MaraMark } from "../redesign/MaraMark";
 import { VoomLogo } from "../shell/VoomLogo";
-import { Tag } from "../ui/primitives";
 import { SetupComplete } from "./SetupComplete";
 import { OnboardingIcon } from "./onboardingIcons";
 
@@ -941,7 +940,7 @@ function StepAutomation() {
                 icon={<OnboardingIcon label={choice.title} />}
                 label={choice.title}
                 hint={choice.sub}
-                extra={<Tag tone={allowed ? "t-green" : "t-grey"}>{allowed ? "Included in your plan" : `Needs the ${choice.plan}`}</Tag>}
+                extra={<Badge tone={allowed ? "t-green" : "t-grey"}>{allowed ? "Included in your plan" : `Needs the ${choice.plan}`}</Badge>}
                 mark="radio"
                 active={onboard.auto === choice.value}
                 onClick={() => setOnboardField("auto", choice.value)}
