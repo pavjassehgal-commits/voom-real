@@ -71,9 +71,8 @@ two (dual copies, cross-heartbeat). The third is confirmed when the account is c
    `wrangler d1 execute voom-youtube-deletion-register --remote --file schema/0001_register.sql`.
 3. Secrets: `wrangler secret put` JOURNAL_TOKEN, ALERT_TOKEN, REPLAY_TOKEN (each `openssl rand -hex 32`),
    RESEND_API_KEY (a **send-only** Resend key).
-4. Vars in `wrangler.toml`: ALERT_FROM (verified Resend sender), ALERT_TO (primary
-   operator inbox), ALERT_ESCALATE_TO (deputy). Use real people the owner names; this
-   repo invents none.
+4. Vars in `wrangler.toml`: ALERT_FROM / ALERT_TO = `no-reply@voom.today`, the owner's
+   monitored Google Workspace inbox. ALERT_ESCALATE_TO stays empty until a second person exists.
 5. `wrangler deploy` (Workers Free). Note the `*.workers.dev` URL.
 6. Vercel **Production** env: `YOUTUBE_DELETION_DELIVERY_APPROVED=true`,
    `YOUTUBE_DELETION_JOURNAL_URL=https://<worker>/v1/events`, `YOUTUBE_DELETION_JOURNAL_TOKEN`,
@@ -133,10 +132,25 @@ signup; confirm when creating the account.
   earlier hosted staging run. A hosted run against a real Cloudflare deployment, with a
   real email, is still required (deployment order, step 1).
 
-## 8. Remaining approvals
+## 8. Alert monitoring and backup (single owner)
 
-Owner or delegate: Cloudflare account, plus named operators and deputy (alert
-recipients). Resend send-only key and sender. Retention period. Privacy Policy wording
-about the minimal deletion record. The Production rollout. Separately: eSmart/legal
-review of the published policy pages, and the Google OAuth verification steps in
-`youtube-google-verification-package.md`.
+1. **Primary:** the register emails `no-reply@voom.today` through its own send-only Resend key.
+   A Gmail filter on `[VOOM YouTube deletion` stars and labels these alerts, never sends them to spam, and
+   notifies the owner's phone. Staging subjects say `STAGING`; Production subjects carry no label.
+2. **Backup email:** the VOOM app checks the register every maintenance run. If the register
+   is unreachable, its watchdog is stale, or alert email is stuck, the app sends an `URGENT`
+   email through VOOM's own Resend key (`YOUTUBE_DELETION_FALLBACK_ALERT_TO`). This uses a
+   different system and a different key.
+3. **Weekly manual check (2 minutes, every Monday):** Cloudflare dashboard → Storage & Databases → D1 →
+   `voom-ydr-production` → Console:
+   `select count(*) from register_alerts where email_status = 'pending';` must be 0, and
+   `select last_seen_at from register_heartbeats;` must show both rows within the last day.
+   A non-zero or old value means: follow section 6.
+4. **Away for more than 3 days:** hand the inbox to a trusted person, or check the label daily.
+   Erase deadlines are 7 days, and the day-3 and day-5 alerts exist for exactly this.
+5. **Residual risk:** both email paths use Resend. A full Resend outage is caught by the weekly check.
+
+## 9. Remaining approvals
+
+Owner only: the Production rollout, the retention period (unset = keep the minimal records),
+and the Google OAuth verification steps in `youtube-google-verification-package.md`.

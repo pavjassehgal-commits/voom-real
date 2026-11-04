@@ -6,12 +6,12 @@ Every step needs the owner's explicit approval. Nothing here has been run agains
 
 ## Gate 0 — before the release window (no customer impact)
 
-1. **Approvals:** eSmart/legal sign-off of `/privacy`, `/terms` and `/data-deletion` as on the branch. Named primary and deputy alert recipients.
+1. **Approvals (owner only):** the owner approves `/privacy`, `/terms` and `/data-deletion` as on the branch. Alerts go to `no-reply@voom.today`, monitored by the owner (Gmail filter on `[VOOM YouTube deletion`). The staging real-email test passed on 2026-11-01: 7 of 7 accepted by Resend.
 2. **Production register (Cloudflare Free):** run these in `workers/youtube-deletion-register`, then check them.
    ```bash
    npx wrangler d1 create voom-ydr-production
    ```
-   Put the returned id in `[env.production]`, along with `ALERT_FROM`, `ALERT_TO` and `ALERT_ESCALATE_TO`.
+   Put the returned id in `[env.production]` (sender and recipient are already set to `no-reply@voom.today`).
    ```bash
    npx wrangler d1 execute voom-ydr-production --env production --remote --file schema/0001_register.sql
    ```
@@ -49,7 +49,7 @@ Customers stay blocked, not exposed, but the gap should be minutes, not days.
    - `YOUTUBE_DELETION_DELIVERY_APPROVED=true`
    - `YOUTUBE_DELETION_JOURNAL_URL` and `YOUTUBE_DELETION_JOURNAL_TOKEN`
    - `YOUTUBE_DELETION_ALERT_URL` and `YOUTUBE_DELETION_ALERT_TOKEN`
-   - `YOUTUBE_DELETION_FALLBACK_ALERT_TO`
+   - `YOUTUBE_DELETION_FALLBACK_ALERT_TO=no-reply@voom.today`
    Change nothing else.
 8. **After the first natural reconcile run** (it runs every 5 minutes):
    - The register shows a VOOM heartbeat.

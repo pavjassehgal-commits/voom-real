@@ -42,7 +42,7 @@ immediately before submitting.
   - **Why it can't ship alone:** those pages must deploy **together with** the behaviour they describe: 0065, 0069, the deletion register and the app release. Publishing the text early would make the policy inaccurate, and Google checks that consistency.
 
 ### OWNER ACTION
-1. **Release the compliance work** (0065 + 0069 + Cloudflare register + this branch) after eSmart review of the pages. Submit verification only after this is live.
+1. **Release the compliance work** (0065 + 0069 + Cloudflare register + this branch) after the owner approves the pages. Submit verification only after this is live.
 2. **Google Cloud Console** (Google Auth Platform) for the existing project. Check and record:
    - Audience: **External**, publishing status **In production**. In Testing, only listed test users can connect and their grants expire after 7 days.
    - Branding:
@@ -51,7 +51,7 @@ immediately before submitting.
      - user support email and developer contact;
      - App home page `https://voom.today/`, Privacy `https://voom.today/privacy`, Terms `https://voom.today/terms`;
      - Authorized domain `voom.today`.
-   - Domain: verify `voom.today` in Google Search Console as an Owner/Editor of the project.
+   - Domain: `voom.today` already publishes a `google-site-verification` DNS record (checked 2026-11-04). Confirm in Search Console that the **same Google account that owns the Cloud project** is listed as a verified Owner.
    - Data access: exactly `.../auth/youtube.upload` and `.../auth/youtube.readonly`. Remove anything else.
    - Clients → the Web client matching Vercel Production `GOOGLE_CLIENT_ID`:
      - Authorized redirect URI exactly `https://voom.today/api/integrations/youtube/callback`;
