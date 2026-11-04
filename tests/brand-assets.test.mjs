@@ -195,7 +195,7 @@ test("the image list is validated and capped: 1 logo, 10 products, 5 past posts;
 
   assert.equal(assets.cleanBrandAssets([{ ...asset("logo", 1), path: "elsewhere/x.png" }]), null, "one malformed entry refuses the list");
   assert.equal(assets.cleanBrandAssets("nope"), null);
-  assert.deepEqual(assets.cleanBrandAssets([{ ...asset("logo", 1), description: "x".repeat(300) }])[0].description.length, 120);
+  assert.deepEqual(assets.cleanBrandAssets([{ ...asset("logo", 1), description: "x".repeat(300) }])[0].description.length, 180);
 
   assert.deepEqual(assets.cleanBrandColours({ primary: "#c81e28", secondary: "nope", source: "logo" }), { primary: "#C81E28", secondary: null, source: "logo" });
   assert.equal(assets.cleanBrandColours({ primary: "red" }), null);

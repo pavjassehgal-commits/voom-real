@@ -49,6 +49,13 @@ export const brandImageReadingJsonSchema = {
   },
 } as const;
 
+/**
+ * What MARA is asked for, below the storage caps (`BRAND_ASSET_LIMITS`), so a line
+ * that runs a little long is still stored whole instead of cut mid-sentence.
+ */
+const DESCRIPTION_ASK = BRAND_ASSET_LIMITS.description - 30;
+const LOOK_ASK = BRAND_ASSET_LIMITS.look - 30;
+
 export const BRAND_VISION_SYSTEM_PROMPT = `You are MARA, Voom's practical AI marketing manager, looking at ONE image a small business owner uploaded to their brand kit.
 
 Return JSON only, matching the schema you were given.
@@ -56,9 +63,10 @@ Return JSON only, matching the schema you were given.
 - Never identify or name a person, and never guess anyone's age, ethnicity, religion, health or other personal traits. Say "a person" or "two people".
 - Copy any visible words exactly as written.
 - The payload says what kind of image it is:
-  - "logo": description = what the logo shows, under ${BRAND_ASSET_LIMITS.description} characters, including its words ("Brown coffee bean above the words Bean & Co."). chips = [], look = "".
-  - "product": description = one plain line saying what the product or service shown is, under ${BRAND_ASSET_LIMITS.description} characters ("Iced latte in a tall glass"). chips = [], look = "".
-  - "past_post": description = what the post shows, under ${BRAND_ASSET_LIMITS.description} characters. chips = up to ${BRAND_ASSET_LIMITS.chips} of ${PAST_POST_CHIPS.map((c) => `"${c}"`).join(", ")} that clearly apply. look = one short line on the light, colours and framing, under ${BRAND_ASSET_LIMITS.look} characters ("Warm morning light, close-up, cream and brown tones").
+  - "logo": description = one short sentence saying what the logo shows, under ${DESCRIPTION_ASK} characters, including its words ("Brown coffee bean above the words Bean & Co."). chips = [], look = "".
+  - "product": description = one short sentence saying what the product or service shown is, under ${DESCRIPTION_ASK} characters ("Iced latte in a tall glass"). chips = [], look = "".
+  - "past_post": description = one short sentence saying what the post shows, under ${DESCRIPTION_ASK} characters. chips = up to ${BRAND_ASSET_LIMITS.chips} of ${PAST_POST_CHIPS.map((c) => `"${c}"`).join(", ")} that clearly apply. look = one short line on the light, colours and framing, under ${LOOK_ASK} characters ("Warm morning light, close-up, cream and brown tones").
+- Finish every sentence; a complete short line beats a long one that stops halfway.
 - When the image is unclear, answer "" and [].`;
 
 /** One vision call for one image. Throws the provider's AiError on failure. */

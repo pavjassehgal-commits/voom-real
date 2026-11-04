@@ -71,9 +71,10 @@ import { canUseAutomationMode, getPlanConfig } from "@/lib/billing/plans";
 import { beginHapticGesture, haptic, type HapticGesture } from "@/lib/voom/haptics";
 import { BrandHub } from "@/components/voom/brand/BrandHub";
 import { Icon } from "../icons";
-import { ChannelGlyph } from "../redesign/ui";
+import { ChannelGlyph, FORM } from "../redesign/ui";
+import { MaraMark } from "../redesign/MaraMark";
 import { VoomLogo } from "../shell/VoomLogo";
-import { Btn, Orb, Tag } from "../ui/primitives";
+import { Tag } from "../ui/primitives";
 import { SetupComplete } from "./SetupComplete";
 import { OnboardingIcon } from "./onboardingIcons";
 
@@ -414,14 +415,16 @@ export function OnboardingWizard({ visionEnabled = false, completedOnServer = fa
 /* ── Shared looks (main's setup design) ─────────────────────────────────── */
 
 const QUIET_BTN = "inline-flex h-11 items-center gap-2 rounded-[12px] border border-[var(--line)] bg-white px-4 text-[14px] font-semibold text-text transition hover:bg-[var(--surface-2)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)] focus-visible:ring-offset-1 disabled:cursor-not-allowed";
-const FIELD = "h-12 w-full rounded-[12px] border border-[var(--line)] bg-white px-4 text-[14.5px] text-text outline-none transition placeholder:text-text-3 focus:border-[var(--brand-line)] focus:ring-4 focus:ring-[var(--brand-soft)]";
-const AREA = "w-full resize-y rounded-[14px] border border-[var(--line)] bg-white px-4 py-3.5 text-[14.5px] leading-[1.65] text-text outline-none transition placeholder:text-text-3 focus:border-[var(--brand-line)] focus:ring-4 focus:ring-[var(--brand-soft)] disabled:opacity-60";
-/** MARA's own notes: the panel with her orb. */
+// The shared form kit (components/voom/redesign/ui.tsx), a touch taller here.
+const FIELD = cx(FORM.field, "h-12 px-4");
+const AREA = cx(FORM.area, "px-4 py-3.5 leading-[1.65]");
+const SMALL_BTN = FORM.smallBtn;
+/** MARA's own notes: the panel with her mark. */
 const MARA_PANEL = "rounded-[16px] border border-[#cfc4ff] bg-white/85 p-4";
 /** A plain note (what happened, what to do). */
-const NOTE = "rounded-[12px] border border-[var(--line)] bg-white/80 px-4 py-3 text-[13px] leading-relaxed text-text-2";
+const NOTE = FORM.note;
 /** Something went wrong but the owner can carry on. */
-const WARN = "rounded-[12px] border border-[var(--amber)]/30 bg-[var(--amber-soft)] px-4 py-3 text-[13px] leading-relaxed text-text-2";
+const WARN = FORM.warn;
 
 /** The reference gives each answer icon its own pastel tile. */
 const TINTS = ["bg-[#e8f3ff]", "bg-[#fff4e0]", "bg-[#ffece9]", "bg-[#e9f8ee]", "bg-[#f1ecff]", "bg-[#fff0f6]"];
@@ -507,33 +510,12 @@ function Mark({ kind, active }: { kind: "check" | "radio" | "box"; active: boole
   );
 }
 
-/** Centred radio tile with the icon on top (the reference's stacked layout, used for the pace). */
-function TileChoice({ label, hint, active, onClick }: { label: string; hint?: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      data-haptic="light"
-      className={cx(
-        "relative flex min-w-0 flex-col items-center rounded-[14px] border bg-white px-2.5 pb-3.5 pt-5 text-center transition sm:px-3 sm:pb-4 hover:border-[var(--brand-line)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)]",
-        active ? "border-[#b9a8ff] bg-[#f5f2ff] shadow-[0_0_0_1px_#b9a8ff]" : "border-[var(--line)]",
-      )}
-    >
-      <span className="absolute left-3 top-3"><Mark kind="radio" active={active} /></span>
-      <OnboardingIcon label={label} size={30} />
-      <span className="mt-2.5 text-[13.5px] font-semibold leading-snug text-text sm:text-[14px]">{label}</span>
-      {hint && <span className="mt-1 text-[12px] leading-snug text-text-2">{hint}</span>}
-    </button>
-  );
-}
-
-/** MARA speaking: her orb beside a short paragraph. */
+/** MARA speaking: her mark beside a short paragraph. */
 function MaraNote({ children, role }: { children: ReactNode; role?: "status" }) {
   return (
     <div role={role} className={MARA_PANEL}>
-      <div className="flex items-start gap-2.5">
-        <Orb size="sm" className="mt-0.5" />
+      <div className="flex items-start gap-3">
+        <MaraMark height={22} className="mt-0.5" />
         <p className="text-[13.5px] leading-[1.6] text-text">{children}</p>
       </div>
     </div>
@@ -552,7 +534,7 @@ function WebsiteReadStatus({ website, draftReady, onRetry, onRetryLook }: { webs
         <span>Read {pages} page{pages === 1 ? "" : "s"}.{draftReady ? " Drafted your description for the next screen." : ""}</span>
         {website.lookStatus === "ready" ? <span>Took one look at the homepage: its colours are under your logo.</span> : null}
         {website.lookStatus === "" ? <span>Looking at the homepage for its colours…</span> : null}
-        {website.lookStatus === "failed" ? <><span className="text-[var(--amber)]">Couldn&apos;t take a look at the homepage for its colours.</span><Btn variant="ghost" size="sm" onClick={onRetryLook}>Try the look again</Btn></> : null}
+        {website.lookStatus === "failed" ? <><span className="text-[var(--amber)]">Couldn&apos;t take a look at the homepage for its colours.</span><button type="button" className={cx(SMALL_BTN, "h-7 px-2.5 text-[12px]")} onClick={onRetryLook}>Try the look again</button></> : null}
         {website.lookStatus === "off" ? <span>Image reading is off, so no colours from the site.</span> : null}
       </span>
     );
@@ -561,7 +543,7 @@ function WebsiteReadStatus({ website, draftReady, onRetry, onRetryLook }: { webs
     return (
       <span role="alert" className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-[var(--amber)]">
         {website.reason}
-        <Btn variant="ghost" size="sm" onClick={onRetry}>Try again</Btn>
+        <button type="button" className={cx(SMALL_BTN, "h-7 px-2.5 text-[12px]")} onClick={onRetry}>Try again</button>
       </span>
     );
   }
@@ -611,8 +593,8 @@ function StepDescribe({ words, reading, onReadAgain, onBackToWebsite }: { words:
         <div role="alert" className={cx(WARN, "mb-3")}>
           <b className="text-text">I couldn&apos;t read your website.</b> {site.reason}
           <span className="mt-2 flex flex-wrap gap-2">
-            <Btn variant="outline" size="sm" onClick={onReadAgain}>Try reading again</Btn>
-            <Btn variant="ghost" size="sm" onClick={onBackToWebsite}>Back to the website</Btn>
+            <button type="button" className={SMALL_BTN} onClick={onReadAgain}>Try reading again</button>
+            <button type="button" className={SMALL_BTN} onClick={onBackToWebsite}>Back to the website</button>
           </span>
         </div>
       ) : onboard.descFromWebsite ? (
@@ -700,7 +682,7 @@ function StepAssets({ visionEnabled, onRead, onRetryLook }: { visionEnabled: boo
         </span>
         <WebsiteReadStatus website={site} draftReady={onboard.descFromWebsite} onRetry={onRead} onRetryLook={onRetryLook} />
       </QBlock>
-      <div className="rounded-[18px] border border-[var(--line)] bg-white p-4 sm:p-5">
+      <div className="rounded-[18px] border border-[var(--line)] bg-white/70 p-4 sm:p-5">
         <BrandAssetsEditor
           assets={onboard.assets}
           colours={onboard.colours}
@@ -868,13 +850,13 @@ function StepVoice() {
           <VoiceSampleCards samples={onboard.samples} liked={onboard.liked} disliked={onboard.disliked} onSort={sort} />
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
             <span className="text-[12.5px] text-text-3">Kept so far: {onboard.liked.length} sound like you · {onboard.disliked.length} not you</span>
-            <Btn variant="ghost" size="sm" onClick={() => void write()}>Try 3 more</Btn>
+            <button type="button" className={SMALL_BTN} onClick={() => void write()}>Try 3 more</button>
           </div>
         </QBlock>
       ) : onboard.samplesNote === "failed" ? (
         <div className={NOTE}>
           I couldn&apos;t write sample captions just now. I&apos;ll show you samples on your Brand page.
-          <Btn variant="ghost" size="sm" className="ml-2" onClick={() => void write()}>Try again</Btn>
+          <button type="button" className={cx(SMALL_BTN, "ml-2 h-8 px-2.5 text-[12.5px]")} onClick={() => void write()}>Try again</button>
         </div>
       ) : null}
     </div>
@@ -930,9 +912,9 @@ function StepPace() {
   const { setOnboardField } = useVoomActions();
   return (
     <QBlock title="Posting pace" help="2–3 times a week is preselected; skipping keeps it.">
-      <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-4">
-        {Q_FREQ.map((v) => (
-          <TileChoice key={v} label={v} hint={FREQ_HINT[v]} active={onboard.freq === v} onClick={() => setOnboardField("freq", v)} />
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        {Q_FREQ.map((v, index) => (
+          <OptionCard key={v} tint={tint(index + 3)} icon={<OnboardingIcon label={v} size={28} />} label={v} hint={FREQ_HINT[v]} mark="radio" active={onboard.freq === v} onClick={() => setOnboardField("freq", v)} />
         ))}
       </div>
     </QBlock>

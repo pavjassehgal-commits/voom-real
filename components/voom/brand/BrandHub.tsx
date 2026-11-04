@@ -10,14 +10,16 @@
  * operating section and offers "Looks right" instead. "How we sound" can ask
  * MARA for three sample captions to sort (slice 6, `VoiceSamplesWriter`).
  *
- * Look (Phase C, 2026-11-02): each section is a `voom-card` like the redesigned
- * pages; the buttons, chips, tags and fields are the shared primitives main's
- * own shell still uses.
+ * Look (Phase C, 2026-11-02, polished 2026-11-04): each section is a `voom-card`
+ * like the redesigned pages; buttons, pills and fields come from the redesign's
+ * form kit (`FORM`, `Pill`, `BTN` in components/voom/redesign/ui.tsx).
  */
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { Icon } from "@/components/voom/icons";
 import { AutomationMode } from "@/components/voom/operating/AutomationMode";
-import { Btn, Chip, Field, Input, Tag, Textarea } from "@/components/voom/ui/primitives";
+import { Tag } from "@/components/voom/ui/primitives";
+import { BTN, FORM, Pill } from "@/components/voom/redesign/ui";
+import { cx } from "@/lib/voom/cx";
 import { BrandAssetsEditor } from "@/components/voom/brand/BrandAssetsEditor";
 import { requestVoiceSamples, sortSample, VoiceSampleCards, voiceSamplesMessage, WritingSamplesPanel, type SampleVerdict } from "@/components/voom/brand/VoiceSamples";
 import { saveBrandSection } from "@/lib/brand/actions";
@@ -88,8 +90,19 @@ function ListText({ items, separator, rows, disabled, onChange }: { items: strin
     onChange(next);
   };
   return separator === "line"
-    ? <Textarea rows={rows ?? 4} value={text} disabled={disabled} onChange={(e) => handle(e.target.value)} />
-    : <Input value={text} disabled={disabled} onChange={(e) => handle(e.target.value)} />;
+    ? <textarea className={FORM.area} rows={rows ?? 4} value={text} disabled={disabled} onChange={(e) => handle(e.target.value)} />
+    : <input className={FORM.field} value={text} disabled={disabled} onChange={(e) => handle(e.target.value)} />;
+}
+
+/** A labelled field, the redesign way. */
+function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  return (
+    <label className="mb-4 block last:mb-0">
+      <span className={FORM.label}>{label}</span>
+      {children}
+      {hint ? <span className={FORM.hint}>{hint}</span> : null}
+    </label>
+  );
 }
 
 function Para({ children, empty }: { children?: string | string[]; empty: string }) {
@@ -104,13 +117,13 @@ function ChipList({ items, empty }: { items: string[]; empty: string }) {
 
 function Toggle({ options, selected, onChange, disabled }: { options: readonly string[]; selected: string[]; onChange: (next: string[]) => void; disabled?: boolean }) {
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap gap-2">
       {options.map((option) => {
         const active = selected.includes(option);
         return (
-          <Chip key={option} active={active} disabled={disabled} onClick={() => onChange(active ? selected.filter((x) => x !== option) : [...selected, option])}>
+          <Pill key={option} on={active} disabled={disabled} onClick={() => onChange(active ? selected.filter((x) => x !== option) : [...selected, option])}>
             {option}
-          </Chip>
+          </Pill>
         );
       })}
     </div>
@@ -119,11 +132,11 @@ function Toggle({ options, selected, onChange, disabled }: { options: readonly s
 
 function Pick({ options, value, onChange, disabled }: { options: readonly string[]; value: string; onChange: (next: string) => void; disabled?: boolean }) {
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap gap-2">
       {options.map((option) => (
-        <Chip key={option} active={value === option} disabled={disabled} onClick={() => onChange(value === option ? "" : option)}>
+        <Pill key={option} on={value === option} disabled={disabled} onClick={() => onChange(value === option ? "" : option)}>
           {option}
-        </Chip>
+        </Pill>
       ))}
     </div>
   );
@@ -269,13 +282,13 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
               </div>
               {isEditing ? (
                 <div className="flex gap-2">
-                  <Btn variant="primary" size="sm" disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save"}</Btn>
-                  <Btn variant="ghost" size="sm" disabled={busy} onClick={cancelEdit}>Cancel</Btn>
+                  <button type="button" className={FORM.smallPrimary} disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save"}</button>
+                  <button type="button" className={FORM.smallBtn} disabled={busy} onClick={cancelEdit}>Cancel</button>
                 </div>
               ) : (
-                <Btn variant="outline" size="sm" disabled={busy || editing !== null} onClick={() => startEdit(section.id)}>
+                <button type="button" className={FORM.smallBtn} disabled={busy || editing !== null} onClick={() => startEdit(section.id)}>
                   <Icon name="edit" size={13} /> Edit
-                </Btn>
+                </button>
               )}
             </div>
             {isEditing && draft ? (
@@ -302,7 +315,7 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
       {mode === "onboarding" ? (
         onDone ? (
           <div className="mt-2 flex justify-end">
-            <Btn variant="primary" disabled={busy || editing !== null} onClick={onDone}>Looks right</Btn>
+            <button type="button" className={BTN.primary} disabled={busy || editing !== null} onClick={onDone}>Looks right</button>
           </div>
         ) : null
       ) : (
@@ -326,7 +339,7 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
                       <Icon name={open ? "up" : "down"} size={12} className="ml-auto" />
                     </button>
                     {open ? (
-                      <div className="mt-2 space-y-2 rounded-xl bg-surface-2 p-3 text-[12.5px]">
+                      <div className="mt-2 space-y-2 rounded-[12px] border border-line bg-surface-2 p-3 text-[12.5px]">
                         {entry.changedKeys.length === 0 ? <p className="text-text-3">{entry.changeSummary || "Saved without changes."}</p> : null}
                         {entry.changedKeys.map((key) => (
                           <div key={key}>
@@ -493,11 +506,11 @@ function SectionView({ id, values, plan, automation, mode, onConfirmFact, previe
           <ChipList items={values.voice.personality} empty="No personality chosen. MARA uses a neutral tone." />
           <div>
             <div className="mb-1 text-[12px] font-semibold text-text-2">Sounds like us</div>
-            {values.voice.liked.length ? values.voice.liked.map((s) => <p key={s} className="mb-1 rounded-lg bg-surface-2 px-3 py-2 text-[13px]">{s}</p>) : <p className="text-[13px] text-text-3">No samples yet.</p>}
+            {values.voice.liked.length ? values.voice.liked.map((s) => <p key={s} className="mb-1.5 rounded-[12px] border border-[var(--brand-line)] bg-[var(--brand-soft)] px-3.5 py-2.5 text-[13.5px] text-text">{s}</p>) : <p className="text-[13px] text-text-3">No samples yet.</p>}
           </div>
           <div>
             <div className="mb-1 text-[12px] font-semibold text-text-2">Not us</div>
-            {values.voice.disliked.length ? values.voice.disliked.map((s) => <p key={s} className="mb-1 rounded-lg bg-surface-2 px-3 py-2 text-[13px] line-through decoration-text-3">{s}</p>) : <p className="text-[13px] text-text-3">No samples yet.</p>}
+            {values.voice.disliked.length ? values.voice.disliked.map((s) => <p key={s} className="mb-1.5 rounded-[12px] border border-line bg-surface-2 px-3.5 py-2.5 text-[13.5px] text-text-3 line-through decoration-text-3">{s}</p>) : <p className="text-[13px] text-text-3">No samples yet.</p>}
           </div>
         </div>
       );
@@ -523,9 +536,9 @@ function SectionView({ id, values, plan, automation, mode, onConfirmFact, previe
               </p>
               <ul className="space-y-1">
                 {values.facts.unconfirmed.map((fact) => (
-                  <li key={fact} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-2 px-3 py-2 text-[13px] text-text-2">
+                  <li key={fact} className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-line bg-surface px-3.5 py-2.5 text-[13.5px] text-text">
                     <span>{fact}</span>
-                    {onConfirmFact ? <Btn variant="outline" size="sm" onClick={() => onConfirmFact(fact)}>Confirm</Btn> : null}
+                    {onConfirmFact ? <button type="button" className={cx(FORM.smallBtn, "h-8 px-2.5 text-[12.5px]")} onClick={() => onConfirmFact(fact)}>Confirm</button> : null}
                   </li>
                 ))}
               </ul>
@@ -584,13 +597,13 @@ function VoiceSamplesWriter({ values, draft, disabled, onChange }: { values: Bra
   }
 
   return (
-    <div className="rounded-xl border border-line p-3">
+    <div className={FORM.card}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <div className="text-[12.5px] font-semibold text-text-2">Samples from MARA</div>
-          <p className="text-[12px] text-text-3">She writes three from your Brand page; tap the ones that sound like you. Save keeps your picks.</p>
+          <div className="text-[13px] font-semibold text-text">Samples from MARA</div>
+          <p className="text-[12.5px] text-text-2">She writes three from your Brand page; tap the ones that sound like you. Save keeps your picks.</p>
         </div>
-        <Btn variant="outline" size="sm" disabled={disabled || writing} onClick={() => void write()}>{writing ? "Writing…" : samples.length ? "Try 3 more" : "Write 3 new samples"}</Btn>
+        <button type="button" className={FORM.smallBtn} disabled={disabled || writing} onClick={() => void write()}>{writing ? "Writing…" : samples.length ? "Try 3 more" : "Write 3 new samples"}</button>
       </div>
       {writing ? <div className="mt-3"><WritingSamplesPanel /></div> : null}
       {!writing && samples.length ? <div className="mt-3"><VoiceSampleCards samples={samples} liked={draft.liked} disliked={draft.disliked} disabled={disabled} onSort={sort} /></div> : null}
@@ -605,10 +618,10 @@ function SectionEditor({ id, draft, onChange, disabled, values }: { id: BrandSec
       const d = draft as BrandSectionValues["basics"];
       return (
         <div>
-          <Field label="Business name"><Input value={d.name} disabled={disabled} onChange={(e) => onChange({ ...d, name: e.target.value })} /></Field>
-          <Field label="Describe your brand" hint="What you do, who you serve and what makes you different."><Textarea rows={4} value={d.description} disabled={disabled} onChange={(e) => onChange({ ...d, description: e.target.value })} /></Field>
+          <Field label="Business name"><input className={FORM.field} value={d.name} disabled={disabled} onChange={(e) => onChange({ ...d, name: e.target.value })} /></Field>
+          <Field label="Describe your brand" hint="What you do, who you serve and what makes you different."><textarea className={FORM.area} rows={4} value={d.description} disabled={disabled} onChange={(e) => onChange({ ...d, description: e.target.value })} /></Field>
           <Field label="Kind of business">
-            <select className="h-[46px] w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[14.5px]" value={d.category} disabled={disabled} onChange={(e) => onChange({ ...d, category: e.target.value })}>
+            <select className={FORM.select} value={d.category} disabled={disabled} onChange={(e) => onChange({ ...d, category: e.target.value })}>
               <option value="">Not set</option>
               {Q_INDUSTRY.map(([, name]) => <option key={name} value={name}>{name}</option>)}
             </select>
@@ -618,7 +631,7 @@ function SectionEditor({ id, draft, onChange, disabled, values }: { id: BrandSec
     }
     case "brief": {
       const d = draft as BrandSectionValues["brief"];
-      return <Field label="Brand Brief" hint="A few short paragraphs: what you are, what you offer, who it's for, how you sound. Clear it to go back to your description."><Textarea rows={8} value={d.brief} disabled={disabled} onChange={(e) => onChange({ brief: e.target.value })} /></Field>;
+      return <Field label="Brand Brief" hint="A few short paragraphs: what you are, what you offer, who it's for, how you sound. Clear it to go back to your description."><textarea className={FORM.area} rows={8} value={d.brief} disabled={disabled} onChange={(e) => onChange({ brief: e.target.value })} /></Field>;
     }
     case "offerings": {
       const d = draft as BrandSectionValues["offerings"];
@@ -628,8 +641,8 @@ function SectionEditor({ id, draft, onChange, disabled, values }: { id: BrandSec
       const d = draft as BrandSectionValues["audience"];
       return (
         <div className="space-y-3">
-          <div><div className="mb-1.5 text-[12.5px] font-semibold text-text-2">Audience</div><Toggle options={Q_CUSTOMER} selected={d.audience} disabled={disabled} onChange={(audience) => onChange({ ...d, audience })} /></div>
-          <div><div className="mb-1.5 text-[12.5px] font-semibold text-text-2">Main goal</div><Pick options={Q_GOAL.map(([, name]) => name)} value={d.goal} disabled={disabled} onChange={(goal) => onChange({ ...d, goal })} /></div>
+          <div><div className={FORM.label}>Audience</div><Toggle options={Q_CUSTOMER} selected={d.audience} disabled={disabled} onChange={(audience) => onChange({ ...d, audience })} /></div>
+          <div><div className={FORM.label}>Main goal</div><Pick options={Q_GOAL.map(([, name]) => name)} value={d.goal} disabled={disabled} onChange={(goal) => onChange({ ...d, goal })} /></div>
         </div>
       );
     }
@@ -637,7 +650,7 @@ function SectionEditor({ id, draft, onChange, disabled, values }: { id: BrandSec
       const d = draft as BrandSectionValues["voice"];
       return (
         <div className="space-y-3">
-          <div><div className="mb-1.5 text-[12.5px] font-semibold text-text-2">Personality</div><Toggle options={OB_TONE} selected={d.personality} disabled={disabled} onChange={(personality) => onChange({ ...d, personality })} /></div>
+          <div><div className={FORM.label}>Personality</div><Toggle options={OB_TONE} selected={d.personality} disabled={disabled} onChange={(personality) => onChange({ ...d, personality })} /></div>
           {values ? <VoiceSamplesWriter values={values} draft={d} disabled={disabled} onChange={onChange} /> : null}
           <Field label="Sounds like us" hint="Captions you'd be happy to post, one per line, up to 5."><ListText items={d.liked} separator="line" rows={3} disabled={disabled} onChange={(liked) => onChange({ ...d, liked })} /></Field>
           <Field label="Not us" hint="Captions you'd never post, one per line, up to 5."><ListText items={d.disliked} separator="line" rows={3} disabled={disabled} onChange={(disliked) => onChange({ ...d, disliked })} /></Field>
@@ -648,9 +661,9 @@ function SectionEditor({ id, draft, onChange, disabled, values }: { id: BrandSec
       const d = draft as BrandSectionValues["avoid"];
       return (
         <div className="space-y-3">
-          <div><div className="mb-1.5 text-[12.5px] font-semibold text-text-2">Rules</div><Toggle options={AVOID_RULES} selected={d.rules} disabled={disabled} onChange={(rules) => onChange({ ...d, rules })} /></div>
+          <div><div className={FORM.label}>Rules</div><Toggle options={AVOID_RULES} selected={d.rules} disabled={disabled} onChange={(rules) => onChange({ ...d, rules })} /></div>
           <Field label="Words, topics or emoji to ban" hint="Comma-separated. MARA never uses them, in any casing."><ListText items={d.words} separator="comma" disabled={disabled} onChange={(words) => onChange({ ...d, words })} /></Field>
-          <Field label="Anything specific MARA should know or do?"><Textarea rows={3} value={d.notes} disabled={disabled} onChange={(e) => onChange({ ...d, notes: e.target.value })} /></Field>
+          <Field label="Anything specific MARA should know or do?"><textarea className={FORM.area} rows={3} value={d.notes} disabled={disabled} onChange={(e) => onChange({ ...d, notes: e.target.value })} /></Field>
         </div>
       );
     }
@@ -661,14 +674,14 @@ function SectionEditor({ id, draft, onChange, disabled, values }: { id: BrandSec
           <Field label="Facts MARA may state" hint="One per line. Only what you can stand behind: 'Roasting since 2014', 'Family-run'."><ListText items={d.facts} separator="line" rows={4} disabled={disabled} onChange={(facts) => onChange({ ...d, facts })} /></Field>
           {d.unconfirmed.length ? (
             <div>
-              <div className="mb-1.5 text-[12.5px] font-semibold text-text-2">Needs confirmation</div>
-              <ul className="space-y-1.5">
+              <div className={FORM.label}>Needs confirmation</div>
+              <ul className="space-y-2">
                 {d.unconfirmed.map((fact) => (
-                  <li key={fact} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-2 px-3 py-2 text-[13px]">
+                  <li key={fact} className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-line bg-surface px-3.5 py-2.5 text-[13.5px] text-text">
                     <span>{fact}</span>
                     <span className="flex gap-1.5">
-                      <Btn variant="outline" size="sm" disabled={disabled} onClick={() => onChange({ facts: d.facts.includes(fact) ? d.facts : [...d.facts, fact], unconfirmed: d.unconfirmed.filter((f) => f !== fact) })}>Confirm</Btn>
-                      <Btn variant="ghost" size="sm" disabled={disabled} onClick={() => onChange({ ...d, unconfirmed: d.unconfirmed.filter((f) => f !== fact) })}>Remove</Btn>
+                      <button type="button" className={cx(FORM.smallBtn, "h-8 px-2.5 text-[12.5px]")} disabled={disabled} onClick={() => onChange({ facts: d.facts.includes(fact) ? d.facts : [...d.facts, fact], unconfirmed: d.unconfirmed.filter((f) => f !== fact) })}>Confirm</button>
+                      <button type="button" className={cx(FORM.smallBtn, "h-8 px-2.5 text-[12.5px]")} disabled={disabled} onClick={() => onChange({ ...d, unconfirmed: d.unconfirmed.filter((f) => f !== fact) })}>Remove</button>
                     </span>
                   </li>
                 ))}
@@ -682,9 +695,9 @@ function SectionEditor({ id, draft, onChange, disabled, values }: { id: BrandSec
       const d = draft as BrandSectionValues["operate"];
       return (
         <div className="space-y-3">
-          <div><div className="mb-1.5 text-[12.5px] font-semibold text-text-2">Posting pace</div><Pick options={Q_FREQ} value={d.pace} disabled={disabled} onChange={(pace) => onChange({ ...d, pace })} /></div>
-          <div><div className="mb-1.5 text-[12.5px] font-semibold text-text-2">Channels</div><Toggle options={Q_CHANNELS} selected={d.channels} disabled={disabled} onChange={(channels) => onChange({ ...d, channels })} /></div>
-          <p className="text-[12px] text-text-3">The automation level is changed with the cards below; it saves on its own.</p>
+          <div><div className={FORM.label}>Posting pace</div><Pick options={Q_FREQ} value={d.pace} disabled={disabled} onChange={(pace) => onChange({ ...d, pace })} /></div>
+          <div><div className={FORM.label}>Channels</div><Toggle options={Q_CHANNELS} selected={d.channels} disabled={disabled} onChange={(channels) => onChange({ ...d, channels })} /></div>
+          <p className="text-[12.5px] text-text-2">The automation level is changed with the cards below; it saves on its own.</p>
         </div>
       );
     }

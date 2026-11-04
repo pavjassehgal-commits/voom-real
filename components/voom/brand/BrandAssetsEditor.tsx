@@ -14,10 +14,15 @@
  * callbacks, so uploads that finish out of order can never overwrite each
  * other. Nothing here saves a kit version: onboarding saves at Finish, the
  * Brand page on Save.
+ *
+ * Look (2026-11-04): the redesign's white cards, fields and pills (FORM, Pill in
+ * components/voom/redesign/ui.tsx); the description is a two-line box that wraps.
  */
 import { useRef, useState } from "react";
 import { Icon } from "@/components/voom/icons";
-import { Btn, Chip, Input, Tag } from "@/components/voom/ui/primitives";
+import { Tag } from "@/components/voom/ui/primitives";
+import { FORM, Pill } from "@/components/voom/redesign/ui";
+import { cx } from "@/lib/voom/cx";
 import {
   BRAND_ASSET_ACCEPT, BRAND_ASSET_LIMITS, BRAND_COLOUR_SOURCE_LABELS, PAST_POST_CHIPS, brandAssetCount,
   clearBrandColours, pickBrandColour, swapBrandColours, chooseFoundPalette,
@@ -52,8 +57,8 @@ const KIND_LABELS: Record<BrandAssetKind, { title: string; help: string; add: st
 
 function Thumb({ url, label }: { url?: string; label: string }) {
   return url
-    ? <div role="img" aria-label={label} className="h-20 w-20 flex-none rounded-xl border border-line bg-surface-2 bg-cover bg-center" style={{ backgroundImage: `url("${url}")` }} />
-    : <div aria-label={label} className="grid h-20 w-20 flex-none place-items-center rounded-xl border border-line bg-surface-2 text-text-3"><Icon name="img" size={18} /></div>;
+    ? <div role="img" aria-label={label} className="h-20 w-20 flex-none rounded-[12px] border border-line bg-surface-2 bg-cover bg-center" style={{ backgroundImage: `url("${url}")` }} />
+    : <div aria-label={label} className="grid h-20 w-20 flex-none place-items-center rounded-[12px] border border-line bg-surface-2 text-text-3"><Icon name="img" size={18} /></div>;
 }
 
 export function BrandAssetsEditor({ assets, colours, previews, visionEnabled, disabled, savedPaths, onAdd, onText, onRemove, onColours }: BrandAssetsEditorProps) {
@@ -134,9 +139,9 @@ export function BrandAssetsEditor({ assets, colours, previews, visionEnabled, di
     const items = assets.filter((asset) => asset.kind === kind);
     const full = items.length >= BRAND_ASSET_LIMITS[kind];
     return (
-      <div className="mb-5" data-asset-kind={kind}>
+      <div className="mb-6 last:mb-0" data-asset-kind={kind}>
         <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-          <b className="text-[13.5px]">{labels.title}</b>
+          <h3 className="text-[15px] font-semibold text-text">{labels.title}</h3>
           {full ? null : (
             <>
               <input
@@ -147,29 +152,31 @@ export function BrandAssetsEditor({ assets, colours, previews, visionEnabled, di
                 className="hidden"
                 onChange={(e) => void upload(kind, e.target.files)}
               />
-              <Btn variant="outline" size="sm" disabled={disabled || busyKind !== null} onClick={() => inputs.current[kind]?.click()}>
+              <button type="button" className={FORM.smallBtn} disabled={disabled || busyKind !== null} onClick={() => inputs.current[kind]?.click()}>
                 <Icon name="plus" size={13} /> {busyKind === kind ? "Uploading…" : labels.add}
-              </Btn>
+              </button>
             </>
           )}
         </div>
-        <p className="mb-2.5 text-[12.5px] text-text-3">{labels.help}</p>
-        {kind === "past_post" ? <p className="mb-2.5 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-text-2">{PAST_POST_DISCLAIMER}</p> : null}
+        <p className="mb-3 text-[13px] text-text-2">{labels.help}</p>
+        {kind === "past_post" ? <p className={cx(FORM.note, "mb-3")}>{PAST_POST_DISCLAIMER}</p> : null}
         <div className="space-y-2.5">
           {items.map((asset) => (
-            <div key={asset.path} className="flex gap-3 rounded-[14px] border border-line p-3" data-asset={asset.kind}>
+            <div key={asset.path} className={cx(FORM.card, "flex gap-3")} data-asset={asset.kind}>
               <Thumb url={previews[asset.path]} label={asset.description || labels.title} />
               <div className="min-w-0 flex-1 space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-[12.5px] font-semibold text-text-2">{labels.line}</span>
+                  <span className="text-[13px] font-semibold text-text">{labels.line}</span>
                   <span className="flex items-center gap-1.5">
                     {reading.has(asset.path) ? <Tag tone="t-grey">MARA is looking…</Tag> : asset.describedBy === "mara" ? <Tag tone="t-brand">MARA&apos;s guess</Tag> : null}
-                    <Btn variant="ghost" size="sm" disabled={disabled} onClick={() => remove(asset)} aria-label={`Remove ${labels.title.toLowerCase()}`}>
+                    <button type="button" className={cx(FORM.smallBtn, "h-8 px-2.5 text-[12.5px]")} disabled={disabled} onClick={() => remove(asset)} aria-label={`Remove ${labels.title.toLowerCase()}`}>
                       <Icon name="trash" size={13} /> Remove
-                    </Btn>
+                    </button>
                   </span>
                 </div>
-                <Input
+                <textarea
+                  rows={2}
+                  className={cx(FORM.area, "resize-none py-2.5 text-[14px]")}
                   value={asset.description}
                   maxLength={BRAND_ASSET_LIMITS.description}
                   placeholder={labels.placeholder}
@@ -182,18 +189,19 @@ export function BrandAssetsEditor({ assets, colours, previews, visionEnabled, di
                       {PAST_POST_CHIPS.map((chip) => {
                         const active = asset.chips.includes(chip);
                         return (
-                          <Chip
+                          <Pill
                             key={chip}
-                            active={active}
+                            on={active}
                             disabled={disabled || (!active && asset.chips.length >= BRAND_ASSET_LIMITS.chips)}
                             onClick={() => onText(asset.path, { chips: active ? asset.chips.filter((c) => c !== chip) : [...asset.chips, chip] }, "owner")}
                           >
                             {chip}
-                          </Chip>
+                          </Pill>
                         );
                       })}
                     </div>
-                    <Input
+                    <input
+                      className={cx(FORM.field, "h-10 text-[14px]")}
                       value={asset.look}
                       maxLength={BRAND_ASSET_LIMITS.look}
                       placeholder="The look, e.g. warm morning light, close-up, cream and brown tones"
@@ -213,11 +221,11 @@ export function BrandAssetsEditor({ assets, colours, previews, visionEnabled, di
 
   return (
     <div>
-      {error ? <div role="alert" className="mb-3.5 rounded-xl border border-red-900/40 bg-red-950/30 px-3.5 py-2.5 text-sm text-red-300">{error}</div> : null}
+      {error ? <div role="alert" className={cx(FORM.error, "mb-4")}>{error}</div> : null}
       {row("logo")}
       {row("product")}
       {row("past_post")}
-      <p className="text-[12px] text-text-3">
+      <p className="mt-4 text-[12.5px] leading-relaxed text-text-3">
         JPEG, PNG or WebP, up to 10 MB each. Stored privately in Voom.{visionEnabled ? ` ${VISION_PRIVACY_NOTE}` : " Type a line for each image so MARA knows what it is."}
       </p>
     </div>
@@ -234,9 +242,9 @@ function ColourPicker({ colours, disabled, onColours }: { colours: BrandColours 
   const inUse = Boolean(colours && (colours.primary || colours.secondary));
   const found = (["logo", "website"] as const).filter((which) => colours?.found?.[which]);
   return (
-    <div className="mt-3 rounded-[14px] border border-line p-3" data-brand-colours>
+    <div className={cx(FORM.card, "mt-3")} data-brand-colours>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[12.5px] font-semibold text-text-2">Colours MARA uses</span>
+        <span className="text-[13px] font-semibold text-text">Colours MARA uses</span>
         {inUse && colours ? <Tag tone={colours.source === "owner" ? "t-grey" : "t-brand"}>{BRAND_COLOUR_SOURCE_LABELS[colours.source]}</Tag> : null}
       </div>
       {found.length ? (
@@ -248,7 +256,7 @@ function ColourPicker({ colours, disabled, onColours }: { colours: BrandColours 
               <li key={which} className="flex flex-wrap items-center gap-2 text-[12.5px]">
                 {[palette.primary, palette.secondary].filter(Boolean).map((hex) => <span key={hex} className="inline-block h-5 w-5 rounded-md border border-line" style={{ backgroundColor: hex! }} title={hex!} />)}
                 <span className="text-text-2">{BRAND_COLOUR_SOURCE_LABELS[which]}</span>
-                {active ? <Tag tone="t-green">In use</Tag> : <Btn variant="outline" size="sm" disabled={disabled} onClick={() => onColours(chooseFoundPalette(colours, which))}>Use these</Btn>}
+                {active ? <Tag tone="t-green">In use</Tag> : <button type="button" className={cx(FORM.smallBtn, "h-8 px-2.5 text-[12.5px]")} disabled={disabled} onClick={() => onColours(chooseFoundPalette(colours, which))}>Use these</button>}
               </li>
             );
           })}
@@ -259,7 +267,7 @@ function ColourPicker({ colours, disabled, onColours }: { colours: BrandColours 
           <label key={which} className="flex items-center gap-2 text-[13px]">
             <input
               type="color"
-              className="h-9 w-12 cursor-pointer rounded-lg border border-line bg-surface-2"
+              className="h-9 w-12 cursor-pointer rounded-[8px] border border-line bg-surface"
               value={colours?.[which] ?? "#FFFFFF"}
               disabled={disabled}
               onChange={(e) => onColours(pickBrandColour(colours, which, e.target.value))}
@@ -267,10 +275,10 @@ function ColourPicker({ colours, disabled, onColours }: { colours: BrandColours 
             <span>{which === "primary" ? "Main" : "Second"} <span className="font-mono text-text-3">{colours?.[which] ?? "not set"}</span></span>
           </label>
         ))}
-        {inUse && colours?.primary && colours.secondary ? <Btn variant="ghost" size="sm" disabled={disabled} onClick={() => onColours(swapBrandColours(colours))}>Swap</Btn> : null}
-        {inUse ? <Btn variant="ghost" size="sm" disabled={disabled} onClick={() => onColours(clearBrandColours(colours))}>Clear colours</Btn> : null}
+        {inUse && colours?.primary && colours.secondary ? <button type="button" className={cx(FORM.smallBtn, "h-8 px-2.5 text-[12.5px]")} disabled={disabled} onClick={() => onColours(swapBrandColours(colours))}>Swap</button> : null}
+        {inUse ? <button type="button" className={cx(FORM.smallBtn, "h-8 px-2.5 text-[12.5px]")} disabled={disabled} onClick={() => onColours(clearBrandColours(colours))}>Clear colours</button> : null}
       </div>
-      <p className="mt-2 text-[11.5px] text-text-3">Main is the colour MARA leads with in images; Second supports it.</p>
+      <p className="mt-2 text-[12px] text-text-3">Main is the colour MARA leads with in images; Second supports it.</p>
     </div>
   );
 }

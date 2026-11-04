@@ -6,10 +6,11 @@ the status board for Gurnoor and for whichever AI tool opens the repo next. It i
 on purpose: a merge from `main` can touch `ARCHITECTURE.md`, `DECISIONS.md` and `AGENTS.md`, and
 this file must survive that untouched.
 
-Last updated: 2026-11-02, at the end of Phase C of `handover/merge-plan.md` (our Brand page and
-onboarding in the redesign; `handover/phase-c-plan.md`, `DECISIONS.md` 2026-11-02). **The next
-task is slice 8, Instagram import, plan first.** Before that, Gurnoor's browser check of Phase C
-and the commit (section 1).
+Last updated: 2026-11-04, after the Phase C polish (`DECISIONS.md` 2026-11-04: the form kit,
+MARA's mark, longer image descriptions, the pace cards, the theme warning). Phase C itself was
+committed on 2026-11-02 after Gurnoor's browser pass. **The next task is slice 8, Instagram
+import, plan first.** Before that, Gurnoor's browser check of the polish, its commit, and the
+first pull request (section 2).
 
 ---
 
@@ -24,11 +25,12 @@ and the commit (section 1).
   ../voom-real-main` from this folder (the branch and tag stay in git). The `voom-main-check`
   worktree was removed on 2026-11-01.
 - **Pushed?** If `git status` says "ahead of origin", push (`git push`).
-- **Phase C browser check:** Gurnoor had not yet run it when this was written. The list: all 11
-  screens at desktop and phone width, "Read my website" (eatlexis.com), Finish setup → "Your
-  workspace is ready" → Go to dashboard, then `/app/onboarding` again as a finished account (should
-  land on Today after a blank instant), the Brand page, and a post with Existing content in Post
-  Studio. Anything off: fix it as a small follow-up, then the pull request (section 2).
+- **Browser checks:** Phase C passed Gurnoor's pass on 2026-11-02 ("all the screens look fine")
+  with a list of polish items, all built on 2026-11-04 (`DECISIONS.md`). The polish itself awaits
+  his pass: screen 2 (white cards, pills, the two-line description box), screen 3 (MARA's mark on
+  the reading panel), screen 6 (caption cards), screen 8 (2×2 pace cards), screen 10 and the Brand
+  page (the restyled Brand Hub editors), the console free of the theme warning. Anything off: a
+  small follow-up, then the pull request (section 2).
 - Latest checks (2026-11-02, full run after Phase C):
 
   | Check | Result | Meaning |
@@ -49,6 +51,7 @@ and the commit (section 1).
 | `gurnoor-dev`, 10-16 to 10-29 | Agent rules, architecture map, decisions log, baseline; forgot-password and Google sign-in; delete post and cancel approval; Brand Kit v2 slices 1 to 7 (table below) | `DECISIONS.md` 2026-10-15 to 10-28 |
 | `main`, 10-16 to 10-31 | The Figma redesign of every screen (shell, Today, Create, Content, Marketing Plan, Approvals, Automations, MARA, Calendar, Contacts, Channels, Performance, Settings, homepage, login, signup, motion, haptics, notifications); LinkedIn personal text publishing; native TikTok/Shorts plan videos; YouTube MP4 and resumable uploads; Instagram token renewal; AI usage and cost tracking; automation emergency pause and approval integrity; rolling cadence windows and slot leases | `handover/merge-plan.md` section 0 table; `docs/*.md` from `main` (`mara-automation-launch.md`, `scheduled-workers.md`, `linkedin-personal-publishing.md`, `native-plan-video-generation.md`) |
 | The merge itself, 11-01 | 26 conflicts resolved, our migration 0059 renumbered **0075**, 15 tests re-pointed, wizard footer with toast clearance and the haptic warning | `DECISIONS.md` 2026-11-01 |
+| Phase C polish, 11-04 | `FORM` + `Pill` form kit in `components/voom/redesign/ui.tsx` used by the images editor, the caption cards, the Brand Hub and the wizard; `MaraMark` (Gurnoor's ribbon, `public/redesign/mara-mark.webp`) replaces the orb in our screens; image descriptions stored up to 180, asked under 150; pace as 2×2 cards; `suppressHydrationWarning` on `<html>` | `DECISIONS.md` 2026-11-04 |
 | Phase C, 11-02 | Brand page on `PageHeader` + `voom-card`; the 11-screen wizard in `main`'s setup layout with the 3D icons (Manual / Assisted / Autopilot reuse main's automation icons), inspiration chips, `SetupComplete` at the end with Edit links to the Brand page, `completedOnServer` bypass in the wizard (page no longer redirects); `AnalyzingScreen` deleted; 3 tests back to original intent; `ARCHITECTURE.md` full pass ("What `main` built") | `handover/phase-c-plan.md`, `DECISIONS.md` 2026-11-02 |
 
 ### Brand Kit v2: slices built, one line each
@@ -79,8 +82,8 @@ new sidebar, Google and Forgot password on login. The Phase C look is checked by
 Each task follows `AGENTS.md`: a short plan first, wait for Gurnoor's OK, build, `npm test` plus a
 browser check, update the docs, print the git commands for Gurnoor.
 
-1. **Finish Phase C:** Gurnoor's browser check (section 1), any small fix it turns up, then the
-   first **pull request from `merge-main-2026-10-31` to `main`** so the other developer sees the
+1. **Finish Phase C:** Gurnoor's browser check of the polish (section 1), any small fix it turns
+   up, the commit, then the first **pull request from `merge-main-2026-10-31` to `main`** so the other developer sees the
    Brand Kit work (Phase D habit, section 6, step 6). Gurnoor opens it on GitHub; the AI tool
    prints nothing for it beyond a suggested title and description.
 2. **Slice 8: Instagram import.** Design: `docs/brand-kit-v2-design.md`, section "Instagram

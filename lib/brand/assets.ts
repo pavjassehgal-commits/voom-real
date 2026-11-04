@@ -25,7 +25,9 @@ export const BRAND_ASSET_LIMITS = {
   product: 10,
   past_post: 5,
   maxBytes: 10 * 1024 * 1024,
-  description: 120,
+  // Storage cap. MARA is asked for under 150 (lib/brand/vision.ts), so her line is
+  // never cut mid-sentence (it was, at 120; Gurnoor, 2026-11-02).
+  description: 180,
   look: 160,
   chips: 6,
 } as const;
