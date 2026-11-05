@@ -20,9 +20,8 @@ function SubmitButton() {
 
 /**
  * Email + password log in through the existing `login` server action. The
- * reference's Google / Apple buttons, "Keep me logged in" and "Forgot
- * password?" are not shown: Voom has no social sign-in or password-reset flow
- * yet, and a dead control would be worse than none.
+ * reference's social sign-in and session toggles remain absent. Password
+ * recovery now links to the real, rate-limited Supabase Auth flow.
  */
 export default function LoginForm({ initialError }: { initialError?: string }) {
   const [state, formAction] = useActionState(login, initialState);
@@ -64,6 +63,7 @@ export default function LoginForm({ initialError }: { initialError?: string }) {
         </AuthField>
 
         <SubmitButton />
+        <Link href="/forgot-password" className="text-center text-sm font-semibold text-[var(--brand)]">Forgot password?</Link>
       </form>
 
       <p className="mt-7 text-center text-[13px] text-text-2">
