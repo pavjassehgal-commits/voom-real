@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useVoomState } from "@/lib/voom/store";
+import { AUTOMATION_CHOICES } from "@/lib/voom/onboardingData";
+import { onboardingAutomationMode, storedAutomationMode } from "@/lib/voom/automation";
+import { canUseAutomationMode } from "@/lib/billing/plans";
 import { Icon } from "../icons";
 import { ChannelGlyph } from "../redesign/ui";
 import { VoomLogo } from "../shell/VoomLogo";
@@ -18,10 +21,23 @@ type PlanItem = { draftId: string; concept: string; channelLabel: string; dayLab
  * real plan items when there are any and otherwise says plainly that the
  * first plan is built from Marketing Plan. The reference's "Invite your team"
  * step is not shown: Voom has no team seats.
+ *
+ * Brand Kit v2 (Phase C, 2026-11-02): the answers live on the Brand page
+ * (/app/brand), so every Edit link goes there, and the automation card shows
+ * the mode that was really saved: the plan-allowed mode (same rule as the
+ * store), and Autopilot starts as Assisted because onboarding never switches
+ * it on (main's rule, merged 2026-11-05; `onboardingAutomationMode`).
  */
 export function SetupComplete({ skipped }: { skipped: boolean }) {
-  const { onboard, displayName } = useVoomState();
+  const { onboard, displayName, plan } = useVoomState();
   const [items, setItems] = useState<PlanItem[] | null>(null);
+  const wanted = storedAutomationMode(onboard.auto);
+  const allowed = wanted && canUseAutomationMode(plan, wanted) ? wanted : wanted ? (plan === "pro" ? "assisted" : "manual") : null;
+  const savedMode = onboardingAutomationMode(allowed);
+  const automation = savedMode ? AUTOMATION_CHOICES.find((choice) => choice.value === savedMode)?.title ?? savedMode : "";
+  const automationNote = wanted === "autopilot" && savedMode === "assisted"
+    ? "Switch Autopilot on from the Automations page"
+    : "Change it any time on the Automations page";
 
   useEffect(() => {
     let active = true;
@@ -38,11 +54,12 @@ export function SetupComplete({ skipped }: { skipped: boolean }) {
   const join = (values: string[]) => values.filter(Boolean).join(" · ");
   const summary: { icon: string; label: string; value: string; note: string }[] = skipped ? [] : [
     { icon: "share", label: "Channels", value: onboard.channels.join(", ") || "None chosen yet", note: "Connect each from Channels" },
-    { icon: "sparkles", label: "MARA", value: onboard.auto || "Not chosen", note: onboard.permission || "Publishing permission not chosen" },
+    // Brand Kit v2 onboarding (2026-10-24) dropped the publishing-permission and ad-budget
+    // questions (nothing reads them), so this summary has no row for either.
+    { icon: "sparkles", label: "MARA", value: automation || "Not chosen", note: automationNote },
     { icon: "comment", label: "Brand voice", value: join(onboard.tone) || "Not chosen", note: "Shapes every caption" },
     { icon: "contacts", label: "Audience", value: onboard.customer.slice(0, 2).join(", ") || "Not chosen", note: onboard.goal ? `Goal: ${onboard.goal.toLowerCase()}` : "No goal chosen" },
     { icon: "folder", label: "Business", value: onboard.name.trim() || "Name not set", note: join([onboard.industry, onboard.site.trim()]) || "No category chosen" },
-    { icon: "card", label: "Ad budget", value: onboard.budget || "Not chosen", note: "Paid separately, never by Voom" },
     { icon: "cal", label: "Pace", value: onboard.freq || "Not chosen", note: "How often MARA plans posts" },
     { icon: "file", label: "Brand brief", value: onboard.desc.trim() ? "Sent to MARA" : "Not written", note: "Used before every suggestion" },
   ];
@@ -63,7 +80,7 @@ export function SetupComplete({ skipped }: { skipped: boolean }) {
             <span className="voom-create-btn mx-auto grid h-14 w-14 place-items-center rounded-[16px] text-white shadow-[0_14px_30px_-14px_rgba(134,69,250,.9)]"><Icon name="check" size={26} /></span>
             <h1 className="mt-5 text-[clamp(1.75rem,3.4vw,2.35rem)] font-bold tracking-[-0.04em] text-text">Your workspace is ready{name ? `, ${name}` : ""}</h1>
             <p className="mx-auto mt-2 max-w-[520px] text-[15px] leading-relaxed text-text-2">
-              {skipped ? "You skipped the questions — tell MARA about your brand any time in Settings." : "MARA has everything it needs to plan your first week. Here’s what you told us — you can change any of it in Settings."}
+              {skipped ? "You skipped the questions — tell MARA about your brand any time on your Brand page." : "MARA has everything it needs to plan your first week. Here’s what you told us — you can change any of it on your Brand page."}
             </p>
           </div>
 
@@ -76,7 +93,7 @@ export function SetupComplete({ skipped }: { skipped: boolean }) {
                       <span className="grid h-7 w-7 place-items-center rounded-[8px] bg-[var(--brand-soft)] text-[var(--brand-ink)]"><Icon name={card.icon} size={14} /></span>
                       {card.label}
                     </span>
-                    <Link href="/app/settings" className="text-[12px] font-semibold text-[var(--brand)] hover:underline" aria-label={`Edit ${card.label} in Settings`}>Edit</Link>
+                    <Link href="/app/brand" className="text-[12px] font-semibold text-[var(--brand)] hover:underline" aria-label={`Edit ${card.label} on the Brand page`}>Edit</Link>
                   </div>
                   <p className="mt-3 line-clamp-2 text-[14px] font-semibold leading-snug text-text">{card.value}</p>
                   <p className="mt-1 line-clamp-2 text-[12px] text-text-2">{card.note}</p>

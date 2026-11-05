@@ -411,8 +411,8 @@ test("provider secrets and payloads stay server-side only", async () => {
 
   // The user-facing failures remain the fixed truthful strings — never
   // provider detail, regardless of which failure class fired.
-  assert.match(generate, /error: "MARA couldn't write that post\. Please retry\." \}, \{ status: 502 \}\)/);
-  assert.match(generate, /error: "MARA couldn't plan that Story\. Please retry\." \}, \{ status: 502 \}\)/);
+  assert.match(generate, /error: "MARA couldn't write that post\. Please retry\. Your draft is unchanged\." \}, \{ status: 502 \}\)/);
+  assert.match(generate, /error: "MARA couldn't plan that Story\. Please retry\. Your draft is unchanged\." \}, \{ status: 502 \}\)/);
   assert.match(suggest, /error: "MARA couldn't suggest copy just now\. Please retry\." \}, \{ status: 502 \}\)/);
   // The one `.message` a response may carry is the entitlement guard's — a
   // Voom-authored plan/credit sentence, built from the plan config and the

@@ -134,7 +134,9 @@ test("0061 applies to a fresh database without changing existing credit ledger r
     await applyPending();
 
     assert.ok(applied.includes("0061_ai_usage_cost_tracking.sql"));
-    assert.equal(applied.at(-1), "0062_linkedin_personal.sql");
+    // 0062 follows 0061 directly; the newest file is Brand Kit v2 (0075, merged 2026-11-01).
+    assert.equal(applied[applied.indexOf("0061_ai_usage_cost_tracking.sql") + 1], "0062_linkedin_personal.sql");
+    assert.equal(applied.at(-1), "0075_brand_kits.sql");
     const after = await db.query(`
       select generation_id, media_type, credits, source, status
       from public.voom_credit_ledger

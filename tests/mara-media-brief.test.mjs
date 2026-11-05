@@ -48,9 +48,12 @@ test("0026 and the additive 0028 video metadata migration are bounded", async ()
   // deliberately.
   // 0050 (approval-state write lockdown) and 0051 (AI request rate limits)
   // are the production-hardening release and are the only migrations after 0049.
-  // Trend Intelligence (0055-0058) and automation safety (0059) and AI usage (0061) follow; 0052-0054 are reserved for Admin.
-  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql"], "only reviewed post-0049 migrations are present");
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 61), "no unreviewed migration beyond 0061 may exist");
+  // Trend Intelligence (0055-0058), main's automation safety (0059), AI usage (0061), LinkedIn
+  // (0062), native plan videos (0063), YouTube uploads (0064/0066/0067), Instagram token renewal
+  // (0068), slot leases (0070) and Brand Kit v2 (0075; written as 0059, renumbered at the
+  // 2026-11-01 merge) follow; 0052-0054 are reserved for Admin, 0060/0073/0074 are gaps (0065/0069 YouTube erasure, 0071/0072 guards merged 2026-11-05).
+  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql", "0065_youtube_data_retention.sql", "0066_youtube_resumable_uploads.sql", "0067_youtube_upload_cleanup_fairness.sql", "0068_instagram_token_renewal.sql", "0069_youtube_deletion_delivery.sql", "0070_plan_slot_generation_leases.sql", "0071_automation_mode_entitlement_guard.sql", "0072_coordinator_email_flow_authorization.sql", "0075_brand_kits.sql"], "only reviewed post-0049 migrations are present");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 75), "no unreviewed migration beyond 0075 (brand kits) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],

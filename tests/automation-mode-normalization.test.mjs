@@ -60,24 +60,28 @@ test("scheduled planning is enabled only for a confirmed Assisted or Autopilot v
   }
 });
 
+// Merged 2026-11-05: Gurnoor's wizard offers the three real modes as
+// `AUTOMATION_CHOICES` (value + title + hint) instead of main's four title-text
+// `Q_AUTO` cards. The claim is unchanged: every offered answer saves Manual or
+// Assisted, never Autopilot. The legacy labels are still read (LEGACY above).
 test("onboarding saves a canonical mode for every answer it offers — Manual or Assisted, never Autopilot", () => {
-  const offered = onboarding.Q_AUTO.map(([, label]) => label);
-  assert.deepEqual(offered, Object.keys(LEGACY), "the four onboarding answers");
-  for (const label of offered) {
-    const saved = automation.onboardingAutomationMode(label);
-    assert.equal(saved, LEGACY[label], label);
-    assert.equal(automation.automationModeState(saved).kind, "saved", `${label} is saved canonically`);
+  const offered = onboarding.AUTOMATION_CHOICES.map((choice) => choice.value);
+  assert.deepEqual(offered, ["manual", "assisted", "autopilot"], "the three onboarding cards");
+  for (const value of offered) {
+    const saved = automation.onboardingAutomationMode(value);
+    assert.equal(saved, value === "autopilot" ? "assisted" : value, value);
+    assert.equal(automation.automationModeState(saved).kind, "saved", `${value} is saved canonically`);
   }
+  for (const [label, mode] of Object.entries(LEGACY)) assert.equal(automation.onboardingAutomationMode(label), mode, `legacy answer "${label}" still maps`);
   assert.equal(automation.onboardingAutomationMode("manual"), "manual");
   assert.equal(automation.onboardingAutomationMode("assisted"), "assisted");
   assert.equal(automation.onboardingAutomationMode("autopilot"), "assisted", "a client cannot reach Autopilot through onboarding");
   for (const raw of ["", null, undefined, "nonsense"]) assert.equal(automation.onboardingAutomationMode(raw), null);
   // The hints describe exactly what the saved mode does.
-  const hints = Object.fromEntries(onboarding.Q_AUTO.map(([, label, hint]) => [label, hint]));
-  assert.match(hints["I decide everything"], /^Manual/);
-  assert.match(hints["MARA drafts, I approve"], /^Assisted/);
-  assert.match(hints["MARA drafts and schedules"], /Starts in Assisted/);
-  assert.match(hints["MARA runs it end-to-end"], /Starts in Assisted — turn on Autopilot in Automations/);
+  const hints = Object.fromEntries(onboarding.AUTOMATION_CHOICES.map((choice) => [choice.value, choice.sub]));
+  assert.match(hints.manual, /Nothing runs on a schedule/);
+  assert.match(hints.assisted, /you approve before anything goes out/);
+  assert.match(hints.autopilot, /Starts in Assisted — switch Autopilot on in Automations/);
   for (const hint of Object.values(hints)) assert.doesNotMatch(hint, /publishes|rules I set/, "no hint promises automatic publishing");
 });
 

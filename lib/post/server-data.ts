@@ -4,13 +4,15 @@ import { createHash } from "node:crypto";
 import { IngestionFailure, type IngestionStage, logIngestionStage, type IngestionLogContext } from "@/lib/media/ingestion-error";
 import type { createAdminClient } from "@/utils/supabase/admin";
 import {
-  buildPostDraftAssetWrite, calendarChannelFor, calendarStatusFor, composePostCaption, decodeDraftFormat,
+  assetOriginFor, buildPostDraftAssetWrite, calendarChannelFor, calendarStatusFor, composePostCaption, decodeDraftFormat,
   encodeDraftChannel, formatForKind, internalPostState, isPostDraftKind, originForAsset, postTypeLabel,
   splitPostCaption, type PostDraftKind, type PostFormat, type PostInternalState, type PostOrigin,
   POST_STATE_LABELS,
 } from "./core";
 import { persistUploadedPostAsset, PostAssetPersistError } from "./asset-persist";
-import { cancelPublishItem, enqueuePublishItem } from "@/lib/instagram/publish-queue";
+import { brandKitPromptContext, loadBrandContext } from "@/lib/brand/context";
+import type { PostBrandContext } from "./prompt";
+import { cancelPublishItem, enqueuePublishItem, getQueueItemForDraft } from "@/lib/instagram/publish-queue";
 import { isPublishableMime, publishMediaKindForMime, truncateCaption, type PublishMediaKind } from "@/lib/instagram/publishing";
 
 export const POST_ASSET_BUCKET = "mara-media";
@@ -123,6 +125,23 @@ async function loadAssetRow(admin: AdminClient, ownerId: string, draftId: string
   const { data } = await admin.from(POST_ASSET_TABLE).select(ASSET_COLUMNS)
     .eq("owner_user_id", ownerId).eq("draft_id", draftId).maybeSingle();
   return (data as Record<string, unknown> | null) ?? null;
+}
+
+/**
+ * The stored bytes of the owner's visual for a draft (slice 5b: the vision
+ * model's small copy is made from these). Null when there is no stored
+ * visual or the download fails; the path itself never leaves the server.
+ */
+export async function readPostAssetObject(admin: AdminClient, ownerId: string, draftId: string): Promise<Uint8Array | null> {
+  const asset = await loadAssetRow(admin, ownerId, draftId);
+  if (asset?.status !== "uploaded" || typeof asset.storage_path !== "string") return null;
+  try {
+    const { data, error } = await admin.storage.from(POST_ASSET_BUCKET).download(asset.storage_path);
+    if (error || !data) return null;
+    return new Uint8Array(await data.arrayBuffer());
+  } catch {
+    return null;
+  }
 }
 
 /** Owner-scoped read of one post plus its private visual. */
@@ -389,6 +408,54 @@ export async function cancelPostSchedule(admin: AdminClient, ownerId: string, dr
     .eq("owner_user_id", ownerId).eq("source_draft_id", draftId).maybeSingle();
   if (existing?.id) await admin.from("content_calendar_items").delete().eq("owner_user_id", ownerId).eq("id", existing.id);
   await cancelPublishItem(admin, ownerId, draftId).catch(() => false);
+}
+
+/**
+ * Switches an Instagram Post's source between "my own asset" and "existing
+ * content" (a photo already shot), which is what unlocks MARA's caption, CTA
+ * and timing suggestions. The source lives on the stored visual's row, so with
+ * no visual yet there is nothing to write: the editor then sends the chosen
+ * source with the next upload. Returns true when a row was updated.
+ */
+export async function setPostAssetOrigin(
+  admin: AdminClient, ownerId: string, draftId: string, origin: "own_asset" | "existing_content",
+): Promise<boolean> {
+  const existing = await loadAssetRow(admin, ownerId, draftId);
+  if (!existing) return false;
+  const { error } = await admin.from(POST_ASSET_TABLE)
+    .update({ origin: assetOriginFor(origin) })
+    .eq("owner_user_id", ownerId).eq("draft_id", draftId);
+  if (error) throw new Error("post_source_update_failed");
+  return true;
+}
+
+export type DeletePostResult =
+  | { ok: true }
+  | { ok: false; reason: "not_found" | "publishing" | "published" };
+
+/**
+ * Permanently deletes a post the user owns. Refuses while Instagram is
+ * publishing it, and always for a published one: a provider-confirmed publish
+ * is a record Voom never erases. Order matters: the calendar row must go
+ * first (its foreign key is `on delete restrict`), the queue row is cancelled
+ * (the queue function never touches in-flight or published rows), the stored
+ * file and its row are removed, and only then the draft itself. Credit-ledger
+ * and media-generation rows keep their history: their links to the draft are
+ * `on delete set null`.
+ */
+export async function deletePostDraft(admin: AdminClient, ownerId: string, draftId: string): Promise<DeletePostResult> {
+  const { data: draft } = await admin.from("mara_drafts").select("id")
+    .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
+  if (!draft) return { ok: false, reason: "not_found" };
+  const queued = await getQueueItemForDraft(admin, ownerId, draftId);
+  if (queued?.status === "publishing") return { ok: false, reason: "publishing" };
+  if (queued?.status === "published") return { ok: false, reason: "published" };
+  await cancelPostSchedule(admin, ownerId, draftId);
+  const storagePath = await deletePostAsset(admin, ownerId, draftId);
+  if (storagePath) await removePostAssetObject(admin, ownerId, storagePath);
+  const { error } = await admin.from("mara_drafts").delete().eq("owner_user_id", ownerId).eq("id", draftId);
+  if (error) throw new Error("post_delete_failed");
+  return { ok: true };
 }
 
 /** Approves a post. Approval saves state only; nothing is published. */
@@ -737,23 +804,23 @@ export async function deletePostAsset(admin: AdminClient, ownerId: string, draft
   return typeof existing.storage_path === "string" ? existing.storage_path : null;
 }
 
-/** Reads the brand context Post Studio prompts with. */
-export async function loadPostBrandContext(admin: AdminClient, ownerId: string) {
-  const [{ data: profile }, { data: business }] = await Promise.all([
-    admin.from("profiles").select("display_name").eq("user_id", ownerId).maybeSingle(),
-    admin.from("businesses")
-      .select("brand_name,brand_description,industry,target_customer,main_goal,brand_personality,content_frequency")
-      .eq("owner_user_id", ownerId).maybeSingle(),
-  ]);
-  if (!business) return null;
+/**
+ * Reads the brand context Post Studio prompts with: the core `businesses`
+ * fields plus the Brand Kit extras (`lib/brand/context.ts`, migration 0075).
+ * Array fields are joined with ", " exactly as before.
+ */
+export async function loadPostBrandContext(admin: AdminClient, ownerId: string): Promise<PostBrandContext | null> {
+  const context = await loadBrandContext(admin, ownerId);
+  if (!context) return null;
   return {
-    brandName: String(business.brand_name ?? profile?.display_name ?? "Your business"),
-    brandDescription: String(business.brand_description ?? ""),
-    industry: String(business.industry ?? ""),
-    targetCustomer: String(business.target_customer ?? ""),
-    mainGoal: String(business.main_goal ?? ""),
-    brandPersonality: String(business.brand_personality ?? ""),
-    contentFrequency: String(business.content_frequency ?? ""),
+    brandName: context.brandName,
+    brandDescription: context.brandDescription,
+    industry: context.industry,
+    targetCustomer: context.targetCustomer.join(","),
+    mainGoal: context.mainGoal,
+    brandPersonality: context.brandPersonality.join(","),
+    contentFrequency: context.contentFrequency,
+    brandKit: brandKitPromptContext(context.kit),
   };
 }
 

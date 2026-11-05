@@ -20,9 +20,12 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import type {
+  BrandLearned,
+  BrandLearnedKey,
   BusinessProfileInput,
   BusinessRecord,
   OnboardingAnswers,
+  OnboardingWebsiteRead,
   OnboardingInput,
   Toast,
 } from "./types";
@@ -30,6 +33,9 @@ import { saveOnboarding as saveOnboardingAction, saveBrandSettings as saveBrandS
 import { normalizeMediaSpendSettings, type MediaSpendSettings } from "@/lib/mara/media-spend";
 import { brandFromBusiness, deriveHandle, type Brand } from "./brand-state";
 import { AUTOMATION_MODE_EVENT, storedAutomationMode } from "./automation";
+import { canUseAutomationMode } from "@/lib/billing/plans";
+import { coloursAfterLogo, coloursAfterLogoRemoved, coloursAfterWebsite, withAddedAsset, withAssetText, withoutAsset, type BrandAsset, type BrandAssetText, type BrandPalette } from "@/lib/brand/assets";
+import { DEFAULT_FREQ } from "./onboardingData";
 import { applyThemeToDocument, initialTheme, persistTheme, readStoredTheme, subscribeToTheme, themeSnapshot, type ThemeValue } from "./theme";
 
 const NAV_PATHS: Record<string, string> = {
@@ -40,6 +46,7 @@ const NAV_PATHS: Record<string, string> = {
   // Voom 2.0 primary aliases
   "marketing-plan": "/app/plan",
   marketing_plan: "/app/plan",
+  brand: "/app/brand",
   create: "/app/studio",
   studio: "/app/studio",
   calendar: "/app/calendar",
@@ -75,11 +82,56 @@ function emptyOnboard(): OnboardingAnswers {
     goal: "",
     tone: [],
     channels: [],
-    budget: "",
-    freq: "",
+    freq: DEFAULT_FREQ,
     auto: "",
-    permission: "",
+    offerings: [],
+    rules: [],
+    words: [],
+    notes: "",
+    facts: [],
+    brief: "",
+    learned: null,
+    learnedFor: "",
+    learnedNote: "",
+    fromMara: [],
+    factsUnconfirmed: [],
+    assets: [],
+    colours: null,
+    assetPreviews: {},
+    liked: [],
+    disliked: [],
+    samples: [],
+    samplesFor: "",
+    samplesNote: "",
+    website: emptyWebsiteRead(),
+    learnedWith: "",
+    descFromWebsite: false,
   };
+}
+
+export function emptyWebsiteRead(): OnboardingWebsiteRead {
+  return { url: "", status: "", reason: "", text: "", pageTitles: [], fetchedAt: "", look: null, lookStatus: "" };
+}
+
+/**
+ * Which kit answer key each prefillable onboarding field is. Editing one of
+ * these fields removes MARA's claim on it (`fromMara`), so the saved
+ * provenance only ever says "description" for values the owner left as read.
+ */
+const LEARNED_KEY_FOR_FIELD: Partial<Record<keyof OnboardingAnswers, BrandLearnedKey>> = {
+  name: "name",
+  industry: "category",
+  offerings: "offerings",
+  customer: "audience",
+  goal: "goal",
+  tone: "personality",
+  brief: "brief",
+};
+
+function withoutMaraClaim(onboard: OnboardingAnswers, field: keyof OnboardingAnswers): OnboardingAnswers {
+  const key = LEARNED_KEY_FOR_FIELD[field];
+  if (!key || !onboard.fromMara.includes(key)) return onboard;
+  return { ...onboard, fromMara: onboard.fromMara.filter((k) => k !== key) };
 }
 
 export function getInitials(name: string, email: string | null | undefined): string {
@@ -170,8 +222,32 @@ interface VoomActions {
   saveMediaSpend: (input: MediaSpendSettings) => Promise<boolean>;
 
   setOnboardField: <K extends keyof OnboardingAnswers>(key: K, value: OnboardingAnswers[K]) => void;
-  toggleOnboardArray: (key: "customer" | "tone" | "channels", value: string, max?: number) => boolean;
+  toggleOnboardArray: (key: "customer" | "tone" | "channels" | "rules", value: string, max?: number) => boolean;
   setOnboardStep: (step: number) => void;
+  /**
+   * Slice 4. `applyLearned` keeps MARA's reading and prefills every empty (or
+   * still-MARA's) field; `markLearnedFailed` records a read that did not work.
+   */
+  applyLearned: (learned: BrandLearned, forDescription: string) => void;
+  markLearnedFailed: (forDescription: string) => void;
+  /**
+   * Slice 5: the "Give MARA your brand" uploads. Applied as functional
+   * updates so uploads and MARA's readings that finish out of order never
+   * overwrite each other.
+   */
+  addOnboardAsset: (asset: BrandAsset, previewUrl: string | null, computed: { primary: string | null; secondary: string | null } | null) => void;
+  setOnboardAssetText: (path: string, text: BrandAssetText, by: "mara" | "owner") => void;
+  removeOnboardAsset: (path: string) => void;
+  /**
+   * Slice 7: the website read's outcome. Applied as a functional update so a
+   * read finishing after other edits never overwrites them; the site's
+   * colours become the website palette (used only when nothing else is).
+   */
+  applyWebsiteRead: (read: OnboardingWebsiteRead, palette: BrandPalette | null) => void;
+  /** Slice 7: the homepage look, which lands after the text; merged into the read without touching its status. */
+  applyWebsiteLook: (url: string, look: OnboardingWebsiteRead["look"], lookStatus: OnboardingWebsiteRead["lookStatus"], palette: BrandPalette | null) => void;
+  /** Slice 7: the description box takes the website's draft only while it is empty. */
+  applyWebsiteDescriptionDraft: (draft: string) => void;
   finishOnboarding: (skipped: boolean) => Promise<boolean>;
   restartOnboarding: () => Promise<void>;
 }
@@ -317,7 +393,7 @@ export function VoomProvider({
           permission: input.publishingPermission,
         },
       }));
-      toast("Brand profile saved");
+      toast("Settings saved");
       return true;
     },
     [toast],
@@ -348,7 +424,8 @@ export function VoomProvider({
   );
 
   const setOnboardField = useCallback<VoomActions["setOnboardField"]>((key, value) => {
-    setState((s) => ({ ...s, onboard: { ...s.onboard, [key]: value } }));
+    // Typing in the description box replaces the website's draft with the owner's own words.
+    setState((s) => ({ ...s, onboard: { ...withoutMaraClaim(s.onboard, key), [key]: value, ...(key === "desc" ? { descFromWebsite: false } : {}) } }));
   }, []);
 
   const toggleOnboardArray = useCallback<VoomActions["toggleOnboardArray"]>((key, value, max) => {
@@ -361,7 +438,7 @@ export function VoomProvider({
         return s;
       }
       const next = has ? arr.filter((v) => v !== value) : [...arr, value];
-      return { ...s, onboard: { ...s.onboard, [key]: next } };
+      return { ...s, onboard: { ...withoutMaraClaim(s.onboard, key), [key]: next } };
     });
     if (!ok) toast(`Pick up to ${max}`, "err");
     return ok;
@@ -371,11 +448,103 @@ export function VoomProvider({
     setState((s) => ({ ...s, onboardStep: step }));
   }, []);
 
+  const applyLearned = useCallback<VoomActions["applyLearned"]>((learned, forDescription) => {
+    setState((s) => {
+      const o = s.onboard;
+      const fromMara: BrandLearnedKey[] = [];
+      const next: OnboardingAnswers = { ...o, learned, learnedFor: forDescription.trim(), learnedNote: "" };
+      // A field is prefilled only when the owner has not typed into it (empty,
+      // or still MARA's from an earlier read). Their own words always win.
+      const take = <F extends keyof OnboardingAnswers>(field: F, value: OnboardingAnswers[F], empty: boolean) => {
+        const key = LEARNED_KEY_FOR_FIELD[field];
+        if (!key) return;
+        const current = o[field];
+        const free = (Array.isArray(current) ? current.length === 0 : current === "") || o.fromMara.includes(key);
+        if (empty || !free) return;
+        next[field] = value;
+        fromMara.push(key);
+      };
+      take("name", learned.name, !learned.name);
+      take("industry", learned.category, !learned.category);
+      take("offerings", learned.offerings, !learned.offerings.length);
+      take("customer", learned.audience, !learned.audience.length);
+      take("goal", learned.goal, !learned.goal);
+      take("tone", learned.personality, !learned.personality.length);
+      take("brief", learned.brief, !learned.brief);
+      // Facts are never prefilled: they wait, unticked, until the owner confirms each one.
+      next.factsUnconfirmed = learned.facts.filter((fact) => !o.facts.includes(fact));
+      next.fromMara = fromMara;
+      return { ...s, onboard: next };
+    });
+  }, []);
+
+  const markLearnedFailed = useCallback<VoomActions["markLearnedFailed"]>((forDescription) => {
+    setState((s) => ({ ...s, onboard: { ...s.onboard, learned: null, learnedFor: forDescription.trim(), learnedNote: "failed" } }));
+  }, []);
+
+  const addOnboardAsset = useCallback<VoomActions["addOnboardAsset"]>((asset, previewUrl, computed) => {
+    setState((s) => {
+      const o = s.onboard;
+      return {
+        ...s,
+        onboard: {
+          ...o,
+          assets: withAddedAsset(o.assets, asset),
+          assetPreviews: previewUrl ? { ...o.assetPreviews, [asset.path]: previewUrl } : o.assetPreviews,
+          colours: asset.kind === "logo" ? coloursAfterLogo(o.colours, computed) : o.colours,
+        },
+      };
+    });
+  }, []);
+
+  const setOnboardAssetText = useCallback<VoomActions["setOnboardAssetText"]>((path, text, by) => {
+    setState((s) => ({ ...s, onboard: { ...s.onboard, assets: withAssetText(s.onboard.assets, path, text, by) } }));
+  }, []);
+
+  const removeOnboardAsset = useCallback<VoomActions["removeOnboardAsset"]>((path) => {
+    setState((s) => {
+      const o = s.onboard;
+      const wasLogo = o.assets.some((asset) => asset.path === path && asset.kind === "logo");
+      return { ...s, onboard: { ...o, assets: withoutAsset(o.assets, path), colours: wasLogo ? coloursAfterLogoRemoved(o.colours) : o.colours } };
+    });
+  }, []);
+
+  const applyWebsiteRead = useCallback<VoomActions["applyWebsiteRead"]>((read, palette) => {
+    setState((s) => {
+      // A look that already landed for the same address is kept.
+      const previous = s.onboard.website;
+      const keepLook = previous.url === read.url && previous.lookStatus && !read.lookStatus;
+      const website = keepLook ? { ...read, look: previous.look, lookStatus: previous.lookStatus } : read;
+      return { ...s, onboard: { ...s.onboard, website, colours: palette ? coloursAfterWebsite(s.onboard.colours, palette) : s.onboard.colours } };
+    });
+  }, []);
+
+  const applyWebsiteLook = useCallback<VoomActions["applyWebsiteLook"]>((url, look, lookStatus, palette) => {
+    setState((s) => {
+      const current = s.onboard.website;
+      // The address changed meanwhile: this look is stale.
+      if (current.url !== url) return s;
+      return { ...s, onboard: { ...s.onboard, website: { ...current, look, lookStatus }, colours: palette ? coloursAfterWebsite(s.onboard.colours, palette) : s.onboard.colours } };
+    });
+  }, []);
+
+  const applyWebsiteDescriptionDraft = useCallback<VoomActions["applyWebsiteDescriptionDraft"]>((draft) => {
+    setState((s) => {
+      const o = s.onboard;
+      if (!draft.trim() || (o.desc.trim() && !o.descFromWebsite)) return s;
+      return { ...s, onboard: { ...o, desc: draft, descFromWebsite: true } };
+    });
+  }, []);
+
   const finishOnboarding = useCallback<VoomActions["finishOnboarding"]>(
     async (skipped) => {
       const o = state.onboard;
       setState((s) => ({ ...s, onboardSaving: true, onboardError: null }));
 
+      // The saved mode is the one the plan allows. A higher wish is kept in
+      // the kit so the upgrade prompt can show it (never silently dropped).
+      const wanted = storedAutomationMode(o.auto);
+      const allowed = wanted && canUseAutomationMode(state.plan, wanted) ? wanted : wanted ? (state.plan === "pro" ? "assisted" : "manual") : "";
       const payload: OnboardingInput = {
         displayName: o.displayName,
         brandName: skipped ? "" : o.name,
@@ -385,13 +554,37 @@ export function VoomProvider({
         mainGoal: skipped ? "" : o.goal,
         brandPersonality: skipped ? [] : o.tone,
         preferredChannels: skipped ? [] : o.channels,
-        monthlyAdBudget: skipped ? "" : o.budget,
+        // Budget and publishing permission are no longer asked (nothing live reads them).
+        monthlyAdBudget: "",
         contentFrequency: skipped ? "" : o.freq,
-        automationLevel: skipped ? "" : o.auto,
-        publishingPermission: skipped ? "" : o.permission,
+        automationLevel: skipped ? "" : allowed,
+        publishingPermission: "",
         // Stored through the existing email brand profile path, never on
         // `businesses` (see OnboardingInput).
         website: skipped ? "" : o.site,
+        kit: skipped ? undefined : {
+          brief: o.brief,
+          offerings: o.offerings,
+          rules: o.rules,
+          words: o.words,
+          notes: o.notes,
+          facts: o.facts,
+          ...(wanted && wanted !== allowed ? { wantedAutomation: wanted } : {}),
+          // Slice 4: which saved values are MARA's reading, and the facts she
+          // found that the owner did not tick (kept aside, never used).
+          ...(o.fromMara.length ? { fromDescription: o.fromMara } : {}),
+          ...(o.factsUnconfirmed.length ? { factsUnconfirmed: o.factsUnconfirmed } : {}),
+          // Slice 5: image references and colours, only when there are some.
+          ...(o.assets.length ? { assets: o.assets } : {}),
+          ...(o.colours ? { colours: o.colours } : {}),
+          // Slice 6: the sample captions sorted on the voice screen, only when there are some.
+          ...(o.liked.length || o.disliked.length ? { voiceSamples: { liked: o.liked, disliked: o.disliked } } : {}),
+          // Slice 7: the website read's small record and which sources the guesses came from.
+          ...(o.website.status === "ready" || o.website.status === "empty"
+            ? { website: { url: o.website.url, status: o.website.status, fetchedAt: o.website.fetchedAt, pageTitles: o.website.pageTitles, ...(o.website.look ? { look: { look: o.website.look.look, styleTags: o.website.look.styleTags } } : {}) } }
+            : {}),
+          ...(o.learnedWith === "description+website" ? { readSource: "website" as const } : {}),
+        },
       };
 
       const result = await saveOnboardingAction(payload);
@@ -424,7 +617,7 @@ export function VoomProvider({
       }));
       return true;
     },
-    [state.onboard, toast],
+    [state.onboard, state.plan, toast],
   );
 
   const restartOnboarding = useCallback<VoomActions["restartOnboarding"]>(async () => {
@@ -453,6 +646,14 @@ export function VoomProvider({
       setOnboardField,
       toggleOnboardArray,
       setOnboardStep,
+      applyLearned,
+      markLearnedFailed,
+      addOnboardAsset,
+      setOnboardAssetText,
+      removeOnboardAsset,
+      applyWebsiteRead,
+      applyWebsiteLook,
+      applyWebsiteDescriptionDraft,
       finishOnboarding,
       restartOnboarding,
     }),
@@ -471,6 +672,14 @@ export function VoomProvider({
       setOnboardField,
       toggleOnboardArray,
       setOnboardStep,
+      applyLearned,
+      markLearnedFailed,
+      addOnboardAsset,
+      setOnboardAssetText,
+      removeOnboardAsset,
+      applyWebsiteRead,
+      applyWebsiteLook,
+      applyWebsiteDescriptionDraft,
       finishOnboarding,
       restartOnboarding,
     ],

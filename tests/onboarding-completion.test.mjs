@@ -2,10 +2,11 @@
  * Setup completion survives the save's own revalidation (browser-rendered).
  *
  * saveOnboarding() revalidates /app, so the save action's response re-renders
- * /app/onboarding with onboarding_completed = true. The page used to redirect
- * on that render, throwing the owner to Today before "Your workspace is ready"
- * could show. Now the page hands the flag to the wizard, which only bypasses
- * setup when the flag was already true at mount.
+ * /app/onboarding with onboarding_completed = true. A server redirect on that
+ * render would throw the owner to Today before "Your workspace is ready" could
+ * show. So the page hands the flag to the wizard, which only bypasses setup
+ * when the flag was already true at mount (main's pattern, adopted by the
+ * Brand Kit v2 wizard in Phase C of handover/merge-plan.md, 2026-11-02).
  *
  * This mounts the REAL wizard in Chromium, flips the flag exactly as the
  * revalidated render does, and checks the wizard stays put; then mounts a

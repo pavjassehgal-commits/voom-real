@@ -12,7 +12,11 @@ registerHooks({resolve(s,c,next){
       export async function getPostDraft(db,owner,id){return globalThis.__launchPost.read(owner,id)}
       export async function savePostDraft(db,owner,id,patch){return globalThis.__launchPost.save(owner,id,patch)}
       export async function approvePostDraft(){throw Error('No approval in save tests')}
-      export async function rejectPostDraft(){throw Error('No rejection in save tests')}`,
+      export async function rejectPostDraft(){throw Error('No rejection in save tests')}
+      export async function deletePostDraft(){throw Error('No delete in save tests')}
+      export async function setPostAssetOrigin(){throw Error('No origin change in save tests')}`,
+    // deletePostDraft and setPostAssetOrigin are Gurnoor's branch's exports (delete post, 2026-10-23;
+    // "Existing content" source switch); the route imports them, so the double must name them (merge 2026-11-05).
   };
   return doubles[s]?{shortCircuit:true,url:'data:text/javascript,'+encodeURIComponent(doubles[s])}:next(s,c);
 }});

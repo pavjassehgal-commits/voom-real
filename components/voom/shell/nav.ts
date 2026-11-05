@@ -13,8 +13,8 @@ export interface NavGroup {
 /**
  * Application shell navigation — redesign Batch 1 (Figma "15 — Today").
  *
- * Workspace: Today, Create, Calendar, Performance
- * Automation: Marketing Plan, Approvals, Automations
+ * Workspace: Today, Brand (the Brand Kit v2 hub, Gurnoor's branch), Create, Calendar, Content, Performance
+ * Automation: MARA, Marketing Plan, Approvals, Automations
  * Manage: Channels (the existing Connections hub), Campaigns, Contacts
  * System: Settings
  *
@@ -28,6 +28,7 @@ export const NAV: NavGroup[] = [
     g: "Workspace",
     items: [
       { id: "today", n: "Today", i: "house" },
+      { id: "brand", n: "Brand", i: "heart" },
       { id: "studio", n: "Create", i: "pencil" },
       { id: "calendar", n: "Calendar", i: "cal" },
       { id: "content", n: "Content", i: "file" },
@@ -61,6 +62,7 @@ export const NAV: NavGroup[] = [
 
 export const TITLES: Record<string, string> = {
   today: "Today",
+  brand: "Brand",
   plan: "Marketing Plan",
   studio: "Create",
   create: "Create",

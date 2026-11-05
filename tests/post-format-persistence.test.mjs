@@ -120,11 +120,14 @@ test("image generation does not overwrite the selected format", async () => {
   // Posts and Reels generate at the draft's own format; a Story is locked to
   // its single legal 9:16 format, which is still never a user overwrite.
   assert.match(route, /const format = post\.kind === "story" \? "9:16" : post\.format;/);
-  // Generating writes copy, the brief and media rows — never the draft's
-  // channel/format — so it cannot change the user's choice.
+  // Generating writes the brief, then (only once the visual exists) the held
+  // copy, plus media rows — never the draft's channel/format — so it cannot
+  // change the user's choice.
   const draftWrites = [...route.matchAll(/from\("mara_drafts"\)\s*\.update\(\{([^}]*)\}/g)].map((match) => match[1]);
-  assert.ok(draftWrites.length >= 2, "the route updates the draft (brief, copy)");
+  assert.ok(draftWrites.length >= 1, "the route updates the draft (brief)");
   for (const patch of draftWrites) assert.doesNotMatch(patch, /\b(channel|format)\b/, `a draft update never touches the format: {${patch.trim()}}`);
+  assert.match(route, /let draftCopy: \{ title: string; content: string \};/, "the held copy carries only title and content");
+  assert.match(route, /from\("mara_drafts"\)\s*\.update\(draftCopy\)/, "the held copy is written as-is");
   assert.doesNotMatch(route, /encodeDraftChannel|normalizePostFormat/);
   assert.doesNotMatch(route, /async function setFormat/);
   assert.doesNotMatch(route, /from\("post_draft_assets"\)\.update\(\{ format \}\)/);
@@ -201,9 +204,10 @@ test("Post format needed no schema change; 0022-0027 remain intact and 0028 is v
   // not been told about — it must be added deliberately.
   // 0050 (approval-state write lockdown) and 0051 (AI request rate limits)
   // are the production-hardening release and are the only migrations after 0049.
-  // Trend Intelligence (0055-0058) and automation safety (0059) and AI usage (0061) follow; 0052-0054 are reserved for Admin.
-  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql"], "only reviewed post-0049 migrations are present");
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 61), "no unreviewed migration beyond 0061 may exist");
+  // Trend Intelligence (0055-0058), main's 0059-0070 and Brand Kit v2 (0075; written as 0059,
+  // renumbered at the 2026-11-01 merge) follow; 0052-0054 are reserved for Admin, the rest are gaps.
+  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql", "0065_youtube_data_retention.sql", "0066_youtube_resumable_uploads.sql", "0067_youtube_upload_cleanup_fairness.sql", "0068_instagram_token_renewal.sql", "0069_youtube_deletion_delivery.sql", "0070_plan_slot_generation_leases.sql", "0071_automation_mode_entitlement_guard.sql", "0072_coordinator_email_flow_authorization.sql", "0075_brand_kits.sql"], "only reviewed post-0049 migrations are present");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 75), "no unreviewed migration beyond 0075 (brand kits) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],

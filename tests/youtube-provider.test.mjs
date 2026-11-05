@@ -1490,6 +1490,7 @@ test("migrations 0047-0051 apply cleanly and retain their required ordering", as
   assert.ok(applied.includes("0047_youtube_provider.sql"), "0047 applied through PGlite");
   assert.ok(applied.includes("0049_tiktok_provider.sql"), "0049 (TikTok) applied through PGlite");
   assert.ok(applied.includes("0050_approval_state_write_lockdown.sql"), "0050 (write lockdown) applied through PGlite");
+  assert.equal(applied[applied.length - 1], "0075_brand_kits.sql", "Brand Kit v2 (0075; written as 0059, renumbered at the 2026-11-01 merge with main) is the newest migration");
   const ordered = ["0047_youtube_provider.sql", "0048_youtube_oauth_state_acl.sql", "0049_tiktok_provider.sql", "0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql"];
   assert.deepEqual(applied.filter((name) => ordered.includes(name)), ordered, "provider migrations remain ordered through 0051");
   assert.ok(applied.indexOf("0055_trend_intelligence.sql") > applied.indexOf("0051_ai_request_rate_limits.sql"), "Trend Intelligence follows 0051");

@@ -23,6 +23,7 @@ import { identifyCalendarGaps } from "@/lib/coordinator/engine";
 import { MAX_TREND_IDEAS_PER_RUN } from "@/lib/trends/relevance";
 import type { TrendRpcClient } from "@/lib/trends/supabase-rpc";
 import { buildPlannedContentPayload, plannedContentJsonSchema, plannedContentSchema, plannedContentSystemPrompt } from "./prompt";
+import { brandKitPromptContext, loadBrandKit, type BrandKitPromptContext } from "@/lib/brand/context";
 import { trendContextEnabled } from "./trend-flag";
 import { slotLeaseSeconds } from "./slot-lease";
 import { aiRequestTimeoutMs } from "@/lib/ai/config";
@@ -186,6 +187,8 @@ export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInp
   }
   const goal = String(business.main_goal ?? "Grow awareness");
   const selectedChannels = normalizeSelectedSocialChannels(business.preferred_channels);
+  // Brand Kit v2: read once per run; never throws (no kit = unchanged prompts).
+  const brandKit = brandKitPromptContext(await loadBrandKit(admin, input.ownerId));
   // The cadence pattern is pinned to the active plan's start so every run, on
   // any day, plans the same dates (the coordinator resolves the same anchor).
   const { data: activePlan, error: activePlanError } = await admin.from("marketing_plans").select("created_at")
@@ -214,6 +217,7 @@ export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInp
     mode,
     trigger,
     selectedChannels,
+    brandKit,
     targetDates: input.targetDates,
     channelCoverage: input.channelCoverage,
     mediaDeps: input.mediaDeps,
@@ -249,6 +253,8 @@ interface PortContext {
   trigger: WorkflowTrigger;
   /** Canonical selected social channels from businesses.preferred_channels. */
   selectedChannels?: PlanChannel[];
+  /** Brand Kit extras for every prompt of this run (migration 0075, Brand Kit v2); null = none. */
+  brandKit?: BrandKitPromptContext | null;
   /** Coordinator gap dates and the actual existing channel commitments. */
   targetDates?: string[];
   channelCoverage?: ChannelCoverage[];
@@ -420,6 +426,7 @@ export async function buildWorkflowPorts(admin: AdminClient, context: PortContex
         timeZone: context.timeZone,
         slot,
         plannedConcepts,
+        brandKit: context.brandKit ?? null,
         performance: slot.channel === "instagram" ? await performanceContextForPlanning() : null,
         ...(context.planningDeps?.provider ? { provider: context.planningDeps.provider } : {}),
       };
@@ -917,6 +924,8 @@ export async function generateWorkflowPlannedContent(input: {
   performance?: PerformancePlanContext | null;
   /** Verified trend evidence (flag-gated by the caller); null/absent = none. */
   trendOpportunity?: TrendPromptContext | null;
+  /** Brand Kit extras (migration 0075); null/absent = prompts unchanged. */
+  brandKit?: BrandKitPromptContext | null;
   /** Test seam only; production uses the configured AI provider. */
   provider?: AiProvider;
 }): Promise<GeneratedContent> {
@@ -941,11 +950,12 @@ export async function generateWorkflowPlannedContent(input: {
     recentConcepts: input.plannedConcepts,
     performance: input.performance ?? null,
     trendOpportunity: input.trendOpportunity ?? null,
+    brandKit: input.brandKit ?? null,
   });
   try {
     const plan = await (input.provider ?? createAiProvider()).structured({
       messages: [
-        { role: "system", content: plannedContentSystemPrompt({ trendEvidence: Boolean(input.trendOpportunity) }) },
+        { role: "system", content: plannedContentSystemPrompt({ trendEvidence: Boolean(input.trendOpportunity), brandKit: input.brandKit ?? null }) },
         { role: "user", content: JSON.stringify(payload) },
       ],
       temperature: 0.7,

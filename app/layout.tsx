@@ -43,6 +43,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="en"
       className={`${bricolage.variable} ${publicSans.variable} ${dmSans.variable} ${plexMono.variable} h-full antialiased`}
+      // The pre-paint script below adds `data-theme` to this element before React
+      // hydrates; React 19 reports that extra attribute as a mismatch in development
+      // (every page, harmless). This tells it the attribute is expected (2026-11-04).
+      suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-bg text-text font-sans">
         {/*

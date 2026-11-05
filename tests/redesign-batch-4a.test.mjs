@@ -34,8 +34,13 @@ test("log in and sign up keep the existing server actions, field names and signe
 
 test("auth screens offer no control Voom cannot honour", async () => {
   const all = (await Promise.all([code("app/login/LoginForm.tsx"), code("app/signup/SignupForm.tsx"), code("components/voom/auth/AuthFrame.tsx")])).join("\n");
-  assert.doesNotMatch(all, /signInWithOAuth|Continue with Google|Apple/i, "no social sign-in exists");
-  assert.doesNotMatch(all, /Forgot password|Keep me logged in|Resend link/i, "no password reset, session toggle or resend flow exists");
+  // Since 2026-10-20 (Gurnoor's branch, merged 2026-11-01) Voom has Google sign-in
+  // (`app/components/GoogleButton.tsx`, Supabase OAuth) and a password-reset flow, so
+  // both controls are real; Apple, "Keep me logged in" and "Resend link" still are not.
+  assert.match(all, /<GoogleButton \/>/, "Google sign-in is offered on both forms");
+  assert.doesNotMatch(all, /Apple/i, "no Apple sign-in exists");
+  assert.match(all, /href="\/forgot-password"/, "the password reset flow is linked from log in");
+  assert.doesNotMatch(all, /Keep me logged in|Resend link/i, "no session toggle or resend flow exists");
   assert.doesNotMatch(all, /10 channels|Facebook/i);
   assert.doesNotMatch(all, /createAdminClient|service_role/i);
 });
@@ -48,19 +53,24 @@ test("setup keeps the real save path, validation and the completed-account redir
   // An onboarded account opening setup is sent on by the wizard, using what the
   // server said when it FIRST mounted. The page itself must not redirect: the
   // save action's /app revalidation re-renders this page, and a server redirect
-  // then would hide the completion summary.
-  assert.match(page, /<OnboardingWizard completedOnServer=\{Boolean\(business\?\.onboarding_completed\)\} \/>/);
+  // then would hide the completion summary. (The Brand Kit v2 wizard adopted this
+  // in Phase C of handover/merge-plan.md, 2026-11-02; the page also passes
+  // `visionEnabled` for its image-reading screen.)
+  assert.match(page, /<OnboardingWizard visionEnabled=\{isAiVisionConfigured\(\)\} completedOnServer=\{Boolean\(business\?\.onboarding_completed\)\} \/>/);
   assert.doesNotMatch(page, /redirect\(/, "no server redirect inside the save action's re-render");
   assert.match(wizard, /const \[finishedBeforeMount\] = useState\(completedOnServer\)/, "the bypass is decided once, at mount");
   assert.match(wizard, /if \(finishedBeforeMount\) router\.replace\("\/app"\)/, "an onboarded account never restarts setup");
-  assert.match(wizard, /const ok = await finishOnboarding\(skipped\);\s*(?:haptic\(ok \? "success" : "error"(?:, gesture)?\);\s*)?if \(ok\) setComplete\(\{ skipped \}\);/, "success shows only after the save succeeds");
+  assert.match(wizard, /const ok = await finishOnboarding\(skipped\);\s*haptic\(ok \? "success" : "error", gesture\);\s*if \(ok\) setComplete\(\{ skipped \}\);/, "success shows only after the save succeeds");
   assert.ok(wizard.indexOf("if (complete) return <SetupComplete") < wizard.indexOf("if (finishedBeforeMount) return null"), "a just-finished setup shows its summary, never the bypass");
   assert.match(complete, /href="\/app\/today"[^>]*>Go to dashboard/, "the summary leads to the dashboard");
-  assert.match(wizard, /await finishOnboarding\(skipped\)/);
-  for (const message of ["Tell MARA what to call you", "Pick the kind of business", "Choose your main marketing goal", "Pick at least one target customer", "Choose a publishing permission"]) {
+  assert.match(complete, /href="\/app\/brand"/, "Brand Kit v2: the answers are edited on the Brand page");
+  // The five required answers (DECISIONS 2026-10-24, slice 3).
+  for (const message of ["Tell MARA what to call you", "Tell MARA a little more", "Pick the kind of business", "Choose your main marketing goal", "Choose how much MARA should do"]) {
     assert.match(wizard, new RegExp(message), `validation kept: ${message}`);
   }
-  assert.doesNotMatch(wizard, /AnalyzingScreen|setTimeout/, "no timed fake-progress screen");
+  // No timed fake-progress screen. (The wizard's own setTimeout calls are real waits on
+  // MARA's reads, raced against the AI call; see tests/brand-extract.test.mjs.)
+  assert.doesNotMatch(wizard, /AnalyzingScreen|setAnalyzing/, "no timed fake-progress screen");
   assert.match(complete, /\/api\/voom\/workflow/, "the first-week list comes from the real plan");
   assert.doesNotMatch(complete, /Invite your team|seats|3 drafts/i, "no team seats or invented drafts");
   assert.doesNotMatch(complete + wizard, /\.(insert|update|upsert|delete)\(/, "setup screens never write directly");

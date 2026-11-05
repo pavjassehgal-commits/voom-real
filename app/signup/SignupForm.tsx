@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import Link from "next/link";
+import GoogleButton from "../components/GoogleButton";
 import { Icon } from "@/components/voom/icons";
 import { AUTH_INPUT, AUTH_SUBMIT, AuthAlert, AuthField, AuthFrame, PasswordToggle } from "@/components/voom/auth/AuthFrame";
 import { signup, type SignupState } from "./actions";
@@ -31,8 +32,9 @@ function passwordStrength(password: string) {
 
 /**
  * Sign up through the existing `signup` server action (email, password and
- * the confirmation it validates). The reference's Google / Apple buttons and
- * its "Resend link" are not shown: Voom has neither flow. Agreement to the
+ * the confirmation it validates), or "Continue with Google" (Supabase OAuth,
+ * since 2026-10-20). The reference's Apple button and its "Resend link" are
+ * not shown: Voom has neither flow. Agreement to the
  * Terms and Privacy Policy is stated plainly instead of a checkbox the
  * server would not record.
  */
@@ -64,7 +66,9 @@ export default function SignupForm() {
 
   return (
     <AuthFrame title="Create your account" subtitle="Start on the Free plan · no credit card">
-      <form action={formAction} className="mt-6 flex flex-col gap-4">
+      <GoogleButton />
+
+      <form action={formAction} className="flex flex-col gap-4">
         {state.formError && <AuthAlert>{state.formError}</AuthAlert>}
 
         <AuthField label="Work email" icon="mail" error={state.fieldErrors?.email} errorId="email-error">

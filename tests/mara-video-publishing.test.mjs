@@ -74,7 +74,7 @@ test("regeneration semantics: one entry point, safe unconfigured state, atomic r
   // The video branch runs BEFORE the image guards, and non-reel/story kinds
   // are refused for video truthfully.
   const wantsVideoAt = generate.indexOf('wantsVideo');
-  const imageGuardAt = generate.indexOf('No visual was attached');
+  const imageGuardAt = generate.indexOf('The visual could not be generated');
   assert.ok(wantsVideoAt > -1 && imageGuardAt > -1 && wantsVideoAt < imageGuardAt, "video branch precedes the image path");
   assert.match(generate, /MARA generates video for Reels and Stories\. Use the Post flow for feed images\./);
   assert.match(generate, /body\.media === "video"/);

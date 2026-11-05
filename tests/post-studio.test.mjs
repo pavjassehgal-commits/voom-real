@@ -278,11 +278,14 @@ test("0021 is marked already-applied; 0018-0020 are untouched and 0022-0028 stay
   // 0050 (approval-state write lockdown) and 0051 (AI request rate limits)
   // are the production-hardening release and are the only migrations after 0049.
   // Trend Intelligence (0055-0058) and the reviewed automation safety boundary
-  // (0059), AI usage (0061), LinkedIn (0062) and native plan video generation
-  // (0063) and native YouTube uploads (0064) follow, then direct YouTube
-  // resumable uploads (0066) and cleanup fairness (0067); 0065/0069 are the reviewed YouTube erasure pair; 0052-0054 remain reserved.
-  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql", "0065_youtube_data_retention.sql", "0066_youtube_resumable_uploads.sql", "0067_youtube_upload_cleanup_fairness.sql", "0068_instagram_token_renewal.sql", "0069_youtube_deletion_delivery.sql", "0070_plan_slot_generation_leases.sql", "0071_automation_mode_entitlement_guard.sql", "0072_coordinator_email_flow_authorization.sql"], "only reviewed post-0049 migrations are present");
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 72), "no unreviewed migration beyond 0072 may exist");
+  // (0059), AI usage (0061), LinkedIn (0062), native plan video generation
+  // (0063), native YouTube uploads (0064), the reviewed YouTube erasure pair (0065, 0069),
+  // direct resumable uploads (0066), cleanup fairness (0067), Instagram token renewal (0068),
+  // slot leases (0070), the automation mode guard (0071), the coordinator email-flow guard
+  // (0072) and Brand Kit v2 (0075; written as 0059 on Gurnoor's branch, renumbered at the
+  // 2026-11-01 merge) follow; 0052-0054 remain reserved, 0060/0073/0074 are gaps.
+  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql", "0065_youtube_data_retention.sql", "0066_youtube_resumable_uploads.sql", "0067_youtube_upload_cleanup_fairness.sql", "0068_instagram_token_renewal.sql", "0069_youtube_deletion_delivery.sql", "0070_plan_slot_generation_leases.sql", "0071_automation_mode_entitlement_guard.sql", "0072_coordinator_email_flow_authorization.sql", "0075_brand_kits.sql"], "only reviewed post-0049 migrations are present");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 75), "no unreviewed migration beyond 0075 (brand kits) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],
@@ -352,7 +355,7 @@ test("a post only shows a visual once a stored object exists", async () => {
   // Generation failures leave no visual attached.
   const route = await read("app/api/posts/[id]/generate/route.ts");
   assert.match(route, /status: "failed", error_code: code/);
-  assert.match(route, /No visual was attached/);
+  assert.match(route, /The visual could not be generated, so nothing was changed/);
 });
 
 // ---------------------------------------------------------------------------
@@ -416,15 +419,18 @@ test("existing image becomes an Instagram Post and existing video becomes a Reel
   assert.match(modal, /create\("instagram_post", "mara"\)/);
 });
 
-test("existing-content suggestions are metadata-only and disclose that MARA did not watch", async () => {
+test("existing-content suggestions disclose exactly what MARA saw: a photo through one vision look (slice 5b), a video never", async () => {
   const route = await read("app/api/posts/[id]/suggest/route.ts");
   assert.match(route, /buildExistingContentPayload/);
-  assert.match(route, /inspectedVisual: false/);
-  assert.match(route, /disclosure: EXISTING_CONTENT_DISCLOSURE/);
+  assert.match(route, /const seen = assetKind === "image" \? await lookAtPostImage\(/, "only a photo is ever looked at");
+  assert.match(route, /inspectedVisual: Boolean\(seen\)/);
+  assert.match(route, /disclosure: seen \? EXISTING_CONTENT_SEEN_DISCLOSURE : EXISTING_CONTENT_DISCLOSURE/);
   assert.match(route, /postAssetKindForMime\(post\.visual\.mimeType\)/);
-  assert.doesNotMatch(route, /bytes|arrayBuffer|base64|createMediaProvider|getMediaConfig/);
+  // The bytes go to the vision model's small copy only; the text model and the image generator never see them.
+  assert.doesNotMatch(route, /createMediaProvider|getMediaConfig/);
+  assert.match(route, /describePostImage\(provider, \{ jpeg, hint: postVisionHint\(brand\) \}\)/);
   const editor = await read("components/voom/modals/PostEditorModal.tsx");
-  assert.match(editor, /MARA has not seen this file/);
+  assert.match(editor, /MARA saw: /);
 });
 
 // ---------------------------------------------------------------------------

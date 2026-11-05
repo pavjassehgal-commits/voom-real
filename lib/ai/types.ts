@@ -1,8 +1,17 @@
 export type AiRole = "system" | "user" | "assistant";
 
+/**
+ * One part of a multimodal message (OpenAI-compatible chat format). Only the
+ * vision call (lib/brand/vision.ts) sends image parts; every other caller
+ * keeps plain string content.
+ */
+export type AiContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 export interface AiMessage {
   role: AiRole;
-  content: string;
+  content: string | AiContentPart[];
 }
 
 export interface AiRequest {
