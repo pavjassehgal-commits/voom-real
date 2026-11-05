@@ -7,6 +7,7 @@ import { evaluateMarketingNeeds, failedPublishDates } from "./engine";
 import { runOwnerWorkflow } from "@/lib/voom/workflow/service";
 import { parsePlanActionChannel as parseActionChannel } from "@/lib/voom/workflow/channels";
 import { proposeEmailFlow } from "@/lib/email-flows/create";
+import { assertAutonomousWorkAllowed } from "@/lib/voom/automation-safety";
 import type { AdminClient } from "@/lib/post/server-data";
 import type { PerformanceReport } from "@/lib/performance/insights";
 import type { CoordinatorRunResult } from "./types";
@@ -67,12 +68,27 @@ export async function runCoordinatorForOwner(
     .digest("hex")
     .slice(0, 48);
 
+  // Final runtime authorization for EVERY autonomous action below (gap filling
+  // and email-flow proposals): a fresh read of pause, confirmed mode and plan
+  // entitlement. A forged, unconfirmed, paused or unentitled account does
+  // nothing, whatever the state snapshot or the stored value says.
+  let authorizationBlock: string | null = null;
+  if (trigger !== "ui_read" && state.mode !== "manual") {
+    try {
+      await assertAutonomousWorkAllowed(admin as AdminClient, ownerId, state.mode);
+    } catch (err) {
+      authorizationBlock = err instanceof Error ? err.message : "automation_not_authorized";
+      actionsTaken.push({ type: "automation_not_authorized", details: { reason: authorizationBlock } });
+    }
+  }
+
   // Check if we should execute workflow filling for gaps:
   // If Manual, NEVER autonomously generate content or run workflow.
   // If ui_read, NEVER run mutation workflows.
   const shouldExecuteGapFilling =
     trigger !== "ui_read" &&
     state.mode !== "manual" &&
+    !authorizationBlock &&
     evaluation.gaps.length > 0;
 
   if (shouldExecuteGapFilling) {
@@ -153,6 +169,7 @@ export async function runCoordinatorForOwner(
   const shouldProposeFlows =
     trigger !== "ui_read" &&
     state.mode !== "manual" &&
+    !authorizationBlock &&
     evaluation.state.emailState.flowOpportunities.length > 0;
 
   if (shouldProposeFlows) {

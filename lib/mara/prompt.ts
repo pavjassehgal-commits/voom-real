@@ -1,6 +1,7 @@
 import "server-only";
 import type { MaraDraftKind } from "./types";
 import type { BusinessRecord, ProfileRecord } from "@/lib/voom/types";
+import { automationModeDisplayLabel } from "@/lib/voom/automation";
 
 /**
  * LEGACY — the free-form MARA chat loop that consumed this prompt was retired
@@ -23,7 +24,9 @@ export function buildMaraSystemPrompt(profile: ProfileRecord | null, business: B
     selectedChannels: business.preferred_channels,
     contentFrequency: business.content_frequency ?? "",
     monthlyAdBudget: business.monthly_ad_budget ?? "",
-    automationLevel: business.automation_level ?? "",
+    // The mode MARA actually runs under (never a raw onboarding answer, which
+    // could make MARA promise automation the owner has not confirmed).
+    automationLevel: automationModeDisplayLabel(business.automation_level),
     publishingPermission: business.publishing_permission ?? "",
   };
 

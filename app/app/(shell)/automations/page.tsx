@@ -4,7 +4,7 @@ import { AutomationPauseControl } from "@/components/voom/automations/Automation
 import { EmailFlowsPanel } from "@/components/voom/automations/EmailFlowsPanel";
 import { Icon } from "@/components/voom/icons";
 import { BTN, ChannelGlyph, PageHeader, StatCard, StatusChip } from "@/components/voom/redesign/ui";
-import { normalizeAutomationMode, AUTOMATION_MODE_STATUS_LINES } from "@/lib/voom/automation";
+import { automationModeConfirmed, automationModeStatusLine, normalizeAutomationMode } from "@/lib/voom/automation";
 import { normalizePlan, getPlanConfig } from "@/lib/billing/plans";
 import { accountTimezone } from "@/lib/voom/timezone";
 import { getOperatingData } from "@/lib/voom/operating-data";
@@ -43,6 +43,7 @@ export default async function AutomationsPage() {
   const timeZone = accountTimezone((data.business as { timezone?: string | null }).timezone);
   const lifecycle = data.coordinator?.state.emailState;
   const mode = normalizeAutomationMode(data.business.automation_level);
+  const modeConfirmed = automationModeConfirmed(data.business.automation_level);
   const pausedAt = pause?.pausedAt ?? null;
   const items = data.snapshot.items;
   const mediaActive = items.filter((item) => MEDIA_ACTIVE.has(item.status));
@@ -66,7 +67,7 @@ export default async function AutomationsPage() {
     )}
 
     <div className="mb-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-      <StatCard icon="sparkle" value={mode === "autopilot" ? "Autopilot" : mode === "assisted" ? "Assisted" : "Manual"} label={pausedAt ? "Saved mode · paused" : "Current mode"} tone="brand" />
+      <StatCard icon="sparkle" value={mode === "autopilot" ? "Autopilot" : mode === "assisted" ? "Assisted" : "Manual"} label={pausedAt ? "Saved mode · paused" : modeConfirmed ? "Current mode" : "Not confirmed yet"} tone="brand" />
       <StatCard icon="checkCircle" value={waitingOnYou} label="Waiting on your approval" tone="coral" note={waitingOnYou ? <Link href="/app/approvals" className="text-[var(--brand-ink)] hover:underline">Review approvals</Link> : undefined} />
       <StatCard icon="video" value={mediaActive.length} label="Media in progress" tone="blue" />
       <StatCard icon="warn" value={mediaProblems.length} label="Need attention" tone={mediaProblems.length ? "coral" : "green"} />
@@ -76,12 +77,12 @@ export default async function AutomationsPage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 id="automation-mode" className="text-[18px] font-semibold text-text">Marketing automation mode</h2>
-          <p className="mt-1 max-w-2xl text-[14px] leading-relaxed text-text-2">{AUTOMATION_MODE_STATUS_LINES[mode]} Your saved mode is highlighted below; each card says what that mode does, including whether paid MARA media can start on its own.</p>
+          <p className="mt-1 max-w-2xl text-[14px] leading-relaxed text-text-2">{automationModeStatusLine(data.business.automation_level)} Your saved mode is highlighted below; each card says what that mode does, including whether paid MARA media can start on its own.</p>
         </div>
         <span className="rounded-full bg-[var(--brand-soft)] px-3 py-1 text-[12.5px] font-semibold text-[var(--brand-ink)]">{plan.name} plan</span>
       </div>
       <div className="mt-4">
-        <AutomationMode describe initial={normalizeAutomationMode(data.business.automation_level)} plan={planId} />
+        <AutomationMode describe initial={normalizeAutomationMode(data.business.automation_level)} confirmed={automationModeConfirmed(data.business.automation_level)} plan={planId} />
       </div>
       {lockedModes.length > 0 && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[var(--brand-line)] bg-[var(--brand-soft-2)] px-4 py-3">

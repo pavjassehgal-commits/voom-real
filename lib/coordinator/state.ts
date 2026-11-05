@@ -3,7 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { accountTimezone, addDays, isoToLocalDate, localDate, localToUtcIso } from "@/lib/voom/timezone";
 import { cadenceAnchorDate, normalizeCadence, slotDates, type ContentType } from "@/lib/voom/cadence";
-import { normalizeAutomationMode } from "@/lib/voom/automation";
+import { effectiveAutomationMode } from "@/lib/voom/automation-safety";
 import { normalizePlan, canUseAutopilot, canGenerateExplicitMedia } from "@/lib/billing/plans";
 import { getCreditSummary } from "@/lib/billing/ledger";
 import { loadPerformancePlanContext } from "@/lib/performance/data";
@@ -61,8 +61,10 @@ export async function buildMarketingState(
   const tz = accountTimezone((businessRow as { timezone?: string | null }).timezone);
   const today = localDate(now, tz);
   const cadence = normalizeCadence((businessRow as { content_frequency?: string | null }).content_frequency);
-  const mode = normalizeAutomationMode((businessRow as { automation_level?: string | null }).automation_level);
   const planId = normalizePlan((businessRow as { plan?: string | null }).plan);
+  // The coordinator decides autonomous work from the EFFECTIVE mode: confirmed
+  // and capped at the plan, so a forged or unconfirmed value is never acted on.
+  const mode = effectiveAutomationMode((businessRow as { automation_level?: string | null }).automation_level, planId);
   const allowAutomaticPaidMedia = Boolean((businessRow as { allow_automatic_paid_media?: boolean }).allow_automatic_paid_media);
 
   // Compute 7-day horizon: today up to today + 6

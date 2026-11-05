@@ -103,7 +103,9 @@ five required answers, per-screen Skip and no global Skip; option lists in `lib/
 the Brand Brief screen is the Brand Hub component in local mode). Since Phase C (2026-11-02) it
 wears the redesign's setup layout from `main`: a sticky header with the step list, a sticky intro
 column with the designers' artwork on large screens, white answer cards with the 3D icons
-(`onboardingIcons.tsx`; Manual / Assisted / Autopilot reuse main's three automation icons), the
+(`onboardingIcons.tsx`; Manual / Assisted / Autopilot reuse main's three automation icons; since
+the 2026-11-05 merge onboarding saves Manual or Assisted only, so the Autopilot card says "Starts
+in Assisted" and the owner switches Autopilot on in Automations, where the plan is checked), the
 "Need inspiration?" chips under the description box, and a light footer that notifications stack
 above. Finish shows `SetupComplete.tsx` ("Your workspace is ready": the saved answers, the real
 plan items from `/api/voom/workflow`, Edit links to the Brand page, "Go to dashboard"). A finished
@@ -197,6 +199,15 @@ in this branch and described in the tables above where it changed a folder.
 | Automation safety (PRs #81, #101, #102) | Emergency Pause all / Resume for MARA's automation, approval integrity (approved content is versioned and locked), cadence as a hard limit on every rolling 7-day window, single-flight slot generation with a database lease, a fail-closed AI timeout, failed publishes held for the owner. | `docs/mara-automation-launch.md`, `lib/coordinator/*`, `lib/voom/workflow/{rolling-plan,slot-lease,channel-planner}.ts`, migrations 0059 and 0070 |
 | Worker schedules (PR #102) | The Supabase Cron definitions rewritten as one guarded file; secrets read from Vault. Not yet re-run on the dev project. | `docs/scheduled-workers.md`, `supabase/ops/schedule-workers.sql` |
 | Test harness | Next.js entry-point export rules; the headless-Chrome helper used by every layout test. Its known weaknesses (a leaked profile folder per scenario, no page-script timeout) are open items in `handover/next-session.md`. | `tests/helpers/rendered-surface.mjs`, `docs/baseline.md` Notes |
+
+### Merged 2026-11-05 (`main` at `1ab2826`, PRs #103 to #110)
+| Theme | What it does | Read |
+|---|---|---|
+| Automation mode normalisation (PR #103) | One reading of the stored mode (`automationModeState`: saved / legacy answer needing confirmation / unset = Manual). Onboarding saves only Manual or Assisted and only a mode the plan includes (`onboardingAutomationMode`; our wizard's Autopilot card says "Starts in Assisted"); Settings never writes the mode; the Automations control is the one place Autopilot is switched on. Migration 0071 enforces plan entitlement on `businesses.automation_level` in the database; 0072 refuses a coordinator-created email flow unless the owner is in a confirmed, plan-included mode. | `docs/automation-mode-normalization.md`, `lib/voom/automation.ts`, migrations 0071, 0072 |
+| MARA launch readiness (PR #104) | Launch checks for MARA's scheduled work: today's schedule and approval messages (`lib/voom/today-schedule.ts`, `lib/post/approval-message.ts`), Instagram publish readiness, coordinator state. | `docs/mara-automation-launch.md`, `tests/mara-launch-*.test.mjs` |
+| App icons (PRs #106, #107) | One app icon for the tab, Apple touch icon and the logo components, aligned with the TikTok listing (`VOOM_APP_ICON` in `lib/voom/brand-assets.ts`, `app/icon.png`, `app/apple-icon.png`). | `components/voom/shell/VoomLogo.tsx`, `app/layout.tsx` |
+| YouTube compliance launch (PR #109) | Owner-run YouTube data erasure and retention (data route, deletion delivery, a credential-revocation outbox, 28-day maintenance inside the reconcile cron), legal pages updated, a separate Cloudflare worker that keeps a deletion register (`workers/youtube-deletion-register/`, its own `package.json`, excluded from our lint and typecheck). Migrations 0065 (retention tables) and 0069 (deletion events). | `docs/youtube-compliance-release.md`, `docs/youtube-data-retention.md`, `docs/youtube-deletion-delivery.md`, `docs/youtube-deletion-register-runbook.md`, `lib/youtube/*`, migrations 0065, 0069 |
+| Google site verification (PR #110) | A static verification file served at the site root. | `public/google64d37fb3f3955a22.html` |
 
 ## Background jobs (Supabase Cron unless noted)
 instagram-publish (5 min) · youtube-publish (5 min) · tiktok-publish (5 min) · youtube-reconcile

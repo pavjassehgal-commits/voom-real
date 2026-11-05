@@ -92,8 +92,6 @@ export interface YouTubeFlowPorts {
   now?(): number;
   /** Remaining wall-clock milliseconds for this serverless invocation. */
   remainingBudgetMs?(): number;
-  /** Whether the Google API project passed the Compliance Audit (affects only the truthful provider note, never the outcome). */
-  projectAudited?: boolean;
 }
 
 export type ChunkOutcome =
@@ -353,7 +351,7 @@ async function finishFromProviderEvidence(
       return { outcome: "retrying", code: "video_not_yet_listed" };
     }
     if (isPublishedEvidence(evidence.uploadStatus)) {
-      await ports.markPublished(item, evidence.privacyStatus, privacyNote(item, evidence.privacyStatus, ports.projectAudited === true));
+      await ports.markPublished(item, evidence.privacyStatus, privacyNote(item, evidence.privacyStatus));
       return { outcome: "published", videoId };
     }
     if (evidence.uploadStatus === "rejected") {
@@ -374,12 +372,12 @@ async function finishFromProviderEvidence(
 }
 
 /** The truthful note when YouTube's applied privacy differs from requested. */
-function privacyNote(item: YouTubeFlowItem, providerPrivacy: string | null, projectAudited: boolean): string | null {
+function privacyNote(item: YouTubeFlowItem, providerPrivacy: string | null): string | null {
   const requested = item.privacyStatus;
   if (!requested || !providerPrivacy || providerPrivacy === requested) return null;
-  if (providerPrivacy === "private" && !projectAudited) {
-    return "YouTube locked this upload to private: the API project has not passed the YouTube API Services Compliance Audit.";
-  }
+  // Google documents (videos.insert, 2026-10-15) that unverified projects are
+  // NOT restricted to private; a difference can come from the creator's own
+  // account settings. Report the applied privacy, never a guessed cause.
   return `YouTube applied '${providerPrivacy}' privacy instead of the requested '${requested}'.`;
 }
 
@@ -403,7 +401,7 @@ async function acceptProviderVideo(
   await ports.recordVideoId(item, result.videoId, result.uploadStatus ?? "uploaded", result.privacyStatus ?? privacy);
   const withVideo: YouTubeFlowItem = { ...item, videoId: result.videoId, lastAttemptAt: new Date(now()).toISOString() };
   if (isPublishedEvidence(result.uploadStatus)) {
-    await ports.markPublished(withVideo, result.privacyStatus ?? privacy, privacyNote(withVideo, result.privacyStatus ?? privacy, ports.projectAudited === true));
+    await ports.markPublished(withVideo, result.privacyStatus ?? privacy, privacyNote(withVideo, result.privacyStatus ?? privacy));
     return { outcome: "published", videoId: result.videoId };
   }
   // Provider acceptance != publication. Poll for the provider's own

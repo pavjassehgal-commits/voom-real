@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { YouTubeClient } from "./client.ts";
 import { readYouTubeConfig, youTubeKeyRing, type YouTubeConfig } from "./config.ts";
 import { getYouTubeServerCredentials } from "./data.ts";
+import { guardYouTubeClient } from "./privacy.ts";
 import { runYouTubePublishFlow, type YouTubeFlowItem, type YouTubeFlowPorts } from "./publish-flow.ts";
 import {
   claimDueYouTubeUploads,
@@ -145,6 +146,9 @@ export function buildYouTubeFlowPorts(
   } = {},
 ): YouTubeFlowPorts {
   const remainingBudgetMs = options.remainingBudgetMs;
+  // Ports are used sequentially; every credential load binds the current grant.
+  let authorizedClient: YouTubeClient | null = null;
+  const provider = () => { if (!authorizedClient) throw new Error("youtube_authorization_required"); return authorizedClient; };
 
   async function signedUrlFor(storagePath: string): Promise<string | null> {
     const cached = signedUrls.get(storagePath);
@@ -174,6 +178,7 @@ export function buildYouTubeFlowPorts(
     },
     async loadCredentials(ownerId) {
       const credentials = await getYouTubeServerCredentials(db, ownerId, keyRing, client);
+      authorizedClient = guardYouTubeClient(client,db,ownerId,credentials.authorizationEpoch);
       return { channelId: credentials.channelId, accessToken: credentials.accessToken, uploadsPlaylistId: null };
     },
     async loadAsset(ownerId, draftId) {
@@ -202,17 +207,17 @@ export function buildYouTubeFlowPorts(
       return response.body;
     },
     async initiateSession({ accessToken, metadata, contentType, contentLength }) {
-      const { sessionUrl } = await client.initiateUploadSession(accessToken, metadata, contentType, contentLength);
+      const { sessionUrl } = await provider().initiateUploadSession(accessToken, metadata, contentType, contentLength);
       return sessionUrl;
     },
     async putChunk({ sessionUrl, body, contentType, contentRange, contentLength }) {
-      return client.uploadChunk(sessionUrl, body, contentType, contentRange, contentLength);
+      return provider().uploadChunk(sessionUrl, body, contentType, contentRange, contentLength);
     },
     async querySession(sessionUrl, totalSize) {
-      return client.queryUploadStatus(sessionUrl, totalSize);
+      return provider().queryUploadStatus(sessionUrl, totalSize);
     },
     async getVideo(accessToken, videoId) {
-      const read = await client.getVideo(accessToken, videoId);
+      const read = await provider().getVideo(accessToken, videoId);
       if (!read) return null;
       return {
         videoId: read.videoId,
@@ -226,10 +231,10 @@ export function buildYouTubeFlowPorts(
       // The uploads playlist id is YouTube's own (channels.list
       // contentDetails.relatedPlaylists.uploads); it is resolved read-only at
       // recovery time rather than stored.
-      const channel = await client.getMyChannel(accessToken);
+      const channel = await provider().getMyChannel(accessToken);
       const playlistId = channel.uploadsPlaylistId ?? uploadsPlaylistId;
       if (!playlistId) return [];
-      return client.listRecentUploads(accessToken, playlistId, 10);
+      return provider().listRecentUploads(accessToken, playlistId, 10);
     },
     async persistSession(item, sessionUrl, contentLength) {
       await recordYouTubeUploadSession(db, item.id, item.ownerUserId, sessionUrl, contentLength);
@@ -248,6 +253,5 @@ export function buildYouTubeFlowPorts(
     },
     sleep,
     ...(remainingBudgetMs ? { remainingBudgetMs } : {}),
-    projectAudited: config.projectAudited,
   };
 }

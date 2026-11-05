@@ -67,7 +67,7 @@ test("weekly coverage includes existing cross-channel coordinator commitments wi
   );
   assert.equal(view.days[0].items.length, 1, "the same plan commitment is never counted twice");
   assert.equal(view.days[2].items[0].channelLabel, "TikTok");
-  assert.equal(view.next?.concept, "TikTok launch", "standalone scheduled work can truthfully become Next Up");
+  assert.equal(view.next, null, "projections without persisted job evidence cannot become Next Up");
 });
 
 test("Next Up and Needs You use existing workflow status without invented work", () => {
@@ -75,9 +75,9 @@ test("Next Up and Needs You use existing workflow status without invented work",
   const actionable = buildTodayView(
     { today: "2026-09-24", planValidUntil: null, items: [next] },
     summary({ next, needsApproval: [item({ status: "needs_approval" })] }),
-    null,
+    null, [{ ...next, publishingJobKey: "youtube:queue-1" }],
   );
-  assert.equal(actionable.next, next);
+  assert.equal(actionable.next.draftId, next.draftId);
   assert.equal(actionable.attention.state, "action");
   assert.match(actionable.attention.title, /1 item needs your approval/);
 
@@ -107,8 +107,8 @@ test("Today V2 uses real performance state and removes the operational counter g
   // The real performance read model backs Today: loaded once per request by
   // the shared operating read and awaited by the page.
   assert.match(operatingData, /loadPerformanceReport/);
-  assert.match(page, /await data\.performance/);
-  assert.match(page, /buildTodayView\(data\.snapshot, data\.summary, data\.coordinator\)/);
+  assert.match(page, /data\.performance, readChannels/);
+  assert.match(page, /buildTodayView\(data\.snapshot, data\.summary, data\.coordinator, scheduledItems\)/);
   assert.match(dashboard, /Performance is learning/);
   assert.doesNotMatch(page + dashboard, /0 generating|0 waiting for media|0 missed|Stat label=/i);
   assert.doesNotMatch(page + dashboard, /Ask MARA|input.*MARA/i);

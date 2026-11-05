@@ -147,6 +147,7 @@ export type SlotClaim =
 /** Failure codes that mean the run itself is no longer authorized: stop all further work. */
 const AUTHORIZATION_STOP_CODES = new Set([
   "automation_paused",
+  "automation_mode_unconfirmed",
   "automation_mode_changed",
   "automation_subscription_restricted",
   "automation_state_unavailable",

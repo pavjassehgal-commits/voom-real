@@ -16,10 +16,9 @@ import type { YouTubeConnectionView } from "@/lib/youtube/types";
  * Everything on this page is truthful by construction:
  *   - the connection card shows the channel identity YouTube itself returned
  *     and the scopes Google actually granted;
- *   - Google's unaudited-project restriction is stated plainly while it
- *     applies: uploads from an API project that has not passed the YouTube
- *     API Services Compliance Audit are locked to PRIVATE by YouTube, and
- *     Voom says so instead of promising public publishing;
+ *   - the unaudited project's default daily upload quota is stated plainly
+ *     while it applies (Google's Compliance Audit gates quota, not privacy),
+ *     and the privacy YouTube actually applied is always what Voom reports;
  *   - the queue list shows the durable queue's own states. "Published"
  *     appears only when YouTube returned a real video id AND its own
  *     uploadStatus='processed'; provider-applied privacy is shown next to
@@ -177,10 +176,10 @@ function YouTubePageContent() {
           </div>
           {!connection.projectAudited && (
             <div role="status" className="mt-3 rounded-xl border border-amber/35 bg-amber/10 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-amber">
-              Google restriction in effect: videos uploaded through an API project that has not passed the YouTube API
-              Services Compliance Audit are locked to <b>private</b> viewing mode by YouTube — no matter which privacy is
-              requested. Voom uploads, then reports the privacy YouTube actually applied. Public publishing becomes
-              available once the project passes Google&apos;s audit.
+              Daily upload limit in effect: until Voom&apos;s Google API project completes the YouTube API Services
+              Compliance Audit, uploads share YouTube&apos;s default daily quota, so some may wait for the next day.
+              YouTube can also apply a different privacy than requested (for example from your channel&apos;s settings) —
+              Voom always reports the privacy YouTube actually applied.
             </div>
           )}
         </Card>

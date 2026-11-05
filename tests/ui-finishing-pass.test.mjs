@@ -25,7 +25,8 @@ test("Content that couldn't load shows unknown counts (—), never a false 0", a
 
 test("Settings names the stored automation mode, not its raw database value", async () => {
   const page = await read("app/app/(shell)/settings/page.tsx");
-  assert.match(page, /value=\{automationMode \? AUTOMATION_MODE_LABELS\[automationMode\] : "Not set yet"\}/);
+  // Through the shared reading: a canonical mode, "· not confirmed" for an onboarding answer, or "Not set yet".
+  assert.match(page, /value=\{automationModeDisplayLabel\(automationMode\)\}/);
   assert.doesNotMatch(page, /value=\{brand\.auto \|\|/);
 });
 

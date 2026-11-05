@@ -1,4 +1,5 @@
 import "./helpers/server-only-shim.mjs";
+import "./helpers/youtube-deletion-transport-shim.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { registerHooks } from "node:module";
@@ -52,6 +53,9 @@ async function run(fn) {
     } };
   ctx.adminDb = {
     from(table) {
+      if(table==='youtube_privacy_controls')return {select(){return this;},eq(){return this;},async maybeSingle(){return {data:{blocked:ctx.row.status==='revoked',deletion_event_id:target.connection},error:null};}};
+      if(table==='youtube_deletion_events')return {select(){return this;},eq(){return this;},is(){return this;},in(){return this;},async maybeSingle(){return {data:{recorded_at:new Date(NOW).toISOString(),completion_receipt:'synthetic-complete'},error:null};},async then(resolve){resolve({data:null,count:0,error:null});}};
+      if(table==='youtube_connections')return {select(){return this;},eq(){return this;},async maybeSingle(){return {data:structuredClone(ctx.row),error:null};}};
       assert.equal(table, "youtube_oauth_states"); return { async insert(row) {
         assert.equal(row.owner_user_id, target.owner); assert.equal(row.state_hash, DIAGNOSTIC_MARKER);
         assert.ok(row.consumed_at); assert.equal(Date.parse(row.expires_at), target.expiresAt);
@@ -60,10 +64,13 @@ async function run(fn) {
       } };
     },
     rpc(name, args) {
+      if(name==='claim_youtube_deletion_events')return Promise.resolve({data:[],error:null});
       assert.equal(args.p_owner_user_id, target.owner);
       if (name === "get_youtube_connection_secret") return { async maybeSingle() { return { data: ctx.secret, error: null }; } };
       // Like PostgREST, do not execute a mutation until the request is awaited.
       return { then(resolve, reject) { return Promise.resolve().then(() => {
+        if(name==='request_youtube_erasure'){ctx.blocked=true;return {data:true,error:null};}
+        if(name==='erase_youtube_data'){ctx.statusWrites++;ctx.row.status='revoked';return {data:{erased:true,revocationPending:false},error:null};}
         if (name === "update_youtube_access_token") {
           if (ctx.persistError) return { data: false, error: { message: "synthetic storage error" } };
           ctx.persisted++; ctx.row.access_token_expires_at = args.p_access_token_expires_at;
@@ -158,10 +165,10 @@ test("uncertain claim does not authorize Google; its consumed marker prevents re
   c.claimError = { code: "57014" }; assert.equal((await POST(request())).status, 503);
   c.claimError = null; assert.equal((await POST(request())).status, 409); assert.equal(c.network, 0);
 }));
-test("invalid_grant reports reconnect and existing logic marks only this connection revoked", () => run(async c => {
+test("invalid_grant reports reconnect and commits the block without bypassing the diagnostic's database allowlist", () => run(async c => {
   c.httpStatus = 400; c.response = { error: "invalid_grant", error_description: "synthetic sensitive detail" };
   const body = await (await POST(request())).json(); assert.equal(body.outcome, "reconnect_required"); assert.equal(body.reconnectionRequired, true);
-  assert.equal(c.row.status, "revoked"); assert.equal(c.statusWrites, 1); assert.equal(c.persisted, 0); assert.equal(c.network, 1);
+  assert.equal(c.blocked, true); assert.equal(c.row.status, "connected"); assert.equal(c.statusWrites, 0); assert.equal(c.persisted, 0); assert.equal(c.network, 1);
   assert.ok(!JSON.stringify(body).includes("sensitive detail"));
 }));
 test("invalid client is not falsely diagnosed as an expired refresh token", () => run(async c => {

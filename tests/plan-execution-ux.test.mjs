@@ -362,13 +362,31 @@ test("9. an expired, unpublished schedule derives Missed with a truthful reason"
   assert.match(String(state.missedReason(facts)), /schedule|publish/i);
 });
 
-test("9b. every missed flavour derives Needs attention (missed), including a missing queue row", () => {
+test("9b. every missed flavour derives Needs attention (missed); an approval with no queue row is never Scheduled or Missed", () => {
   // Queue row never created (the historical 6:30 PM incident's dead state).
-  assert.equal(state.deriveWorkflowStatus({
+  // No publishing job ever existed, so nothing was "missed" — and it must
+  // never read as Scheduled either. It is an approval that needs explicit
+  // scheduling (Ready to schedule once the connection is confirmed usable).
+  const noJob = {
     draftStatus: "approved", hasMedia: true, mediaStatus: "completed",
     publishStatus: null, awaitingApproval: false,
     publishAt: "2026-09-12T05:00:00.000Z", now: new Date("2026-09-12T14:41:00.000Z"),
-  }), "missed");
+  };
+  assert.equal(state.deriveWorkflowStatus(noJob), "approved");
+  assert.equal(state.WORKFLOW_STATUS_LABELS.approved, "Approved");
+  assert.equal(state.deriveWorkflowStatus({ ...noJob, connectionReady: true }), "ready_to_schedule");
+  for (const facts of [noJob, { ...noJob, connectionReady: true }]) {
+    assert.notEqual(state.deriveWorkflowStatus(facts), "scheduled", "an approval without a job is never shown as scheduled");
+  }
+  const noJobActions = nextActions.planItemActions({
+    contentType: "post", stage: "approved", failedStage: null, mode: "assisted",
+    publishAt: noJob.publishAt, hasMedia: true, queueStatus: null,
+  });
+  assert.match(noJobActions.headline, /no active publishing job is confirmed\. Schedule this item explicitly; nothing has been published/);
+  assert.equal(noJobActions.actions[0].id, "approve_schedule", "the next step is an explicit scheduling action");
+  assert.match(noJobActions.explanation.autoPublish, /^No — approval alone is not an active publishing job/);
+  // A real job whose time passed is still Missed.
+  assert.equal(state.deriveWorkflowStatus({ ...noJob, publishStatus: "scheduled" }), "missed");
   // Queue withdrawn because media never arrived.
   assert.equal(state.deriveWorkflowStatus({
     draftStatus: "approved", hasMedia: false, mediaStatus: "failed",
@@ -457,7 +475,7 @@ test("12a. all operating screens render the ONE shared read model", async () => 
   assert.match(calendar, /api\/voom\/workflow/);
   // The shared stage labels are the single vocabulary.
   const shared = await read("lib/voom/workflow/state.ts");
-  for (const label of ["Missed scheduled time", "Needs attention", "Ready for review", "Needs content"]) {
+  for (const label of ["Missed scheduled time", "Needs attention", "Ready for review", "Needs media"]) {
     assert.match(shared, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 });

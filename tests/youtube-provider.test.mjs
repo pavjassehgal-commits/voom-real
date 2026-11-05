@@ -31,12 +31,14 @@
  * installed/server apps, videos.list processingDetails/statistics).
  */
 import "./helpers/server-only-shim.mjs";
+import "./helpers/youtube-deletion-transport-shim.mjs";
 
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { createSupabaseLite } from "./helpers/pglite-supabase.mjs";
+const { deliverDeletionEvents } = await import("../lib/youtube/deletion-delivery.ts");
 
 const root = new URL("../", import.meta.url);
 const read = (path) => readFile(new URL(path, root), "utf8");
@@ -87,6 +89,13 @@ function fakeConfig(extra = {}) {
 // ---------------------------------------------------------------------------
 
 const RPC_DEFS = {
+  claim_youtube_deletion_events: { params: [["p_limit","integer"],["p_owner","uuid"]], returns:"setof" },
+  finish_youtube_deletion_event: { params: [["p_id","uuid"],["p_owner","uuid"],["p_claim","uuid"],["p_receipt","text"],["p_alerted","boolean"],["p_failure","text"],["p_completion","text"]], returns:"scalar" },
+  flag_youtube_deletion_failure: { params: [["p_owner","uuid"]], returns:"scalar" },
+  request_youtube_erasure: { params: [["p_owner_user_id","uuid"],["p_expected_epoch","text"]], returns:"scalar" },
+  erase_youtube_data: { params: [["p_owner_user_id","uuid"],["p_revoke","boolean"],["p_expected_epoch","text"]], returns:"scalar" },
+  claim_youtube_revocation_tasks: { params: [["p_limit","integer"],["p_owner","uuid"]], returns:"setof" },
+  finish_youtube_revocation: { params: [["p_id","uuid"],["p_claim","uuid"],["p_success","boolean"]], returns:"scalar" },
   save_youtube_connection: {
     params: [
       ["p_owner_user_id", "uuid"], ["p_channel_id", "text"], ["p_channel_title", "text"],
@@ -94,6 +103,7 @@ const RPC_DEFS = {
       ["p_encrypted_refresh_token", "text"], ["p_refresh_iv", "text"], ["p_refresh_auth_tag", "text"],
       ["p_refresh_key_version", "smallint"], ["p_encrypted_access_token", "text"], ["p_access_iv", "text"],
       ["p_access_auth_tag", "text"], ["p_access_key_version", "smallint"], ["p_access_token_expires_at", "timestamptz"],
+      ["p_state_hash", "text"],
     ],
     returns: "scalar",
   },
@@ -103,6 +113,7 @@ const RPC_DEFS = {
     params: [
       ["p_owner_user_id", "uuid"], ["p_encrypted_access_token", "text"], ["p_access_iv", "text"],
       ["p_access_auth_tag", "text"], ["p_access_key_version", "smallint"], ["p_access_token_expires_at", "timestamptz"],
+      ["p_expected_epoch", "text"],
     ],
     returns: "scalar",
   },
@@ -175,6 +186,7 @@ function createPgliteAdmin(db) {
   return {
     from(table) {
       let columns = "*";
+      let countOnly = false;
       const filters = []; // [sqlFragment, params[]]
       let orderColumn = null;
       let orderAscending = true;
@@ -229,7 +241,7 @@ function createPgliteAdmin(db) {
           const result = await db.query(sql, params);
           return { data: result.rows, error: null };
         }
-        const select = columns === "*" ? "*" : columns.split(",").map((c) => `"${c.trim()}"`).join(",");
+        const select = countOnly ? 'count(*)::int as count' : columns === "*" ? "*" : columns.split(",").map((c) => `"${c.trim()}"`).join(",");
         const { sql: whereSql, params } = assembleWhere();
         let sql = `select ${select} from public.${table}${whereSql}`;
         if (orderColumn) sql += ` order by "${orderColumn}" ${orderAscending ? "asc" : "desc"}`;
@@ -238,7 +250,7 @@ function createPgliteAdmin(db) {
           sql += ` limit $${params.length}`;
         }
         const result = await db.query(sql, params);
-        return { data: result.rows, error: null };
+        return { data: countOnly ? null : result.rows, count: countOnly ? result.rows[0].count : undefined, error: null };
       };
 
       const wrap = () => {
@@ -263,7 +275,7 @@ function createPgliteAdmin(db) {
       };
 
       const builder = {
-        select(cols) { columns = cols ?? "*"; return builder; },
+        select(cols, options) { columns = cols ?? "*"; countOnly = options?.head === true; return builder; },
         insert(values) { mode = "insert"; writeValues = values; return wrap(); },
         upsert(values, options) { mode = "upsert"; writeValues = values; upsertConflict = options?.onConflict ?? null; return wrap(); },
         update(values) { mode = "update"; writeValues = values; return builder; },
@@ -796,7 +808,7 @@ test("revocation is best-effort and never throws for a token Google already forg
 
   const failed = fakeFetch([["https://oauth2.googleapis.com/revoke", () => jsonResponse(400, { error: "invalid_token" })]]);
   const failedClient = new clientMod.YouTubeClient(fakeConfig(), failed.request);
-  assert.equal(await failedClient.revokeToken("1//gone"), false, "a failed revocation reports false; local destruction does not depend on it");
+  assert.equal(await failedClient.revokeToken("1//gone"), true, "Google confirms the token is already invalid; no retry is needed");
 });
 
 test("channels.list?mine=true yields the authoritative channel identity", async () => {
@@ -1324,7 +1336,7 @@ test("an item that already carries a provider video id skips straight to the evi
   assert.equal(ports.published[0].privacyStatus, "unlisted", "the privacy YouTube ACTUALLY applied is stored");
 });
 
-test("an unaudited project's forced-private upload is reported truthfully, never as the requested public", async () => {
+test("a provider-applied private upload is reported truthfully, never as the requested public or a guessed cause", async () => {
   const ports = makePorts({
     putChunk: async () => ({ outcome: "complete", videoId: VIDEO_ID, uploadStatus: "processed", privacyStatus: "private" }),
     projectAudited: false,
@@ -1332,7 +1344,8 @@ test("an unaudited project's forced-private upload is reported truthfully, never
   const result = await flowMod.runYouTubePublishFlow(baseItem({ privacyStatus: "public" }), ports);
   assert.equal(result.outcome, "published");
   assert.equal(ports.published[0].privacyStatus, "private", "the provider's applied privacy wins");
-  assert.match(ports.published[0].note, /Compliance Audit/i, "the note explains Google's unaudited-project restriction");
+  assert.match(ports.published[0].note, /applied 'private' privacy instead of the requested 'public'/);
+  assert.doesNotMatch(ports.published[0].note, /audit/i, "Google documents no audit-based private lock, so none is claimed");
 
   const audited = makePorts({
     putChunk: async () => ({ outcome: "complete", videoId: VIDEO_ID, uploadStatus: "processed", privacyStatus: "private" }),
@@ -1453,7 +1466,11 @@ function enqueueInput(draftId, overrides = {}) {
 
 async function saveConnection(ownerId, overrides = {}) {
   const { admin } = await liteDb();
+  await (await import('../lib/youtube/privacy.ts')).retryYouTubeRevocations(admin,KEY,{revokeToken:async()=>true},ownerId);
+  const oauthState=await dataMod.createYouTubeOAuthState(admin,ownerId);
+  assert.equal(await dataMod.consumeYouTubeOAuthState(admin,ownerId,oauthState,oauthState),true);
   await dataMod.saveYouTubeConnection(admin, {
+    oauthState,
     ownerId,
     channelId: `UC-${ownerId.slice(0, 8)}`,
     channelTitle: "Voom Studio",
@@ -1480,12 +1497,14 @@ test("migrations 0047-0051 apply cleanly and retain their required ordering", as
   assert.ok(applied.indexOf("0061_ai_usage_cost_tracking.sql") > applied.indexOf("0059_automation_emergency_pause.sql"));
   assert.ok(applied.indexOf("0063_native_plan_video_generation.sql") > applied.indexOf("0061_ai_usage_cost_tracking.sql"));
   assert.ok(applied.indexOf("0066_youtube_resumable_uploads.sql") > applied.indexOf("0064_youtube_uploaded_video.sql"), "direct native uploads follow the existing provider and attachment migrations");
+  assert.ok(applied.indexOf("0065_youtube_data_retention.sql") > applied.indexOf("0064_youtube_uploaded_video.sql"), "retention follows native attachment support");
+  assert.ok(applied.indexOf("0066_youtube_resumable_uploads.sql") > applied.indexOf("0065_youtube_data_retention.sql"), "fresh schemas retain migration ordering");
   assert.ok(applied.indexOf("0067_youtube_upload_cleanup_fairness.sql") > applied.indexOf("0066_youtube_resumable_uploads.sql"), "cleanup fairness follows the installed upload migration");
   const tables = await all(
     "select table_name from information_schema.tables where table_schema = 'public' and table_name like 'youtube_%' order by table_name",
   );
   assert.deepEqual(tables.map((row) => row.table_name), [
-    "youtube_connection_secrets", "youtube_connections", "youtube_oauth_states", "youtube_performance_snapshots", "youtube_publish_queue", "youtube_upload_sessions",
+    "youtube_connection_secrets", "youtube_connections", "youtube_deletion_events", "youtube_erased_publications", "youtube_oauth_states", "youtube_performance_snapshots", "youtube_privacy_controls", "youtube_publish_queue", "youtube_revocation_tasks", "youtube_upload_sessions",
   ]);
   for (const table of tables.map((row) => row.table_name)) {
     const rls = await one("select relrowsecurity from pg_class where oid = $1::regclass", [`public.${table}`]);
@@ -1637,12 +1656,12 @@ test("publication requires YouTube's own 'processed' evidence, stamps provider_r
   ).catch((error) => ({ error }));
   assert.match(String(notProcessed.error?.message ?? ""), /youtube_publish_not_processed/);
 
-  await queueMod.completeYouTubePublishJob(admin, row.id, OWNER_A, { privacyStatus: "private", providerNote: "YouTube locked this upload to private: the API project has not passed the YouTube API Services Compliance Audit." });
+  await queueMod.completeYouTubePublishJob(admin, row.id, OWNER_A, { privacyStatus: "private", providerNote: "YouTube applied 'private' privacy instead of the requested 'public'." });
   const published = await one("select * from public.youtube_publish_queue where id = $1", [row.id]);
   assert.equal(published.status, "published");
   assert.equal(published.provider_upload_status, "processed");
   assert.ok(published.published_at, "the publication instant is stamped");
-  assert.match(published.provider_note, /Compliance Audit/, "the unaudited-project truth is stored, not hidden");
+  assert.match(published.provider_note, /applied 'private' privacy/, "the provider-applied privacy truth is stored, not hidden");
 
   const draft = await one("select provider_ref from public.mara_drafts where id = $1", [draftId]);
   assert.equal(draft.provider_ref, videoId, "the draft carries YouTube's OWN reference");
@@ -1746,7 +1765,7 @@ test("failures, retries and cancellation keep the state machine honest", async (
   assert.equal(untouched.status, "provider_processing");
 });
 
-test("disconnect withdraws only what never reached YouTube and destroys only credentials — never videos, never history", async () => {
+test("disconnect erases owner API history and credentials without deleting customer drafts or remote videos", async () => {
   const { admin } = await liteDb();
   const ownerId = OWNER_B;
   await saveConnection(ownerId);
@@ -1769,34 +1788,29 @@ test("disconnect withdraws only what never reached YouTube and destroys only cre
   assert.deepEqual(revokedCalls, [`refresh-${ownerId.slice(0, 8)}`], "the stored refresh token is explicitly revoked at Google");
 
   const connection = await one("select status, disconnected_at, access_token_expires_at from public.youtube_connections where owner_user_id = $1", [ownerId]);
-  assert.equal(connection.status, "disconnected");
-  assert.ok(connection.disconnected_at);
-  assert.equal(connection.access_token_expires_at, null);
+  assert.equal(connection, undefined);
 
   const secrets = await one("select count(*)::int as n from public.youtube_connection_secrets where owner_user_id = $1", [ownerId]);
   assert.equal(secrets.n, 0, "credentials are destroyed locally");
 
   const queuedRow = await one("select status, failure_code from public.youtube_publish_queue where draft_id = $1", [queued]);
-  assert.equal(queuedRow.status, "cancelled");
-  assert.equal(queuedRow.failure_code, "connection_disconnected");
+  assert.equal(queuedRow, undefined);
   const parkedRow = await one("select status from public.youtube_publish_queue where draft_id = $1", [parked]);
-  assert.equal(parkedRow.status, "cancelled");
+  assert.equal(parkedRow, undefined);
 
-  // The published fact — and the customer's YouTube video — are untouched.
+  // Google-derived evidence is erased locally, never a YouTube video-delete call.
   const publishedAfter = await one("select status, youtube_video_id, published_at from public.youtube_publish_queue where id = $1", [publishedRow.id]);
-  assert.equal(publishedAfter.status, "published");
-  assert.equal(publishedAfter.youtube_video_id, videoId);
-  assert.ok(publishedAfter.published_at);
+  assert.equal(publishedAfter, undefined);
   const history = await one("select provider_ref from public.mara_drafts where id = $1", [published]);
-  assert.equal(history.provider_ref, videoId, "Voom history keeps the provider reference");
+  assert.equal(history.provider_ref, null);
 
   // The sanitized view reports the truthful disconnected state.
   const view = await dataMod.getYouTubeConnection(admin, ownerId, true, false);
   assert.equal(view.connected, false);
-  assert.equal(view.status, "disconnected");
+  assert.equal(view.status, "not_connected");
 });
 
-test("revoked authorization parks future work truthfully and leaves provider-owned rows alone", async () => {
+test("revoked authorization erases future work and provider-derived records without automatic retry", async () => {
   const { admin } = await liteDb();
   const ownerId = OWNER_A;
   const scheduledDraft = await makeDraft(ownerId);
@@ -1805,13 +1819,14 @@ test("revoked authorization parks future work truthfully and leaves provider-own
   const processingRow = await queueMod.enqueueYouTubePublishItem(admin, enqueueInput(processingDraft));
   await queueMod.recordYouTubeVideoId(admin, processingRow.id, ownerId, newVideoId(), "uploaded", "private");
 
+  await admin.rpc('request_youtube_erasure',{p_owner_user_id:ownerId});
+  await deliverDeletionEvents(admin,ownerId,{journal:async()=> 'synthetic-intent',alert:async()=>{},complete:async()=> 'synthetic-complete'});
   await one("select public.set_youtube_connection_status($1::uuid, $2::text)", [ownerId, "revoked"]);
 
   const scheduledRow = await one("select status, failure_code from public.youtube_publish_queue where draft_id = $1", [scheduledDraft]);
-  assert.equal(scheduledRow.status, "permission_required");
-  assert.equal(scheduledRow.failure_code, "authorization_revoked");
+  assert.equal(scheduledRow, undefined);
   const processingAfter = await one("select status from public.youtube_publish_queue where id = $1", [processingRow.id]);
-  assert.equal(processingAfter.status, "provider_processing", "a row YouTube already owns is left for reconciliation, not cancelled");
+  assert.equal(processingAfter, undefined);
 
   // An invented status is refused.
   await assert.rejects(
@@ -1820,7 +1835,7 @@ test("revoked authorization parks future work truthfully and leaves provider-own
   );
 
   // Reset for later tests.
-  await one("select public.set_youtube_connection_status($1::uuid, $2::text)", [ownerId, "connected"]);
+  await saveConnection(ownerId);
 });
 
 test("reconcile claims poll provider_processing WITHOUT burning attempts and resume only stale uploads", async () => {
@@ -1947,13 +1962,13 @@ test("server credentials: stored ciphertext only, on-demand refresh, invalid_gra
     /youtube_token_refresh_failed/,
   );
   const revoked = await one("select status from public.youtube_connections where owner_user_id = $1", [OWNER_A]);
-  assert.equal(revoked.status, "revoked", "the truthful state replaces a dead authorization");
+  assert.equal(revoked, undefined, "invalid authorization erases API-derived identity");
   const revokedView = await dataMod.getYouTubeConnection(admin, OWNER_A, true, false);
   assert.equal(revokedView.connected, false);
   assert.equal(dataMod.canPublishWith(revokedView), false);
 
   // Restore for the worker sections below.
-  await one("select public.set_youtube_connection_status($1::uuid, 'connected')", [OWNER_A]);
+  await saveConnection(OWNER_A);
   await db.query("update public.youtube_connections set access_token_expires_at = now() + interval '59 minutes' where owner_user_id = $1", [OWNER_A]);
   assert.equal(dataMod.canPublishWith(await dataMod.getYouTubeConnection(admin, OWNER_A, true, false)), true);
 });
@@ -1980,8 +1995,8 @@ test("owner-level defaults are explicit or null — never invented", async () =>
 test("one YouTube channel belongs to at most ONE connected owner; disconnect frees it", async () => {
   const { admin } = await liteDb();
   const sharedChannel = "UC-shared-channel-1";
-  await dataMod.saveYouTubeConnection(admin, {
-    ownerId: OWNER_A, channelId: sharedChannel, channelTitle: "Shared", channelHandle: null, thumbnailUrl: null,
+  await saveConnection(OWNER_A, {
+    channelId: sharedChannel, channelTitle: "Shared", channelHandle: null, thumbnailUrl: null,
     grantedScopes: [...scopesMod.YOUTUBE_SCOPES], refreshToken: "refresh-a", accessToken: "access-a",
     accessTokenExpiresAt: new Date(Date.now() + 3599_000).toISOString(), encryptionKey: KEY,
   });
@@ -1994,14 +2009,16 @@ test("one YouTube channel belongs to at most ONE connected owner; disconnect fre
     /youtube_connection_save_failed/,
     "a second owner cannot claim an already-connected channel",
   );
+  await admin.rpc('request_youtube_erasure',{p_owner_user_id:OWNER_A});
+  await deliverDeletionEvents(admin,OWNER_A,{journal:async()=> 'synthetic-intent',alert:async()=>{},complete:async()=> 'synthetic-complete'});
   await one("select public.disconnect_youtube_connection($1::uuid)", [OWNER_A]);
-  await dataMod.saveYouTubeConnection(admin, {
-    ownerId: OWNER_B, channelId: sharedChannel, channelTitle: "Shared", channelHandle: null, thumbnailUrl: null,
+  await saveConnection(OWNER_B, {
+    channelId: sharedChannel, channelTitle: "Shared", channelHandle: null, thumbnailUrl: null,
     grantedScopes: [...scopesMod.YOUTUBE_SCOPES], refreshToken: "refresh-b", accessToken: "access-b",
     accessTokenExpiresAt: new Date(Date.now() + 3599_000).toISOString(), encryptionKey: KEY,
   });
   const rows = await all("select owner_user_id, status from public.youtube_connections where channel_id = $1 order by status", [sharedChannel]);
-  assert.equal(rows.length, 2, "the disconnected history row stays; only ONE row is connected");
+  assert.equal(rows.length, 1, "erased identity is not retained; only ONE connected owner remains");
   assert.equal(rows.filter((row) => row.status === "connected").length, 1);
   // Restore owner A's connection for the worker tests.
   await saveConnection(OWNER_A);
@@ -2251,7 +2268,13 @@ test("performance syncs REAL Data API statistics idempotently; unavailable is ne
   await queueMod.recordYouTubeVideoId(admin, bareRow.id, OWNER_A, bareVideo, "uploaded", "private");
   await queueMod.completeYouTubePublishJob(admin, bareRow.id, OWNER_A, { privacyStatus: "private" });
 
-  // OWNER_B has a published row (from the disconnect test). Revoke the
+  // Explicitly seed an independent B publication; disconnect now erases history.
+  await saveConnection(OWNER_B);
+  const bDraft=await makeDraft(OWNER_B);
+  const bRow=await queueMod.enqueueYouTubePublishItem(admin,enqueueInput(bDraft,{ownerId:OWNER_B}));
+  await queueMod.recordYouTubeVideoId(admin,bRow.id,OWNER_B,newVideoId(),"uploaded","private");
+  await queueMod.completeYouTubePublishJob(admin,bRow.id,OWNER_B,{privacyStatus:"private"});
+  // Revoke the
   // connection the later channel-uniqueness test created, so the sync meets
   // the real "published history, dead credentials" situation.
   await db.query("update public.youtube_connections set status = 'revoked' where owner_user_id = $1", [OWNER_B]);
@@ -2290,17 +2313,19 @@ test("performance syncs REAL Data API statistics idempotently; unavailable is ne
 });
 
 test("performance snapshots cannot store non-numbers or negatives — the schema refuses fake metrics", async () => {
-  const draftId = await makeDraft(OWNER_A);
+  // A fresh independent owner has never had an erasure; this test isolates metric validation.
+  const freshOwner='88888888-8888-4888-8888-888888888888';
+  await one('insert into auth.users(id) values($1)',[freshOwner]);
   await assert.rejects(
     one(`insert into public.youtube_performance_snapshots
          (owner_user_id, youtube_video_id, content_type, published_at, collected_at, metrics, metric_sources, draft_id)
-         values ($1, $2, 'short', now(), now(), '{"views": -3}'::jsonb, '{}'::jsonb, $3)`, [OWNER_A, newVideoId(), draftId]),
+         values ($1, $2, 'short', now(), now(), '{"views": -3}'::jsonb, '{}'::jsonb, $3)`, [freshOwner, newVideoId(), null]),
     /youtube_performance_snapshots_metrics_check/,
   );
   await assert.rejects(
     one(`insert into public.youtube_performance_snapshots
          (owner_user_id, youtube_video_id, content_type, published_at, collected_at, metrics, metric_sources, draft_id)
-         values ($1, $2, 'short', now(), now(), '{"views": "lots"}'::jsonb, '{}'::jsonb, $3)`, [OWNER_A, newVideoId(), draftId]),
+         values ($1, $2, 'short', now(), now(), '{"views": "lots"}'::jsonb, '{}'::jsonb, $3)`, [freshOwner, newVideoId(), null]),
     /youtube_performance_snapshots_metrics_check/,
   );
 });
@@ -2342,7 +2367,7 @@ test("disconnect stops publishing and destroys credentials — and NEVER deletes
   assert.match(routeCode, /disconnect_youtube_connection|disconnectYouTube/, "the only write path is the safe disconnect");
 
   const data = await read("lib/youtube/data.ts");
-  assert.match(data, /revokeToken/, "Google is asked to revoke the token");
+  assert.match(data, /retryYouTubeRevocations/, "Google revocation uses the durable ciphertext-only outbox");
   assert.doesNotMatch(data, /videos\.delete|deleteVideo/i, "the data layer has no video-deletion concept at all");
 
   const client = await read("lib/youtube/client.ts");
@@ -2350,7 +2375,7 @@ test("disconnect stops publishing and destroys credentials — and NEVER deletes
   assert.doesNotMatch(client, /videos\.delete|playlistItems\.delete/i, "no delete endpoint exists in the client");
 
   const modal = await read("components/voom/modals/DisconnectYouTubeModal.tsx");
-  assert.match(modal, /never touched|never deletes|cannot delete/i, "the modal tells the truth about videos");
+  assert.match(modal, /never touched|never deletes|cannot delete|not deleted/i, "the modal tells the truth about videos");
 });
 
 test("the status/queue/settings/performance routes stay owner-scoped and sanitized", async () => {
@@ -2410,7 +2435,8 @@ test("the social drafts route records declarations without inventing them, and i
 test("the YouTube hub and editor surfaces tell the provider truth", async () => {
   const page = await read("app/app/(shell)/youtube/page.tsx");
   assert.match(page, /integrations\/youtube\/status|integrations\/youtube\/queue/, "the hub reads the real endpoints");
-  assert.match(page, /Compliance Audit/i, "the unaudited-project private lock is disclosed");
+  assert.match(page, /Compliance Audit/i, "the unaudited project's default upload quota is disclosed");
+  assert.doesNotMatch(page, /locked to <b>private<\/b>/i, "no audit-based private lock Google no longer documents is claimed");
   assert.match(page, /YouTubeConnectModal|DisconnectYouTubeModal/, "connect/disconnect are real flows");
   assert.match(page, /never revenue/i, "monetary analytics are explicitly out of scope");
   assert.match(page, /views|likes|comments/i, "only real Data API statistics are surfaced");

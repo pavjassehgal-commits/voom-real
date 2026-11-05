@@ -65,11 +65,15 @@ export const DEFAULT_FREQ = "2–3 times a week";
  * the plan it needs. The old four title-text cards saved their title into the
  * column, which every reader then treated as Assisted; the wizard now saves
  * `value` (DECISIONS 2026-10-22).
+ *
+ * Autopilot is never switched on from onboarding (main's rule, merged
+ * 2026-11-05): the server maps it to Assisted (`onboardingAutomationMode`) and
+ * migration 0071 checks the plan in the database. The card says so.
  */
 export const AUTOMATION_CHOICES: { value: "manual" | "assisted" | "autopilot"; emoji: string; title: string; sub: string; plan: string }[] = [
   { value: "manual", emoji: "🙋", title: "Manual", sub: "MARA helps only when you ask. Nothing runs on a schedule.", plan: "Free plan" },
   { value: "assisted", emoji: "✍️", title: "Assisted", sub: "MARA plans and drafts on schedule; you approve before anything goes out.", plan: "Pro plan" },
-  { value: "autopilot", emoji: "🤖", title: "Autopilot", sub: "MARA runs your marketing end-to-end, inside your limits and brand rules.", plan: "Max plan" },
+  { value: "autopilot", emoji: "🤖", title: "Autopilot", sub: "MARA runs your marketing end-to-end, inside your limits and brand rules. Starts in Assisted — switch Autopilot on in Automations.", plan: "Max plan" },
 ];
 
 export const OB_STEPS = [

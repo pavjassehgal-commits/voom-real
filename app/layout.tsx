@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Bricolage_Grotesque, DM_Sans, Public_Sans, IBM_Plex_Mono } from "next/font/google";
 import { THEME_INIT_SCRIPT } from "@/lib/voom/theme";
+import { VOOM_APP_ICON } from "@/lib/voom/brand-assets";
 import "./globals.css";
 
 const bricolage = Bricolage_Grotesque({
@@ -26,8 +27,15 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://voom.today"),
   title: "Voom",
   description: "Voom — MARA, your AI marketing manager.",
+  openGraph: {
+    title: "Voom",
+    description: "Voom — MARA, your AI marketing manager.",
+    images: [{ url: VOOM_APP_ICON, width: 1024, height: 1024, alt: "Voom official app icon" }],
+  },
+  twitter: { card: "summary", images: [{ url: VOOM_APP_ICON, alt: "Voom official app icon" }] },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -39,7 +39,7 @@ export function workflowTone(status: string): WorkspaceTone {
   if (status === "published") return "green";
   if (status === "failed" || status === "media_timed_out") return "red";
   if (status === "missed" || status === "media_delayed") return "amber";
-  if (status === "needs_approval" || status === "ready_for_review" || status === "waiting_for_media") return "amber";
+  if (["needs_approval", "ready_for_review", "waiting_for_media", "approved", "needs_connection", "ready_to_schedule", "needs_content"].includes(status)) return "amber";
   if (status === "generating" || status === "publishing" || status === "scheduled") return "blue";
   return "grey";
 }
@@ -214,7 +214,7 @@ export type StateGroup = "attention" | "live" | "review" | "ready" | "open";
 export function stateGroup(status: string): StateGroup {
   if (status === "failed" || status === "media_timed_out" || status === "missed" || status === "media_delayed") return "attention";
   if (status === "publishing" || status === "published" || status === "scheduled") return "live";
-  if (status === "needs_approval" || status === "waiting_for_media") return "review";
+  if (["needs_approval", "waiting_for_media", "approved", "needs_connection", "ready_to_schedule"].includes(status)) return "review";
   if (status === "ready_for_review" || status === "generating") return "ready";
   return "open";
 }

@@ -15,10 +15,9 @@ export interface YouTubeConnectionView {
   defaultPrivacy: "public" | "private" | "unlisted" | null;
   defaultMadeForKids: boolean | null;
   /**
-   * Google's unaudited-project restriction: when the API project has not
-   * passed the YouTube API Services Compliance Audit, every upload is locked
-   * to private viewing mode. Voom surfaces this truthfully instead of
-   * promising public publishing Google would silently block.
+   * Whether the API project has passed the YouTube API Services Compliance
+   * Audit. Google requires it only for quota beyond the default allocation;
+   * it does not change upload privacy. Applied privacy is always read back.
    */
   projectAudited: boolean;
   lastSyncedAt: string | null;

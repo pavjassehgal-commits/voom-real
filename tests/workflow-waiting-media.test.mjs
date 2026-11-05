@@ -189,12 +189,14 @@ function seedIncident(options = {}) {
       id: DRAFT, owner_user_id: OWNER, source_plan_id: "plan-1", kind: "reel",
       title: "SynraPay Global Reach Showcase", content: "Show the Global Reach milestone.",
       status: "approved", source_plan_item_key: "2026-09-13", proposed_publish_at: SCHEDULED,
+      content_version: 1, approved_content_version: 1,
       conversation_id: "conv-1", media_brief: "Clean 9:16 global reach visual.",
       created_at: "2026-09-13T08:00:00Z",
     }],
     post_draft_assets: assets,
     mara_media_generations: generations,
     instagram_publish_queue: queue,
+    instagram_connections: [{ owner_user_id: OWNER, status: "connected", scopes: [pub.INSTAGRAM_PUBLISH_PERMISSION] }],
     content_calendar_items: [{ id: "cal-1", owner_user_id: OWNER, source_draft_id: DRAFT }],
     mara_pending_actions: [],
   }));
@@ -550,12 +552,11 @@ test("5d. the video token resolves to the same job identity on repeated first-ru
 // ===========================================================================
 
 test("6a. once Voom owns the bytes the held item derives Scheduled, not Waiting", () => {
-  // The late-media sync has not flipped the queue row yet — still, a stored
-  // visual means the item is on the normal schedule, never "waiting" forever.
+  // A visual alone cannot upgrade a held queue row into an executable job.
   assert.equal(state.deriveWorkflowStatus({
     draftStatus: "approved", hasMedia: true, mediaStatus: "completed",
     publishStatus: "waiting_for_media", awaitingApproval: false, publishAt: SCHEDULED, now: NOW,
-  }), "scheduled");
+  }), "approved");
   // And once the sync flips the row, it is plainly scheduled.
   assert.equal(state.deriveWorkflowStatus({
     draftStatus: "approved", hasMedia: true, mediaStatus: "completed",
@@ -564,7 +565,7 @@ test("6a. once Voom owns the bytes the held item derives Scheduled, not Waiting"
 });
 
 test("6b. the read model: the incident item with a stored visual is Scheduled", async () => {
-  const db = createFakeAdmin(seedIncident({ generation: "completed", updatedAt: NOW.toISOString(), asset: true }));
+  const db = createFakeAdmin(seedIncident({ generation: "completed", updatedAt: NOW.toISOString(), asset: true, queue: "scheduled" }));
   const snapshot = await readModel.loadWorkflowSnapshot(db, OWNER, { now: NOW });
   const item = snapshot.items[0];
   assert.equal(item.status, "scheduled");

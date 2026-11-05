@@ -98,7 +98,7 @@ function fixture({ plan = 'pro', legacy = false } = {}) {
       const row = rows.find((row) => row.id === id && row.owner_user_id === owner);
       row.status = 'approved'; jobs.set(id, { owner, id }); return post(db, owner, id);
     },
-    async sync(_db, owner, id) { calls.push(['sync', owner, id]); },
+    async sync(_db, owner, id) { calls.push(['sync', owner, id]); return post(db, owner, id); },
     async cancel(_db, owner, id) { calls.push(['cancel', owner, id]); jobs.delete(id); },
     async enqueue(_db, input) { calls.push(['enqueue', input.ownerId, input.draftId]); jobs.set(input.draftId, input); },
     async card(_db, owner, input) { calls.push(['card', owner, input.draftId]); },

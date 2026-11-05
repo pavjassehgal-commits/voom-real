@@ -27,7 +27,7 @@ export function nativeVideoDb(db) {
   const admin = {
     objects,
     errors,
-    async rpc(name, args) {
+    async rpc(name, args = {}) {
       const values = Object.values(args);
       const result = await execute(`select public.${ident(name)}(${Object.keys(args).map((k, i) => `${ident(k)} => $${i + 1}`).join(',')}) as value`, values);
       return { data: result.data?.[0]?.value ?? null, error: result.error };
@@ -40,11 +40,14 @@ export function nativeVideoDb(db) {
       const chain = {
         select(cols, options) { columns = cols; count = options?.head === true; return chain; },
         eq(key, value) { filters.push(`${ident(key)}=${bind(value)}`); return chain; },
+        is(key, value) { assert.equal(value,null); filters.push(`${ident(key)} is null`); return chain; },
+        gt(key, value) { filters.push(`${ident(key)}>${bind(value)}`); return chain; },
         in(key, list) { filters.push(`${ident(key)} in (${list.map(bind).join(',')})`); return chain; },
         gte(key, value) { filters.push(`${ident(key)}>=${bind(value)}`); return chain; },
+        lt(key, value) { filters.push(`${ident(key)}<${bind(value)}`); return chain; },
         or(expression) {
-          const match = expression.match(/^updated_at\.is\.null,updated_at\.lte\.(.+)$/);
-          assert.ok(match); filters.push(`(updated_at is null or updated_at<=${bind(match[1])})`); return chain;
+          const match = expression.match(/^(updated_at|authorization_checked_at)\.is\.null,\1\.(lt|lte)\.(.+)$/);
+          assert.ok(match); filters.push(`(${match[1]} is null or ${match[1]}${match[2]==='lt'?'<':'<='}${bind(match[3])})`); return chain;
         },
         order(key, options) { order = ` order by ${ident(key)} ${options?.ascending === false ? 'desc' : 'asc'}`; return chain; },
         limit(number) { assert.ok(Number.isInteger(number)); limit = ` limit ${number}`; return chain; },
@@ -53,6 +56,7 @@ export function nativeVideoDb(db) {
         upsert(row, options) { insert = row; conflict = options.onConflict.split(',').map(ident); return chain; },
         delete() { deleting = true; return chain; },
         maybeSingle() { single = true; return chain; },
+        single() { single = true; return chain; },
         async then(resolve, reject) {
           try {
             assert.match(columns, /^(\*|[a-z_,]+)$/);
@@ -63,7 +67,7 @@ export function nativeVideoDb(db) {
               const update = conflict ? ` on conflict (${conflict.join(',')}) do update set ${Object.keys(insert).map(key => `${ident(key)}=excluded.${ident(key)}`).join(',')}` : '';
               sql = `insert into ${table} (${Object.keys(insert).map(ident).join(',')}) values (${Object.values(insert).map(bind).join(',')})${update} returning ${columns}`;
             } else if (patch) {
-              const assignments = Object.entries(patch).map(([key, value]) => `${ident(key)}=${bind(value && typeof value === 'object' ? JSON.stringify(value) : value)}`).join(',');
+              const assignments = Object.entries(patch).map(([key, value]) => `${ident(key)}=${bind(value && typeof value === 'object' && !Array.isArray(value) ? JSON.stringify(value) : value)}`).join(',');
               sql = `update ${table} set ${assignments}${filters.length ? ` where ${filters.join(' and ')}` : ''} returning ${columns}`;
             } else {
               sql = `select ${count ? 'count(*)::int as count' : columns} from ${table}${filters.length ? ` where ${filters.join(' and ')}` : ''}${order}${limit}`;

@@ -1,8 +1,22 @@
 import { canUseAutomationMode, normalizePlan } from "@/lib/billing/plans";
 import type { AdminClient } from "@/lib/post/server-data";
-import { normalizeAutomationMode, type AutomationModeValue } from "./automation";
+import { automationModeState, confirmedAutomationMode, normalizeAutomationMode, type AutomationModeValue } from "./automation";
 
 export type AutonomousBlockReason = "automation_paused" | "mode_changed" | "subscription_restricted";
+
+/**
+ * The mode automation may actually run with for a stored value and plan: only
+ * a confirmed canonical mode, capped at what the plan includes (Autopilot on
+ * Pro runs as Assisted; anything unentitled on Free runs as Manual). A forged
+ * or stale value can therefore never act above the account's entitlement.
+ */
+export function effectiveAutomationMode(value: string | null | undefined, plan: string | null | undefined): AutomationModeValue {
+  const mode = confirmedAutomationMode(value);
+  const planId = normalizePlan(plan);
+  if (canUseAutomationMode(planId, mode)) return mode;
+  if (mode === "autopilot" && canUseAutomationMode(planId, "assisted")) return "assisted";
+  return "manual";
+}
 
 export async function assertAutonomousWorkAllowed(
   admin: AdminClient,
@@ -15,7 +29,11 @@ export async function assertAutonomousWorkAllowed(
     .maybeSingle();
   if (error || !data) throw new Error("automation_state_unavailable");
   if (data.automation_paused_at) throw new Error("automation_paused");
-  const mode = normalizeAutomationMode(data.automation_level);
+  // Only a confirmed canonical value authorizes autonomous work: an
+  // unconfirmed onboarding answer or a missing/unknown value fails closed.
+  const state = automationModeState(data.automation_level);
+  if (state.kind !== "saved") throw new Error("automation_mode_unconfirmed");
+  const mode = state.mode;
   if (mode !== requiredMode) throw new Error("automation_mode_changed");
   if (!canUseAutomationMode(normalizePlan(data.plan), mode)) throw new Error("automation_subscription_restricted");
 }

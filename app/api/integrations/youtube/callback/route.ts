@@ -73,6 +73,7 @@ export async function GET(request: Request) {
     const channel = await client.getMyChannel(tokens.accessToken);
     stage = "save";
     await saveYouTubeConnection(admin, {
+      oauthState: state,
       ownerId: user.id,
       channelId: channel.channelId,
       channelTitle: channel.title,

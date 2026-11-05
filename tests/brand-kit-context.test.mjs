@@ -322,6 +322,12 @@ function fakeUserDb({ newestVersion = null, newestRow = null, insertError = null
       }
       return {
         upsert: async (payload) => { calls.upserts.push({ table, payload }); return { error: null, data: { id: "row-1" } }; },
+        // main's saveOnboarding (merged 2026-11-05) reads the plan first and
+        // inserts a brand-new account's row (updates an existing one). The
+        // fake is a new account; the insert is recorded with the upserts so
+        // "businesses is written" reads the same.
+        select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
+        insert: (payload) => { calls.upserts.push({ table, payload }); return { select: () => ({ single: async () => ({ data: { id: "row-1" }, error: null }) }) }; },
       };
     },
     auth: { getClaims: async () => ({ data: { claims: { sub: "owner-1", email: "owner@example.com" } }, error: null }) },

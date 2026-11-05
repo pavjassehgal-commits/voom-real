@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useVoomState } from "@/lib/voom/store";
 import { AUTOMATION_CHOICES } from "@/lib/voom/onboardingData";
+import { onboardingAutomationMode, storedAutomationMode } from "@/lib/voom/automation";
+import { canUseAutomationMode } from "@/lib/billing/plans";
 import { Icon } from "../icons";
 import { ChannelGlyph } from "../redesign/ui";
 import { VoomLogo } from "../shell/VoomLogo";
@@ -22,12 +24,20 @@ type PlanItem = { draftId: string; concept: string; channelLabel: string; dayLab
  *
  * Brand Kit v2 (Phase C, 2026-11-02): the answers live on the Brand page
  * (/app/brand), so every Edit link goes there, and the automation card shows
- * the mode's title (the wizard saves the mode value, DECISIONS 2026-10-22).
+ * the mode that was really saved: the plan-allowed mode (same rule as the
+ * store), and Autopilot starts as Assisted because onboarding never switches
+ * it on (main's rule, merged 2026-11-05; `onboardingAutomationMode`).
  */
 export function SetupComplete({ skipped }: { skipped: boolean }) {
-  const { onboard, displayName } = useVoomState();
+  const { onboard, displayName, plan } = useVoomState();
   const [items, setItems] = useState<PlanItem[] | null>(null);
-  const automation = AUTOMATION_CHOICES.find((choice) => choice.value === onboard.auto)?.title ?? onboard.auto;
+  const wanted = storedAutomationMode(onboard.auto);
+  const allowed = wanted && canUseAutomationMode(plan, wanted) ? wanted : wanted ? (plan === "pro" ? "assisted" : "manual") : null;
+  const savedMode = onboardingAutomationMode(allowed);
+  const automation = savedMode ? AUTOMATION_CHOICES.find((choice) => choice.value === savedMode)?.title ?? savedMode : "";
+  const automationNote = wanted === "autopilot" && savedMode === "assisted"
+    ? "Switch Autopilot on from the Automations page"
+    : "Change it any time on the Automations page";
 
   useEffect(() => {
     let active = true;
@@ -46,7 +56,7 @@ export function SetupComplete({ skipped }: { skipped: boolean }) {
     { icon: "share", label: "Channels", value: onboard.channels.join(", ") || "None chosen yet", note: "Connect each from Channels" },
     // Brand Kit v2 onboarding (2026-10-24) dropped the publishing-permission and ad-budget
     // questions (nothing reads them), so this summary has no row for either.
-    { icon: "sparkles", label: "MARA", value: automation || "Not chosen", note: "Change it any time on the Automations page" },
+    { icon: "sparkles", label: "MARA", value: automation || "Not chosen", note: automationNote },
     { icon: "comment", label: "Brand voice", value: join(onboard.tone) || "Not chosen", note: "Shapes every caption" },
     { icon: "contacts", label: "Audience", value: onboard.customer.slice(0, 2).join(", ") || "Not chosen", note: onboard.goal ? `Goal: ${onboard.goal.toLowerCase()}` : "No goal chosen" },
     { icon: "folder", label: "Business", value: onboard.name.trim() || "Name not set", note: join([onboard.industry, onboard.site.trim()]) || "No category chosen" },

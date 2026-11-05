@@ -904,7 +904,8 @@ test("the Today insight exists only when there is enough measured data", async (
   // the real performance read model (loaded by getOperatingData alongside the
   // coordinator's own consumption of it) — never a second, disagreeing source.
   assert.match(operatingData, /loadPerformanceReport/, "the shared operating read loads the real performance report");
-  assert.match(today, /await data\.performance/, "Today awaits the shared report");
+  assert.match(today, /const \[performance, [^\]]*\] = await Promise\.all\(\[\s*data\.performance,/, "Today awaits the shared report");
+  assert.doesNotMatch(today, /loadPerformanceReport/, "and never loads a second, disagreeing report");
   assert.match(today, /performance=\{performance\}/);
   assert.match(dashboard, /report\.headline/, "Today V2 only presents a performance claim backed by the real report");
   assert.doesNotMatch(dashboard, /fake|sample chart|12\.4K/i);

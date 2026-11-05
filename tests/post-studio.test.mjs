@@ -279,11 +279,12 @@ test("0021 is marked already-applied; 0018-0020 are untouched and 0022-0028 stay
   // are the production-hardening release and are the only migrations after 0049.
   // Trend Intelligence (0055-0058) and the reviewed automation safety boundary
   // (0059), AI usage (0061), LinkedIn (0062), native plan video generation
-  // (0063), native YouTube uploads (0064), direct resumable uploads (0066), cleanup
-  // fairness (0067), Instagram token renewal (0068), slot leases (0070) and Brand Kit v2
-  // (0075; written as 0059 on Gurnoor's branch, renumbered at the 2026-11-01 merge) follow;
-  // 0052-0054 and 0065 remain reserved, 0060/0069/0071-0074 are gaps.
-  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql", "0066_youtube_resumable_uploads.sql", "0067_youtube_upload_cleanup_fairness.sql", "0068_instagram_token_renewal.sql", "0070_plan_slot_generation_leases.sql", "0075_brand_kits.sql"], "only reviewed post-0049 migrations are present");
+  // (0063), native YouTube uploads (0064), the reviewed YouTube erasure pair (0065, 0069),
+  // direct resumable uploads (0066), cleanup fairness (0067), Instagram token renewal (0068),
+  // slot leases (0070), the automation mode guard (0071), the coordinator email-flow guard
+  // (0072) and Brand Kit v2 (0075; written as 0059 on Gurnoor's branch, renumbered at the
+  // 2026-11-01 merge) follow; 0052-0054 remain reserved, 0060/0073/0074 are gaps.
+  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql", "0065_youtube_data_retention.sql", "0066_youtube_resumable_uploads.sql", "0067_youtube_upload_cleanup_fairness.sql", "0068_instagram_token_renewal.sql", "0069_youtube_deletion_delivery.sql", "0070_plan_slot_generation_leases.sql", "0071_automation_mode_entitlement_guard.sql", "0072_coordinator_email_flow_authorization.sql", "0075_brand_kits.sql"], "only reviewed post-0049 migrations are present");
   assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 75), "no unreviewed migration beyond 0075 (brand kits) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
@@ -443,7 +444,7 @@ test("posts can be saved as a draft, scheduled, and approved without publishing"
   assert.match(route, /approvePostDraft\(admin, user\.id, id, expected === undefined \? undefined : \{ expectedContentVersion: expected \}\)/);
   assert.match(route, /postApprovalBlockers\(\{ caption: existing\.caption, hasVisual: existing\.visualReady, kind: existing\.kind \}\)/);
   assert.match(route, /checkScheduleInstant/);
-  assert.match(route, /Voom will automatically publish this to Instagram at the scheduled time\./);
+  assert.match(route, /postApprovalMessage\(admin, user\.id, post\)/, "publish claims require persisted queue evidence");
   const data = await read("lib/post/server-data.ts");
   assert.match(data, /status: "approved"/);
   assert.match(data, /approval_origin: options\?\.approvalOrigin \?\? "user"/);
@@ -566,7 +567,11 @@ test("no test executes a provider, so no real paid generation runs in the suite"
     const source = await read(`tests/${name}`);
     // The upload route's behavioural suite substitutes auth/storage and
     // rejects external HTTP; all other Post Studio suites remain source-only.
-    if (name === "youtube-native-upload.test.mjs") {
+    if (name === "mara-launch-post-api.test.mjs") {
+      assert.match(source, /registerHooks/);
+      assert.match(source, /External HTTP forbidden in post save tests/);
+      assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media"|generate\/route)/);
+    } else if (name === "youtube-native-upload.test.mjs") {
       assert.match(source, /registerHooks/);
       assert.match(source, /globalThis\.fetch=async\(\)=>\{throw new Error\('External HTTP forbidden/);
       assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media"|generate\/route)/);

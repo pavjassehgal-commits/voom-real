@@ -63,6 +63,16 @@ Environment: Node v26.0.0, npm 11.12.1, macOS.
   with brand work); (b) the same 5 of `main`'s own tests; (c) the 3 `rendered-surface-cleanup`
   flakes did not show in this run. The two former todo tests (`onboarding-icons` emoji check,
   `redesign-batch-4a` artwork) pass for real now.
+- **After the second merge of `main` (2026-11-05, head `1ab2826`)** the suite is 2467 tests (152
+  of `main`'s new tests) and the expected result is **2442 pass / 21 fail / 4 skipped / 0 todo**.
+  The 21 are: (a) the same **14** parked trend failures; (b) **7** of `main`'s own tests: the 5
+  above plus `worker-schedules` "PR branch opts out of automatic shared-credential Previews…" and
+  `mara-launch-hardening` "PR branch cannot auto-deploy…", which pin `vercel.json`'s branch list
+  that main's PRs 103, 104 and 107 extended without updating them. Proved 2026-11-05 on a plain
+  copy of `main` at `1ab2826` (`git archive` into the scratch folder, `node_modules` linked): the
+  same two fail there and `mara-launch-post-api` passes there. Lint is 0 errors / **16** warnings:
+  the new one is main's (`network` unused in `tests/marketing-plan-channel-assignment.test.mjs`,
+  its new "revocation DURING an email AI call" test); the ceiling is 16 until main removes it.
 
 ## History
 | Date | Tests pass / fail / skip | Typecheck | Lint err / warn | Change |
@@ -82,6 +92,7 @@ Environment: Node v26.0.0, npm 11.12.1, macOS.
 | 2026-10-27 | 1749 / **9** / 4 | clean | 0 / 16 | Brand Kit v2 slice 6: MARA writes three sample captions to sort, on the voice screen and the Brand page (+10 tests); token cap raised after the browser check; History line now names only the fields that changed (+1 test, 1 assertion reordered). Same 9 parked trend failures. See DECISIONS 2026-10-27. |
 | 2026-10-28 | 1752 / **9** / 4 | clean | 0 / 16 | Brand images: leftover files swept after Finish and after a Brand page images save; colours go with the logo (+3 tests, 1 extended). Same 9 parked trend failures. See DECISIONS 2026-10-28. |
 | 2026-10-28 | 1761 / **9** / 4 | clean | 0 / 16 | Slice 5b: MARA looks at an uploaded photo, with a brand hint, before suggesting its caption, and the caption serves the owner's "What is this post for?" line (+9 tests; 2 existing assertions reworded for the seen path). Same 9 parked trend failures. See DECISIONS 2026-10-28 (slice 5b). |
+| 2026-11-05 | 2442 / **21** / 4 | clean | 0 / 16 | Second merge of GitHub `main` (23 commits, head `1ab2826`, PRs #103 to #110: automation mode normalisation with migrations 0071/0072, MARA launch readiness, app icons, YouTube compliance with migrations 0065/0069, Google verification file). 6 conflicts resolved per `handover/merge-decisions.md` Merge 2; our Autopilot card and `SetupComplete` follow main's "onboarding never switches Autopilot on" rule; 7 migration-list tests gain 0065/0069/0071/0072 (0075 stays newest); main's `Q_AUTO` and post-route tests and our 3 fake-database onboarding tests re-pointed. The 21: 14 parked trend + 7 identical on plain `main` (2 new, Notes above). The extra lint warning is main's. See DECISIONS 2026-11-05. |
 | 2026-11-04 (evening) | 2292 / **19** / 4 | clean | 0 / 15 | Polish round 2: image descriptions cut at a sentence end (`trimToSentence`, cap 240, asked under 160, no schema `maxLength`; +4 assertions, cap assertion moved to 240), growing description box, gear `settings` icon, `FORM` sizes match the Settings page, round `Badge` replaces `Tag` in our screens. Same 19 failures (14 parked trend + 5 identical on plain `main`). See DECISIONS 2026-11-04 (evening). |
 | 2026-11-04 | 2292 / **19** / 4 | clean | 0 / 15 | Phase C polish: form kit (`FORM`, `Pill`) for the images editor, caption cards, Brand Hub and wizard; MARA's mark replaces the orb; image descriptions stored up to 180; pace as 2×2 cards; `suppressHydrationWarning` on `<html>`. Same 19 failures as the row below (14 parked trend + 5 identical on plain `main`). See DECISIONS 2026-11-04. |
 | 2026-11-02 | 2292 / **19** / 4 | clean | 0 / 15 | Phase C of `handover/merge-plan.md`: our Brand page and 11-screen wizard in the redesign (main's setup layout, 3D icons, SetupComplete at the end, `completedOnServer` bypass); `AnalyzingScreen` deleted; the 2 todo tests pass again (+2). The 19: 14 parked trend (2 more aged out with the date, Notes above) + 5 identical on plain `main`; no cleanup flake this run. See DECISIONS 2026-11-02. |

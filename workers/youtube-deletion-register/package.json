@@ -1,0 +1,13 @@
+{
+  "name": "voom-youtube-deletion-register",
+  "private": true,
+  "type": "module",
+  "description": "Independent YouTube deletion register (Cloudflare Worker + D1). Not part of the Next.js bundle.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "miniflare": "4.20260730.0",
+    "wrangler": "4.151.0"
+  }
+}

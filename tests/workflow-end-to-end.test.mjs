@@ -426,7 +426,7 @@ test("Assisted prepares content and owner-scoped approvals; explicit approval ad
   assert.equal(store.assets.size, 0);
   assert.equal(store.queue.size, 0);
   assert.equal(store.approvals.size, 3, "approval does not itself schedule or publish");
-  for (const draftId of store.drafts.keys()) assert.equal(viewFor(store, draftId), "needs_approval");
+  for (const draftId of store.drafts.keys()) assert.equal(viewFor(store, draftId), "needs_content");
 
   // The owner produces the visual on ONE planned card: the same item is now
   // ready for review, and only that one.
@@ -434,7 +434,7 @@ test("Assisted prepares content and owner-scoped approvals; explicit approval ad
   produceMediaExplicitly(store, first);
   assert.equal(store.providerImageCalls, 1, "exactly one paid generation, for the one click");
   assert.equal(viewFor(store, first), "needs_approval");
-  for (const id of others) assert.equal(viewFor(store, id), "needs_approval");
+  for (const id of others) assert.equal(viewFor(store, id), "needs_content");
   assert.equal(store.drafts.size, 3, "producing media must not create another item");
 
   // Approving advances the SAME draft — no second copy is created anywhere.
@@ -444,7 +444,7 @@ test("Assisted prepares content and owner-scoped approvals; explicit approval ad
   assert.equal(store.calendar.get(first), `cal-${first}`);
   assert.equal(store.queue.get(first).status, "scheduled");
   // The other two genuinely still need the owner's action.
-  assert.equal([...store.drafts.keys()].filter((id) => viewFor(store, id) === "needs_approval").length, 2);
+  assert.equal([...store.drafts.keys()].filter((id) => viewFor(store, id) === "needs_content").length, 2);
 });
 
 test("editing the caption and time before approval updates the same workflow item", async () => {
@@ -580,7 +580,7 @@ test("every workflow status is derived from real facts, with Published never reg
   const base = { draftStatus: "draft", hasMedia: false, mediaStatus: null, publishStatus: null, awaitingApproval: false };
   assert.equal(stateMod.deriveWorkflowStatus(base), "planned");
   assert.equal(stateMod.deriveWorkflowStatus({ ...base, mediaStatus: "processing" }), "generating");
-  assert.equal(stateMod.deriveWorkflowStatus({ ...base, awaitingApproval: true }), "needs_approval");
+  assert.equal(stateMod.deriveWorkflowStatus({ ...base, awaitingApproval: true }), "needs_content");
   assert.equal(stateMod.deriveWorkflowStatus({ ...base, draftStatus: "approved", hasMedia: true, publishStatus: "scheduled" }), "scheduled");
   assert.equal(stateMod.deriveWorkflowStatus({ ...base, draftStatus: "approved", publishStatus: "publishing" }), "publishing");
   assert.equal(stateMod.deriveWorkflowStatus({ ...base, draftStatus: "approved", publishStatus: "published" }), "published");

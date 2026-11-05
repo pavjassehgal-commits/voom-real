@@ -10,6 +10,8 @@ import { appendBrandKitVersion, brandKitAnswersFromOnboarding, brandKitAnswersFr
 import { cleanBrandAssets, cleanBrandColours, isOwnBrandAssetPath } from "@/lib/brand/assets";
 import { syncBrandToEmail } from "@/lib/brand/email-sync";
 import { loadNewestBrandAssets, removeUnreferencedBrandAssets } from "@/lib/brand/asset-storage";
+import { onboardingAutomationMode } from "./automation";
+import { canGenerateAutomaticMedia, canUseAutomationMode, normalizePlan } from "@/lib/billing/plans";
 import type { BusinessProfileInput, OnboardingInput } from "./types";
 
 /** `notice` is a non-fatal message worth showing (the save itself succeeded). */
@@ -35,8 +37,19 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
     .upsert({ user_id: user.id, display_name: input.displayName.trim() || null }, { onConflict: "user_id" });
   if (profileError) return { ok: false, error: saveError(profileError) };
 
-  const { error: businessError } = await supabase.from("businesses").upsert(
-    {
+  // The answer saves only a mode the account's plan includes (a new account is
+  // Free, so only Manual). Anything else — or an unreadable plan — saves no
+  // mode at all: the owner then chooses one in Automations, where the plan is
+  // checked again. Migration 0071 enforces the same rule in the database.
+  const requestedMode = onboardingAutomationMode(input.automationLevel);
+  const { data: currentPlan, error: planError } = await supabase.from("businesses")
+    .select("plan").eq("owner_user_id", user.id).maybeSingle();
+  // Do not guess whether to insert when the owner-scoped read is unavailable.
+  if (planError) return { ok: false, error: saveError(planError) };
+  const onboardingMode = requestedMode && !planError
+    && canUseAutomationMode(normalizePlan((currentPlan as { plan?: string | null } | null)?.plan), requestedMode)
+    ? requestedMode : null;
+  const businessValues = {
       owner_user_id: user.id,
       brand_name: input.brandName.trim() || null,
       brand_description: input.brandDescription.trim() || null,
@@ -47,13 +60,24 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
       preferred_channels: input.preferredChannels,
       monthly_ad_budget: input.monthlyAdBudget || null,
       content_frequency: input.contentFrequency || null,
-      automation_level: input.automationLevel || null,
-      publishing_permission: input.publishingPermission || null,
+      // Onboarding saves the canonical mode its answer describes (Manual or
+      // Assisted — never Autopilot). An unknown or skipped answer leaves the
+      // stored mode untouched rather than inventing one.
+      ...(onboardingMode ? { automation_level: onboardingMode } : {}),
+      ...(input.publishingPermission ? { publishing_permission: input.publishingPermission } : {}),
       onboarding_completed: true,
-    },
-    { onConflict: "owner_user_id" },
-  );
+    };
+  // INSERT guards run before ON CONFLICT. An upsert of an existing Pro
+  // business without a plan would therefore validate Assisted against the
+  // candidate row's default Free plan. Never send or trust a client plan:
+  // update the existing owner row under RLS; only genuinely new rows insert.
+  const saved = currentPlan
+    ? await supabase.from("businesses").update(businessValues)
+        .eq("owner_user_id", user.id).select("id").maybeSingle()
+    : await supabase.from("businesses").insert(businessValues).select("id").single();
+  const businessError = saved.error;
   if (businessError) return { ok: false, error: saveError(businessError) };
+  if (!saved.data) return { ok: false, error: GENERIC_ERROR };
 
   // Slice 5: uploads are references the server re-checks: well-formed,
   // capped, and inside this user's own folder. Anything else is dropped.
@@ -157,7 +181,10 @@ export async function saveBrandSettings(input: BusinessProfileInput): Promise<Sa
       preferred_channels: input.preferredChannels,
       monthly_ad_budget: input.monthlyAdBudget || null,
       content_frequency: input.contentFrequency || null,
-      automation_level: input.automationLevel || null,
+      // The automation mode is deliberately NOT written here. It changes only
+      // through the Automations control (/api/automation-mode), which checks
+      // the plan entitlement; re-saving the brand profile must never replace
+      // it with a stale or client-supplied value.
       publishing_permission: input.publishingPermission || null,
     },
     { onConflict: "owner_user_id" },
@@ -193,6 +220,16 @@ export async function saveMediaSpendSettings(input: MediaSpendSettings): Promise
     allow_automatic_paid_media: input.allowAutomaticPaidMedia,
     monthly_media_budget_usd: input.monthlyMediaBudgetUsd,
   });
+  // Turning automatic paid media ON is consent that only a plan with automatic
+  // media can use; it is refused elsewhere rather than stored dormant (where a
+  // later upgrade would activate it without a fresh choice). Turning it off is
+  // always allowed. Migration 0071 enforces the same rule in the database.
+  if (settings.allowAutomaticPaidMedia) {
+    const { data: current, error: planError } = await supabase.from("businesses").select("plan").eq("owner_user_id", user.id).maybeSingle();
+    if (planError || !canGenerateAutomaticMedia(normalizePlan((current as { plan?: string | null } | null)?.plan))) {
+      return { ok: false, error: "Automatic paid media is only available on the Max plan." };
+    }
+  }
   const { error } = await supabase
     .from("businesses")
     .update({

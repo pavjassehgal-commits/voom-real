@@ -106,6 +106,7 @@ function createAdminClient(tables) {
     tables,
     writes,
     from: (table) => new Query(table),
+    storage: { from: () => ({ createSignedUrls: async paths => ({ data: paths.map(path => ({ path, signedUrl: `https://preview.invalid/${path}` })), error: null }) }) },
     // Write traps: the shared read model must never mutate anything.
     insert: refuse("insert"),
     update: refuse("update"),
@@ -121,6 +122,7 @@ function createAdminClient(tables) {
 function draftRow(overrides = {}) {
   return {
     id: "draft", owner_user_id: OWNER, source_plan_id: "plan-1", kind: "instagram_post",
+    content_version: 1, approved_content_version: 1,
     title: "A planned item", content: "Caption.", status: "draft",
     source_plan_item_key: "2026-09-12", proposed_publish_at: at("2026-09-12"),
     created_at: "2026-09-12T08:55:57Z",
@@ -156,6 +158,7 @@ function seedDb(drafts, extra = {}) {
     post_draft_assets: [],
     mara_media_generations: [],
     instagram_publish_queue: [],
+    instagram_connections: [{ owner_user_id: OWNER, status: "connected", scopes: ["instagram_business_content_publish"] }],
     content_calendar_items: [],
     mara_pending_actions: [],
     ...extra,
@@ -243,7 +246,8 @@ test("Today on Sep 12 has no Sep 8/Sep 10 approval needs, scheduled, generating,
   }
 
   // The only current approval need is today's own rolling item.
-  assert.deepEqual(summary.needsApproval.map((item) => item.draftId), ["draft-2026-09-12"]);
+  assert.deepEqual(summary.needsApproval.map((item) => item.draftId), [], "missing media is production work before final review");
+  assert.equal(snapshot.items[0].status, "needs_content");
   // "Due today" is exactly the Sep 12 slot.
   assert.deepEqual(summary.publishingToday.map((item) => item.localDate), ["2026-09-12"]);
   assert.equal(readModel.itemsForToday(snapshot).length, 1);
@@ -268,6 +272,7 @@ test("the Calendar feed drops stale rows but keeps legitimate scheduled/publishe
     draftRow({ id: "no-publish-at", source_plan_item_key: "2026-09-15", proposed_publish_at: "" }),
   ];
   const db = createAdminClient(seedDb(drafts, {
+    post_draft_assets: [{ owner_user_id: OWNER, draft_id: "future-scheduled", status: "uploaded", storage_path: `${OWNER}/future.png`, mime_type: "image/png" }],
     instagram_publish_queue: [
       { owner_user_id: OWNER, draft_id: "future-scheduled", status: "scheduled", instagram_media_id: null, failure_message: null },
       { owner_user_id: OWNER, draft_id: "past-published", status: "published", instagram_media_id: "ig-179", failure_message: null },

@@ -157,7 +157,7 @@ export default async function ConnectionsPage() {
             ["Default", youTube?.defaultPrivacy ? capitalise(youTube.defaultPrivacy) : "Per video"],
           ] : null}
           description={youTubeConnected
-            ? `Approved, scheduled Shorts and videos publish through the durable YouTube queue; Published appears only after YouTube confirms the video is processed.${youTube && !youTube.projectAudited ? " Google currently locks uploads from unaudited API projects to private — Voom reports the privacy YouTube actually applied." : ""}`
+            ? `Approved, scheduled Shorts and videos publish through the durable YouTube queue; Published appears only after YouTube confirms the video is processed.${youTube && !youTube.projectAudited ? " Uploads use YouTube's default daily quota until Voom's API project completes Google's compliance audit — Voom reports the privacy YouTube actually applied." : ""}`
             : youTube?.configured
               ? "Real YouTube publishing is available: connect your channel to publish Shorts and full videos through Voom's durable queue. Until you connect, YouTube content can be planned, approved and scheduled inside Voom — nothing is published."
               : "Planning connected: Shorts and full videos with title, description, concept and outline. The server-side YouTube integration is not configured yet, so nothing is published to YouTube."}

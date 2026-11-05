@@ -231,6 +231,8 @@ test("the sidebar derives its operational copy from saved state only", async () 
   assert.equal(source.match(/automationModeStatusLine\(/g).length, 1, "one derivation of the sidebar status line");
 
   const storeSource = await readRepoFile("lib/voom/store.tsx");
-  assert.match(storeSource, /automationMode: storedAutomationMode\(init\.business\?\.automation_level\)/, "the shell state is seeded from the stored column");
+  // Seeded with the stored value itself, so an unconfirmed onboarding answer
+  // can be described truthfully (read through automationModeState).
+  assert.match(storeSource, /automationMode: init\.business\?\.automation_level \?\? null/, "the shell state is seeded from the stored column");
   assert.doesNotMatch(storeSource, /automationMode:\s*normalizeAutomationMode\(init\.business\?\.plan\)/, "the mode is never derived from the plan");
 });

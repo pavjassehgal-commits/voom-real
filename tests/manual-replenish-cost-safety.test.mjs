@@ -516,10 +516,10 @@ test("3b. even a forged 'full' stage cannot make the engine reach media for Manu
 test("3c. runOwnerWorkflow reads the SAVED mode — no caller can run a Manual account as Assisted", async () => {
   const source = await read("lib/voom/workflow/service.ts");
   assert.doesNotMatch(source, /mode\?:\s*"manual"\s*\|\s*"assisted"\s*\|\s*"autopilot"/, "WorkflowRunInput has no mode override");
-  assert.match(source, /let mode = normalizeAutomationMode\(business\.automation_level\)/, "the mode comes from the saved row");
-  // The only thing that can change the saved mode is the plan entitlement,
-  // and it can only NARROW it (Free -> Manual, Pro -> at most Assisted).
-  assert.match(source, /if \(!canUseAutomationMode\(planId, mode\)\) \{\s*mode = planId === "pro" \? "assisted" : "manual";/);
+  // The mode comes from the saved row, through the one effective-mode rule:
+  // confirmation and plan entitlement can only NARROW it (unconfirmed -> Manual,
+  // Free -> Manual, Pro -> at most Assisted). See effectiveAutomationMode.
+  assert.match(source, /const mode = effectiveAutomationMode\(business\.automation_level, planId\);/, "the mode comes from the saved row");
   assert.doesNotMatch(source, /mode = "autopilot"/, "nothing ever widens a run to Autopilot");
   assert.match(source, /if \(!mayAutomaticallyGeneratePaidMedia\(context\.mode, context\.trigger\)\)/, "the ensureMedia port carries the guard");
 

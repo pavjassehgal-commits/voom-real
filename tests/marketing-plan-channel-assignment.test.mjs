@@ -1972,3 +1972,138 @@ test("increased timeout on the real 0070 SQL: the lease runs ~334 s and a slow w
   assert.equal(drafts.length, 7);
   assert.equal(new Set(drafts.map((draft) => draft.source_plan_item_key)).size, 7);
 });
+
+// ── Authorization: forged and unconfirmed modes never act (PR #103 review) ──
+
+function subscribers(count) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `contact-${index}`, owner_id: OWNER, email: `subscriber${index}@example.com`, email_status: "subscribed",
+  }));
+}
+
+for (const [label, overrides] of [
+  ["a forged 'autopilot' on Free", { plan: "free", automation_level: "autopilot" }],
+  ["a forged 'assisted' on Free", { plan: "free", automation_level: "assisted" }],
+  ["an unconfirmed onboarding answer on Max", { plan: "max", automation_level: "MARA runs it end-to-end" }],
+  ["a paused Max Autopilot account", { plan: "max", automation_level: "autopilot", automation_paused_at: NOW.toISOString() }],
+]) {
+  test(`the coordinator proposes no email flow and plans nothing for ${label}`, async (t) => {
+    const network = installLocalAiFetch();
+    t.after(network.restore);
+    const seed = adminSeed({ preferredChannels: ["TikTok"], businessOverrides: overrides });
+    seed.contacts = subscribers(6);
+    const admin = createMemoryAdmin(seed);
+    const result = await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+    assert.ok(!result.actionsTaken.some((action) => action.type.startsWith("email_flow_")), "no email flow is proposed");
+    assert.ok(!result.actionsTaken.some((action) => action.type.startsWith("fill_calendar") || action.type.startsWith("gap_filling")), "no gap filling runs");
+    assert.equal(admin.tables.get("voom_email_flows").length, 0);
+    assert.equal(admin.tables.get("mara_drafts").length, 0);
+    assert.equal(network.requests.length, 0, "no AI generation");
+  });
+}
+
+test("a confirmed, entitled Assisted account still gets its email-flow proposal and gap filling", async (t) => {
+  const network = installLocalAiFetch();
+  t.after(network.restore);
+  const seed = adminSeed({ preferredChannels: ["TikTok"], businessOverrides: { plan: "pro", automation_level: "assisted" } });
+  seed.contacts = subscribers(6);
+  const admin = createMemoryAdmin(seed);
+  const result = await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+  assert.ok(result.actionsTaken.some((action) => action.type.startsWith("email_flow_")), "the proposal path is reached");
+  assert.ok(result.actionsTaken.some((action) => action.type === "fill_calendar_gaps"));
+  assert.ok(!result.actionsTaken.some((action) => action.type === "automation_not_authorized"));
+});
+
+test("a forged 'autopilot' on Free gets Manual behaviour on an explicit Replenish: plan only, no approvals or media", async () => {
+  const admin = createMemoryAdmin(adminSeed({ preferredChannels: ["Instagram"], businessOverrides: { plan: "free", automation_level: "autopilot" } }));
+  const planningDeps = { provider: structuredProvider(), performanceContext: async () => null };
+  const run = await service.runOwnerWorkflow(admin, { ownerId: OWNER, now: NOW, trigger: "replenish", planningDeps });
+  assert.equal(run.mode, "manual");
+  assert.equal(run.stage, "planning_only");
+  assert.equal(run.autoApproved + run.awaitingApproval + run.mediaQueued, 0);
+  assert.equal(admin.tables.get("mara_pending_actions").length, 0);
+  assert.equal(admin.tables.get("mara_media_generations").length, 0);
+  assert.ok(admin.tables.get("mara_drafts").every((draft) => draft.status === "draft"));
+});
+
+// ── Email-proposal authorization race (PR #103 review) ───────────────────────
+
+/** Adds the create_email_flow write path to the memory admin (records persisted drafts). */
+function withEmailFlowWrites(admin) {
+  const rpc = admin.rpc;
+  admin.rpc = (name, args) => {
+    if (name !== "create_email_flow") return rpc(name, args);
+    const run = async () => {
+      if (admin.beforeEmailWrite) await admin.beforeEmailWrite(args);
+      const row = { id: `flow-${admin.tables.get("voom_email_flows").length + 1}`, owner_user_id: args.p_owner_user_id,
+        flow_type: args.p_payload.flowType, created_by: args.p_payload.createdBy, status: "draft", name: args.p_payload.name };
+      admin.tables.get("voom_email_flows").push(row);
+      return { data: row, error: null };
+    };
+    return { single: run, then: (resolve, reject) => run().then(resolve, reject) };
+  };
+  return admin;
+}
+
+function emailRaceFixture(t) {
+  const network = installLocalAiFetch();
+  t.after(network.restore);
+  const seed = adminSeed({ preferredChannels: ["TikTok"], businessOverrides: { plan: "pro", automation_level: "assisted" } });
+  seed.contacts = subscribers(6);
+  const admin = withEmailFlowWrites(createMemoryAdmin(seed));
+  const business = admin.tables.get("businesses")[0];
+  const emailRequests = () => network.requests.filter((payload) => !payload.assignedSocialSlot).length;
+  const socialRequests = () => network.requests.filter((payload) => payload.assignedSocialSlot).length;
+  return { network, admin, business, emailRequests, socialRequests };
+}
+
+for (const [label, revoke] of [
+  ["pauses automation", (business) => { business.automation_paused_at = NOW.toISOString(); }],
+  ["switches to Manual", (business) => { business.automation_level = "manual"; }],
+  ["downgrades to Free", (business) => { business.plan = "free"; }],
+]) {
+  test(`owner ${label} during social gap filling: zero email AI calls and zero email drafts afterwards`, async (t) => {
+    const { network, admin, business, emailRequests } = emailRaceFixture(t);
+    const fetch = globalThis.fetch;
+    globalThis.fetch = async (...args) => {
+      const body = JSON.parse(String(args[1]?.body ?? "{}"));
+      const payload = JSON.parse(body.messages?.find((m) => m.role === "user")?.content ?? "{}");
+      if (payload.assignedSocialSlot && network.requests.length === 1) revoke(business); // during the 2nd social generation
+      return fetch(...args);
+    };
+    t.after(() => { globalThis.fetch = fetch; });
+    const result = await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+    assert.equal(emailRequests(), 0, "no email AI call after the revocation");
+    assert.equal(admin.tables.get("voom_email_flows").length, 0, "no email draft is persisted");
+    assert.ok(!result.actionsTaken.some((action) => action.type === "email_flow_proposed"), "nothing reports a successful proposal");
+  });
+}
+
+test("revocation DURING an email AI call: the generated flow is never saved", async (t) => {
+  const { network, admin, business, emailRequests } = emailRaceFixture(t);
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (...args) => {
+    const body = JSON.parse(String(args[1]?.body ?? "{}"));
+    const payload = JSON.parse(body.messages?.find((m) => m.role === "user")?.content ?? "{}");
+    if (!payload.assignedSocialSlot) business.automation_paused_at = NOW.toISOString(); // owner pauses while MARA writes the email
+    return fetch(...args);
+  };
+  t.after(() => { globalThis.fetch = fetch; });
+  const result = await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+  assert.equal(emailRequests(), 1, "the in-flight call happened once; no further email call started");
+  assert.equal(admin.tables.get("voom_email_flows").length, 0, "the in-flight result is discarded");
+  const outcomes = result.actionsTaken.filter((action) => action.type.startsWith("email_flow_")).map((action) => action.type);
+  assert.ok(!outcomes.includes("email_flow_proposed"));
+  assert.ok(outcomes.every((type) => type === "email_flow_not_permitted"), JSON.stringify(outcomes));
+});
+
+test("an authorized, unpaused Assisted owner still gets both lifecycle email proposals, idempotently", async (t) => {
+  const { admin, emailRequests } = emailRaceFixture(t);
+  const first = await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+  assert.equal(first.actionsTaken.filter((action) => action.type === "email_flow_proposed").length, 2);
+  assert.equal(admin.tables.get("voom_email_flows").length, 2);
+  assert.equal(emailRequests(), 2);
+  const again = await coordinator.runCoordinatorForOwner(admin, OWNER, BUSINESS, { now: NOW, trigger: "scheduled" });
+  assert.ok(!again.actionsTaken.some((action) => action.type === "email_flow_proposed"), "existing flows are not re-proposed");
+  assert.equal(admin.tables.get("voom_email_flows").length, 2);
+});

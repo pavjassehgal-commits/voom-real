@@ -89,6 +89,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     });
   } catch (reason) {
     const code = reason instanceof Error ? reason.message : "";
+    if (code === "youtube_previous_submission_erased_do_not_retry") {
+      return Response.json({error:"This video's earlier submission history was deleted. It cannot safely be retried. Create a new draft and review it before publishing."},{status:409});
+    }
+    if (code === "youtube_data_erased_reconnect_required") {
+      return Response.json({error:"YouTube is disconnected or data deletion is pending. Complete deletion and reconnect before publishing."},{status:409});
+    }
     if (code === "youtube_synthetic_declaration_required") {
       return Response.json({ error: "Review the altered/synthetic-content declaration before approving this generated video." }, { status: 400 });
     }

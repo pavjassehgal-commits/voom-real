@@ -137,7 +137,13 @@ test("Finish setup writes the businesses row and brand kit version 1 with the br
   globalThis.__VOOM_FAKE_SUPABASE__ = {
     from(table) {
       if (table === "brand_kits") { const q = chain({ data: null, error: null }); q.insert = async (row) => { calls.kitInserts.push(row); return { error: null }; }; return q; }
-      return { upsert: async (payload) => { calls.upserts.push({ table, payload }); return { error: null, data: { id: "row-1" } }; } };
+      // A new account: main's saveOnboarding (merged 2026-11-05) reads the plan (none yet), then
+      // inserts the businesses row; the insert is recorded with the upserts.
+      return {
+        upsert: async (payload) => { calls.upserts.push({ table, payload }); return { error: null, data: { id: "row-1" } }; },
+        select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
+        insert: (payload) => { calls.upserts.push({ table, payload }); return { select: () => ({ single: async () => ({ data: { id: "row-1" }, error: null }) }) }; },
+      };
     },
     auth: { getClaims: async () => ({ data: { claims: { sub: "owner-1", email: "owner@example.com" } }, error: null }) },
   };
@@ -145,7 +151,8 @@ test("Finish setup writes the businesses row and brand kit version 1 with the br
   const business = calls.upserts.find((call) => call.table === "businesses").payload;
   assert.equal(business.automation_level, "manual", "a real mode value, never the card title");
   assert.equal(business.monthly_ad_budget, null);
-  assert.equal(business.publishing_permission, null);
+  // main's save (merged 2026-11-05) leaves the key out when nothing was answered, so the stored value is untouched.
+  assert.equal(business.publishing_permission ?? null, null);
   assert.deepEqual(business.preferred_channels, ["Instagram", "TikTok"]);
   assert.equal(business.onboarding_completed, true);
   const kit = calls.kitInserts[0];

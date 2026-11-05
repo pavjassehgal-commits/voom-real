@@ -1,6 +1,7 @@
 {
   "git": {
     "deploymentEnabled": {
+      "codex/tiktok-icon-consistency": false,
       "codex/linkedin-production-release": false,
       "codex/linkedin-marketing-plan": false,
       "codex/marketing-plan-action-handoff": false,
@@ -11,7 +12,9 @@
       "codex/youtube-resumable-uploads": false,
       "fix/instagram-token-renewal": false,
       "codex/scheduled-worker-config-drift": false,
-      "fix/mara-automation-launch": false
+      "fix/mara-automation-launch": false,
+      "fix/automation-mode-normalization": false,
+      "codex/mara-launch-readiness": false
     }
   },
   "crons": [

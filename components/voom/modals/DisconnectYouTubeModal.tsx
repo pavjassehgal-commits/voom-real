@@ -31,17 +31,18 @@ export function DisconnectYouTubeModal({ onDisconnected }: { onDisconnected?: ()
       <ModalHead title="Disconnect YouTube?" onClose={close} />
       <ModalBody>
         <p className="text-sm leading-[1.6] text-text-2">
-          Voom will delete its encrypted tokens, ask Google to revoke them, and stop all future YouTube publishing.
-          Items that never reached YouTube are withdrawn from the queue.
+          Voom will disconnect YouTube and delete its stored YouTube channel details, publishing records,
+          video references and performance snapshots. It will also ask Google to revoke access.
         </p>
         <p className="mt-2 text-sm leading-[1.6] text-text-2">
-          Your videos on YouTube are never touched — Voom cannot delete or edit them and never asks for that
-          permission. Your Voom history (drafts, queue records, performance snapshots) stays readable.
+          Your original Voom drafts and uploaded media stay. Your videos on YouTube are not deleted.
+          An upload already sent to YouTube may finish processing. Deleted submission history cannot be
+          restored or automatically retried; reconnecting does not bring it back.
         </p>
       </ModalBody>
       <ModalFoot>
         <Btn variant="ghost" onClick={close}>Keep connected</Btn>
-        <Btn variant="danger" disabled={busy} onClick={() => void disconnect()}>{busy ? "Disconnecting…" : "Disconnect"}</Btn>
+        <Btn variant="danger" disabled={busy} onClick={() => void disconnect()}>{busy ? "Disconnecting…" : "Disconnect and delete data"}</Btn>
       </ModalFoot>
     </ModalShell>
   );

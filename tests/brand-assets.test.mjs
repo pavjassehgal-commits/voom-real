@@ -384,6 +384,10 @@ function fakeUserDb(newestRow = null) {
         return {
           upsert: async (payload) => { calls.upserts.push({ table, payload }); return { error: null }; },
           update: (payload) => { calls.businessUpdates.push(payload); const u = { eq: () => u, then: (resolve) => resolve({ error: null }) }; return u; },
+          // main's saveOnboarding (merged 2026-11-05) reads the plan first (no row: a new
+          // account) and inserts the businesses row; the insert is recorded with the upserts.
+          select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
+          insert: (payload) => { calls.upserts.push({ table, payload }); return { select: () => ({ single: async () => ({ data: { id: "row-1" }, error: null }) }) }; },
         };
       }
       return { upsert: async (payload) => { calls.upserts.push({ table, payload }); return { error: null }; } };

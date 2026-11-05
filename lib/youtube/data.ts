@@ -7,6 +7,7 @@ import { encryptYouTubeToken, decryptYouTubeToken, type YouTubeKeyInput } from "
 import { YOUTUBE_SCOPES, hasUploadPermission } from "./scopes.ts";
 import type { YouTubeClient } from "./client.ts";
 import type { YouTubeConnectionView } from "./types.ts";
+import { assertYouTubeGrant, confirmedYouTubeAuthorizationLoss, eraseYouTubeData, retryYouTubeRevocations } from "./privacy.ts";
 
 /**
  * The YouTube connection data layer.
@@ -21,8 +22,8 @@ import type { YouTubeConnectionView } from "./types.ts";
  *     plaintext never leaves this module, never reaches the browser, and is
  *     never written to a log or an error message.
  *   - refresh happens server-side on demand; a refresh Google rejects with
- *     invalid_grant marks the connection `revoked` — the truthful state —
- *     instead of pretending access continues.
+ *     invalid_grant blocks access and erases derived data instead of
+ *     retaining an indefinitely revoked connection (migration 0065).
  */
 
 const OAUTH_TTL_MS = 10 * 60 * 1000;
@@ -121,6 +122,7 @@ export interface SaveYouTubeConnectionInput {
   accessToken: string;
   accessTokenExpiresAt: string;
   encryptionKey: YouTubeKeyInput;
+  oauthState?: string;
 }
 
 /** Persists a completed authorization: ciphertext in, never plaintext out. */
@@ -143,6 +145,7 @@ export async function saveYouTubeConnection(db: SupabaseClient, input: SaveYouTu
     p_access_auth_tag: access.authTag,
     p_access_key_version: access.keyVersion,
     p_access_token_expires_at: input.accessTokenExpiresAt,
+    ...(input.oauthState ? { p_state_hash: hashState(input.oauthState) } : {}),
   });
   if (error) throw new Error("youtube_connection_save_failed");
 }
@@ -152,16 +155,16 @@ export interface YouTubeServerCredentials {
   accessToken: string;
   scopes: string[];
   uploadsPlaylistId?: string | null;
+  authorizationEpoch: string;
 }
 
 /**
  * Server-side credentials for one owner, with on-demand refresh.
  *
  * Throwing means "not usable" — callers treat every throw as not-connected
- * and never publish. A Google-rejected refresh (invalid_grant) marks the
- * connection `revoked` so the UI tells the truth and future publishing
- * stops; historical Voom records and the customer's YouTube videos are
- * untouched either way.
+ * and never publish. A Google-rejected refresh (invalid_grant) erases the
+ * matching grant's API data. Original drafts/media and remote YouTube
+ * videos are never deleted by this credential path.
  */
 export async function getYouTubeServerCredentials(
   db: SupabaseClient,
@@ -169,10 +172,12 @@ export async function getYouTubeServerCredentials(
   encryptionKey: YouTubeKeyInput,
   client: YouTubeClient,
 ): Promise<YouTubeServerCredentials> {
+  const authorizationEpoch = await assertYouTubeGrant(db,ownerId);
   const { data, error } = await db.rpc("get_youtube_connection_secret", { p_owner_user_id: ownerId }).maybeSingle();
   if (error || !data) throw new Error("youtube_connection_unavailable");
   const secret = data as Record<string, unknown>;
   if (secret.connection_status !== "connected") throw new Error("youtube_connection_unavailable");
+  await assertYouTubeGrant(db,ownerId,authorizationEpoch);
   const scopes = Array.isArray(secret.scopes) ? (secret.scopes as string[]) : [];
 
   const refreshToken = decryptYouTubeToken({
@@ -191,7 +196,7 @@ export async function getYouTubeServerCredentials(
     : null;
 
   if (storedAccess && Number.isFinite(expiresAt) && expiresAt - REFRESH_SKEW_MS > Date.now()) {
-    return { channelId: String(secret.channel_id), accessToken: storedAccess, scopes };
+    return { channelId: String(secret.channel_id), accessToken: storedAccess, scopes, authorizationEpoch };
   }
 
   // Refresh server-side. This is the ONLY place a refresh token is spent,
@@ -200,43 +205,36 @@ export async function getYouTubeServerCredentials(
   try {
     refreshed = await client.refreshAccessToken(refreshToken);
   } catch (cause) {
-    if (isAuthFailure(cause)) {
-      try { await db.rpc("set_youtube_connection_status", { p_owner_user_id: ownerId, p_status: "revoked" }); } catch { /* best effort */ }
+    if (confirmedYouTubeAuthorizationLoss(cause)) {
+      await eraseYouTubeData(db,ownerId,false,authorizationEpoch);
     }
     throw new Error("youtube_token_refresh_failed");
   }
+  await assertYouTubeGrant(db,ownerId,authorizationEpoch);
   const access = encryptYouTubeToken(refreshed.accessToken, encryptionKey);
   const accessExpiresAt = new Date(Date.now() + refreshed.expiresIn * 1000).toISOString();
-  try {
-    await db.rpc("update_youtube_access_token", {
+  {
+    const saved = await db.rpc("update_youtube_access_token", {
       p_owner_user_id: ownerId,
       p_encrypted_access_token: access.encryptedToken,
       p_access_iv: access.iv,
       p_access_auth_tag: access.authTag,
       p_access_key_version: access.keyVersion,
       p_access_token_expires_at: accessExpiresAt,
+      p_expected_epoch: authorizationEpoch,
     });
-  } catch {
-    // Persisting the refreshed token is an optimization; the in-memory token
-    // remains valid for this invocation either way.
+    if (saved.error || saved.data !== true) throw new Error("youtube_token_refresh_storage_failed");
   }
   const granted = refreshed.grantedScopes.length ? refreshed.grantedScopes : scopes;
-  return { channelId: String(secret.channel_id), accessToken: refreshed.accessToken, scopes: granted };
-}
-
-function isAuthFailure(cause: unknown): boolean {
-  return Boolean(cause) && typeof cause === "object" && (cause as { kind?: unknown }).kind === "auth";
+  return { channelId: String(secret.channel_id), accessToken: refreshed.accessToken, scopes: granted, authorizationEpoch };
 }
 
 /**
  * Disconnect. Order matters for safety:
- *   1. read the encrypted refresh token (to revoke it at Google),
- *   2. destroy the local secrets + mark disconnected (the RPC also withdraws
- *      every queue row that never reached the provider),
- *   3. best-effort explicit revocation at Google's revoke endpoint.
- * Local destruction never depends on the remote call succeeding, and nothing
- * here deletes a queue row with provider evidence, a Voom historical record
- * or — anywhere in this integration — a customer's YouTube video.
+ *   1. commit an owner-scoped access barrier,
+ *   2. erase API-derived data and isolate one encrypted revocation task,
+ *   3. immediately attempt Google revocation, durably retrying outages.
+ * No remote video-delete API is involved; original drafts/media survive.
  */
 export async function disconnectYouTube(
   db: SupabaseClient,
@@ -244,26 +242,9 @@ export async function disconnectYouTube(
   encryptionKey: YouTubeKeyInput,
   client: YouTubeClient,
 ): Promise<{ disconnected: boolean; revokedAtGoogle: boolean }> {
-  let refreshToken: string | null = null;
-  const { data } = await db.rpc("get_youtube_connection_secret", { p_owner_user_id: ownerId }).maybeSingle();
-  if (data) {
-    const secret = data as Record<string, unknown>;
-    try {
-      refreshToken = decryptYouTubeToken({
-        encryptedToken: String(secret.encrypted_refresh_token),
-        iv: String(secret.refresh_iv),
-        authTag: String(secret.refresh_auth_tag),
-      }, encryptionKey);
-    } catch {
-      refreshToken = null;
-    }
-  }
-
-  const { data: disconnected, error } = await db.rpc("disconnect_youtube_connection", { p_owner_user_id: ownerId });
-  if (error) throw new Error("youtube_disconnect_failed");
-
-  const revokedAtGoogle = refreshToken ? await client.revokeToken(refreshToken) : false;
-  return { disconnected: Boolean(disconnected), revokedAtGoogle };
+  const receipt = await eraseYouTubeData(db,ownerId);
+  const revocation = await retryYouTubeRevocations(db,encryptionKey,client,ownerId);
+  return { disconnected: true, revokedAtGoogle: !receipt.revocationPending || revocation.completed > 0 };
 }
 
 /** Whether the connection can truthfully publish right now. */

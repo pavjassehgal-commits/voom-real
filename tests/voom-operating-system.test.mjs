@@ -57,7 +57,10 @@ test("Today is the operational command centre over the one workflow", async () =
   for (const section of ["Next up", "Needs you", "This week", "Performance", "MARA insight"]) {
     assert.match(dashboard, new RegExp(section));
   }
-  assert.match(page, /buildTodayView\(data\.snapshot, data\.summary, data\.coordinator\)/);
+  // Built from the one shared read, plus the owner-scoped scheduled-job truth
+  // (lib/voom/today-schedule.ts) that alone may be counted as "scheduled".
+  assert.match(page, /buildTodayView\(data\.snapshot, data\.summary, data\.coordinator, scheduledItems\)/);
+  assert.match(page, /loadTodayScheduledItems\(createAdminClient\(\), data\.user\.id, data\.snapshot\.today, data\.snapshot\.timeZone\)/);
   assert.match(projection, /summary\.needsApproval/);
   assert.match(projection, /summary\.waitingForMedia/);
   assert.match(projection, /summary\.failed/);
