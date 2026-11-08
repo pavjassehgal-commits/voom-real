@@ -5,22 +5,44 @@ import "server-only";
  *
  * Every host is resolved and every address checked against `isPublicAddress`
  * before a request is sent, and again on every redirect (three at most, same
- * host only). Each request has a 10 s cap and the body is cut at 2 MB. Only
- * HTML is read. A plain Voom user agent, no cookies, no JavaScript.
- * robots.txt is obeyed; an unreachable robots file counts as allowed.
+ * host only). The connection then goes to one of the addresses that passed
+ * the check, never to a fresh lookup (`pinnedFetch`), so a host cannot change
+ * its DNS answer between our check and the connection ("DNS rebinding";
+ * closed 2026-11-07 after the Codex review of PR #111). Each request has a
+ * 10 s cap and the body is cut at 2 MB. Only HTML is read. A plain Voom user
+ * agent, no cookies, no JavaScript. robots.txt is obeyed; an unreachable
+ * robots file counts as allowed.
  *
- * `fetch` and the DNS lookup are injected so the Node suite drives this with
- * fakes. Known limit, recorded in DECISIONS: a host could change its DNS
- * answer between our check and the connection itself.
+ * The fetch and the DNS lookup are injected so the Node suite drives this
+ * with fakes; `pinnedFetch` itself is tested against a local server.
  */
 import { lookup } from "node:dns/promises";
+import { request as httpRequest, type IncomingMessage } from "node:http";
+import { request as httpsRequest } from "node:https";
+import type { LookupFunction } from "node:net";
+import { Readable } from "node:stream";
 import {
   checkWebsiteUrl, extractPage, isPublicAddress, pickFollowUpLinks, robotsAllows, WEBSITE_READ_LIMITS, WEBSITE_USER_AGENT,
   websiteSnapshotText, type WebsitePage, type WebsiteReadStatus, type WebsiteSnapshot,
 } from "./website";
 
+/** What one guarded GET asks for; the shape `fetch` takes, so a test's fake can be a plain `fetch`. */
+export interface GuardedRequestInit {
+  method: "GET";
+  redirect: "manual";
+  headers: Record<string, string>;
+  signal: AbortSignal;
+  credentials: "omit";
+  cache: "no-store";
+}
+
 export interface WebsiteFetchDeps {
-  fetch: typeof fetch;
+  /**
+   * One GET to `url`, connecting only to one of `addresses` (the ones that
+   * passed the public check). The Host header and the TLS name stay the URL's
+   * hostname, so the site answers as itself.
+   */
+  fetch: (url: string, init: GuardedRequestInit, addresses: string[]) => Promise<Response>;
   /** Every address the host resolves to. */
   resolve: (host: string) => Promise<string[]>;
   now: () => Date;
@@ -38,13 +60,61 @@ async function defaultResolve(host: string): Promise<string[]> {
   return records.map((record) => record.address);
 }
 
-const DEFAULT_DEPS: WebsiteFetchDeps = { fetch: (input, init) => fetch(input, init), resolve: defaultResolve, now: () => new Date() };
+/**
+ * A DNS lookup that answers only with the addresses we already checked. Node
+ * calls it in two shapes: `{ all: true }` wants every address (the default
+ * "try both families" connect), otherwise one address and its family.
+ */
+export function pinnedLookup(addresses: string[]): LookupFunction {
+  const entries = addresses.map((address) => ({ address, family: address.includes(":") ? 6 : 4 }));
+  return (_hostname, options, callback) => {
+    if (!entries.length) { callback(Object.assign(new Error("no pinned address"), { code: "ENOTFOUND" }), "", 4); return; }
+    if (options.all) callback(null, entries);
+    else callback(null, entries[0].address, entries[0].family);
+  };
+}
 
-/** Refuses any host that resolves to a non-public address (or to nothing). */
-async function assertPublicHost(host: string, deps: WebsiteFetchDeps): Promise<void> {
+function responseFrom(message: IncomingMessage): Response {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(message.headers)) {
+    if (Array.isArray(value)) for (const one of value) headers.append(name, one);
+    else if (value !== undefined) headers.set(name, value);
+  }
+  // `Response` refuses a body on 204/205/304 and any status outside 200-599; a
+  // site answering oddly must become a plain failure, never a thrown error.
+  const status = message.statusCode ?? 0;
+  if (status < 200 || status > 599) throw new WebsiteReadError("unreachable");
+  const body = status === 204 || status === 205 || status === 304 ? null : (Readable.toWeb(message) as ReadableStream<Uint8Array>);
+  return new Response(body, { status, statusText: message.statusMessage ?? "", headers });
+}
+
+/**
+ * The default fetch: Node's own http/https request with the lookup pinned to
+ * `addresses`. Redirects are never followed here (the caller re-checks them),
+ * no cookies exist, and `init.signal` ends the request on the time cap. Each
+ * request opens its own connection (`agent: false`): no kept-alive socket from
+ * an earlier request is ever reused, so every connection went through the pin.
+ */
+export function pinnedFetch(url: string, init: GuardedRequestInit, addresses: string[]): Promise<Response> {
+  const target = new URL(url);
+  const request = target.protocol === "https:" ? httpsRequest : httpRequest;
+  return new Promise<Response>((resolve, reject) => {
+    const req = request(target, { method: init.method, headers: init.headers, lookup: pinnedLookup(addresses), signal: init.signal, agent: false }, (message) => {
+      try { resolve(responseFrom(message)); } catch (error) { message.resume(); reject(error); }
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+const DEFAULT_DEPS: WebsiteFetchDeps = { fetch: pinnedFetch, resolve: defaultResolve, now: () => new Date() };
+
+/** Refuses any host that resolves to a non-public address (or to nothing); returns the checked addresses. */
+async function assertPublicHost(host: string, deps: WebsiteFetchDeps): Promise<string[]> {
   let addresses: string[];
   try { addresses = await deps.resolve(host); } catch { throw new WebsiteReadError("unreachable"); }
   if (!addresses.length || !addresses.every(isPublicAddress)) throw new WebsiteReadError("refused");
+  return addresses;
 }
 
 async function readBody(response: Response): Promise<string> {
@@ -66,14 +136,15 @@ async function readBody(response: Response): Promise<string> {
 }
 
 /**
- * One guarded GET: public host, manual redirects re-checked and limited to
- * the same host, time and size caps. Returns the final URL and the body for
- * an HTML page; throws WebsiteReadError otherwise.
+ * One guarded GET: public host, the connection pinned to the checked
+ * addresses, manual redirects re-checked and limited to the same host, time
+ * and size caps. Returns the final URL and the body for an HTML page; throws
+ * WebsiteReadError otherwise.
  */
 export async function fetchGuarded(start: URL, deps: WebsiteFetchDeps, accept: "html" | "text" = "html"): Promise<{ url: URL; body: string; status: number }> {
   let url = start;
   for (let hop = 0; hop <= WEBSITE_READ_LIMITS.redirects; hop++) {
-    await assertPublicHost(url.hostname, deps);
+    const addresses = await assertPublicHost(url.hostname, deps);
     let response: Response;
     try {
       response = await deps.fetch(url.href, {
@@ -83,7 +154,7 @@ export async function fetchGuarded(start: URL, deps: WebsiteFetchDeps, accept: "
         signal: AbortSignal.timeout(WEBSITE_READ_LIMITS.requestMs),
         credentials: "omit",
         cache: "no-store",
-      });
+      }, addresses);
     } catch {
       throw new WebsiteReadError("unreachable");
     }

@@ -534,7 +534,7 @@ function WebsiteReadStatus({ website, draftReady, onRetry, onRetryLook }: { webs
         {website.lookStatus === "ready" ? <span>Took one look at the homepage: its colours are under your logo.</span> : null}
         {website.lookStatus === "" ? <span>Looking at the homepage for its colours…</span> : null}
         {website.lookStatus === "failed" ? <><span className="text-[var(--amber)]">Couldn&apos;t take a look at the homepage for its colours.</span><button type="button" className={cx(SMALL_BTN, "h-7 px-2.5 text-[12px]")} onClick={onRetryLook}>Try the look again</button></> : null}
-        {website.lookStatus === "off" ? <span>Image reading is off, so no colours from the site.</span> : null}
+        {website.lookStatus === "off" ? <span>The homepage look is off, so no colours from the site.</span> : null}
       </span>
     );
   }

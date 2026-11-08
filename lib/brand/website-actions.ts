@@ -18,7 +18,7 @@ import { AiError, createAiProvider, createAiVisionProvider } from "@/lib/ai";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { consumeAiRateLimit } from "@/lib/rate-limit";
 import { downscaleForVision } from "./image";
-import { checkWebsiteUrl, describeWebsiteLook, draftDescriptionFromWebsite, WEBSITE_READ_LIMITS, type WebsiteLook, type WebsiteReadStatus } from "./website";
+import { checkWebsiteUrl, describeWebsiteLook, draftDescriptionFromWebsite, WEBSITE_READ_LIMITS, websiteScreenshotEnabled, type WebsiteLook, type WebsiteReadStatus } from "./website";
 import { readWebsite } from "./website-fetch";
 import { screenshotWebsite } from "./website-screenshot";
 
@@ -83,12 +83,13 @@ async function draftDescription(website: { url: string; text: string }): Promise
   }
 }
 
-/** The screenshot plus vision call. "off" without a vision model (nothing spent), "failed" when either step failed. */
+/** The screenshot plus vision call. "off" when the screenshot is switched off or there is no vision model (nothing spent), "failed" when either step failed. */
 export async function readBrandWebsiteLook(raw: unknown): Promise<WebsiteLookResult> {
   const user = await getCurrentUser();
   if (!user) return { ok: false, reason: "login" };
   const check = checkWebsiteUrl(typeof raw === "string" ? raw : "");
   if (!check.ok) return { ok: false, reason: "refused" };
+  if (!websiteScreenshotEnabled()) return { ok: false, reason: "off" };
   let provider: ReturnType<typeof createAiVisionProvider>;
   try { provider = createAiVisionProvider(); } catch { return { ok: false, reason: "off" }; }
   if (!(await consumeAiRateLimit(user.id, "brand_website_look"))) return { ok: false, reason: "rate_limited" };

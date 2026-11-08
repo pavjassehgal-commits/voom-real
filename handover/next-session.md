@@ -6,12 +6,14 @@ the status board for Gurnoor and for whichever AI tool opens the repo next. It i
 on purpose: a merge from `main` can touch `ARCHITECTURE.md`, `DECISIONS.md` and `AGENTS.md`, and
 this file must survive that untouched.
 
-Last updated: 2026-11-05, after the second merge of GitHub `main` (`DECISIONS.md` 2026-11-05,
-per-file ledger `handover/merge-decisions.md` Merge 2): main at `1ab2826`, PRs #103 to #110
-(automation mode rule, MARA launch readiness, app icons, YouTube compliance, Google verification
-file). Gurnoor commits the merge, runs four migrations on the dev project, pushes, then opens the
-first pull request (section 2, item 1). The second polish round was committed as `b3972b2` on
-2026-11-04. **The next task after the pull request is slice 8, Instagram import, plan first.**
+Last updated: 2026-11-07, after answering the teammate's Codex review of our **pull request #111**
+(`merge-main-2026-10-31` → `main`, opened 2026-11-06 after the second merge of `main`, head
+`1ab2826`). Our part of the review is built (`DECISIONS.md` 2026-11-07): the website text reader
+pins the checked address (no DNS rebinding), the homepage screenshot is off unless
+`VOOM_WEBSITE_SCREENSHOT=on`, and `vercel.json` opts our branch out of preview deployments.
+Gurnoor commits and pushes (section 2, item 1), then the auth overlap with the teammate's PR #108
+waits for that PR to land first. **The next task after PR #111 merges is slice 8, Instagram
+import, plan first.**
 
 ---
 
@@ -38,11 +40,13 @@ first pull request (section 2, item 1). The second polish round was committed as
   Autopilot on in Automations", and the setup-complete card for MARA shows the mode really saved
   (Assisted for an Autopilot pick, with the note "Switch Autopilot on from the Automations page").
   Anything off: a small follow-up, then the pull request (section 2).
-- Latest checks (2026-11-05, full run after the second merge of `main`, before its commit):
+  **Since 2026-11-07:** the homepage look needs `VOOM_WEBSITE_SCREENSHOT=on` in `.env.local`;
+  without it screen 2 says "The homepage look is off, so no colours from the site." after a read.
+- Latest checks (2026-11-07, full run after the website-reader hardening, before its commit):
 
   | Check | Result | Meaning |
   |---|---|---|
-  | `npm test` | 2467 tests: 2442 pass / 21 fail / 4 skipped / 0 todo (about 120 s) | The 21 are named in `docs/baseline.md` Notes: 14 parked trend tests, 7 of `main`'s own tests that fail identically on a plain copy of `main` (5 old, 2 new Vercel branch-list tests). The 3 cleanup flakes did not show this run; when they do, 24. |
+  | `npm test` | 2468 tests: 2443 pass / 21 fail / 4 skipped / 0 todo (about 120 s) | One new test (the pinned connection, against a local server). The 21 are named in `docs/baseline.md` Notes: 14 parked trend tests, 7 of `main`'s own tests that fail identically on a plain copy of `main` (5 old, 2 Vercel branch-list tests). The 3 cleanup flakes did not show this run; when they do, 24. |
   | `npm run typecheck` | clean | |
   | `npm run lint` | 0 errors / 16 warnings | 15 pre-existing plus one of `main`'s (`network` unused in `tests/marketing-plan-channel-assignment.test.mjs`). New work must not add one. |
 
@@ -91,17 +95,37 @@ new sidebar, Google and Forgot password on login. The Phase C look is checked by
 Each task follows `AGENTS.md`: a short plan first, wait for Gurnoor's OK, build, `npm test` plus a
 browser check, update the docs, print the git commands for Gurnoor.
 
-1. **Finish Phase C and ship it:** Gurnoor commits the 2026-11-05 merge and pushes, runs the four
-   new migrations on the dev project (`handover/changes-log.md` top row), does the browser check
-   of the polish and of screen 9 (section 1), any small fix it turns up, then the first **pull
-   request from `merge-main-2026-10-31` to `main`** so the other developer sees the Brand Kit
-   work (Phase D habit, section 6, step 6). Gurnoor opens it on GitHub; the AI tool prints
-   nothing for it beyond a suggested title and description.
-2. **Slice 8: Instagram import.** Design: `docs/brand-kit-v2-design.md`, section "Instagram
+1. **Get pull request #111 merged.** Done so far: the 2026-11-05 merge committed (`0b9ec7b`) and
+   pushed, the four migrations run on dev, the browser check, the PR opened on 2026-11-06. The
+   teammate's Codex review (2026-11-05) listed ten points; ours are built on 2026-11-07
+   (`DECISIONS.md`): Gurnoor commits and pushes them, adds `VOOM_WEBSITE_SCREENSHOT=on` to
+   `.env.local`, edits the PR description to say only migration 0075 is missing on production,
+   and posts the review-reply comment. **Order agreed with Gurnoor on 2026-11-07: PR #111 merges
+   first.** The teammate applies 0075 and the production Google client (A9) on production, then
+   PR #111 is merged (default merge, not squash; merging deploys to voom.today). Their draft
+   **PR #108** (secure password recovery and account emails; 30 files, migration 0074) then lands
+   on top of `main`, and they resolve the **seven overlapping auth files**
+   (`app/auth/callback/route.ts`, `app/forgot-password/{actions.ts,page.tsx}`,
+   `app/login/{LoginForm.tsx,page.tsx}`, `app/reset-password/page.tsx`, `app/signup/SignupForm.tsx`):
+   their recovery flow wins; ours to keep is only "Continue with Google"
+   (`app/components/GoogleButton.tsx`, `app/auth/google/actions.ts`, one line in each of
+   `LoginForm.tsx` and `SignupForm.tsx`, and `/reset-password` stays in the callback's allowlist
+   only if their flow uses it). Their 0074 also means re-pointing the seven exact-list migration
+   tests (`multi-social-core`, `post-studio`, `post-studio-production-0021`,
+   `campaigns-v3-unified-channels`, `mara-media-brief`, `post-format-persistence`,
+   `email-automation-flows-pglite`), where 0074 is listed as a gap today. The full before/after
+   checklist for both sides, and the message sent to the teammate, is **`handover/pr-111-handoff.md`**.
+2. **Homepage screenshot through Cloudflare Browser Rendering** (Gurnoor's choice, 2026-11-07):
+   move `screenshotWebsite` off our Vercel function onto Cloudflare's isolated browser, so a
+   hostile page's requests can reach nothing of ours; then set `VOOM_WEBSITE_SCREENSHOT=on` in
+   production. Needs from the teammate: the Cloudflare account that runs the YouTube deletion
+   worker, Browser Rendering enabled, an API token with that permission only (goes in Vercel env,
+   never in code). Plan first, as always.
+3. **Slice 8: Instagram import.** Design: `docs/brand-kit-v2-design.md`, section "Instagram
    import (slice 8)" and build-order item 8. Not yet planned in detail; the plan is the first step.
-3. **Slice 9 (optional): the brand kit everywhere** (Reel and Story visuals, campaigns, the
+4. **Slice 9 (optional): the brand kit everywhere** (Reel and Story visuals, campaigns, the
    coordinator still read the old business fields).
-4. **Anything from section 4 whose trigger has arrived.**
+5. **Anything from section 4 whose trigger has arrived.**
 
 Beyond Brand Kit v2, the older agreed order (`DECISIONS.md` 2026-10-15 and 10-16) is: 2FA before
 onboarding goes public, then LinkedIn company pages (personal text posts exist now, from `main`),
@@ -134,13 +158,13 @@ then Stripe billing.
 | Wizard cards without 3D icons | The six avoid-rules and the LinkedIn "coming soon" channel card are plain white cards; every other answer has the designers' icon. | If the designers draw them, or if Gurnoor wants placeholders. | `DECISIONS.md` 2026-11-02 |
 | LinkedIn not configured on dev | The five `LINKEDIN_*` vars (`.env.example`) are unset; the Channels card says "not configured", nothing publishes. | When LinkedIn is to be tested; `docs/linkedin-personal-publishing.md`. | `handover/changes-log.md` 2026-11-01 |
 | Worker schedules not re-run on dev | `main` rewrote `supabase/ops/schedule-workers.sql`. | Before relying on scheduled publishing on dev; before production. | `handover/changes-log.md` 2026-11-01 |
-| Four `main` migrations not yet on dev | 0065, 0069 (YouTube erasure), 0071, 0072 (automation and coordinator guards) arrived with the 2026-11-05 merge. Until they run, the dev database lacks the YouTube privacy tables and the two triggers, and `tests/mara-launch-onboarding` style real-database checks are the only place 0071 is exercised. | Right after the merge commit (`handover/changes-log.md` top row). | `handover/changes-log.md` |
+| Auth overlap with the teammate's PR #108 | Their PR (secure password recovery, account emails, migration 0074) and ours both change seven login/signup/password files. Agreed order (2026-11-07): **ours lands first**; they resolve the seven files on top, their recovery flow wins, our Google button stays; they re-point the seven exact-list migration tests for 0074. | When they land PR #108; if they ask us to do the resolution instead, Gurnoor merges `origin/main` here after #108 lands. | `handover/pr-111-handoff.md`, `DECISIONS.md` 2026-11-07 |
+| Homepage screenshot off in production | `readBrandWebsiteLook` returns "off" unless `VOOM_WEBSITE_SCREENSHOT=on`. The browser's own lookups are not pinned (every image, script and font a page loads). Chosen fix: Cloudflare Browser Rendering (section 2, item 2), then the flag on in production. | After PR #111 merges; needs the teammate's Cloudflare token. | `DECISIONS.md` 2026-11-07, `lib/brand/website.ts` `websiteScreenshotEnabled` |
 | Timing flake (1) | "loadPerformanceReport itself stays parallel and dedupe-safe" in `tests/perf-regression.test.mjs` sometimes fails in a full run, always passes alone. | Only if it starts failing alone. | `docs/baseline.md` Notes |
-| DNS rebinding in the website reader | The reader resolves a site's address and refuses private ones, then lets `fetch` and Chromium resolve again. **Planned fix:** pin the resolved address. | Before a public launch, or before leaving Vercel. | `DECISIONS.md` 2026-10-28 and 2026-10-30; `lib/brand/website-fetch.ts` header |
 | Website read-again from the Brand page | A site can only be read during onboarding today. | When an owner asks, or with slice 9. | design doc item 7 "Not built" |
 | Screenshots of further pages | Only the top of the homepage is looked at for colours and look. | If homepage-only proves too thin in real use. | design doc item 7 "Not built" |
-| Chromium memory on Vercel | The homepage screenshot runs a packaged headless Chromium inside the onboarding server action (`maxDuration = 60`). If production logs show out-of-memory or "browser closed", raise the function memory. | First production deploy with slice 7. | `handover/production-setup.md` |
-| Production deploy steps not yet done | `handover/changes-log.md`: migration 0075, the nine `main` migrations of 11-01 and the four of 11-05, LinkedIn vars and app, worker schedules, the vision env vars, the Chromium memory check, Google sign-in's production OAuth client. Dev is done for all but LinkedIn, the schedules and the four 11-05 migrations. | The next production deploy; work through the table top to bottom. | `handover/changes-log.md` |
+| Chromium memory on Vercel | The homepage screenshot runs a packaged headless Chromium inside the onboarding server action (`maxDuration = 60`). If production logs show out-of-memory or "browser closed", raise the function memory. | Only once `VOOM_WEBSITE_SCREENSHOT=on` is set in production (row above). | `handover/production-setup.md` |
+| Production deploy steps not yet done | `handover/changes-log.md`: migration **0075** (the only one of ours still missing on production; the Codex review confirmed 0065/0069/0071/0072 are already there), LinkedIn vars and app, worker schedules, the vision env vars (optional), Google sign-in's production OAuth client (A9), a proper email provider (the teammate's PR #108 covers it). Dev is done for all but LinkedIn and the schedules. | Before the teammate presses merge on PR #111; the teammate owns production. | `handover/changes-log.md`, PR #111 comments |
 | Reference images in image generation | Product photos and past posts are described to the image model as text only. | A later design decision. | `ARCHITECTURE.md` "Not built yet" |
 
 ---

@@ -36,6 +36,17 @@ export const WEBSITE_READ_LIMITS = {
 } as const;
 
 export const WEBSITE_USER_AGENT = "Voom/1.0 (brand reader)";
+
+/**
+ * The homepage screenshot is off unless `VOOM_WEBSITE_SCREENSHOT=on`. The
+ * headless browser does its own DNS lookups for every image and script a page
+ * loads, so the pinned-address protection the text fetch has (website-fetch.ts)
+ * does not cover it yet; until it does, production keeps the screenshot off
+ * (Codex review of PR #111, 2026-11-07). The text read is unaffected.
+ */
+export function websiteScreenshotEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return env.VOOM_WEBSITE_SCREENSHOT === "on";
+}
 export const WEBSITE_PAGE_KEYWORDS = ["about", "services", "products", "menu", "shop", "pricing"] as const;
 
 export type WebsiteReadStatus = "ready" | "refused" | "blocked_by_robots" | "unreachable" | "not_html" | "empty";

@@ -20,6 +20,7 @@
  */
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { registerHooks } from "node:module";
 import test from "node:test";
 
@@ -174,6 +175,49 @@ test("the guarded fetch checks every host, follows same-host redirects three tim
   await assert.rejects(fetcher.fetchGuarded(new URL("https://lexis.in/"), d), (e) => e.status === "unreachable");
   assert.equal(website.WEBSITE_READ_LIMITS.requestMs, 10_000);
   assert.ok(d.calls[0].init.signal instanceof AbortSignal, "every request carries the time cap");
+});
+
+test("the real fetch connects only to the address that passed the check, never to a fresh DNS answer (no DNS rebinding)", async () => {
+  // The lookup Node is handed answers with the pinned addresses in both shapes Node asks for.
+  const lookup = fetcher.pinnedLookup(["93.184.216.34", "2606:4700::1111"]);
+  await new Promise((done) => lookup("brand-pin.invalid", {}, (err, address, family) => { assert.equal(err, null); assert.equal(address, "93.184.216.34"); assert.equal(family, 4); done(); }));
+  await new Promise((done) => lookup("brand-pin.invalid", { all: true }, (err, addresses) => { assert.equal(err, null); assert.deepEqual(addresses, [{ address: "93.184.216.34", family: 4 }, { address: "2606:4700::1111", family: 6 }]); done(); }));
+  await new Promise((done) => fetcher.pinnedLookup([])("brand-pin.invalid", {}, (err) => { assert.equal(err.code, "ENOTFOUND"); done(); }));
+
+  // A local server stands in for the site. The address is a name that does not exist
+  // (".invalid"), so the request can only arrive if the pinned address is what is used.
+  const seen = [];
+  const server = createServer((req, res) => {
+    seen.push({ host: req.headers.host, agent: req.headers["user-agent"], url: req.url });
+    if (req.url === "/odd-205") { res.writeHead(205, { "content-type": "text/html" }); res.end("<p>body on a 205</p>"); return; }
+    if (req.url === "/odd-999") { res.writeHead(999, { "content-type": "text/html" }); res.end("<p>nonsense status</p>"); return; }
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "set-cookie": ["a=1", "b=2"] });
+    res.end("<html><head><title>Pinned</title></head><body><p>Reached through the pinned address.</p></body></html>");
+  });
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  const port = server.address().port;
+  const init = { method: "GET", redirect: "manual", headers: { "User-Agent": website.WEBSITE_USER_AGENT, Accept: "text/html" }, signal: AbortSignal.timeout(5_000), credentials: "omit", cache: "no-store" };
+  try {
+    const response = await fetcher.pinnedFetch(`http://brand-pin.invalid:${port}/menu`, init, ["127.0.0.1"]);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "text/html; charset=utf-8");
+    assert.equal(response.headers.get("set-cookie"), "a=1, b=2", "repeated headers are kept");
+    assert.match(await response.text(), /Reached through the pinned address/);
+    assert.deepEqual(seen, [{ host: `brand-pin.invalid:${port}`, agent: website.WEBSITE_USER_AGENT, url: "/menu" }], "the site still sees its own name, not the address");
+    // Odd answers become plain results or a rejection the guarded fetch turns into "unreachable", never a thrown error inside Node's callback.
+    const odd = await fetcher.pinnedFetch(`http://brand-pin.invalid:${port}/odd-205`, init, ["127.0.0.1"]);
+    assert.equal(odd.status, 205);
+    assert.equal(odd.body, null, "a 205 keeps no body (Response would throw)");
+    await assert.rejects(fetcher.pinnedFetch(`http://brand-pin.invalid:${port}/odd-999`, init, ["127.0.0.1"]), (e) => e.status === "unreachable", "a status outside 200-599 is a rejection, which the guarded fetch reports as unreachable (test above: a fetch that throws)");
+    await assert.rejects(fetcher.pinnedFetch(`http://brand-pin.invalid:${port}/`, init, []), /no pinned address|ENOTFOUND/, "no checked address, no connection");
+    await assert.rejects(fetcher.pinnedFetch(`http://brand-pin.invalid:${port}/`, { ...init, signal: AbortSignal.timeout(1) }, ["127.0.0.1"]), "the time cap ends the request");
+  } finally {
+    await new Promise((done) => server.close(done));
+  }
+  const source = await read("lib/brand/website-fetch.ts");
+  assert.match(source, /fetch: pinnedFetch/, "the pinned fetch is the default");
+  assert.match(source, /lookup: pinnedLookup\(addresses\), signal: init\.signal, agent: false/, "Node's request is handed the pinned lookup and never reuses a kept-alive socket");
+  assert.match(source, /const addresses = await assertPublicHost\(url\.hostname, deps\);[\s\S]*?\}, addresses\);/, "the checked addresses are the ones passed on");
 });
 
 test("the body is cut at 2 MB, robots.txt is obeyed, and a read gathers the homepage plus up to four keyword pages", async () => {
@@ -401,10 +445,22 @@ test("the text action answers with a plain reason, spends its bucket only for a 
   assert.doesNotMatch(source, /\.from\(|insert\(|upsert\(/, "the actions store nothing");
 });
 
-test("the look action is off without a vision model (nothing spent), sends the screenshot to the vision model, and reports a failed screenshot", async () => {
+test("the look action is off unless the screenshot is switched on and a vision model exists (nothing spent), sends the screenshot to the vision model, and reports a failed screenshot", async () => {
   globalThis.__VOOM_BUCKETS__ = [];
   globalThis.__VOOM_RATE_OK__ = true;
   login(true);
+  // The screenshot switch: off by default (the browser's own lookups are not pinned), on only with "on".
+  assert.equal(website.websiteScreenshotEnabled({}), false);
+  assert.equal(website.websiteScreenshotEnabled({ VOOM_WEBSITE_SCREENSHOT: "true" }), false, "only the word on");
+  assert.equal(website.websiteScreenshotEnabled({ VOOM_WEBSITE_SCREENSHOT: "on" }), true);
+  const previous = process.env.VOOM_WEBSITE_SCREENSHOT;
+  delete process.env.VOOM_WEBSITE_SCREENSHOT;
+  globalThis.__VOOM_FAKE_VISION__ = () => ({ structured: async () => { throw new Error("must not call the vision model with the screenshot off"); } });
+  globalThis.__VOOM_FAKE_SHOT__ = async function mustNotRun() { throw new Error("must not screenshot with the switch off"); };
+  assert.deepEqual(await actions.readBrandWebsiteLook("lexis.in"), { ok: false, reason: "off" });
+  assert.deepEqual(globalThis.__VOOM_BUCKETS__, [], "switch off: nothing spent");
+  process.env.VOOM_WEBSITE_SCREENSHOT = "on";
+
   globalThis.__VOOM_FAKE_VISION__ = () => { throw new AiError("not_configured"); };
   globalThis.__VOOM_FAKE_SHOT__ = async function mustNotRun() { throw new Error("must not screenshot without a vision model"); };
   assert.deepEqual(await actions.readBrandWebsiteLook("lexis.in"), { ok: false, reason: "off" });
@@ -431,7 +487,11 @@ test("the look action is off without a vision model (nothing spent), sends the s
     globalThis.__VOOM_RATE_OK__ = true;
   } finally {
     console.log = quiet;
+    if (previous === undefined) delete process.env.VOOM_WEBSITE_SCREENSHOT; else process.env.VOOM_WEBSITE_SCREENSHOT = previous;
   }
+  const wizardSource = await read("components/voom/onboarding/OnboardingWizard.tsx");
+  assert.match(wizardSource, /The homepage look is off, so no colours from the site\./, "the owner is told the look is off, not that image reading is");
+  assert.match(await read(".env.example"), /VOOM_WEBSITE_SCREENSHOT=/);
 });
 
 /* ── 8. Colours per source ───────────────────────────────────────────────── */
