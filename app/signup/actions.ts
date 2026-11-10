@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import { resolveSiteUrl } from "@/utils/site-url";
+import { queueWelcome } from "@/lib/transactional-email/server";
 
 export type SignupState = {
   success?: boolean;
@@ -56,12 +57,14 @@ export async function signup(
   });
 
   if (error) {
+    if(error.code==="user_already_exists")return {success:true};
     return {
       formError: "We couldn't create your account. Please try again.",
     };
   }
 
   if (data.session) {
+    await queueWelcome(data.session.user.id);
     redirect("/app/onboarding");
   }
 

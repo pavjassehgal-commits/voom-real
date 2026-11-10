@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
+import { queueWelcome } from "@/lib/transactional-email/server";
 
 export type LoginState = {
   formError?: string;
@@ -31,7 +32,7 @@ export async function login(
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword({
+  const { data, error } = await supabase.auth.signInWithPassword({
     email,
     password,
   });
@@ -40,5 +41,6 @@ export async function login(
     return { formError: "Incorrect email or password." };
   }
 
+  if(data.user)await queueWelcome(data.user.id);
   redirect("/app");
 }

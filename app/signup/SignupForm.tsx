@@ -31,8 +31,8 @@ function passwordStrength(password: string) {
 
 /**
  * Sign up through the existing `signup` server action (email, password and
- * the confirmation it validates). The reference's Google / Apple buttons and
- * its "Resend link" are not shown: Voom has neither flow. Agreement to the
+ * the confirmation it validates). Social login is not shown. Confirmation
+ * resend uses Supabase Auth. Agreement to the
  * Terms and Privacy Policy is stated plainly instead of a checkbox the
  * server would not record.
  */
@@ -48,8 +48,9 @@ export default function SignupForm() {
       <AuthFrame title="Check your email" badge={<span className="grid h-12 w-12 place-items-center rounded-full bg-[#e7f6f1] text-[var(--green)]"><Icon name="mail" size={20} /></span>}>
         <div role="status" className="mt-2 text-center">
           <p className="text-[13.5px] leading-relaxed text-text-2">
-            We sent a confirmation link to {email ? <b className="font-semibold text-text">{email}</b> : "your inbox"}. Click it to activate your account and sign in.
+            If this address needs confirmation, you’ll receive a link to activate your account. If you already have an account, log in or reset your password.
           </p>
+          <Link href="/verify-email" className="mt-4 block text-sm font-semibold text-[var(--brand)]">Request another confirmation link</Link>
           <p className="mt-5 rounded-[10px] border border-[var(--line)] bg-[var(--surface-2)] px-4 py-3 text-left text-[12.5px] leading-relaxed text-text-2">
             Didn&apos;t get it? Check spam, or make sure this is the email you signed up with.
           </p>

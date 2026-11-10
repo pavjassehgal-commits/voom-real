@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { type NextRequest } from "next/server";
 import { createClient } from "@/utils/supabase/server";
+import { queueWelcome } from "@/lib/transactional-email/server";
 
 const ALLOWED_NEXT_PATHS = new Set(["/app"]);
 
@@ -19,11 +20,12 @@ export async function GET(request: NextRequest) {
 
   if (code) {
     const supabase = await createClient();
-    const { error } = await supabase.auth.exchangeCodeForSession(
+    const { data, error } = await supabase.auth.exchangeCodeForSession(
       code,
       flowId ? { flowId } : undefined,
     );
     if (!error) {
+      if(data.user)await queueWelcome(data.user.id);
       redirect(next);
     }
   }

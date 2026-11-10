@@ -35,7 +35,8 @@ test("log in and sign up keep the existing server actions, field names and signe
 test("auth screens offer no control Voom cannot honour", async () => {
   const all = (await Promise.all([code("app/login/LoginForm.tsx"), code("app/signup/SignupForm.tsx"), code("components/voom/auth/AuthFrame.tsx")])).join("\n");
   assert.doesNotMatch(all, /signInWithOAuth|Continue with Google|Apple/i, "no social sign-in exists");
-  assert.doesNotMatch(all, /Forgot password|Keep me logged in|Resend link/i, "no password reset, session toggle or resend flow exists");
+  assert.doesNotMatch(all, /Keep me logged in/i, "no unsupported session toggle exists");
+  assert.match(all, /href="\/forgot-password"/, "password recovery has a real route");
   assert.doesNotMatch(all, /10 channels|Facebook/i);
   assert.doesNotMatch(all, /createAdminClient|service_role/i);
 });

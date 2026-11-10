@@ -11,7 +11,7 @@ const SAFE_ERRORS: Record<string, string> = {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; notice?: string }>;
 }) {
   const supabase = await createClient();
   const { data } = await supabase.auth.getClaims();
@@ -19,11 +19,12 @@ export default async function LoginPage({
     redirect("/app");
   }
 
-  const { error } = await searchParams;
+  const { error,notice } = await searchParams;
   const initialError = error ? SAFE_ERRORS[error] : undefined;
 
   return (
     <AuthFrame title="Welcome back" subtitle="Log in to your Voom account">
+      {notice==="password_updated"&&<p role="status" className="mt-4 text-center text-sm text-text-2">Your password was updated. Log in with your new password.</p>}
       <LoginForm initialError={initialError} />
     </AuthFrame>
   );

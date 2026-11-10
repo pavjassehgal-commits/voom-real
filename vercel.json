@@ -2,6 +2,7 @@
   "git": {
     "deploymentEnabled": {
       "codex/tiktok-icon-consistency": false,
+      "codex/transactional-customer-email": false,
       "codex/linkedin-production-release": false,
       "codex/linkedin-marketing-plan": false,
       "codex/marketing-plan-action-handoff": false,
