@@ -24,8 +24,8 @@ test('recovery proof is owner/session-bound, short-lived and tamper resistant',(
   for(const [owner,session,key,time,p] of [['other','session',secret,now,proof],['owner','other',secret,now,proof],['owner','session','short',now,proof],['owner','session',secret,now+600000,proof],['owner','session',secret,now,proof+'x'],['owner','session',secret,now,undefined]])assert.equal(validRecoveryProof(p,owner,session,key,time),false);
 });
 test('reset and resend never disclose account existence, provider failures or throttle outcome',async()=>{
-  for(const allowed of [true,false])for(const result of ['known','unknown','error']){let sends=0;assert.deepEqual(await requestAuthEmail(async()=>allowed,async()=>{sends++;if(result==='error')throw Error('private');return result;}),{success:true,message:AUTH_EMAIL_MESSAGE});assert.equal(sends,allowed?1:0);}
-  let sends=0;assert.deepEqual(await requestAuthEmail(async()=>{throw Error('db');},async()=>sends++),{success:true,message:AUTH_EMAIL_MESSAGE});assert.equal(sends,0);
+  for(const allowed of ['allowed','limited'])for(const result of ['known','unknown','error']){let sends=0;assert.deepEqual(await requestAuthEmail(async()=>allowed,async()=>{sends++;if(result==='error')throw Error('private');return result;}),{success:true,message:AUTH_EMAIL_MESSAGE});assert.equal(sends,allowed==='allowed'?1:0);}
+  let sends=0;assert.match((await requestAuthEmail(async()=>{throw Error('private db');},async()=>sends++)).error,/temporarily unavailable/);assert.equal(sends,0);
 });
 test('mobile email document escapes supplied text and uses the official mark',()=>{
   const html=emailDocument('<script>x</script>','" & message','Go','https://example.test/?a=1&b=2',config.site);

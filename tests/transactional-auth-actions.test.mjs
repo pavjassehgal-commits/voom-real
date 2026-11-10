@@ -21,7 +21,7 @@ const originalSecret=process.env.VOOM_AUTH_EMAIL_SECRET,originalSite=process.env
 let s;
 beforeEach(()=>{
   process.env.VOOM_AUTH_EMAIL_SECRET='synthetic-action-test-secret-'.repeat(2);process.env.NEXT_PUBLIC_SITE_URL='https://staging.example.test';
-  const values=new Map();s={calls:[],welcomes:[],allowed:true,values,updateError:null,userId:'owner',claimsSub:'owner',session:'session'};
+  const values=new Map();s={calls:[],welcomes:[],allowed:'allowed',values,updateError:null,userId:'owner',claimsSub:'owner',session:'session'};
   s.jar={get:name=>values.has(name)?{value:values.get(name)}:undefined,set:(name,value,options)=>{s.calls.push({name:'cookie',options});values.set(name,value);}};
   const call=async(name,args,result)=>{s.calls.push({name,args});return result;};
   s.client={auth:{
@@ -40,7 +40,7 @@ test('real reset and resend actions use trusted configured callback, not caller 
   await actions.requestVerification({},form({email:'owner@example.test'}));assert.equal(s.calls[1].args[0].type,'signup');assert.equal(s.calls[1].args[0].options.emailRedirectTo,'https://staging.example.test/auth/callback?next=%2Fapp');
 });
 test('throttled real server action never invokes Supabase and does not reveal throttling',async()=>{
-  s.allowed=false;const state=await actions.requestPasswordReset({},form({email:'owner@example.test'}));assert.equal(state.success,true);assert.equal(s.calls.length,0);
+  s.allowed='limited';const state=await actions.requestPasswordReset({},form({email:'owner@example.test'}));assert.equal(state.success,true);assert.equal(s.calls.length,0);
 });
 test('recovery rejects missing secret, both token formats, bad hash, unknown owner and mismatched claims',async()=>{
   const hash='a'.repeat(56);
@@ -68,9 +68,18 @@ test('invalid or expired provider tokens never grant recovery proof, and throttl
   assert.doesNotMatch(result.error,/private provider/);
   assert.deepEqual(s.calls.map(c=>c.name),['verify']);
   assert.equal(s.values.size,0);
-  s.allowed=false;
-  assert.deepEqual(await actions.continueRecovery({},input),result);
+  s.allowed='limited';
+  assert.match((await actions.continueRecovery({},input)).error,/wait/);
   assert.equal(s.calls.length,1);
+});
+test('unavailable limiter fails closed without revealing internal errors',async()=>{
+  s.allowed='unavailable';
+  const request=await actions.requestPasswordReset({},form({email:'owner@example.test'}));
+  assert.match(request.error,/temporarily unavailable/);
+  assert.match((await actions.continueRecovery({},form({code:'synthetic-code'}))).error,/temporarily unavailable/);
+  s.values.set('voom_password_recovery',recoveryProof('owner','session',process.env.VOOM_AUTH_EMAIL_SECRET));
+  assert.match((await actions.changeRecoveredPassword({},form({password:'synthetic-password-123',confirmPassword:'synthetic-password-123'}))).error,/temporarily unavailable/);
+  assert.equal(s.calls.filter(c=>['reset','exchange','update'].includes(c.name)).length,0);
 });
 test('password update refuses unproved, other-session and mismatched-password requests',async()=>{
   const valid=form({password:'synthetic-password-123',confirmPassword:'synthetic-password-123'});

@@ -15,7 +15,7 @@ export async function requestPasswordReset(_state: AccountEmailState, form: Form
     const email = String(form.get("email") || "").trim();
     if (!validAuthEmail(email))
         return { error: "Enter a valid email address." };
-    return requestAuthEmail(() => allowAuthEmail(email), async () => {
+    return requestAuthEmail(() => allowAuthEmail("request", email), async () => {
         const supabase = await createClient();
         await supabase.auth.resetPasswordForEmail(email, { redirectTo: new URL("/auth/recovery", resolveSiteUrl(null)).toString() });
     });
@@ -24,7 +24,7 @@ export async function requestVerification(_state: AccountEmailState, form: FormD
     const email = String(form.get("email") || "").trim();
     if (!validAuthEmail(email))
         return { error: "Enter a valid email address." };
-    return requestAuthEmail(() => allowAuthEmail(email), async () => {
+    return requestAuthEmail(() => allowAuthEmail("request", email), async () => {
         const supabase = await createClient();
         const callback = new URL("/auth/callback", resolveSiteUrl(null));
         callback.searchParams.set("next", "/app");
@@ -41,8 +41,9 @@ export async function continueRecovery(_state: AccountEmailState, form: FormData
     const malformedHash = hash && (hash.length > 256 || !/^(?:pkce_)?[a-f0-9]{32,256}$/.test(hash));
     if (secret.length < 32 || Boolean(code) === Boolean(hash) || code.length > 2048 || malformedHash)
         return failure;
-    if (!await allowAuthEmail("recovery:" + (hash || code)))
-        return failure;
+    const limit = await allowAuthEmail("recovery", hash || code);
+    if (limit === "unavailable") return { error: "This service is temporarily unavailable. Please try again later." };
+    if (limit === "limited") return { error: "Please wait before trying again." };
     try {
         const supabase = await createClient();
         const flowId = String(form.get("sb_flow_id") || "");
@@ -79,7 +80,9 @@ export async function changeRecoveredPassword(_state: AccountEmailState, form: F
         const jar = await cookies();
         if (error || !data.user || typeof sessionId !== "string" || claims.data?.claims?.sub !== data.user.id || !validRecoveryProof(jar.get("voom_password_recovery")?.value, data.user.id, sessionId, process.env.VOOM_AUTH_EMAIL_SECRET || ""))
             return { error: "Request a new password-reset link." };
-        if (!await allowAuthEmail("password-update:" + data.user.id))
+        const limit = await allowAuthEmail("password-update", data.user.id);
+        if (limit === "unavailable") return { error: "This service is temporarily unavailable. Please try again later." };
+        if (limit === "limited")
             return { error: "Please wait before trying again." };
         const result = await supabase.auth.updateUser({ password });
         if (result.error)

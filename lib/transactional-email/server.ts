@@ -14,20 +14,25 @@ export async function queueWelcome(userId: string) {
         console.error("[transactional-email] welcome_queue_unavailable");
     }
 }
-export async function allowAuthEmail(email: string) {
+export type AuthEmailAction = "request" | "recovery" | "password-update";
+export type AuthEmailLimit = "allowed" | "limited" | "unavailable";
+export async function allowAuthEmail(action: AuthEmailAction, subject: string): Promise<AuthEmailLimit> {
     const secret = process.env.VOOM_AUTH_EMAIL_SECRET;
     if (!secret || secret.length < 32)
-        return false;
+        return "unavailable";
     try {
         const h = await headers();
         // On Vercel this header is overwritten by the edge, unlike caller-supplied XFF.
         const ip = process.env.VERCEL ? h.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() : "local";
         if (!ip)
-            return false;
-        const result = await createAdminClient().rpc("consume_voom_auth_email_limit", { p_ip_hash: hmac(secret, "auth-ip", ip), p_email_hash: hmac(secret, "auth-email", email.toLowerCase()) }).abortSignal(AbortSignal.timeout(2500));
-        return !result.error && result.data === true;
+            return "unavailable";
+        // Requests share one budget; recovery and update get separate IP budgets.
+        // The database function still enforces its shared global hourly budget.
+        const result = await createAdminClient().rpc("consume_voom_auth_email_limit", { p_ip_hash: hmac(secret, `auth-ip:${action}`, ip), p_email_hash: hmac(secret, `auth-subject:${action}`, subject.toLowerCase()) }).abortSignal(AbortSignal.timeout(2500));
+        if (result.error || typeof result.data !== "boolean") return "unavailable";
+        return result.data ? "allowed" : "limited";
     }
     catch {
-        return false;
+        return "unavailable";
     }
 }
