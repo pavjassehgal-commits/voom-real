@@ -147,13 +147,14 @@ export async function processEmailUnsubscribe(
     p_source: "email_footer",
   });
 
-  if (error) {
+  const status = (data as { status?: unknown } | null)?.status;
+  if (error || (status !== "unsubscribed" && status !== "already_unsubscribed")) {
     return { ok: false, reason: "processing_failed", businessName };
   }
 
   return {
     ok: true,
-    reason: (data as { status?: string } | null)?.status === "unsubscribed" ? "unsubscribed" : "already_unsubscribed",
+    reason: status,
     businessName,
   };
 }

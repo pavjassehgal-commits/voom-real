@@ -25,6 +25,8 @@ interface IdentityState {
     displayName: string | null;
     fromAddress: string | null;
     replyTo: string | null;
+    legalName?: string | null;
+    postalAddress?: string | null;
   } | null;
   verification: {
     status: "not_configured" | "pending" | "verified" | "failed" | "unknown";
@@ -62,12 +64,12 @@ const VERIFICATION_UI: Record<IdentityState["verification"]["status"], { label: 
   failed: {
     label: "Domain check failed",
     tone: "red",
-    note: "The domain check didn't pass. Until it does, emails send from Voom's managed address with your business name shown.",
+    note: "The domain check didn't pass. Marketing sending stays blocked until your business's own domain is verified.",
   },
   unknown: {
     label: "Not verified",
     tone: "grey",
-    note: "Until the domain is verified, emails send from Voom's managed address with your business name shown.",
+    note: "Verify domain ownership and the provider DNS records below before sending marketing emails.",
   },
   not_configured: {
     label: "Not configured",
@@ -89,6 +91,36 @@ const EMAIL_TYPES: Record<string, string> = {
   "image/webp": "image/webp",
 };
 
+function SendingDomainSetup({ domain, onVerified }: { domain: string; onVerified: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ domain: string; ownership?: { name: string; value: string }; records?: unknown[]; verified?: boolean } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  async function run(action: "begin" | "verify") {
+    setBusy(true); setError(null);
+    try {
+      const response = await fetch("/api/voom/email-domains", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, domain }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Domain setup is unavailable.");
+      setResult(body);
+      if (body.verified) await onVerified();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Domain setup is unavailable."); }
+    finally { setBusy(false); }
+  }
+  const current = result?.domain === domain ? result : null;
+  return <div className="mb-4 rounded-xl border border-line p-3">
+    <h3 className="text-sm font-semibold">Verify your sending domain</h3>
+    <p className="my-2 text-xs text-text-3">Enter your sender address above, save it, then prove domain ownership with a TXT record. Next, add the provider&apos;s SPF/DKIM records shown here. This never sends an email.</p>
+    <div className="flex flex-wrap gap-2">
+      <Btn variant="outline" size="sm" disabled={busy || !domain} onClick={() => void run("begin")}>Get DNS instructions</Btn>
+      <Btn variant="outline" size="sm" disabled={busy || !domain} onClick={() => void run("verify")}>{busy ? "Checking…" : "Check DNS verification"}</Btn>
+    </div>
+    {error && <p role="alert" className="mt-2 text-xs text-red">{error}</p>}
+    {current?.ownership && <div className="mt-3 break-all text-xs"><b>Ownership TXT name:</b> {current.ownership.name}<br /><b>TXT value:</b> {current.ownership.value}</div>}
+    {(current?.records?.length ?? 0) > 0 && <pre className="mt-3 max-h-60 overflow-auto whitespace-pre-wrap break-all text-xs" aria-label="Provider DNS records">{JSON.stringify(current?.records, null, 2)}</pre>}
+    {current && <p role="status" className="mt-2 text-xs">{current.verified ? "Domain verified for this business." : "Sending stays blocked until ownership and provider DNS verification both pass."}</p>}
+  </div>;
+}
+
 export function EmailIdentityCard() {
   const [state, setState] = useState<IdentityState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -96,6 +128,8 @@ export function EmailIdentityCard() {
   const [displayName, setDisplayName] = useState("");
   const [fromAddress, setFromAddress] = useState("");
   const [replyTo, setReplyTo] = useState("");
+  const [legalName, setLegalName] = useState("");
+  const [postalAddress, setPostalAddress] = useState("");
   const [primaryColor, setPrimaryColor] = useState("#1A73E8");
   const [secondaryColor, setSecondaryColor] = useState("#F4F1EC");
   const [website, setWebsite] = useState("");
@@ -126,6 +160,8 @@ export function EmailIdentityCard() {
     setDisplayName(data.identity?.displayName ?? "");
     setFromAddress(data.identity?.fromAddress ?? "");
     setReplyTo(data.identity?.replyTo ?? "");
+    setLegalName(data.identity?.legalName ?? "");
+    setPostalAddress(data.identity?.postalAddress ?? "");
     setPrimaryColor(data.brand.primaryColor ?? "#1A73E8");
     setSecondaryColor(data.brand.secondaryColor ?? "#F4F1EC");
     setWebsite(data.brand.website ?? "");
@@ -163,7 +199,8 @@ export function EmailIdentityCard() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          identity: { displayName, fromAddress: fromAddress || null, replyTo: replyTo || null },
+          identity: { displayName, fromAddress: fromAddress || null, replyTo: replyTo || null,
+            ...(legalName.trim() ? { legalName } : {}), ...(postalAddress.trim() ? { postalAddress } : {}) },
           brand: {
             logoAssetId,
             primaryColor: primaryColor || null,
@@ -245,7 +282,7 @@ export function EmailIdentityCard() {
     <Card className="mb-3.5 p-4">
       <h2 className="mb-1.5 font-display text-lg font-semibold">Email identity & branding</h2>
       <p className="mb-3.5 text-[12.5px] text-text-3">
-        How your marketing email looks and who it comes from. Voom stays out of the customer’s inbox — the email is your business, not Voom.
+        Your business&apos;s verified sending identity and branding. Marketing sending also requires recorded customer consent and available sending allowance.
       </p>
 
       {loadError && (
@@ -258,7 +295,7 @@ export function EmailIdentityCard() {
       <div className="mb-4 rounded-xl border border-line bg-surface-2/60 px-3.5 py-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[13px] font-semibold">
-            Next email sends as <b>{sendingName}</b>
+            Sender preview: <b>{sendingName}</b>
             {sendingAddress ? ` <${sendingAddress}>` : ""}
           </span>
           <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11.5px] font-semibold ${TONE_CLASS[verification.tone]}`}>
@@ -267,13 +304,24 @@ export function EmailIdentityCard() {
         </div>
         {state?.sender?.mode === "voom_fallback" && sendingAddress && (
           <div className="mt-1 text-[12px] text-amber">
-            Your domain isn’t verified yet, so delivery uses Voom’s managed address ({sendingAddress}) with your business name shown — never a fake “from you” address.
+            Marketing sending is blocked. This managed-address preview does not authorize sending; verify a domain owned by your business below.
           </div>
         )}
         {verification.note && <div className="mt-1 text-[12px] leading-relaxed text-text-2">{verification.note}</div>}
         {state?.verification.domain && state.verification.status !== "verified" && (
           <div className="mt-1 text-[12px] text-text-3">Domain being checked: {state.verification.domain}</div>
         )}
+      </div>
+
+      <SendingDomainSetup domain={fromAddress.trim().toLowerCase().split("@")[1] ?? ""} onVerified={reload} />
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Legal/business sender name" hint="Your real sender identity, included in every marketing email footer.">
+          <Input value={legalName} onChange={(e) => setLegalName(e.target.value)} maxLength={160} />
+        </Field>
+        <Field label="Business postal address" hint="A real postal address for your business. Required before sending.">
+          <Input value={postalAddress} onChange={(e) => setPostalAddress(e.target.value)} maxLength={500} />
+        </Field>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -285,7 +333,7 @@ export function EmailIdentityCard() {
         </Field>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Reply-to" hint="Where customer replies should go. Leave empty to reply to the sender address.">
+        <Field label="Reply-to" hint="A working contact email for your business. Required before marketing sending.">
           <Input value={replyTo} onChange={(e) => setReplyTo(e.target.value)} placeholder="support@yourbusiness.com" />
         </Field>
         <Field label="Website" hint="Used as the default link destination when a CTA has no other destination.">

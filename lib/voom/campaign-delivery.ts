@@ -114,7 +114,7 @@ export async function readCampaignDelivery(db: SupabaseClient, ownerId: string, 
           // Over-cap audiences must be refused entirely — sending stays
           // blocked until the audience is narrowed back within the cap.
           ? audience !== null && audience.eligibleCount > 0 && audience.overLimitCount === 0
-          : (!send || send.internal_status === "failed")
+          : (!send || (send.internal_status === "failed" && send.last_error_code !== "provider_outcome_ambiguous"))
       ),
       note: audienceNote ?? buildDeliveryNote(campaign, provider, send, audience, sendsSummary),
       schemaReady: true,
@@ -188,6 +188,7 @@ export interface CampaignSendProviderResult {
   /** A terminal failure (quality guard / sender) cannot be fixed by retrying
    *  the same content; the route surfaces it as needs-attention. */
   terminal: boolean;
+  ambiguous?: boolean;
 }
 
 /**
@@ -228,14 +229,24 @@ export async function sendEmailCampaign(campaign: CampaignRecord, recipient: Cam
     };
   }
 
+  // The send-row UUID is stable across retry claims. Failure to retrieve it
+  // must never fall back to a fresh provider key.
+  const { data: sendRow, error: sendReadError } = await admin.from("campaign_sends")
+    .select("id,idempotency_key")
+    .eq("owner_user_id", ownerId).eq("campaign_id", campaign.id).eq("recipient_id", recipient.id).maybeSingle();
+  if (sendReadError || !sendRow?.id) return {
+    ok: false, providerMessageId: null, providerStatus: null, errorCode: "send_claim_unavailable",
+    errorMessage: "Voom could not verify the durable send claim. Nothing was submitted.", terminal: true,
+  };
   const prepared = await prepareBrandedSend(
     {
       admin,
       ownerId,
       to: recipient.contact,
-      // Provisional: replaced below with the claim's own idempotency key, so
-      // the provider-side dedupe key is exactly the durable claim key.
-      idempotencyKey: createCampaignSendAttemptKey(),
+      // Source UUID, not a new attempt UUID: ambiguous outcomes keep one key.
+      idempotencyKey: `campaign-email:${sendRow.id}`,
+      sourceKind: "campaign",
+      sourceId: sendRow.id,
       subject: campaign.subject?.trim() || campaign.name,
       previewText: campaign.preview_text,
       body: campaign.content,
@@ -259,27 +270,21 @@ export async function sendEmailCampaign(campaign: CampaignRecord, recipient: Cam
     };
   }
 
-  // The claim (made by the route) stored the durable idempotency key on the
-  // send row; use it as the provider-side dedupe key for this exact send.
-  let payload = prepared.payload;
-  try {
-    const { data: sendRow } = await admin.from("campaign_sends")
-      .select("idempotency_key")
-      .eq("owner_user_id", ownerId)
-      .eq("campaign_id", campaign.id)
-      .eq("recipient_id", recipient.id)
-      .maybeSingle();
-    const claimKey = (sendRow as { idempotency_key?: string | null } | null)?.idempotency_key;
-    if (claimKey) payload = { ...payload, idempotencyKey: claimKey };
-  } catch {
-    // The provisional key is still unique per attempt; dedupe stays safe.
-  }
-
-  const response = await dispatchBrandedEmail(payload, {});
-  return { ...response, terminal: false };
+  const response = await dispatchBrandedEmail(prepared.payload, { admin });
+  return { ...response, terminal: response.ambiguous };
 }
 
-export async function recordDeliveryFromWebhook(db: SupabaseClient, input: { provider: "resend" | "twilio"; providerMessageId: string | null; eventId: string; eventType: string; receivedAt: string; providerStatus: string | null }) {
+export async function recordDeliveryFromWebhook(db: SupabaseClient, input: { provider: "resend" | "twilio"; providerMessageId: string | null; eventId: string; eventType: string; receivedAt: string; providerStatus: string | null; sourceKind?: "campaign" | "flow"; sourceId?: string }) {
+  if (input.provider === "resend") {
+    if (!input.providerMessageId) throw new Error("webhook_message_id_missing");
+    const result = await db.rpc("record_marketing_email_webhook", {
+      p_event: input.eventId, p_message: input.providerMessageId, p_type: input.eventType,
+      p_status: input.providerStatus, p_received: input.receivedAt,
+      p_source: input.sourceId ?? null, p_kind: input.sourceKind ?? null,
+    });
+    if (result.error || result.data !== true) throw new Error("webhook_reconciliation_pending");
+    return;
+  }
   if (!input.providerMessageId) return;
 
   // 1) Campaign sends (0018 lifecycle).
@@ -313,26 +318,7 @@ export async function recordDeliveryFromWebhook(db: SupabaseClient, input: { pro
     return;
   }
 
-  // 2) Lifecycle flow sends (0040). One webhook route serves both: Voom has a
-  //    single email provider and a single delivery-event intake.
-  const runResult = await db.from("voom_email_flow_step_runs")
-    .select("id,owner_user_id")
-    .eq("provider", "resend")
-    .eq("provider_message_id", input.providerMessageId)
-    .maybeSingle();
-
-  if (runResult.error || !runResult.data) return;
-  if (input.provider !== "resend") return;
-
-  await db.rpc("record_email_flow_delivery_event", {
-    p_owner_user_id: runResult.data.owner_user_id,
-    p_send_id: runResult.data.id,
-    p_provider: "resend",
-    p_event_id: input.eventId,
-    p_event_type: input.eventType,
-    p_received_at: input.receivedAt,
-    p_provider_status: input.providerStatus,
-  });
+  // Historical SMS events never enter the active Resend/sequence path.
 }
 
 const SUPPRESSION_EVENTS: Record<string, "bounced" | "complained"> = {
@@ -401,6 +387,7 @@ function fallbackDelivery(campaign: CampaignRecord, provider: CampaignProviderAv
 }
 
 function buildDeliveryNote(campaign: CampaignRecord, provider: CampaignProviderAvailability, send: CampaignSendRecord | null, audience: AudienceEligibilityPreview | null = null, sendsSummary: CampaignSendSummary | null = null) {
+  if (send?.last_error_code === "provider_outcome_ambiguous") return "Delivery is uncertain. Do not resend: provider reconciliation is required before any further submission for this recipient.";
   if (campaign.status !== "approved") return "Approve the campaign before sending anything externally.";
   if (!provider.configured) return `${provider.label} is not configured on the server yet, so Voom cannot send this campaign.`;
 

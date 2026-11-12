@@ -63,11 +63,16 @@ function ContactEditorBody({
   const [phone, setPhone] = useState(contact?.phone ?? "");
   const [tagsText, setTagsText] = useState((contact?.tags ?? []).join(", "));
   const [emailConsent, setEmailConsent] = useState<Consent>(contact?.email_status ?? "default");
+  const [consentAttested, setConsentAttested] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function submit() {
     setError(null);
+    if (emailConsent === "subscribed" && (!isEdit || !contact?.email_consent_at || emailConsent !== contact.email_status) && !consentAttested) {
+      setError("Confirm that this person explicitly agreed to your marketing emails before marking Subscribed.");
+      return;
+    }
     if (!email.trim() && !phone.trim()) {
       setError("Add an email or a phone number.");
       return;
@@ -93,7 +98,7 @@ function ContactEditorBody({
           last_name: lastName.trim() || null,
           email: email.trim().toLowerCase() || null,
           phone: phone.trim() || null,
-          email_status: emailConsent === "default" ? undefined : emailConsent,
+          email_status: emailConsent === "default" || (emailConsent === contact.email_status && !consentAttested) ? undefined : emailConsent,
           tags,
         })
       : await createContactAction({
@@ -118,7 +123,7 @@ function ContactEditorBody({
     <ModalShell wide>
       <ModalHead
         title={isEdit ? "Edit contact" : "Add contact"}
-        sub="Voom never infers consent — defaults to Unknown unless you confirm. No email is ever sent from here."
+        sub="Choose Subscribed only if this person explicitly agreed to your marketing emails. Saving records your declaration and its time. Unknown contacts are never emailed. No email is sent from here."
         onClose={close}
       />
       <ModalBody>
@@ -163,6 +168,11 @@ function ContactEditorBody({
             onChange={setEmailConsent}
           />
         </div>
+        {emailConsent === "subscribed" && <label className="mt-3 flex items-start gap-2 text-xs text-text-2">
+          <input type="checkbox" checked={consentAttested} onChange={(event) => setConsentAttested(event.target.checked)} />
+          I confirm this person explicitly agreed to receive marketing emails from my business. Save records my declaration and its time; this is not proof of a double opt-in.
+        </label>}
+        {isEdit && contact && email.trim().toLowerCase() !== contact.email && <p className="mt-2 text-xs text-amber">Changing the email address resets consent to Unknown. Save the new address, then record consent for that address separately.</p>}
       </ModalBody>
       <ModalFoot>
         <Btn variant="ghost" onClick={close}>

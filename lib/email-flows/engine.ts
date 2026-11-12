@@ -184,7 +184,7 @@ async function enrollForFlow(
     // Consent is authoritative and fail-closed: only an explicit subscription
     // with a valid, unsuppressed address may enroll.
     const eligibility = flowContactEligibility(contact, suppressed);
-    if (!eligibility.eligible) {
+    if (!eligibility.eligible || !contact.email_consent_at || !contact.email_consent_source) {
       summary.ineligible += 1;
       continue;
     }
@@ -234,6 +234,8 @@ async function enrollForFlow(
 }
 
 interface CandidateContact {
+  email_consent_at?: string | null;
+  email_consent_source?: string | null;
   id: string;
   email: string | null;
   email_status: string | null;
@@ -261,13 +263,15 @@ async function discoverCandidates(
         id: contact.id,
         email: contact.email,
         email_status: contact.email_status,
+        email_consent_at: contact.email_consent_at,
+        email_consent_source: contact.email_consent_source,
         first_name: contact.first_name,
         created_at: contact.created_at,
       }));
   }
 
   const { data } = await admin.from("contacts")
-    .select("id,email,email_status,first_name,created_at")
+    .select("id,email,email_status,email_consent_at,email_consent_source,first_name,created_at")
     .eq("owner_id", ownerId)
     .eq("email_status", "subscribed")
     .not("email", "is", null)
@@ -369,7 +373,7 @@ async function executeRun(
   }
 
   const { data: contactRow, error: contactError } = await admin.from("contacts")
-    .select("id,email,email_status,first_name")
+    .select("id,email,email_status,email_consent_at,email_consent_source,first_name")
     .eq("owner_id", ownerId)
     .eq("id", enrollment.contact_id)
     .maybeSingle();
@@ -389,6 +393,12 @@ async function executeRun(
       p_kind: "enrollment_stopped",
     });
     summary.stopped += 1;
+    summary.skipped += 1;
+    return;
+  }
+  if (!contact.email_consent_at || !contact.email_consent_source) {
+    // Preserve existing enrollment/history, but don't submit or consume retries
+    // while a legacy subscription still needs an explicit owner attestation.
     summary.skipped += 1;
     return;
   }
@@ -491,6 +501,7 @@ async function executeRun(
     ctaUrl: snapshot.ctaUrl ?? null,
     flowType: flow.flow_type,
     idempotencyKey: providerIdempotencyKey,
+    sourceId: claimed.id,
     firstName: contact.first_name,
   };
   const prepared = await prepareFlowEmail(sendInput, options.send ?? {});
@@ -513,11 +524,11 @@ async function executeRun(
       };
     } else {
       summary.submitted += 1;
-      provider = await dispatchPreparedFlowEmail(prepared.payload, options.send ?? {});
+      provider = await dispatchPreparedFlowEmail(prepared.payload, { ...options.send, admin });
     }
   }
 
-  const { data: recordedRow } = await admin.rpc("record_email_flow_step_provider_result", {
+  const { data: recordedRow, error: recordedError } = await admin.rpc("record_email_flow_step_provider_result", {
     p_owner_user_id: ownerId,
     p_run_id: claimed.id,
     p_outcome: provider.ok ? "accepted" : "failed",
@@ -526,6 +537,13 @@ async function executeRun(
     p_error_code: provider.errorCode,
     p_error_message: provider.errorMessage,
   });
+  if (recordedError || !(recordedRow as { id?: string } | null)?.id) {
+    // The independent submission receipt prevents a second provider POST.
+    // Do not advance this sequence or report a successful send on a failed
+    // persistence operation. Reconcile the receipt before resuming the run.
+    summary.failed += 1;
+    return;
+  }
 
   if (!provider.ok) {
     summary.failed += 1;
@@ -795,7 +813,7 @@ async function recipientStillEligible(
       .eq("id", flowId)
       .maybeSingle(),
     admin.from("contacts")
-      .select("id,email,email_status")
+      .select("id,email,email_status,email_consent_at,email_consent_source")
       .eq("owner_id", ownerId)
       .eq("id", contactId)
       .maybeSingle(),
@@ -806,7 +824,7 @@ async function recipientStillEligible(
   if (currentFlow?.status !== "active" || currentFlow.activated_by !== "user" || !currentContact) return false;
   try {
     const suppressed = await loadSuppressedEmails(admin, ownerId, currentContact.email ? [currentContact.email] : []);
-    return flowContactEligibility(currentContact, suppressed).eligible;
+    return Boolean(currentContact.email_consent_at && currentContact.email_consent_source) && flowContactEligibility(currentContact, suppressed).eligible;
   } catch {
     return false;
   }

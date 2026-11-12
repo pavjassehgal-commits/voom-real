@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 
 type State =
+  | { phase: "confirm" }
   | { phase: "working" }
   | { phase: "done"; message: string; businessName: string | null }
   | { phase: "failed"; message: string };
@@ -38,23 +39,12 @@ async function requestUnsubscribe(token: string): Promise<Outcome> {
  * Voom for an address Voom actually emailed.
  */
 export default function UnsubscribePage() {
-  const token = useMemo(
-    () => (typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("token") ?? ""),
-    [],
-  );
-  const [state, setState] = useState<State>({ phase: "working" });
-
-  useEffect(() => {
-    let cancelled = false;
-    void requestUnsubscribe(token).then((outcome) => {
-      if (!cancelled) setState(outcome);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
+  const [state, setState] = useState<State>({ phase: "confirm" });
 
   async function retry() {
+    // GET/link scanning never changes a subscription. Read the token only
+    // after an explicit click; RFC8058 clients use the authenticated POST URL.
+    const token = new URLSearchParams(window.location.search).get("token") ?? "";
     setState({ phase: "working" });
     setState(await requestUnsubscribe(token));
   }
@@ -63,6 +53,10 @@ export default function UnsubscribePage() {
     <main className="flex min-h-full flex-1 items-center justify-center p-6">
       <div className="w-full max-w-md rounded-2xl border border-line bg-surface p-8 shadow-sm" role="status" aria-live="polite">
         <h1 className="text-xl font-semibold text-text">Email preferences</h1>
+        {state.phase === "confirm" && <>
+          <p className="mt-4 text-sm text-text">Stop receiving marketing email from this business?</p>
+          <button type="button" onClick={() => void retry()} className="mt-5 rounded-lg border border-line px-4 py-2 text-sm font-medium text-text hover:bg-hover">Unsubscribe</button>
+        </>}
         {state.phase === "working" && <p className="mt-4 text-sm text-muted">We’re confirming your unsubscribe…</p>}
         {state.phase === "done" && (
           <>

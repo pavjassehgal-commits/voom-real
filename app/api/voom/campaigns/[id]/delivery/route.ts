@@ -93,13 +93,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     // Unsubscribes are durable: a real opt-out (working link click, provider
     // bounce or complaint) blocks this address from every future marketing
     // send, audience or single recipient.
-    const { data: suppressionRows } = await db.from("voom_email_suppressions")
+    const { data: suppressionRows, error: suppressionError } = await db.from("voom_email_suppressions")
       .select("email")
       .eq("owner_id", user.id)
       .eq("email", contact)
       .limit(1);
+    if (suppressionError) return Response.json({ error: "Suppression checks are unavailable. Nothing was sent." }, { status: 503 });
     if ((suppressionRows ?? []).length > 0) {
       return Response.json({ error: "That recipient has opted out of marketing email and cannot be messaged." }, { status: 409 });
+    }
+    const { data: consent, error: consentError } = await db.from("contacts")
+      .select("email_status,email_consent_at,email_consent_source")
+      .eq("owner_id", user.id).eq("email", contact).maybeSingle();
+    if (consentError) return Response.json({ error: "Contact consent could not be checked. Nothing was sent." }, { status: 503 });
+    if (consent?.email_status !== "subscribed" || !consent.email_consent_at || !consent.email_consent_source) {
+      return Response.json({ error: "Add this recipient to Contacts and explicitly record their marketing-email subscription before sending." }, { status: 409 });
     }
 
     const delivery = await readCampaignDelivery(db, user.id, campaign);
@@ -129,8 +137,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       p_campaign_id: id,
       p_contact: contact,
       p_contact_name: parsed.data.contactName || null,
-      p_consent_at: new Date().toISOString(),
-      p_consent_source: "voom-campaign-manual-send",
+      p_consent_at: consent.email_consent_at,
+      p_consent_source: consent.email_consent_source,
     }).single();
 
     if (recipientResult.error || !recipientResult.data) {

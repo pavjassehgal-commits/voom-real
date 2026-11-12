@@ -23,6 +23,8 @@ import {
 } from "@/lib/email/branded/dispatch";
 
 export interface FlowSendDeps {
+  admin?: SupabaseClient;
+  txt?: BrandedSendDeps["txt"];
   /** Test seam. Production uses the configured Resend client. */
   client?: BrandedSendDeps["client"];
   /**
@@ -45,6 +47,7 @@ export interface FlowSendInput {
    * timeout-and-retry, the provider would not send the same message twice.
    */
   idempotencyKey: string;
+  sourceId?: string;
   /** Contact first name for the `{firstName}` token, or null. */
   firstName?: string | null;
   /** Stored step copy (frozen on the run's content snapshot at claim time). */
@@ -99,7 +102,7 @@ export function personalizeFlowBody(body: string, firstName: string | null | und
 export async function sendFlowEmail(input: FlowSendInput, deps: FlowSendDeps = {}): Promise<FlowSendResult> {
   const prepared = await prepareFlowEmail(input, deps);
   if (!prepared.ok) return prepared.result;
-  return dispatchPreparedFlowEmail(prepared.payload, deps);
+  return dispatchPreparedFlowEmail(prepared.payload, { ...deps, admin: input.admin });
 }
 
 /** Complete every renderer/sender/quality check before a provider call. */
@@ -111,6 +114,8 @@ export async function prepareFlowEmail(input: FlowSendInput, deps: FlowSendDeps 
         ownerId: input.ownerId,
         to: input.to,
         idempotencyKey: input.idempotencyKey,
+        sourceKind: "flow",
+        sourceId: input.sourceId,
         subject: input.subject,
         body: input.body,
         previewText: input.previewText ?? null,
@@ -119,7 +124,7 @@ export async function prepareFlowEmail(input: FlowSendInput, deps: FlowSendDeps 
         flowType: input.flowType ?? null,
         firstName: input.firstName ?? null,
       },
-      { client: deps.client ?? null, providerDomains: deps.providerDomains ?? null },
+      { client: deps.client ?? null, providerDomains: deps.providerDomains ?? null, txt: deps.txt },
     );
     if (prepared.ok) return prepared;
     return {
@@ -156,7 +161,7 @@ export async function dispatchPreparedFlowEmail(
 ): Promise<FlowSendResult> {
   let response;
   try {
-    response = await dispatchBrandedEmail(payload, { client: deps.client ?? null });
+    response = await dispatchBrandedEmail(payload, { client: deps.client ?? null, admin: deps.admin });
   } catch {
     return {
       ok: false,

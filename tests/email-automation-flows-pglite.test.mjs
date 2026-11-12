@@ -56,6 +56,9 @@ let db;
 async function getDb() {
   if (!db) {
     ({ db } = await createSupabaseLite());
+    // This suite exercises already-activated email operations. Production
+    // activation remains a separate operator decision; new migration is OFF.
+    await db.exec("update public.voom_email_sending_policy set enabled=true");
     await db.exec(`
       insert into auth.users (id, email) values
         ('${OWNER_A}', 'owner.a@example.com'),
@@ -829,7 +832,9 @@ test("7. migrations 0040–0044 remain additive and owner-scoped", async () => {
   // (0051); all must leave every email flow table, function and cron path
   // exactly as 0040–0044 shipped them.
   assert.ok(files.includes("0044_email_flow_durable_claims.sql"), "0044 is still applied");
-  const afterEmailAutomation = files.filter((name) => name > "0044_email_flow_durable_claims.sql");
+  // Pin the original freeze window. Later reviewed migrations (0062 onward,
+  // including the separate commercial safety gate) have their own tests.
+  const afterEmailAutomation = files.filter((name) => name > "0044_email_flow_durable_claims.sql" && name < "0062");
   assert.deepEqual(afterEmailAutomation, ["0045_campaigns_v3_unified_channels.sql", "0046_multi_social_core.sql", "0047_youtube_provider.sql", "0048_youtube_oauth_state_acl.sql", "0049_tiktok_provider.sql", "0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql"],
     "0045 Campaigns v3, 0046 Multi-Social Core, 0047 YouTube provider, 0048 OAuth ACL fix, 0049 TikTok provider, 0050 write lockdown, 0051 rate limits, 0055-0058 Trend Intelligence, 0059 automation pause/resume and 0061 AI usage are the only migrations after the Email Automation freeze");
   // Executed statements only: 0047 documents its rollback plan in comments
