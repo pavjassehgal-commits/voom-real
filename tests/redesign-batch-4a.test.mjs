@@ -40,7 +40,7 @@ test("auth screens offer no control Voom cannot honour", async () => {
   assert.match(all, /<GoogleButton \/>/, "Google sign-in is offered on both forms");
   assert.doesNotMatch(all, /Apple/i, "no Apple sign-in exists");
   assert.match(all, /href="\/forgot-password"/, "the password reset flow is linked from log in");
-  assert.doesNotMatch(all, /Keep me logged in|Resend link/i, "no session toggle or resend flow exists");
+  assert.doesNotMatch(all, /Keep me logged in/i, "no unsupported session toggle exists");
   assert.doesNotMatch(all, /10 channels|Facebook/i);
   assert.doesNotMatch(all, /createAdminClient|service_role/i);
 });

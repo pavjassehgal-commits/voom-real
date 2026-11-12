@@ -9,5 +9,5 @@ export default async function SignupPage() {
     redirect("/app");
   }
 
-  return <SignupForm />;
+  return <SignupForm googleEnabled={process.env.VOOM_GOOGLE_AUTH_ENABLED === "true"} />;
 }

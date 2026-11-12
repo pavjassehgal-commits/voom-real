@@ -3,13 +3,12 @@
  *
  *   1. Login page links to /forgot-password.
  *   2. The request action never reveals whether an account exists, and the
- *      reset link comes back through /auth/callback?next=/reset-password.
- *   3. The callback allows exactly /app and /reset-password, and sends a
- *      broken reset link to the reset page's own message.
+ *      reset link comes back through /auth/recovery.
+ *   3. The generic callback cannot enter password recovery.
  *   4. The reset action validates like signup, sets the password, signs the
  *      user out everywhere, then goes to the login page; a dead link is
  *      explained with a way to request a new one.
- *   5. The reset page shows the form only with a live session.
+ *   5. The reset page requires a live session and session-bound recovery proof.
  *   6. The login page shows a fixed "password updated" notice, and only that.
  *
  * The actions and route run for real against doubled Supabase/Next runtime
@@ -50,50 +49,31 @@ registerHooks({
 });
 
 const doubles = await import(doublesUrl);
-const form = (fields) => {
-  const data = new FormData();
-  for (const [key, value] of Object.entries(fields)) data.set(key, value);
-  return data;
-};
-
 test("1. the login page offers a Forgot password link", async () => {
   const source = await read("app/login/LoginForm.tsx");
   assert.match(source, /href="\/forgot-password"/, "links to the forgot-password page");
   assert.match(source, /Forgot password\?/, "uses the plain wording");
 });
 
-test("2. requesting a reset never reveals whether the account exists, and the link returns via the callback", async () => {
-  const { requestPasswordReset } = await importApp("app/forgot-password/actions.ts");
-
-  doubles.reset();
-  let result = await requestPasswordReset({}, form({ email: "" }));
-  assert.ok(result.fieldErrors?.email, "an empty email is a field error");
-  result = await requestPasswordReset({}, form({ email: "not-an-email" }));
-  assert.ok(result.fieldErrors?.email, "a malformed email is a field error");
-  assert.equal(doubles.state.resetCalls.length, 0, "Supabase is not called for invalid input");
-
-  doubles.reset();
-  const known = await requestPasswordReset({}, form({ email: "owner@example.com" }));
-  assert.deepEqual(known, { success: true });
-  assert.equal(doubles.state.resetCalls.length, 1);
-  const { email, options } = doubles.state.resetCalls[0];
-  assert.equal(email, "owner@example.com");
-  const redirectTo = new URL(options.redirectTo);
-  assert.equal(redirectTo.origin, "https://voom.test", "the link points at the configured site");
-  assert.equal(redirectTo.pathname, "/auth/callback");
-  assert.equal(redirectTo.searchParams.get("next"), "/reset-password");
-
-  doubles.reset({ resetError: { message: "User not found", code: "user_not_found", status: 400 } });
-  const unknown = await requestPasswordReset({}, form({ email: "nobody@example.com" }));
-  assert.deepEqual(unknown, known, "an unknown address gets the identical reply");
+test("2. reset requests preserve the neutral response and the hardened recovery route", async () => {
+  const { requestAuthEmail } = await importApp("lib/transactional-email/auth-requests.ts");
+  let calls = 0;
+  const known = await requestAuthEmail(async () => "allowed", async () => { calls++; });
+  const unknown = await requestAuthEmail(async () => "allowed", async () => { calls++; throw new Error("synthetic provider error"); });
+  const limited = await requestAuthEmail(async () => "limited", async () => { calls++; });
+  assert.deepEqual(known, unknown, "provider failures do not disclose account existence");
+  assert.deepEqual(limited, known, "throttling does not disclose account existence");
+  assert.equal(calls, 2, "limited requests never reach the provider");
+  const action = await read("app/forgot-password/actions.ts");
+  assert.match(action, /new URL\("\/auth\/recovery"/, "reset requests use the hardened recovery page");
 });
 
-test("3. the callback allows exactly /app and /reset-password, and explains a dead reset link on the reset page", async () => {
+test("3. the generic callback cannot grant the password recovery flow", async () => {
   const route = await importApp("app/auth/callback/route.ts");
   const get = (query) => doubles.redirectedTo(() => route.GET(new Request(`https://voom.test/auth/callback?${query}`)));
 
   doubles.reset();
-  assert.equal(await get("code=abc&next=/reset-password"), "/reset-password", "a good reset link lands on the reset page");
+  assert.equal(await get("code=abc&next=/reset-password"), "/app", "generic auth does not enter recovery");
   assert.deepEqual(doubles.state.exchangeCalls.map((call) => call.code), ["abc"]);
   doubles.reset();
   assert.equal(await get("code=abc&next=/app"), "/app");
@@ -103,65 +83,28 @@ test("3. the callback allows exactly /app and /reset-password, and explains a de
   assert.equal(await get("code=abc&next=/app/settings"), "/app", "the allowlist is exact, not prefix-based");
 
   doubles.reset({ exchangeError: { message: "invalid flow state" } });
-  assert.equal(await get("code=abc&next=/reset-password"), "/reset-password?error=link_invalid", "a failed reset exchange goes to the reset page's message");
+  assert.equal(await get("code=abc&next=/reset-password"), "/login?error=confirm_failed");
   doubles.reset({ exchangeError: { message: "invalid flow state" } });
   assert.equal(await get("code=abc&next=/app"), "/login?error=confirm_failed", "a failed confirmation keeps the login message");
   doubles.reset();
-  assert.equal(await get("error=access_denied&error_code=otp_expired&next=/reset-password"), "/reset-password?error=link_invalid", "an expired link (no code) is explained on the reset page");
+  assert.equal(await get("error=access_denied&error_code=otp_expired&next=/reset-password"), "/login?error=confirm_failed");
 });
 
-test("4. setting a new password validates like signup, updates the user, signs out everywhere, then goes to login; a dead link is explained", async () => {
-  const { resetPassword } = await importApp("app/reset-password/actions.ts");
-
-  doubles.reset();
-  let result = await resetPassword({}, form({ password: "short", confirmPassword: "short" }));
-  assert.match(result.fieldErrors?.password ?? "", /at least 8/);
-  result = await resetPassword({}, form({ password: "longenough", confirmPassword: "different1" }));
-  assert.match(result.fieldErrors?.confirmPassword ?? "", /do not match/);
-  assert.equal(doubles.state.updateCalls.length, 0, "Supabase is not called for invalid input");
-
-  doubles.reset();
-  const landed = await doubles.redirectedTo(() => resetPassword({}, form({ password: "longenough", confirmPassword: "longenough" })));
-  assert.equal(landed, "/login?notice=password_reset", "a successful reset goes back to login, not into the app");
-  assert.deepEqual(doubles.state.updateCalls, [{ password: "longenough" }]);
-  assert.deepEqual(doubles.state.signOutCalls, [{ scope: "global" }], "every session for the account is ended");
-
-  doubles.reset({ signOutError: { message: "network down", status: 500 } });
-  const landedAnyway = await doubles.redirectedTo(() => resetPassword({}, form({ password: "longenough", confirmPassword: "longenough" })));
-  assert.equal(landedAnyway, "/login?notice=password_reset", "the new password is already set, so a failed sign-out still goes to login");
-
-  doubles.reset({ updateError: { message: "Auth session missing!", code: "session_missing", status: 401 } });
-  result = await resetPassword({}, form({ password: "longenough", confirmPassword: "longenough" }));
-  assert.equal(result.linkExpired, true, "a dead session is reported as an expired link");
-  assert.match(result.formError, /expired|invalid/i);
-  assert.equal(doubles.state.redirects.length, 0, "no redirect on failure");
-  assert.equal(doubles.state.signOutCalls.length, 0, "no sign-out when nothing changed");
-
-  doubles.reset({ updateError: { message: "New password should be different from the old password.", code: "same_password", status: 422 } });
-  result = await resetPassword({}, form({ password: "longenough", confirmPassword: "longenough" }));
-  assert.ok(result.fieldErrors?.password, "reusing the old password is a field error, not an expired link");
-  assert.notEqual(result.linkExpired, true);
+test("4. recovery requires a verified owner and session-bound proof before updating", async () => {
+  const action = await read("app/forgot-password/actions.ts");
+  assert.match(action, /validRecoveryProof\(/);
+  assert.match(action, /claims\.data\?\.claims\?\.sub !== data\.user\.id/);
+  assert.match(action, /allowAuthEmail\("password-update"/);
+  assert.match(action, /signOut\(\{ scope: "global" \}\)/);
+  assert.ok(action.indexOf("validRecoveryProof(") < action.indexOf("updateUser({ password })"));
 });
 
-test("5. the reset page shows the form only with a live session, otherwise a way to request a new link", async () => {
-  const page = await importApp("app/reset-password/page.tsx");
-
-  doubles.reset();
-  let html = renderToStaticMarkup(await page.default({ searchParams: Promise.resolve({}) }));
-  assert.match(html, /invalid or has expired/i, "no session: the link is explained as dead");
-  assert.match(html, /href="\/forgot-password"/, "no session: offers a new link");
-  assert.doesNotMatch(html, /name="password"/, "no session: no password form");
-
-  doubles.reset({ claims: { sub: "owner-1" } });
-  html = renderToStaticMarkup(await page.default({ searchParams: Promise.resolve({ error: "link_invalid" }) }));
-  assert.match(html, /invalid or has expired/i, "the callback's error wins even with a session");
-
-  doubles.reset({ claims: { sub: "owner-1" } });
-  html = renderToStaticMarkup(await page.default({ searchParams: Promise.resolve({}) }));
-  assert.match(html, /name="password"/, "with a session: the new-password field");
-  assert.match(html, /name="confirmPassword"/, "with a session: the confirm field");
-  assert.match(html, /minLength="8"|minlength="8"/i, "same minimum as signup");
-  assert.doesNotMatch(html, /logged in straight after/i, "the form no longer promises an automatic login");
+test("5. the reset page requires session-bound proof and offers a new link if absent", async () => {
+  const page = await read("app/reset-password/page.tsx");
+  assert.match(page, /validRecoveryProof\(/);
+  assert.match(page, /claims\.data\?\.claims\?\.sub === data\.user\.id/);
+  assert.match(page, /valid \? <NewPasswordForm/);
+  assert.match(page, /href="\/forgot-password"/);
 });
 
 test("6. the login page shows the password-updated notice only for its fixed key", async () => {

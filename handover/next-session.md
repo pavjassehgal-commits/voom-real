@@ -203,6 +203,16 @@ then Stripe billing.
 
 ---
 
+## Combined authentication release candidate — local only
+
+`VOOM_GOOGLE_AUTH_ENABLED` defaults to off and blocks the VOOM Google action;
+it does not block direct calls to Supabase. Keep the Supabase Google provider
+disabled until the legacy-account linking risk is resolved. Earlier legacy
+reconciliation experiments are preserved separately in the local bundle and
+are not part of this release candidate. Check Supabase Support's answer on
+hosted provider isolation and test it before any Google activation decision.
+See `docs/combined-auth-release-readiness.md` for remaining release gates.
+
 ## 6. Keeping up with `main`: every 2 or 3 days (Phase D of the merge plan)
 
 The 2026-10-31 merge took a full session because 20 days had passed. The habit that prevents a

@@ -18,6 +18,10 @@ import { resolveSiteUrl } from "@/utils/site-url";
  * so switching Supabase projects needs no code change.
  */
 export async function continueWithGoogle(): Promise<void> {
+  // UI visibility alone is not an authorization boundary.
+  if (process.env.VOOM_GOOGLE_AUTH_ENABLED !== "true") {
+    redirect("/login?error=google_unavailable");
+  }
   const origin = (await headers()).get("origin");
   const redirectTo = new URL("/auth/callback", resolveSiteUrl(origin));
   redirectTo.searchParams.set("next", "/app");

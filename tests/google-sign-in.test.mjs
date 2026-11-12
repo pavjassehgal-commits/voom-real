@@ -51,6 +51,12 @@ const doubles = await import(doublesUrl);
 test("1. the Google action asks Supabase for a Google URL returning to our callback, then goes there; a failure goes to the login message", async () => {
   const { continueWithGoogle } = await importApp("app/auth/google/actions.ts");
 
+  delete process.env.VOOM_GOOGLE_AUTH_ENABLED;
+  doubles.reset();
+  assert.equal(await doubles.redirectedTo(() => continueWithGoogle()), "/login?error=google_unavailable");
+  assert.equal(doubles.state.oauthCalls.length, 0, "disabled direct action must not contact Supabase");
+  process.env.VOOM_GOOGLE_AUTH_ENABLED = "true";
+
   doubles.reset();
   const landed = await doubles.redirectedTo(() => continueWithGoogle());
   assert.equal(doubles.state.oauthCalls.length, 1, "exactly one sign-in request");
@@ -77,14 +83,21 @@ test("2. login and signup both offer Continue with Google through the one action
     assert.match(source, /GoogleButton/, `${file} renders the Google button`);
   }
 
+  delete process.env.VOOM_GOOGLE_AUTH_ENABLED;
   doubles.reset();
   const login = await importApp("app/login/page.tsx");
   let html = renderToStaticMarkup(await login.default({ searchParams: Promise.resolve({}) }));
+  assert.doesNotMatch(html, /Continue with Google/, "disabled by default on login");
+  const signup = await importApp("app/signup/page.tsx");
+  html = renderToStaticMarkup(await signup.default());
+  assert.doesNotMatch(html, /Continue with Google/, "disabled by default on signup");
+  process.env.VOOM_GOOGLE_AUTH_ENABLED = "true";
+  doubles.reset();
+  html = renderToStaticMarkup(await login.default({ searchParams: Promise.resolve({}) }));
   assert.match(html, /Continue with Google/, "login page shows the button");
   assert.match(html, /name="email"/, "email login is still there");
 
   doubles.reset();
-  const signup = await importApp("app/signup/page.tsx");
   html = renderToStaticMarkup(await signup.default());
   assert.match(html, /Continue with Google/, "signup page shows the button");
   assert.match(html, /name="confirmPassword"/, "email signup is still there");

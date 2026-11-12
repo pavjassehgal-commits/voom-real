@@ -376,8 +376,22 @@ decision reverses an earlier one, add a new entry and mark the old one "Replaced
 - Consequences: Encoded in `AGENTS.md`.
 - Status: Active
 
+## 2026-11-12: Legacy authentication reconciliation draft
+- Decision: Prepare private tracking separately from account ownership verification and Google linking enforcement.
+- Why: Previously auto-confirmed email addresses do not prove ownership; server assertions and the current recovery proof alone are not sufficient evidence.
+- Consequences: Google login stays disabled until the full reconciliation and Auth-level release gate in `docs/legacy-auth-reconciliation.md` is satisfied. Migration 0076 is a local draft, not applied.
+- Status: Local draft; no hosted changes.
+
 ## Known state (updated 2026-10-16; original 2026-10-15 notes folded in)
 - The working folder is now a **real clone** of `github.com/pavjassehgal-commits/voom-real` (Gurnoor has access as `gurnoor-epay`), on his own branch `gurnoor-dev`, level with `main` at commit `8067316` (15 Oct 22:27). The earlier zip, which the audit used, matched `main` as of 13 Oct 16:13 (commit `b710063`), so the audit's baseline is precisely known.
 - What landed on `main` since that baseline (PRs #74–#79, ~4,800 lines in 62 files): TikTok audit-compliance work (a per-post consent sheet, server-side video-duration checks, fail-closed preview validation, a TikTok site-verification file) and email work (a cleaner email-sending layer, an email campaign results panel). **None of it touches auth, onboarding, navigation, the plan route or the two known bugs — the audit's findings and the plan order are unaffected.**
 - The repo is **actively developed by its owner** (6 PRs merged 13–15 Oct). Consequences: pull `main` into `gurnoor-dev` before every work session, and agree a division of work with the owner — they are investing in email (which this plan sidelines) and appear to be preparing the TikTok audit already, so check before filing a duplicate audit application.
 - Migrations 0052–0054 are still absent from `main` (0051 jumps to 0055); the fresh pull did not change that. Harmless for a fresh test database (the files present apply in order); which migrations production runs is still unconfirmed.
+# Local combined authentication release gate
+
+Keep Google login in the combined release but require the server-only
+`VOOM_GOOGLE_AUTH_ENABLED=true` setting for both its visible controls and server
+action. Default off; this application gate does not stop direct Supabase Auth
+requests. Keep the Google provider disabled until the legacy account-linking
+risk is resolved at the provider level. The dedicated `/auth/recovery` flow
+remains responsible for recovery proofs, rather than the generic callback.

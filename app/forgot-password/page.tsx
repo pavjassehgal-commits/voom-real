@@ -1,21 +1,4 @@
-import { redirect } from "next/navigation";
-import { createClient } from "@/utils/supabase/server";
-import Logo from "../components/Logo";
-import ForgotPasswordForm from "./ForgotPasswordForm";
-
-export default async function ForgotPasswordPage() {
-  const supabase = await createClient();
-  const { data } = await supabase.auth.getClaims();
-  if (data?.claims) {
-    redirect("/app");
-  }
-
-  return (
-    <div className="flex min-h-screen flex-col items-center justify-center px-6 py-12">
-      <div className="mb-8">
-        <Logo />
-      </div>
-      <ForgotPasswordForm />
-    </div>
-  );
-}
+import { AuthFrame } from "@/components/voom/auth/AuthFrame";
+import { AccountEmailForm } from "@/components/voom/auth/AccountEmailForm";
+export const metadata = { title: "Reset password | Voom", robots: { index: false, follow: false } };
+export default function ForgotPasswordPage() { return <AuthFrame title="Reset your password" subtitle="We’ll email a secure link if your account is eligible."><AccountEmailForm kind="reset"/></AuthFrame>; }

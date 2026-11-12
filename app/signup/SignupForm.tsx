@@ -33,12 +33,11 @@ function passwordStrength(password: string) {
 /**
  * Sign up through the existing `signup` server action (email, password and
  * the confirmation it validates), or "Continue with Google" (Supabase OAuth,
- * since 2026-10-20). The reference's Apple button and its "Resend link" are
- * not shown: Voom has neither flow. Agreement to the
+ * since 2026-10-20). Confirmation resend uses Supabase Auth. Agreement to the
  * Terms and Privacy Policy is stated plainly instead of a checkbox the
  * server would not record.
  */
-export default function SignupForm() {
+export default function SignupForm({ googleEnabled }: { googleEnabled: boolean }) {
   const [state, formAction] = useActionState(signup, initialState);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -50,8 +49,9 @@ export default function SignupForm() {
       <AuthFrame title="Check your email" badge={<span className="grid h-12 w-12 place-items-center rounded-full bg-[#e7f6f1] text-[var(--green)]"><Icon name="mail" size={20} /></span>}>
         <div role="status" className="mt-2 text-center">
           <p className="text-[13.5px] leading-relaxed text-text-2">
-            We sent a confirmation link to {email ? <b className="font-semibold text-text">{email}</b> : "your inbox"}. Click it to activate your account and sign in.
+            If this address needs confirmation, you’ll receive a link to activate your account. If you already have an account, log in or reset your password.
           </p>
+          <Link href="/verify-email" className="mt-4 block text-sm font-semibold text-[var(--brand)]">Request another confirmation link</Link>
           <p className="mt-5 rounded-[10px] border border-[var(--line)] bg-[var(--surface-2)] px-4 py-3 text-left text-[12.5px] leading-relaxed text-text-2">
             Didn&apos;t get it? Check spam, or make sure this is the email you signed up with.
           </p>
@@ -66,7 +66,7 @@ export default function SignupForm() {
 
   return (
     <AuthFrame title="Create your account" subtitle="Start on the Free plan · no credit card">
-      <GoogleButton />
+      {googleEnabled && <GoogleButton />}
 
       <form action={formAction} className="flex flex-col gap-4">
         {state.formError && <AuthAlert>{state.formError}</AuthAlert>}

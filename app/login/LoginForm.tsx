@@ -29,9 +29,11 @@ function SubmitButton() {
 export default function LoginForm({
   initialError,
   initialNotice,
+  googleEnabled,
 }: {
   initialError?: string;
   initialNotice?: string;
+  googleEnabled: boolean;
 }) {
   const [state, formAction] = useActionState(login, initialState);
   const [showPassword, setShowPassword] = useState(false);
@@ -41,7 +43,7 @@ export default function LoginForm({
 
   return (
     <>
-      <GoogleButton />
+      {googleEnabled && <GoogleButton />}
 
       <form action={formAction} className="flex flex-col gap-4">
         {notice && (

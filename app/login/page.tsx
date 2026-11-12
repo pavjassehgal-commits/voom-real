@@ -9,9 +9,11 @@ const SAFE_ERRORS: Record<string, string> = {
     "Your confirmation link is invalid or has expired. Please log in, or sign up again to receive a new link.",
   google_failed:
     "Google sign-in didn't complete. Please try again, or log in with your email.",
+  google_unavailable: "Google sign-in is currently unavailable. Please log in with your email.",
 };
 const SAFE_NOTICES: Record<string, string> = {
   password_reset: "Your password has been updated. Log in with your new password.",
+  password_updated: "Your password has been updated. Log in with your new password.",
 };
 
 export default async function LoginPage({
@@ -31,7 +33,7 @@ export default async function LoginPage({
 
   return (
     <AuthFrame title="Welcome back" subtitle="Log in to your Voom account">
-      <LoginForm initialError={initialError} initialNotice={initialNotice} />
+      <LoginForm initialError={initialError} initialNotice={initialNotice} googleEnabled={process.env.VOOM_GOOGLE_AUTH_ENABLED === "true"} />
     </AuthFrame>
   );
 }
