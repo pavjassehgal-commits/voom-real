@@ -14,6 +14,7 @@ const SAFE_ERRORS: Record<string, string> = {
 const SAFE_NOTICES: Record<string, string> = {
   password_reset: "Your password has been updated. Log in with your new password.",
   password_updated: "Your password has been updated. Log in with your new password.",
+  email_confirmed: "If you just confirmed your email, you’re all set. Log in to continue.",
 };
 
 export default async function LoginPage({

@@ -90,6 +90,31 @@ test("3. the generic callback cannot grant the password recovery flow", async ()
   assert.equal(await get("error=access_denied&error_code=otp_expired&next=/reset-password"), "/login?error=confirm_failed");
 });
 
+test("3b. a verified signup link that cannot sign this browser in says the email is confirmed, never that it is invalid", async () => {
+  const route = await importApp("app/auth/callback/route.ts");
+  const get = (query) => doubles.redirectedTo(() => route.GET(new Request(`https://voom.test/auth/callback?${query}`)));
+  for (const code of ["flow_state_expired", "pkce_code_verifier_not_found", "bad_code_verifier"]) {
+    doubles.reset({ exchangeError: { message: "synthetic", code } });
+    assert.equal(await get("code=abc&next=/app&flow=signup"), "/login?notice=email_confirmed", code);
+  }
+  // Without the signup marker (e.g. an OAuth return), or for any other failure, the generic error stays.
+  doubles.reset({ exchangeError: { message: "synthetic", code: "flow_state_expired" } });
+  assert.equal(await get("code=abc&next=/app"), "/login?error=confirm_failed");
+  for (const code of ["unexpected_failure", "flow_state_not_found"]) {
+    doubles.reset({ exchangeError: { message: "synthetic", code } });
+    assert.equal(await get("code=abc&next=/app&flow=signup"), "/login?error=confirm_failed", `${code} is not proof of a verified link`);
+  }
+  // A failed Supabase verification (no code) is never reported as confirmed.
+  doubles.reset();
+  assert.equal(await get("error=access_denied&error_code=otp_expired&next=/app&flow=signup"), "/login?error=confirm_failed");
+  // The notice is a fixed key that creates no session and grants nothing.
+  const login = await read("app/login/page.tsx");
+  assert.match(login, /email_confirmed: "If you just confirmed your email, you’re all set\. Log in to continue\."/);
+  assert.doesNotMatch(login, /email_confirmed: "[^"]*(invalid|expired)/i);
+  const signup = await read("app/signup/actions.ts");
+  assert.match(signup, /searchParams\.set\("flow", "signup"\)/);
+});
+
 test("4. recovery requires a verified owner and session-bound proof before updating", async () => {
   const action = await read("app/forgot-password/actions.ts");
   assert.match(action, /validRecoveryProof\(/);

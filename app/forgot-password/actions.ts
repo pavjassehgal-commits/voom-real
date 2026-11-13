@@ -28,6 +28,7 @@ export async function requestVerification(_state: AccountEmailState, form: FormD
         const supabase = await createClient();
         const callback = new URL("/auth/callback", resolveSiteUrl(null));
         callback.searchParams.set("next", "/app");
+        callback.searchParams.set("flow", "signup");
         await supabase.auth.resend({ type: "signup", email, options: { emailRedirectTo: callback.toString() } });
     });
 }

@@ -37,7 +37,7 @@ const form=entries=>{const f=new FormData();for(const [key,value] of Object.entr
 const redirectedTo=destination=>error=>error.destination===destination;
 test('real reset and resend actions use trusted configured callback, not caller Origin',async()=>{
   await actions.requestPasswordReset({},form({email:'owner@example.test'}));assert.equal(s.calls[0].name,'reset');assert.equal(s.calls[0].args[1].redirectTo,'https://staging.example.test/auth/recovery');
-  await actions.requestVerification({},form({email:'owner@example.test'}));assert.equal(s.calls[1].args[0].type,'signup');assert.equal(s.calls[1].args[0].options.emailRedirectTo,'https://staging.example.test/auth/callback?next=%2Fapp');
+  await actions.requestVerification({},form({email:'owner@example.test'}));assert.equal(s.calls[1].args[0].type,'signup');assert.equal(s.calls[1].args[0].options.emailRedirectTo,'https://staging.example.test/auth/callback?next=%2Fapp&flow=signup');
 });
 test('throttled real server action never invokes Supabase and does not reveal throttling',async()=>{
   s.allowed='limited';const state=await actions.requestPasswordReset({},form({email:'owner@example.test'}));assert.equal(state.success,true);assert.equal(s.calls.length,0);

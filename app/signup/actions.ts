@@ -45,6 +45,7 @@ export async function signup(
   const siteUrl = resolveSiteUrl(origin);
   const emailRedirectTo = new URL("/auth/callback", siteUrl);
   emailRedirectTo.searchParams.set("next", "/app");
+  emailRedirectTo.searchParams.set("flow", "signup");
 
   const supabase = await createClient();
 
