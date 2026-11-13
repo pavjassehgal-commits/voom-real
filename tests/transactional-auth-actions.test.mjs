@@ -106,6 +106,15 @@ test('failed password update shows no success and retains the recovery proof for
   const proof=recoveryProof('owner','session',process.env.VOOM_AUTH_EMAIL_SECRET);s.values.set('voom_password_recovery',proof);s.updateError={message:'private provider details'};
   const state=await actions.changeRecoveredPassword({},form({password:'synthetic-password-123',confirmPassword:'synthetic-password-123'}));assert.ok(state.error);assert.doesNotMatch(state.error,/private provider/);assert.equal(s.values.get('voom_password_recovery'),proof);assert.equal(s.calls.some(c=>c.name==='signout'),false);
 });
+test('a reused or weak new password gets a specific, fixed message and keeps the recovery proof',async()=>{
+  const proof=recoveryProof('owner','session',process.env.VOOM_AUTH_EMAIL_SECRET);
+  for(const [code,expected] of [['same_password',/different from your current one/],['weak_password',/too weak/],['unexpected_failure',/could not be updated/]]){
+    s.values.set('voom_password_recovery',proof);s.calls.length=0;s.updateError={message:'private provider details',code};
+    const state=await actions.changeRecoveredPassword({},form({password:'synthetic-password-123',confirmPassword:'synthetic-password-123'}));
+    assert.match(state.error,expected,code);assert.doesNotMatch(state.error,/private provider/);
+    assert.equal(s.values.get('voom_password_recovery'),proof,'the person can retry with the same link');assert.equal(s.calls.some(c=>c.name==='signout'),false);
+  }
+});
 test('signup, login and callback enqueue only authenticated identity, never form-supplied owner',async()=>{
   await assert.rejects(signup({},form({email:'owner@example.test',password:'synthetic-password-123',confirmPassword:'synthetic-password-123',ownerId:'attacker'})),redirectedTo('/app/onboarding'));
   await assert.rejects(login({},form({email:'owner@example.test',password:'synthetic-password-123',ownerId:'attacker'})),redirectedTo('/app'));

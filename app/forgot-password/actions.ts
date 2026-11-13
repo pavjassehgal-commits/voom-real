@@ -116,8 +116,16 @@ export async function changeRecoveredPassword(_state: AccountEmailState, form: F
         if (limit === "limited")
             return { error: "Please wait before trying again." };
         const result = await supabase.auth.updateUser({ password });
-        if (result.error)
+        if (result.error) {
+            // Only Supabase's fixed codes pick a message; provider text is never shown. The person
+            // has already proven control of the account, so "same password" reveals nothing new.
+            const code = (result.error as { code?: unknown }).code;
+            if (code === "same_password")
+                return { error: "Choose a password that is different from your current one." };
+            if (code === "weak_password")
+                return { error: "That password is too weak. Choose a stronger one." };
             return { error: "Your password could not be updated. Please try again or request a new link." };
+        }
         jar.set("voom_password_recovery", "", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/reset-password", maxAge: 0 });
         try {
             const signOut = await supabase.auth.signOut({ scope: "global" });
