@@ -3,7 +3,7 @@ import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import Link from "next/link";
 import { AUTH_INPUT, AUTH_SUBMIT, AuthAlert, AuthField } from "./AuthFrame";
-import { requestPasswordReset, requestVerification, continueRecovery, changeRecoveredPassword, type AccountEmailState } from "@/app/forgot-password/actions";
+import { requestPasswordReset, requestVerification, continueRecovery, changeRecoveredPassword, confirmEmail, type AccountEmailState } from "@/app/forgot-password/actions";
 function Submit({ children }: {
     children: React.ReactNode;
 }) { const { pending } = useFormStatus(); return <button className={AUTH_SUBMIT} disabled={pending}>{pending ? "Please wait…" : children}</button>; }
@@ -26,6 +26,16 @@ export function RecoveryConfirmation({ code, tokenHash, flowId }: {
     <input type="hidden" name="code" value={code}/><input type="hidden" name="token_hash" value={tokenHash}/><input type="hidden" name="sb_flow_id" value={flowId}/>
     <p className="text-sm leading-relaxed text-text-2">Continue to verify your reset link and choose a new password. Opening this page alone does not consume the link.</p><Submit>Continue securely</Submit>
     <Link href="/forgot-password" className="text-center text-sm text-[var(--brand)]">Request a new reset link</Link></form>;
+}
+export function EmailConfirmation({ tokenHash }: {
+    tokenHash: string;
+}) {
+    const [state, action] = useActionState(confirmEmail, {} as AccountEmailState);
+    return <form action={action} className="mt-6 flex flex-col gap-4">{state.error && <AuthAlert>{state.error}</AuthAlert>}
+    <input type="hidden" name="token_hash" value={tokenHash}/>
+    <p className="text-sm leading-relaxed text-text-2">Confirm your email address to finish setting up your Voom account. Opening this page alone does not use the link.</p><Submit>Confirm email</Submit>
+    <Link href="/login" className="text-center text-sm text-[var(--brand)]">Log in</Link>
+    <Link href="/verify-email" className="text-center text-sm text-[var(--brand)]">Request a new confirmation link</Link></form>;
 }
 export function NewPasswordForm() {
     const [state, action] = useActionState(changeRecoveredPassword, {} as AccountEmailState);

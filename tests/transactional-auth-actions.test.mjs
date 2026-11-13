@@ -112,3 +112,27 @@ test('signup, login and callback enqueue only authenticated identity, never form
   await assert.rejects(callback(new Request('https://staging.example.test/auth/callback?code=c&next=https://evil.test')),redirectedTo('/app'));
   assert.deepEqual(s.welcomes,['owner','owner','owner']);
 });
+test('email confirmation verifies a bounded token hash once, in any browser, and only then signs in',async()=>{
+  const failure=/invalid, expired or already used/;
+  for(const token_hash of ['','invalid','123456','a'.repeat(31),'pkce_','a'.repeat(257),'a'.repeat(56)+'\n','A'.repeat(56)]) assert.match((await actions.confirmEmail({},form({token_hash}))).error,failure);
+  assert.equal(s.calls.length,0,'malformed hashes never reach Supabase');
+  s.allowed='limited';assert.equal((await actions.confirmEmail({},form({token_hash:'a'.repeat(56)}))).error,'Please wait before trying again.');
+  s.allowed='unavailable';assert.match((await actions.confirmEmail({},form({token_hash:'a'.repeat(56)}))).error,/temporarily unavailable/);
+  assert.equal(s.calls.length,0,'throttled or unavailable confirmation never reaches Supabase');
+  s.allowed='allowed';s.verifyError={message:'otp expired'};assert.match((await actions.confirmEmail({},form({token_hash:'a'.repeat(56)}))).error,failure);assert.equal(s.welcomes.length,0);
+  s.verifyError=null;s.calls.length=0;
+  await assert.rejects(actions.confirmEmail({},form({token_hash:'pkce_'+'b'.repeat(56),owner_user_id:'attacker'})),redirectedTo('/app'));
+  assert.deepEqual(s.calls.map(c=>c.name),['verify']);assert.deepEqual(s.calls[0].args[0],{token_hash:'pkce_'+'b'.repeat(56),type:'email'},'no PKCE verifier or caller-chosen type');
+  assert.deepEqual(s.welcomes,['owner'],'welcome uses the verified identity only');
+});
+test('confirmation page is non-consuming and templates send token_hash links to the right app',async()=>{
+  const {readFile}=await import('node:fs/promises');const read=p=>readFile(new URL('../'+p,import.meta.url),'utf8');
+  assert.doesNotMatch(await read('app/auth/confirm/page.tsx'),/verifyOtp|exchangeCodeForSession|createClient/);
+  for(const [dir,app] of [['voom-auth','https://voom.today'],['voom-auth-staging','http://localhost:3000']]){
+    const confirmation=await read(`supabase/templates/${dir}/confirmation.html`),recovery=await read(`supabase/templates/${dir}/recovery.html`);
+    assert.ok(confirmation.includes(`href="${app}/auth/confirm?token_hash={{ .TokenHash }}"`),dir);
+    assert.ok(recovery.includes(`href="${app}/auth/recovery?token_hash={{ .TokenHash }}"`),dir);
+    for(const html of [confirmation,recovery]){assert.doesNotMatch(html,/ConfirmationURL|\{\{ \.Token \}\}|RedirectTo|sb_secret|service_role/);assert.equal((html.match(/\{\{/g)||[]).length,(html.match(/\{\{ \.TokenHash \}\}/g)||[]).length,'every placeholder is the TokenHash');assert.ok(html.includes('{{ .TokenHash }}'));}
+  }
+  assert.doesNotMatch(await read('supabase/templates/voom-auth/confirmation.html'),/localhost/);
+});

@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import { resolveSiteUrl } from "@/utils/site-url";
-import { allowAuthEmail } from "@/lib/transactional-email/server";
+import { allowAuthEmail, queueWelcome } from "@/lib/transactional-email/server";
 import { recoveryProof, validRecoveryProof } from "@/lib/transactional-email/core";
 import { requestAuthEmail, validAuthEmail } from "@/lib/transactional-email/auth-requests";
 export type AccountEmailState = {
@@ -31,6 +31,35 @@ export async function requestVerification(_state: AccountEmailState, form: FormD
         callback.searchParams.set("flow", "signup");
         await supabase.auth.resend({ type: "signup", email, options: { emailRedirectTo: callback.toString() } });
     });
+}
+// Supabase supplies a hex TokenHash, optionally prefixed with pkce_. Bound the
+// input without assuming a digest size; Auth validates the token and lifetime.
+function validTokenHash(hash: string) { return hash.length <= 256 && /^(?:pkce_)?[a-f0-9]{32,256}$/.test(hash); }
+export async function confirmEmail(_state: AccountEmailState, form: FormData): Promise<AccountEmailState> {
+    const failure = { error: "This confirmation link is invalid, expired or already used. If you already confirmed your email, log in; otherwise request a new link." };
+    const hash = String(form.get("token_hash") || "");
+    if (!validTokenHash(hash))
+        return failure;
+    const limit = await allowAuthEmail("confirm", hash);
+    if (limit === "unavailable") return { error: "This service is temporarily unavailable. Please try again later." };
+    if (limit === "limited") return { error: "Please wait before trying again." };
+    let userId: string;
+    try {
+        const supabase = await createClient();
+        // token_hash verification needs no PKCE verifier, so it works in any browser or device.
+        const result = await supabase.auth.verifyOtp({ token_hash: hash, type: "email" });
+        if (result.error)
+            return failure;
+        const { data, error } = await supabase.auth.getUser();
+        if (error || !data.user)
+            return failure;
+        userId = data.user.id;
+    }
+    catch {
+        return failure;
+    }
+    await queueWelcome(userId);
+    redirect("/app");
 }
 export async function continueRecovery(_state: AccountEmailState, form: FormData): Promise<AccountEmailState> {
     const failure = { error: "This reset link is invalid or expired. Request a new link." };

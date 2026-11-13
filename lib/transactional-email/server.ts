@@ -14,7 +14,7 @@ export async function queueWelcome(userId: string) {
         console.error("[transactional-email] welcome_queue_unavailable");
     }
 }
-export type AuthEmailAction = "request" | "recovery" | "password-update";
+export type AuthEmailAction = "request" | "recovery" | "confirm" | "password-update";
 export type AuthEmailLimit = "allowed" | "limited" | "unavailable";
 export async function allowAuthEmail(action: AuthEmailAction, subject: string): Promise<AuthEmailLimit> {
     const secret = process.env.VOOM_AUTH_EMAIL_SECRET;
