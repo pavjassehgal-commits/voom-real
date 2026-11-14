@@ -8,6 +8,7 @@ const {loadTodayScheduledItems}=await import('../lib/voom/today-schedule.ts');
 const {postApprovalMessage}=await import('../lib/post/approval-message.ts');
 
 const OWNER='owner-synthetic',OTHER='other-owner';
+const NOW = new Date('2026-11-01T08:00:00Z');
 function fixture(){
   const tables=new Map(),reads=[];
   for(const channel of ['instagram','tiktok','youtube','linkedin']){
@@ -16,7 +17,7 @@ function fixture(){
   tables.set('mara_drafts',[]);tables.set('post_draft_assets',[]);
   let failure=null;
   const db={from(table){const filters=[];const q={
-    select(){return q},eq(k,v){filters.push(r=>r[k]===v);reads.push([table,k,v]);return q},in(k,v){filters.push(r=>v.includes(r[k]));return q},gte(k,v){filters.push(r=>r[k]>=v);return q},lt(k,v){filters.push(r=>r[k]<v);return q},
+    select(){return q},order(){return q},limit(){return q},eq(k,v){filters.push(r=>r[k]===v);reads.push([table,k,v]);return q},in(k,v){filters.push(r=>v.includes(r[k]));return q},gte(k,v){filters.push(r=>r[k]>=v);return q},lt(k,v){filters.push(r=>r[k]<v);return q},
     result(){return {data:(tables.get(table)||[]).filter(r=>filters.every(f=>f(r))),error:failure===table?{code:'unavailable'}:null}},
     async maybeSingle(){const r=q.result();return {...r,data:r.data[0]||null}},then(ok,bad){return Promise.resolve(q.result()).then(ok,bad)},
   };return q}};
@@ -50,26 +51,26 @@ test('approval messages never promise publishing without a confirmed executable 
 test('Today counts persisted eligible jobs on all four channels, including standalone drafts, once only',async()=>{
   const f=fixture();for(const c of ['instagram','tiktok','youtube','linkedin'])f.seed(c);
   f.tables.get('instagram_publish_queue').push({...f.tables.get('instagram_publish_queue')[0]});
-  const items=await loadTodayScheduledItems(f.db,OWNER,'2026-11-01','Asia/Dubai');assert.equal(items.length,4);
+  const items=await loadTodayScheduledItems(f.db,OWNER,'2026-11-01','Asia/Dubai',NOW);assert.equal(items.length,4);
   assert.deepEqual(new Set(items.map(i=>i.channelLabel)),new Set(['Instagram','TikTok','YouTube','LinkedIn']));
   assert(f.reads.filter(([,key])=>key==='owner_user_id').every(([, ,value])=>value===OWNER));
 });
 test('approval, rejection, cancellation, rescheduling, stale versions, missing media and disconnect immediately change Today counts on a fresh read',async()=>{
   const f=fixture(),{draft,job}=f.seed('instagram');
-  const count=async()=> (await loadTodayScheduledItems(f.db,OWNER,'2026-11-01','Asia/Dubai')).length;
+  const count=async()=> (await loadTodayScheduledItems(f.db,OWNER,'2026-11-01','Asia/Dubai',NOW)).length;
   assert.equal(await count(),1);
   for(const s of ['waiting_for_media','cancelled','failed','published']){job.status=s;assert.equal(await count(),0,s)}job.status='scheduled';
   for(const s of ['draft','rejected']){draft.status=s;assert.equal(await count(),0,s)}draft.status='approved';
   draft.content_version++;assert.equal(await count(),0);draft.approved_content_version=draft.content_version;
-  job.scheduled_at='2026-11-02T14:30:00Z';const rescheduled=await loadTodayScheduledItems(f.db,OWNER,'2026-11-01','Asia/Dubai');assert.equal(rescheduled[0].localDate,'2026-11-02');
+  job.scheduled_at='2026-11-02T14:30:00Z';const rescheduled=await loadTodayScheduledItems(f.db,OWNER,'2026-11-01','Asia/Dubai',NOW);assert.equal(rescheduled[0].localDate,'2026-11-02');
   f.tables.set('post_draft_assets',[]);assert.equal(await count(),0);
 });
 test('cross-owner rows, wrong-channel drafts, missing permissions and read errors cannot inflate the count',async()=>{
   const f=fixture(),{draft,job}=f.seed('linkedin');
-  job.owner_user_id=OTHER;assert.equal((await loadTodayScheduledItems(f.db,OWNER,'2026-11-01','Asia/Dubai')).length,0);job.owner_user_id=OWNER;
-  draft.kind='youtube_video';assert.equal((await loadTodayScheduledItems(f.db,OWNER,'2026-11-01','Asia/Dubai')).length,0);draft.kind='linkedin_text';
-  f.tables.get('linkedin_connections')[0].scopes=[];assert.equal((await loadTodayScheduledItems(f.db,OWNER,'2026-11-01','Asia/Dubai')).length,0);
-  f.fail('linkedin_publish_queue');await assert.rejects(loadTodayScheduledItems(f.db,OWNER,'2026-11-01','Asia/Dubai'),/today_schedule_read_failed/);
+  job.owner_user_id=OTHER;assert.equal((await loadTodayScheduledItems(f.db,OWNER,'2026-11-01','Asia/Dubai',NOW)).length,0);job.owner_user_id=OWNER;
+  draft.kind='youtube_video';assert.equal((await loadTodayScheduledItems(f.db,OWNER,'2026-11-01','Asia/Dubai',NOW)).length,0);draft.kind='linkedin_text';
+  f.tables.get('linkedin_connections')[0].scopes=[];assert.equal((await loadTodayScheduledItems(f.db,OWNER,'2026-11-01','Asia/Dubai',NOW)).length,0);
+  f.fail('linkedin_publish_queue');await assert.rejects(loadTodayScheduledItems(f.db,OWNER,'2026-11-01','Asia/Dubai',NOW),/today_schedule_read_failed/);
 });
 test('Today deduplicates coordinator plan identities but never counts projections as scheduled',()=>{
   const item={draftId:'draft',slotDate:'2026-11-01',localDate:'2026-11-01',status:'approved',channelLabel:'Instagram',contentTypeLabel:'Post',concept:'Original',localTime:'6:30 PM'};

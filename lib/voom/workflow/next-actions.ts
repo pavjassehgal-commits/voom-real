@@ -125,7 +125,7 @@ export function planItemActions(item: PlanItemFacts): PlanItemActions {
     what: explanationWhat(item),
     who: explanationWho(item),
     why: explanationWhy(item),
-    approval: APPROVAL_MODE_LINE[item.mode],
+    approval: item.stage === "needs_approval" ? "This post requires your review and approval." : APPROVAL_MODE_LINE[item.mode],
     when,
     autoPublish: explanationAutoPublish(item),
   };
@@ -500,5 +500,10 @@ function explanationAutoPublish(item: PlanItemFacts): string {
   if (item.stage === "media_delayed") return "No — publishing stays blocked until a real visual exists. Retry the generation, upload a replacement, or cancel the schedule.";
   if (item.stage === "media_timed_out") return `No — that generation timed out after ${MEDIA_GENERATION_HARD_TIMEOUT_MINUTES} minutes, so nothing was published and nothing new was charged. Publishing stays blocked until you retry it as a new generation, upload a replacement, or cancel the schedule.`;
   if (item.stage === "scheduled" || item.stage === "publishing") return "Yes — after approval, the existing publishing queue posts it at the scheduled time.";
-  return item.mode === "autopilot" ? "Safe content publishes automatically; anything risky stops for your approval." : "No — your approval is the trigger.";
+  if (item.stage === "needs_approval") return "This post is waiting for your approval before it can be scheduled.";
+  if (item.stage === "failed") return "Publishing has stopped for this post.";
+  if (item.stage === "published") return "This post has already been published.";
+  return item.mode === "autopilot"
+    ? "Autopilot can approve the complete post after safety checks. Publishing requires a scheduled job."
+    : "You approve the post before it can be scheduled.";
 }

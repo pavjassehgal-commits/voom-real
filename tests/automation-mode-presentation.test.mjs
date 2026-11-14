@@ -134,7 +134,7 @@ test("2. every mode states plainly whether paid MARA media generation is automat
   // The three summaries are the authoritative v1 sentences, verbatim.
   assert.equal(copy.manual.summary, "You control execution. MARA helps when you ask.");
   assert.equal(copy.assisted.summary, "MARA prepares your marketing. You approve execution.");
-  assert.equal(copy.autopilot.summary, "MARA runs your marketing within your limits.");
+  assert.match(copy.autopilot.summary, /complete Instagram post after safety checks/);
 
   // Manual: no automatic generation at all; the user explicitly requests it,
   // and only a plan with AI media credits can honour the request.
@@ -155,7 +155,7 @@ test("2. every mode states plainly whether paid MARA media generation is automat
   // Autopilot: MAY generate paid media automatically — never unconditionally:
   // the plan, the toggle, the credits and the safety rules all have to allow it,
   // and planning still continues when media is blocked.
-  assert.match(copy.autopilot.media, /auto-approves safe work/i);
+  assert.match(copy.autopilot.summary, /held for review need your approval/i);
   assert.match(copy.autopilot.media, /may generate paid media automatically/i);
   assert.match(copy.autopilot.media, /only if your plan supports Autopilot/i);
   assert.match(copy.autopilot.media, /automatic paid media is enabled/i);
@@ -271,8 +271,8 @@ test("3c. Autopilot: automatic paid generation plus auto-approval and scheduling
   assert.ok(calls.autoApproveAndSchedule > 0, "safe internal work is approved and scheduled");
   const copy = automation.AUTOMATION_MODE_COPY.autopilot;
   assert.match(copy.media, /may generate paid media automatically/i);
-  assert.match(copy.media, /auto-approves safe work/i);
-  assert.equal(copy.summary, "MARA runs your marketing within your limits.");
+  assert.match(copy.summary, /complete Instagram post after safety checks/i);
+  assert.match(copy.summary, /working connection and a scheduled job/i);
 });
 
 test("3d. the presentation module cannot change behaviour: no I/O, no scheduling", async () => {

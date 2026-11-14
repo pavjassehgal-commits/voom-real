@@ -390,7 +390,7 @@ export async function loadWorkflowSnapshot(
       .order("updated_at", { ascending: true }),
     getYouTubeQueueItemsForDrafts(admin, ownerId, youtubeIds),
     getTikTokQueueItemsForDrafts(admin, ownerId, tiktokIds),
-    linkedinIds.length ? admin.from("linkedin_publish_queue").select("draft_id,status")
+    linkedinIds.length ? admin.from("linkedin_publish_queue").select("draft_id,status,scheduled_at")
       .eq("owner_user_id", ownerId).in("draft_id", linkedinIds) : Promise.resolve({ data: [], error: null }),
     getInstagramConnection(admin, ownerId, true),
   ]);
@@ -447,7 +447,6 @@ export async function loadWorkflowSnapshot(
     const contentType: PlannedContentType = isInstagram
       ? pair.format as "post" | "reel" | "story"
       : pair.channel === "linkedin" ? "text" : pair.channel === "youtube" && pair.format === "short" ? "short" : "video";
-    const publishAt = String(row.proposed_publish_at ?? "");
     const asset = assetByDraft.get(draftId) as { mime_type?: unknown; origin?: unknown; storage_path?: unknown; display_name?: unknown; status?: unknown } | undefined;
     const hasMedia = Boolean(asset && (asset.status === "uploaded" || typeof asset.storage_path === "string"));
     const media = mediaByDraft.get(draftId) ?? null;
@@ -464,6 +463,9 @@ export async function loadWorkflowSnapshot(
     const queueStatus = isInstagram
       ? (instagramRow?.status ?? null)
       : (linkedinRow?.status ?? socialQueue?.status ?? null);
+    const executionTime = instagramRow?.scheduled_at ?? socialQueue?.scheduled_at ?? linkedinRow?.scheduled_at;
+    const publishAt = queueStatus === "scheduled" && isValidPublishInstant(executionTime)
+      ? String(executionTime) : String(row.proposed_publish_at ?? "");
     const draftStatus = String(row.status ?? "draft") as "draft" | "approved" | "rejected";
     const approvalGranted = draftStatus === "approved" && Number(row.approved_content_version) > 0
       && row.approved_content_version === row.content_version;

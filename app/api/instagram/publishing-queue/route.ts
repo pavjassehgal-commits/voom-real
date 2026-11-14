@@ -1,8 +1,8 @@
+import { instagramPublishReadiness } from "@/lib/instagram/publish-readiness";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { readInstagramConfig } from "@/lib/instagram/config";
 import { listPublishQueue } from "@/lib/instagram/publish-queue";
 import {
-  hasPublishPermission,
   INSTAGRAM_PUBLISH_PERMISSION,
   PUBLISH_MEDIA_KIND_LABELS,
   PUBLISH_STATE_LABELS,
@@ -28,13 +28,16 @@ export async function GET() {
 
   try {
     const admin = createAdminClient();
-    const [rows, { data: connection }] = await Promise.all([
+    const [rows, { data: connection, error: connectionError }] = await Promise.all([
       listPublishQueue(admin, user.id),
-      admin.from("instagram_connections").select("username,scopes,status").eq("owner_user_id", user.id).maybeSingle(),
+      admin.from("instagram_connections").select("username,scopes,status,token_expires_at").eq("owner_user_id", user.id).maybeSingle(),
     ]);
 
-    const scopes = (connection?.scopes as string[] | null) ?? [];
-    const canPublish = connection?.status === "connected" && hasPublishPermission(scopes);
+    if (connectionError) throw new Error("instagram_connection_read_failed");
+    const readiness = instagramPublishReadiness(connection && {
+      status: connection.status, scopes: connection.scopes ?? [], tokenExpiresAt: connection.token_expires_at,
+    });
+    const canPublish = readiness === "ready";
     const draftIds = rows.map((row) => row.draft_id);
     const assets = draftIds.length
       ? (await admin.from("post_draft_assets").select("draft_id,storage_path,mime_type")
@@ -80,10 +83,11 @@ export async function GET() {
     return Response.json({
       items,
       account: connection?.username ? `@${connection.username}` : null,
-      connected: connection?.status === "connected",
+      connected: canPublish || readiness === "permission_required",
+      expired: readiness === "expired",
       configured: Boolean(readInstagramConfig()),
       canPublish,
-      missingPermission: connection?.status === "connected" && !canPublish ? INSTAGRAM_PUBLISH_PERMISSION : null,
+      missingPermission: readiness === "permission_required" ? INSTAGRAM_PUBLISH_PERMISSION : null,
     }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return Response.json({ error: "The publishing queue couldn't load. Please retry." }, { status: 503 });

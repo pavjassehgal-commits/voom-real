@@ -12,6 +12,7 @@ import { runCoordinatorForOwner } from "@/lib/coordinator/service";
 import type { CoordinatorEvaluation } from "@/lib/coordinator/types";
 import { loadPerformanceReport } from "@/lib/performance/data";
 import type { PerformanceReport } from "@/lib/performance/insights";
+import { loadApprovalFeed } from "./approval-feed";
 import { getCurrentUser, getBusinessRecord } from "./server-data";
 
 /**
@@ -43,7 +44,7 @@ export const getOperatingData = cache(async () => {
   // while the coordinator consumes it under its own graceful-degradation guard.
   const performancePromise = loadPerformanceReport(db, user.id);
 
-  const [snapshot, coordinator, actionsRead] = await Promise.all([
+  const [snapshot, coordinator, actions] = await Promise.all([
     loadWorkflowSnapshot(admin, user.id, { business }),
     (async () => {
       try {
@@ -57,9 +58,7 @@ export const getOperatingData = cache(async () => {
         return null;
       }
     })(),
-    db.from("mara_pending_actions")
-      .select("id,tool_name,summary,old_value,new_value,status,result_summary,error_summary,created_at,updated_at,executed_at")
-      .eq("owner_user_id", user.id).order("created_at", { ascending: false }).limit(50),
+    loadApprovalFeed(db, user.id),
   ]);
 
   const summary = todaySummary(snapshot);
@@ -68,7 +67,8 @@ export const getOperatingData = cache(async () => {
   // The Approvals feed follows the same active-horizon rule as the snapshot:
   // rolling-plan cards for stale legacy/out-of-horizon drafts never surface as
   // current approval needs. All other cards pass through untouched.
-  const actionRows = filterApprovalActionsForCurrentWorkflow(actionsRead.data ?? [], snapshot);
+  const actionRows = filterApprovalActionsForCurrentWorkflow(actions, snapshot);
+  const pendingActions = actionRows.filter((action) => action.status === "pending");
   const reelTaskCount = actionRows.filter((action) => action.tool_name === "choose_reel_production" && action.status === "pending"
     && !["ready_for_mara_production", "produced"].includes(String(action.new_value?.productionStatus ?? ""))).length;
 
@@ -76,10 +76,10 @@ export const getOperatingData = cache(async () => {
     user,
     business,
     snapshot,
-    summary,
+    summary: { ...summary, pendingDecisionCount: pendingActions.length },
     coordinator: coordinatorEvaluation,
     // Approvals only ever counts items that genuinely still need a decision.
-    pendingApprovalCount: summary.needsApproval.length,
+    pendingActions,
     reelTaskCount,
     actions: actionRows,
     /**

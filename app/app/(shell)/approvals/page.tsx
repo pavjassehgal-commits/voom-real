@@ -1,5 +1,8 @@
 import { ApprovalsWorkspace } from "@/components/voom/operating/ApprovalsWorkspace";
 import type { ApprovalDraftFacts, ApprovalItem } from "@/components/voom/operating/ApprovalsBoard";
+import { loadTodayScheduledItems } from "@/lib/voom/today-schedule";
+import { formatLocalDate } from "@/lib/voom/timezone";
+import { createAdminClient } from "@/utils/supabase/admin";
 import { getOperatingData } from "@/lib/voom/operating-data";
 
 export const dynamic = "force-dynamic";
@@ -28,15 +31,15 @@ export default async function ApprovalsPage() {
       mediaMimeType: item.mediaMimeType,
     };
   }
-  const scheduled = data.snapshot.items
-    .filter((item) => ["scheduled", "publishing", "published"].includes(item.status))
-    .sort((a, b) => a.publishAt.localeCompare(b.publishAt));
-  const upcoming = scheduled.find((item) => item.status !== "published");
+  const scheduled = await loadTodayScheduledItems(createAdminClient(), data.user.id, data.snapshot.today, data.snapshot.timeZone)
+    .catch(() => null);
+  const now = new Date();
+  const upcoming = scheduled?.find((item) => Date.parse(item.publishAt) >= now.getTime());
 
   return <ApprovalsWorkspace
     initial={data.actions as ApprovalItem[]}
     reelTaskCount={data.reelTaskCount}
     drafts={drafts}
-    publishesThisWeek={{ count: scheduled.length, next: upcoming ? `${upcoming.concept} · ${upcoming.dayLabel} ${upcoming.localTime}` : null }}
+    publishesThisWeek={scheduled ? { count: scheduled.length, next: upcoming ? `${upcoming.concept} · ${formatLocalDate(upcoming.localDate)} ${upcoming.localTime}` : null } : null}
   />;
 }

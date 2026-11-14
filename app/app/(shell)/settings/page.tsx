@@ -6,7 +6,8 @@ import { useVoomActions, useVoomState } from "@/lib/voom/store";
 import { Q_CHANNELS } from "@/lib/voom/onboardingData";
 import type { BusinessProfileInput } from "@/lib/voom/types";
 import { MANUAL_NEVER_AUTO_SPENDS } from "@/lib/mara/media-spend";
-import { automationModeDisplayLabel } from "@/lib/voom/automation";
+import { effectiveAutomationMode } from "@/lib/voom/automation-safety";
+import { AUTOPILOT_POST_APPROVAL, automationModeDisplayLabel } from "@/lib/voom/automation";
 import { Icon } from "@/components/voom/icons";
 import { BTN, ChannelGlyph, PageHeader } from "@/components/voom/redesign/ui";
 import { AdSepNote } from "@/components/voom/ui/Notes";
@@ -96,6 +97,7 @@ export default function SettingsPage() {
   }
 
   const planConfig = getPlanConfig(plan);
+  const autopilotEnabled = effectiveAutomationMode(automationMode, plan) === "autopilot";
 
   async function handleSave() {
     const gesture = beginHapticGesture(); // synchronous: the Save click
@@ -257,7 +259,7 @@ export default function SettingsPage() {
               <ul className="divide-y divide-line">
                 <Row label="Automation level" hint="How proactive MARA is overall." value={automationModeDisplayLabel(automationMode)} tone="brand" />
                 <Row label="Draft content" hint="Write captions, ideas and post drafts." value="Always" tone="green" />
-                <Row label="Publish to social channels" hint="Instagram, TikTok and YouTube." value={brand.permission ? (brand.permission.startsWith("No") ? "Automatic" : "Ask first") : "Not set yet"} tone="amber" />
+                <Row label="Publish to social channels" hint={autopilotEnabled ? AUTOPILOT_POST_APPROVAL : "You approve new posts before they can be scheduled for publishing."} value={autopilotEnabled ? "Eligible Instagram posts can be auto-approved" : "Your approval required"} tone="amber" />
                 <Row label="Send email campaigns" hint="Only through an explicit send action." value="Ask first" tone="amber" />
                 <Row label="Spend ad budget" hint="Always needs your approval." value="Always ask" tone="coral" />
                 <Row label="Posting frequency" hint="MARA plans around this." value={brand.freq || "Not set yet"} tone="brand" />
@@ -316,7 +318,7 @@ export default function SettingsPage() {
             </Panel>
             <Panel title="Payment & invoices" hint="Voom does not take payments inside the app yet.">
               <p className="px-5 py-5 text-[13.5px] leading-relaxed text-text-2 sm:px-6">
-                There is no payment method on file and no invoice to show. Plan changes are handled from the plans page; Voom never charges a card from here.
+                Billing is offline. You can compare plans on the plans page. No payment is taken today.
               </p>
             </Panel>
           </>}

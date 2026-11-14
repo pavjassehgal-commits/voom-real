@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { beginHapticGesture, haptic } from "@/lib/voom/haptics";
 import { useState } from "react";
 import { Icon } from "@/components/voom/icons";
@@ -45,6 +46,7 @@ export function AutomationMode({
   describe?: boolean;
   showPlanSummary?: boolean;
 }) {
+  const router = useRouter();
   const [mode, setMode] = useState(initial);
   const [confirmed, setConfirmed] = useState(initiallyConfirmed);
   const [busy, setBusy] = useState(false);
@@ -80,7 +82,10 @@ export function AutomationMode({
     if (response.ok) { setMode(next); setConfirmed(true); }
     else setError(body.error ?? "Voom couldn't save that mode.");
     // The server echoes the saved mode; fall back to the mode we asked for.
-    if (response.ok) announceSavedMode(storedAutomationMode(body.mode) ?? next);
+    if (response.ok) {
+      announceSavedMode(storedAutomationMode(body.mode) ?? next);
+      router.refresh();
+    }
     haptic(response.ok ? "success" : "error", gesture);
     setBusy(false);
   }

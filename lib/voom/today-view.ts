@@ -27,6 +27,7 @@ export type TodaySnapshotInput<T extends TodayItem = TodayItem> = {
 
 export type TodaySummaryInput<T extends TodayItem = TodayItem> = {
   needsApproval: T[];
+  pendingDecisionCount?: number;
   needsPreparation?: T[];
   waitingForMedia: T[];
   failed: T[];
@@ -121,6 +122,7 @@ export function buildTodayView<T extends TodayItem>(
         ? { state: "active" as const, title: "Your marketing plan is in motion.", detail: `Voom is tracking commitments through ${shortDate(coverageEnd)}.` }
         : { state: "empty" as const, title: "Your marketing plan is ready when you are.", detail: "Choose your channels and build the next seven days." };
 
+  const pendingDecisions = summary.pendingDecisionCount ?? summary.needsApproval.length;
   const attention = summary.missed.length
     ? { state: "action" as const, title: "A scheduled time was missed", detail: `${summary.missed.length} item${summary.missed.length === 1 ? " needs" : "s need"} to be posted now or rescheduled.`, href: "/app/calendar" }
     : summary.failed.length
@@ -131,8 +133,8 @@ export function buildTodayView<T extends TodayItem>(
           ? { state: "action" as const, title: "Instagram connection expired", detail: "Reconnect Instagram before publishing. Approved content and saved jobs are unchanged; review their time and status after reconnecting.", href: "/app/instagram" }
         : summary.needsPreparation?.length
           ? { state: "action" as const, title: "Content needs preparation", detail: `${summary.needsPreparation.length} item${summary.needsPreparation.length === 1 ? " needs" : "s need"} media, connection or scheduling. Open the plan for the next step.`, href: "/app/plan" }
-        : summary.needsApproval.length
-          ? { state: "action" as const, title: `${summary.needsApproval.length} item${summary.needsApproval.length === 1 ? " needs" : "s need"} your approval`, detail: "Review the prepared content before Voom schedules it.", href: "/app/approvals" }
+        : pendingDecisions
+          ? { state: "action" as const, title: `${pendingDecisions} item${pendingDecisions === 1 ? " needs" : "s need"} your approval`, detail: "Open Approvals to review the pending decisions.", href: "/app/approvals" }
           : { state: "clear" as const, title: "You’re all caught up.", detail: "Nothing needs your attention right now.", href: "/app/plan" };
 
   const coordinatorInsight = coordinator?.needs.find((need) => !["nothing_needed", "pending_approval", "content_calendar_gap"].includes(need.type)) ?? null;

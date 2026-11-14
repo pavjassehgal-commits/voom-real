@@ -179,13 +179,16 @@ export const AUTOMATION_MODE_LABELS: Record<AutomationModeValue, string> = {
 
 export const RECOMMENDED_AUTOMATION_MODE: AutomationModeValue = "assisted";
 
+export const AUTOPILOT_POST_APPROVAL =
+  "In your rolling plan, Autopilot can approve a complete Instagram post after safety checks. Posts held for review need your approval. Publishing requires a working connection and a scheduled job.";
+
 /**
  * Exact UI descriptions required by product spec.
  */
 export const AUTOMATION_MODE_DESCRIPTIONS: Record<AutomationModeValue, string> = {
   manual: "You control execution. MARA helps when you ask.",
   assisted: "MARA prepares your marketing. You approve execution.",
-  autopilot: "MARA runs your marketing within your limits.",
+  autopilot: AUTOPILOT_POST_APPROVAL,
 };
 
 export const AUTOPILOT_CREDITS_WARNING =
@@ -218,7 +221,7 @@ export const AUTOMATION_MODE_COPY: Record<AutomationModeValue, AutomationModeCop
     value: "autopilot",
     label: AUTOMATION_MODE_LABELS.autopilot,
     summary: AUTOMATION_MODE_DESCRIPTIONS.autopilot,
-    media: "MARA plans, drafts, schedules and auto-approves safe work, and may generate paid media automatically — but only if your plan supports Autopilot, automatic paid media is enabled, you have enough Voom credits, and safety rules allow the content. Planning continues even when media is blocked.",
+    media: "MARA may generate paid media automatically only if your plan supports Autopilot, automatic paid media is enabled, you have enough Voom credits, and safety rules allow the content. Planning continues even when media is blocked.",
     warning: AUTOPILOT_CREDITS_WARNING,
   },
 };
@@ -269,7 +272,7 @@ export function replenishPlanDescription(mode: AutomationModeValue): string {
     return "Replenish plan creates your upcoming content plan. Media is generated only when you ask MARA to create it.";
   }
   if (mode === "autopilot") {
-    return "Replenish plan tops up your upcoming content plan. MARA may generate media automatically within your credit limits, and safe items are approved and scheduled for you.";
+    return `Replenish plan fills upcoming slots. MARA may generate media automatically within your credit limits if you enable it. ${AUTOPILOT_POST_APPROVAL}`;
   }
   return "Replenish plan tops up your upcoming content plan. MARA prepares drafts and waits for your approval. Media is generated only when you ask MARA to create it.";
 }

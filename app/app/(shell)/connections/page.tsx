@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 import { Icon } from "@/components/voom/icons";
 import { BTN, ChannelGlyph, PageHeader } from "@/components/voom/redesign/ui";
 import { getResendAvailability } from "@/lib/email/config";
+import { instagramPublishReadiness } from "@/lib/instagram/publish-readiness";
+import { SOCIAL_CHANNEL_READINESS_ORDER } from "@/lib/social/readiness";
 import { readInstagramConfig } from "@/lib/instagram/config";
 import { getInstagramConnection } from "@/lib/instagram/data";
 import { cx } from "@/lib/voom/cx";
@@ -13,7 +15,6 @@ import { readYouTubeConfig } from "@/lib/youtube/config";
 import { getYouTubeConnection } from "@/lib/youtube/data";
 import { readLinkedInConfig } from "@/lib/linkedin/config";
 import { getLinkedInConnection } from "@/lib/linkedin/data";
-import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -41,9 +42,9 @@ export default async function ConnectionsPage() {
   const data = await getOperatingData();
   if (!data) return null;
 
-  const selected = new Set(data.business.preferred_channels.map((x) => x.toLowerCase()));
+  const selected = new Set(data.snapshot.selectedChannels);
   const email = getResendAvailability();
-  const user = await getCurrentUser();
+  const { user } = data;
   const admin = createAdminClient();
 
   const instagramConfig = readInstagramConfig();
@@ -52,23 +53,28 @@ export default async function ConnectionsPage() {
   const linkedInConfig = readLinkedInConfig();
   // Every card reads its REAL connection row (Instagram included, 2026-10-17
   // truthfulness fix). A failed read reports "not connected" rather than assuming.
-  const [instagram, youTube, tikTok, linkedIn] = user ? await Promise.all([
+  const [instagram, youTube, tikTok, linkedIn] = await Promise.all([
     getInstagramConnection(admin, user.id, Boolean(instagramConfig)).catch(() => null),
     getYouTubeConnection(admin, user.id, Boolean(youTubeConfig), youTubeConfig?.projectAudited === true).catch(() => null),
     getTikTokConnection(admin, user.id, Boolean(tikTokConfig), tikTokConfig?.appAudited === true).catch(() => null),
     getLinkedInConnection(admin, user.id, Boolean(linkedInConfig)).catch(() => null),
-  ]) : [null, null, null, null];
+  ]);
   const youTubeConnected = Boolean(youTube?.connected) && Boolean(youTube?.scopes.includes(YOUTUBE_UPLOAD_SCOPE));
   const tikTokConnected = Boolean(tikTok?.connected) && Boolean(tikTok?.scopes.includes("video.publish"));
-  const instagramConnected = Boolean(instagram?.connected);
+  const igReadiness = instagramPublishReadiness(instagram);
+  const instagramConnected = igReadiness === "ready";
   // LinkedIn remains manual, explicit text publishing in this foundation;
   // it does not expand the automated-campaign channel allowlist.
   const eligible = data.coordinator?.state.emailState.eligibleContactsCount ?? null;
 
   const igExpiresInDays = daysUntil(instagram?.tokenExpiresAt);
   const needsAttention = (status: string | undefined) => status === "expired" || status === "revoked" || status === "error";
-  const attention = [needsAttention(instagram?.status), needsAttention(tikTok?.status), needsAttention(youTube?.status)].filter(Boolean).length
-    + (instagramConnected && igExpiresInDays !== null && igExpiresInDays <= 7 ? 1 : 0);
+  const igNeedsReconnect = igReadiness === "expired" || igReadiness === "permission_required" || needsAttention(instagram?.status);
+  const attention = [
+    igNeedsReconnect || (instagramConnected && igExpiresInDays !== null && igExpiresInDays <= 7),
+    needsAttention(tikTok?.status), needsAttention(youTube?.status), needsAttention(linkedIn?.status),
+  ].filter(Boolean).length;
+  const unread = [instagram, tikTok, youTube, linkedIn].filter((account) => account === null).length;
   const connectedCount = [instagramConnected, tikTokConnected, youTubeConnected, linkedIn?.connected].filter(Boolean).length;
 
   return (
@@ -90,7 +96,7 @@ export default async function ConnectionsPage() {
       <div className="mb-4">
         <h2 className="text-[17px] font-semibold text-text">Your accounts</h2>
         <p className="text-[13px] text-text-2">
-          {connectedCount} of 4 social accounts connected{attention ? ` · ${attention} need${attention === 1 ? "s" : ""} attention` : ""} · email is set up in Settings
+          {connectedCount} of {SOCIAL_CHANNEL_READINESS_ORDER.length} social accounts confirmed connected{unread > 0 ? ` · ${unread} unavailable` : ""}{attention ? ` · ${attention} need${attention === 1 ? "s" : ""} attention` : ""} · email is set up in Settings
         </p>
       </div>
 
@@ -101,7 +107,8 @@ export default async function ConnectionsPage() {
           selected={selected.has("instagram")}
           {...(instagramConnected
             ? { tone: igExpiresInDays !== null && igExpiresInDays <= 7 ? "amber" : "green", status: igExpiresInDays !== null && igExpiresInDays <= 7 ? "Needs attention" : "Connected" }
-            : needsAttention(instagram?.status) ? { tone: "amber", status: "Needs attention" }
+            : !instagram ? { tone: "grey", status: "Status unavailable" }
+            : igNeedsReconnect ? { tone: "amber", status: "Needs attention" }
             : instagram?.configured === false ? { tone: "grey", status: "Planning only" } : { tone: "grey", status: "Not connected" }) as { tone: Tone; status: string }}
           identity={instagram?.username ? `@${instagram.username}` : null}
           subline={instagram?.accountType ? `${capitalise(instagram.accountType.toLowerCase())} account` : null}
@@ -117,16 +124,17 @@ export default async function ConnectionsPage() {
               : "Connect your professional account to publish posts, Reels and Stories and read their performance."}
           warning={instagramConnected && igExpiresInDays !== null && igExpiresInDays <= 7
             ? `Access expires in ${Math.max(0, igExpiresInDays)} day${igExpiresInDays === 1 ? "" : "s"}. Reconnect to keep scheduled posts publishing.`
-            : needsAttention(instagram?.status) ? "Instagram access stopped working. Reconnect to keep scheduled posts publishing." : null}
+            : igNeedsReconnect ? "Reconnect Instagram with publishing permission to resume scheduled posts." : null}
           action={instagramConnected && !(igExpiresInDays !== null && igExpiresInDays <= 7)
             ? { href: "/app/instagram", label: "Manage", primary: false }
-            : { href: "/app/instagram", label: instagramConnected || needsAttention(instagram?.status) ? "Reconnect Instagram" : "Connect Instagram", primary: true }}
+            : { href: "/app/instagram", label: instagramConnected || igNeedsReconnect ? "Reconnect Instagram" : "Connect Instagram", primary: true }}
         />
         <ChannelCard
           channel="tiktok"
           name="TikTok"
           selected={selected.has("tiktok")}
           {...(tikTokConnected ? { tone: "green", status: "Connected" }
+            : !tikTok ? { tone: "grey", status: "Status unavailable" }
             : needsAttention(tikTok?.status) ? { tone: "amber", status: "Needs attention" }
             : tikTok?.configured ? { tone: "grey", status: "Not connected" } : { tone: "grey", status: "Planning only" }) as { tone: Tone; status: string }}
           identity={tikTok?.creatorUsername ? `@${tikTok.creatorUsername}` : tikTok?.displayName ?? null}
@@ -147,6 +155,7 @@ export default async function ConnectionsPage() {
           name="YouTube"
           selected={selected.has("youtube")}
           {...(youTubeConnected ? { tone: "green", status: "Connected" }
+            : !youTube ? { tone: "grey", status: "Status unavailable" }
             : needsAttention(youTube?.status) ? { tone: "amber", status: "Needs attention" }
             : youTube?.configured ? { tone: "grey", status: "Not connected" } : { tone: "grey", status: "Planning only" }) as { tone: Tone; status: string }}
           identity={youTube?.channelTitle ?? null}
@@ -166,8 +175,8 @@ export default async function ConnectionsPage() {
             : youTubeConnected ? { href: "/app/youtube", label: "Manage", primary: false }
             : { href: "/app/youtube", label: needsAttention(youTube?.status) ? "Reconnect YouTube" : "Connect YouTube", primary: true }}
         />
-        <ChannelCard channel="linkedin" name="LinkedIn" selected={false}
-          tone={linkedIn?.connected ? "green" : "grey"} status={linkedIn?.connected ? "Connected" : linkedInConfig ? "Not connected" : "Setup required"}
+        <ChannelCard channel="linkedin" name="LinkedIn" selected={selected.has("linkedin")}
+          tone={linkedIn?.connected ? "green" : needsAttention(linkedIn?.status) ? "amber" : "grey"} status={!linkedIn ? "Status unavailable" : linkedIn.connected ? "Connected" : needsAttention(linkedIn.status) ? "Needs attention" : linkedInConfig ? "Not connected" : "Setup required"}
           identity={linkedIn?.displayName ?? null} subline="Personal profile · text posts" facts={null}
           description="Connect your personal LinkedIn profile. Each text post requires your explicit review and approval. Company Pages, images and videos are not supported yet."
           warning={linkedInConfig && !linkedIn ? "LinkedIn status could not be read. Refresh before publishing." : null}
@@ -175,7 +184,7 @@ export default async function ConnectionsPage() {
         <ChannelCard
           channel="email"
           name="Email"
-          selected={selected.has("email")}
+          selected={data.business.preferred_channels.some((name) => name.toLowerCase() === "email")}
           tone={email.configured ? "blue" : "grey"}
           status={email.configured ? "Configured on server" : "Not configured"}
           identity={eligible !== null ? `${eligible.toLocaleString("en-US")} contact${eligible === 1 ? "" : "s"} can receive campaigns` : null}
