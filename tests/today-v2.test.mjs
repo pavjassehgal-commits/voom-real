@@ -165,7 +165,7 @@ test("Today V2 has zero horizontal overflow at all required mobile widths", asyn
       { draftId: "draft-1", publishedAt: "2026-09-23T10:00:00Z", interactions: 18400, metrics: { reach: 24100, views: 31000 } },
       { draftId: null, publishedAt: "2026-09-15T10:00:00Z", interactions: 14300, metrics: { reach: 19000 } },
     ], now, "Asia/Dubai"),
-    ideas: [{ draftId: "draft-9", concept: "Customer story carousel with a long working title", contentType: "post", channel: "instagram" }],
+    ideas: [{ id: "action-9", summary: "Customer story carousel with a long working title" }],
     ideaCount: 1,
     channels: [
       { id: "instagram", name: "Instagram", href: "/app/instagram", state: "connected" },

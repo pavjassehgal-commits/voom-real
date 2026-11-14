@@ -406,6 +406,47 @@ test("Approvals answers only what needs a decision — and celebrates an empty q
   assert.match(text, /Retry/, "a failed action offers the real retry");
 });
 
+test("Calendar month navigation and an approval decision update the visible totals", async (t) => {
+  const action = fixture.approvalItems().find(item => item.status === "pending");
+  const results = await measured([
+    {
+      name: "calendar", html: documents.get("calendar"), width: 390, height: 844, onDocumentStart: startFor("calendar"),
+      evaluate: `(async () => {
+        const summary = () => document.querySelector("main h1")?.nextElementSibling?.textContent;
+        for (let i = 0; i < 100 && !summary()?.includes("awaiting approval"); i++) await new Promise(r => setTimeout(r, 25));
+        const before = summary();
+        document.querySelector('[aria-label="Next month"]').click();
+        await new Promise(r => setTimeout(r, 50));
+        return { before, after: summary() };
+      })()`,
+    },
+    {
+      name: "approvals", html: documents.get("approvals"), width: 1280, height: 900,
+      onDocumentStart: startFor("approvals") + `
+        const read = window.fetch;
+        window.fetch = (url, init) => init?.method === "PATCH" ?
+          Promise.resolve(Response.json({ action: ${JSON.stringify({ ...action, status: "cancelled" })} })) : read(url, init);
+      `,
+      evaluate: `(async () => {
+        const pending = () => document.querySelector('[role="tab"]').textContent;
+        const header = () => document.querySelector("main h1")?.nextElementSibling?.textContent;
+        const before = pending(), headerBefore = header();
+        [...document.querySelectorAll("button")].find(button => button.textContent === "Cancel").click();
+        for (let i = 0; i < 100 && pending() === before; i++) await new Promise(r => setTimeout(r, 25));
+        return { before, after: pending(), headerBefore, headerAfter: header() };
+      })()`,
+    },
+  ]);
+  if (!results) return t.skip("no Chromium available for rendered interaction");
+  const [calendar, approvals] = results;
+  assert.match(calendar.evaluate.before, /[1-9]\d* items/);
+  assert.match(calendar.evaluate.after, /0 items · 0 scheduled to publish · 0 awaiting approval/);
+  assert.match(approvals.evaluate.before, /Needs review2/);
+  assert.match(approvals.evaluate.after, /Needs review1/);
+  assert.match(approvals.evaluate.headerBefore, /3 things need your decision/);
+  assert.match(approvals.evaluate.headerAfter, /2 things need your decision/);
+});
+
 test("Performance leads with measured results and reports unavailability honestly", async (t) => {
   const [result] = (await measured([
     { name: "performance", html: documents.get("performance"), width: 1280, height: 900, onDocumentStart: startFor("performance") },

@@ -3,7 +3,7 @@ import { getCreditSummary } from "@/lib/billing/ledger";
 import { normalizePlan } from "@/lib/billing/plans";
 import { normalizeMediaSpendSettings } from "@/lib/mara/media-spend";
 import { readSocialChannelReadiness } from "@/lib/social/readiness";
-import { normalizeAutomationMode } from "@/lib/voom/automation";
+import { automationModeConfirmed, automationModeStatusLine, normalizeAutomationMode } from "@/lib/voom/automation";
 import { getOperatingData } from "@/lib/voom/operating-data";
 import { accountTimezone, addDays } from "@/lib/voom/timezone";
 import { createAdminClient } from "@/utils/supabase/admin";
@@ -36,7 +36,7 @@ export default async function MaraPage() {
   ]);
   const spend = normalizeMediaSpendSettings(data.business as { allow_automatic_paid_media?: unknown; monthly_media_budget_usd?: unknown });
   const items = data.snapshot.items;
-  const pending = data.actions.filter((action) => action.status === "pending");
+  const pending = data.pendingActions;
   const mediaActive = items.filter((item) => item.status === "generating" || item.status === "waiting_for_media");
   const gaps = data.coordinator?.gaps ?? [];
   const disconnected = readiness.filter((entry) => !entry.connected && data.snapshot.selectedChannels.includes(entry.channel));
@@ -57,7 +57,9 @@ export default async function MaraPage() {
     mode={mode}
     planId={planId}
     timeZone={timeZone}
-    plannedCount={items.length}
+    modeConfirmed={automationModeConfirmed(business.automation_level)}
+    modeStatus={automationModeStatusLine(business.automation_level)}
+    effectiveMode={data.snapshot.mode}
     pending={pending.map((action) => ({ id: action.id, summary: action.summary, reason: typeof action.new_value?.reason === "string" ? action.new_value.reason : null }))}
     mediaActiveCount={mediaActive.length}
     credits={credits ? { remaining: credits.remaining, total: credits.allowance + credits.additional } : null}

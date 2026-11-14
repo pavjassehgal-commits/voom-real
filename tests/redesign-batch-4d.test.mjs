@@ -10,9 +10,9 @@ test("Calendar opens on Month, offers Week, and both read the one real workflow 
   const page = await code("app/app/(shell)/calendar/page.tsx");
   assert.match(page, /useState<CalendarMode>\("month"\)/, "Month is the default view");
   assert.match(page, /\(\["week", "month"\] as const\)/, "Week and Month are the only views offered");
-  assert.match(page, /fetch\("\/api\/voom\/workflow"/);
+  assert.match(page, /fetch\("\/api\/voom\/workflow\?view=calendar"/);
   assert.match(page, /<WeekView/);
-  assert.match(page, /onOpen=\{\(event\) => openEvent\(event, open, load\)\}/, "week cards open the same editors as the month view");
+  assert.match(page, /onOpen=\{selectEvent\}/, "week cards open the same editors as the month view");
   for (const editor of ["SocialEditorModal", "SavedCalendarDetailModal", "CreateContentModal"]) assert.match(page, new RegExp(editor));
   assert.match(page, /const DOW = \["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"\]/, "weeks start on Monday, as in the reference");
   assert.doesNotMatch(page, /Best time|>List<|All channels|Ask MARA/, "no invented best-time, list view, channel menu or chat");

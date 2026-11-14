@@ -3,73 +3,28 @@
 import { useState } from "react";
 import { useVoomState } from "@/lib/voom/store";
 import { nfc } from "@/lib/voom/demoData";
-import { getPlanConfig } from "@/lib/billing/plans";
+import { creditCostForMedia } from "@/lib/billing/credits";
+import { AUTOPILOT_POST_APPROVAL } from "@/lib/voom/automation";
+import { getPlanConfig, PLAN_IDS } from "@/lib/billing/plans";
 
-const PLANS = [
-  {
-    id: "free" as const,
-    name: "Free",
-    get m() { return getPlanConfig("free").priceUsd; },
-    y: 0,
-    blurb: getPlanConfig("free").blurb,
-    hot: false,
-    f: [
-      "Manual mode only — You control execution. MARA helps when you ask.",
-      "Plan, draft and upload your own media",
-      "No AI image/video generation (0 credits)",
-      "No Autopilot",
-      "Approvals & Content Calendar",
-      "Instagram Posts, Reels & Stories (own assets)",
-    ],
-    off: ["AI generation with MARA", "Assisted mode", "Autopilot mode", "Automatic paid media"],
-  },
-  {
-    id: "pro" as const,
-    name: "Pro",
-    get m() { return getPlanConfig("pro").priceUsd; },
-    y: 290,
-    blurb: getPlanConfig("pro").blurb,
-    hot: false,
-    f: [
-      "Manual + Assisted mode",
-      "MARA drafts your copy & schedules",
-      "AI image & video generation (150 credits)",
-      "Publishing queue automation",
-      "You approve before Voom acts",
-      "Email marketing (soon)",
-    ],
-    off: ["Autopilot mode", "Automatic paid media"],
-  },
-  {
-    id: "max" as const,
-    name: "Max",
-    get m() { return getPlanConfig("max").priceUsd; },
-    y: 790,
-    blurb: getPlanConfig("max").blurb,
-    hot: true,
-    f: [
-      "Manual + Assisted + Autopilot mode",
-      "MARA runs your marketing within limits",
-      "AI image & video generation (500 credits)",
-      "Automatic paid media generation (toggle)",
-      "Safe actions execute automatically",
-      "Campaign intelligence & insights",
-    ],
-    off: [],
-  },
-];
 import { Icon } from "@/components/voom/icons";
 import { Btn, Card, Tag } from "@/components/voom/ui/primitives";
 import { AD_SEPARATION, AdSepNote } from "@/components/voom/ui/Notes";
 
+const PLAN_DETAILS = {
+  free: ["Plan and draft content with your own media", "Review posts and choose when to schedule them"],
+  pro: ["MARA prepares drafts and proposes times", "You review posts before scheduling and choose when to generate media"],
+  max: [AUTOPILOT_POST_APPROVAL, "Enable automatic image and video generation within your credit and spending limits"],
+};
+
 const FAQS: [string, string][] = [
   [
     "What are Voom credits?",
-    "Credits are used only when Voom generates AI images or videos. An image is 5 credits, a short video is 40 credits. Polling, retries that don't create a new job, planning, copy and scheduling use zero credits.",
+    `An AI image uses ${creditCostForMedia({ mediaType: "image" })} credits and a short AI video uses ${creditCostForMedia({ mediaType: "video" })}. Planning, copy and scheduling use zero media credits.`,
   ],
   [
     "What happens when I run out of credits?",
-    "You see 'You need 40 credits. You have 22 remaining.' No provider call happens when you're blocked, so you are never charged after the message. Planning continues even when media is blocked.",
+    "Voom shows the credits you need and your remaining balance before starting generation. You can still plan, write copy and upload your own media.",
   ],
   [
     "Can Voom spend my ad budget without asking?",
@@ -77,7 +32,7 @@ const FAQS: [string, string][] = [
   ],
   [
     "Is billing active?",
-    "Billing UI is live for credits visibility, but Stripe isn't connected and no card is charged yet. Every account starts on Free while billing is offline; when billing activates you'll choose a plan explicitly before any payment.",
+    "Billing is offline. You can see your assigned plan and media credits in Settings. Paid subscriptions are unavailable.",
   ],
   [
     "What happens to my content if plans change?",
@@ -97,7 +52,7 @@ export default function PricingPage() {
           <Icon name="crown" size={12} /> Plans & Credits
         </Tag>
         <h1 className="my-3 font-display text-[26px] font-bold sm:text-[32px]">Plans & billing</h1>
-        <p className="text-[15px] text-text-2">Where Voom is heading — and what you pay today.</p>
+        <p className="text-[15px] text-text-2">Compare automation modes and monthly media credits.</p>
         <div className="mt-4 flex flex-wrap justify-center gap-2">
           <Tag>Billed monthly once billing is active</Tag>
           <Tag>
@@ -113,45 +68,44 @@ export default function PricingPage() {
         <div className="flex items-center gap-2.5">
           <Icon name="info" className="text-brand" />
           <span className="text-[13.5px]">
-            Billing isn’t active yet. Your account is on the <b>Free</b> plan and every feature you can see today works without a card. Credits are used only when Voom generates AI images or videos.
+            Your workspace is on the <b>{getPlanConfig(plan).name}</b> plan. Billing is offline. All plans include the content calendar, post approvals and email campaigns. Sending email requires a configured sender and eligible recipients.
           </span>
         </div>
       </Card>
 
       <div className="grid items-start gap-4 sm:grid-cols-3">
-        {PLANS.map((p) => {
+        {PLAN_IDS.map((id) => {
+          const p = getPlanConfig(id);
           const cur = plan === p.id;
           return (
             <div
               key={p.id}
-              className={`relative rounded-[22px] border-[1.5px] bg-surface p-6.5 ${p.hot ? "border-brand shadow-[0_20px_50px_-24px_var(--brand)] sm:order-first" : "border-line"}`}
+              className={`relative rounded-[22px] border-[1.5px] bg-surface p-6.5 ${p.id === "max" ? "border-brand shadow-[0_20px_50px_-24px_var(--brand)] sm:order-first" : "border-line"}`}
             >
               <div className="flex items-center justify-between">
                 <h3 className="font-display text-[19px] font-bold">{p.name}</h3>
                 {cur && <Tag tone="t-green">Your plan</Tag>}
               </div>
-              <p className="my-1.5 text-[13.3px] text-text-2">{p.blurb}</p>
+              <p className="my-1.5 text-[13.3px] text-text-2">{p.allowedModes.map((mode) => mode[0].toUpperCase() + mode.slice(1)).join(" + ")}</p>
               <div className="flex items-baseline gap-1.5">
-                <span className="font-display text-[34px] font-bold tracking-tight">${nfc(p.m)}</span>
+                <span className="font-display text-[34px] font-bold tracking-tight">${nfc(p.priceUsd)}</span>
                 <span className="text-[13.5px] text-text-3">/month</span>
               </div>
-              <div className="mt-1 text-xs text-text-3">{p.m ? "Software subscription only — ad budget is separate" : "No card required"}</div>
-              <Btn variant={p.hot ? "primary" : "outline"} block className="mt-4" disabled>
+              <div className="mt-1 text-xs text-text-3">{p.priceUsd ? "Software subscription only — ad budget is separate" : "No card required"}</div>
+              <Btn variant={p.id === "max" ? "primary" : "outline"} block className="mt-4" disabled>
                 {cur ? "Your current plan" : "Available when billing activates"}
               </Btn>
               <ul className="mt-4.5 flex flex-col gap-2.5">
-                {p.f.map((f) => (
+                {PLAN_DETAILS[id].map((f) => (
                   <li key={f} className="flex items-start gap-2 text-[13.5px] text-text-2">
                     <Icon name="check" size={16} className="mt-0.5 flex-none stroke-green" />
                     <span>{f}</span>
                   </li>
                 ))}
-                {p.off.map((f) => (
-                  <li key={f} className="flex items-start gap-2 text-[13.5px] text-text-2 opacity-40">
-                    <Icon name="x" size={16} className="mt-0.5 flex-none stroke-text-3" />
-                    <span>{f}</span>
-                  </li>
-                ))}
+                <li className="flex items-start gap-2 text-[13.5px] text-text-2">
+                  <Icon name={p.allowsExplicitMedia ? "check" : "x"} size={16} className="mt-0.5 flex-none" />
+                  <span>{p.allowsExplicitMedia ? `${p.monthlyCredits} AI media credits per month` : "AI media generation is unavailable on Free"}</span>
+                </li>
               </ul>
             </div>
           );

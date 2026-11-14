@@ -26,6 +26,7 @@ interface QueueResponse {
   items?: PublishingQueueItem[];
   account?: string | null;
   connected?: boolean;
+  expired?: boolean;
   canPublish?: boolean;
   missingPermission?: string | null;
   error?: string;
@@ -107,7 +108,7 @@ export function PublishingQueue() {
 
       {state && !state.connected ? (
         <div className="mb-2.5 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-sm text-text-2">
-          Instagram is not connected, so nothing can be auto-published yet.
+          {state.expired ? "Instagram access has expired. Reconnect to resume scheduled publishing." : "Connect Instagram to enable scheduled publishing."}
         </div>
       ) : null}
 
@@ -118,7 +119,7 @@ export function PublishingQueue() {
           </b>
           <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-text-3">
             {filter === "All"
-              ? "Approve an Instagram Post, Reel or Story with a date and time, and it appears here — Voom publishes it automatically at the scheduled moment."
+              ? "Approve a complete Instagram post, Reel or Story, connect your account and choose a publishing time. Its confirmed job will appear here."
               : "Items appear under this filter as Voom prepares, publishes, or needs to retry them."}
           </p>
         </div>
@@ -143,13 +144,13 @@ export function PublishingQueue() {
                 </div>
                 <p className="text-xs text-text-3">
                   {item.account} · {formatDateTime(item.scheduledAt)}
-                  {item.autoPublish ? " · Voom will auto-publish" : ""}
+                  {item.autoPublish && !pastDue && item.status === "scheduled" ? " · Scheduled to publish" : ""}
                 </p>
                 {pastDue && item.status === "waiting_for_media" && (
                   <p className="mt-0.5 text-xs text-amber">Its scheduled time passed before the visual was ready — the Marketing Plan flags it for your decision.</p>
                 )}
                 {pastDue && item.status !== "waiting_for_media" && (
-                  <p className="mt-0.5 text-xs text-amber">Past its scheduled time — Voom completes it on the next automatic run. It is never dropped or published twice.</p>
+                  <p className="mt-0.5 text-xs text-amber">Past its scheduled time. Check its status before rescheduling. It is never dropped or published twice.</p>
                 )}
                 {!pastDue && item.status === "waiting_for_media" && (
                   <p className="mt-0.5 text-xs text-amber">Waiting for the visual — it cannot publish until the media is ready.</p>

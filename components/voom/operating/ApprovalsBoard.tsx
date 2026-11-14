@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- private signed URLs expire and must bypass the public image optimizer */
 
 import { beginHapticGesture, haptic } from "@/lib/voom/haptics";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { PostEditorModal } from "@/components/voom/modals/PostEditorModal";
@@ -48,8 +48,13 @@ const QUEUE_TABS: { id: QueueTab; label: string }[] = [
  * (the draft changed, or its media is not ready) the refreshed card it returns
  * replaces the stale one and the reason stays visible — nothing is approved.
  */
-export function ApprovalsBoard({ initial, drafts = {} }: { initial: ApprovalItem[]; drafts?: Record<string, ApprovalDraftFacts> }) {
-  const [items, setItems] = useState(initial); const [busy, setBusy] = useState<string | null>(null); const [error, setError] = useState("");
+export function ApprovalsBoard({ items, setItems, onDecision, drafts = {} }: {
+  items: ApprovalItem[];
+  setItems: Dispatch<SetStateAction<ApprovalItem[]>>;
+  onDecision: () => void;
+  drafts?: Record<string, ApprovalDraftFacts>;
+}) {
+  const [busy, setBusy] = useState<string | null>(null); const [error, setError] = useState("");
   const [notices, setNotices] = useState<Record<string, string>>({});
   async function decide(id: string, decision: "confirm" | "cancel" | "edit" | "production", changes?: Record<string, unknown>) {
     const gesture = beginHapticGesture(); // synchronous: the click that made this decision
@@ -63,6 +68,7 @@ export function ApprovalsBoard({ initial, drafts = {} }: { initial: ApprovalItem
     else setNotices((current) => { const next = { ...current }; delete next[id]; return next; });
     haptic(response.status === 409 ? "warning" : response.ok && body.action ? "success" : "error", gesture);
     setBusy(null);
+    if (response.ok && body.action) onDecision();
     return response.ok && Boolean(body.action);
   }
   async function produce(id: string) {
@@ -92,7 +98,7 @@ export function ApprovalsBoard({ initial, drafts = {} }: { initial: ApprovalItem
     itemsRef.current = itemsRef.current.map((item) => item.id === id ? action : item);
     setItems(itemsRef.current);
     window.dispatchEvent(new Event("voom:data-changed"));
-  }, []);
+  }, [setItems]);
 
   const router = useRouter();
   const { open: openModal } = useModal();
@@ -100,7 +106,7 @@ export function ApprovalsBoard({ initial, drafts = {} }: { initial: ApprovalItem
   const [channel, setChannel] = useState("all");
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"soonest" | "newest">("soonest");
-  const [selectedId, setSelectedId] = useState<string | null>(() => initial.find((item) => item.status === "pending" || item.status === "failed")?.id ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(() => items.find((item) => item.status === "pending" || item.status === "failed")?.id ?? null);
 
   const open = items.filter((item) => item.status === "pending" || item.status === "failed");
   const counts: Record<QueueTab, number> = {
@@ -201,7 +207,9 @@ export function ApprovalsBoard({ initial, drafts = {} }: { initial: ApprovalItem
         <div className="mt-4">
           {selected.tool_name === "choose_reel_production"
             ? <ReelProductionCard item={selected} busy={busy === selected.id} onDecision={decide} onProduce={produce} onProduceVideo={produceVideo} onRefresh={refreshItem} />
-            : <ApprovalCard item={selected} busy={busy === selected.id} onDecision={decide} confirmBlockedReason={mediaBlocked} />}
+            : selected.status === "pending" || selected.status === "failed"
+              ? <ApprovalCard key={selected.id} item={selected} busy={busy === selected.id} onDecision={decide} confirmBlockedReason={mediaBlocked} />
+              : <p className="text-sm text-text-2">{selected.result_summary || selected.summary}</p>}
         </div>
         <section className="mt-5">
           <h3 className="text-[14px] font-semibold text-text">Activity</h3>

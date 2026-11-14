@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { ApprovalsBoard, type ApprovalDraftFacts, type ApprovalItem } from "@/components/voom/operating/ApprovalsBoard";
 import { PageHeader, StatCard } from "@/components/voom/redesign/ui";
 
@@ -21,9 +23,16 @@ export function ApprovalsWorkspace({ initial, reelTaskCount = 0, drafts = {}, pu
   drafts?: Record<string, ApprovalDraftFacts>;
   publishesThisWeek?: { count: number; next: string | null } | null;
 }) {
-  const pending = initial.filter((item) => item.status === "pending");
+  const [items, setItems] = useState(initial);
+  const [previousFeed, setPreviousFeed] = useState(initial);
+  if (initial !== previousFeed) {
+    setPreviousFeed(initial);
+    setItems(initial);
+  }
+  const router = useRouter();
+  const pending = items.filter((item) => item.status === "pending");
   const waiting = pending.length;
-  const retryable = initial.filter((item) => item.status === "failed").length;
+  const retryable = items.filter((item) => item.status === "failed").length;
   const open = waiting + retryable;
   const oldest = pending.map((item) => item.created_at).sort()[0] ?? null;
 
@@ -37,10 +46,10 @@ export function ApprovalsWorkspace({ initial, reelTaskCount = 0, drafts = {}, pu
       />
       <div className="mb-5 grid gap-4 sm:grid-cols-3">
         <StatCard icon="clock" value={waiting} label="Waiting on you" tone="coral" note={oldest ? <span className="font-normal text-text-2">Oldest submitted {ago(oldest)}</span> : undefined} />
-        <StatCard icon="cal" value={publishesThisWeek?.count ?? "—"} label="Publishes this week" tone="brand" note={publishesThisWeek?.next ? <span className="font-normal text-text-2">Next: {publishesThisWeek.next}</span> : undefined} />
+        <StatCard icon="cal" value={publishesThisWeek?.count ?? "—"} label="Scheduled · next 7 days" tone="brand" note={publishesThisWeek?.next ? <span className="font-normal text-text-2">Next: {publishesThisWeek.next}</span> : undefined} />
         <StatCard icon="warn" value={retryable} label="Retry needed" tone={retryable ? "coral" : "green"} note={reelTaskCount > 0 ? <span className="font-normal text-text-2">{reelTaskCount} Reel production choice{reelTaskCount === 1 ? "" : "s"}</span> : undefined} />
       </div>
-      <ApprovalsBoard initial={initial} drafts={drafts} />
+      <ApprovalsBoard items={items} setItems={setItems} drafts={drafts} onDecision={() => router.refresh()} />
     </div>
   );
 }

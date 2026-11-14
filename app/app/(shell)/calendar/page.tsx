@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useModal } from "@/lib/voom/modal";
 import { Icon } from "@/components/voom/icons";
@@ -11,9 +12,12 @@ import { Btn, Tag } from "@/components/voom/ui/primitives";
 import { BTN, ChannelGlyph, StatusChip } from "@/components/voom/redesign/ui";
 import { cx } from "@/lib/voom/cx";
 import { currentScheduleDate } from "@/lib/voom/schedule-guard";
+import { PostEditorModal } from "@/components/voom/modals/PostEditorModal";
+import { calendarByDate, calendarNeedsApproval, calendarSummary, type CalendarEvent } from "@/lib/voom/calendar-events";
+import type { ScheduledPost } from "@/lib/voom/today-schedule";
 import { PublishingQueue } from "@/components/voom/PublishingQueue";
 import type { WorkflowSnapshot, WorkflowView } from "@/lib/voom/workflow/read";
-import { MEDIA_GENERATION_HARD_TIMEOUT_MINUTES, WORKFLOW_STATUSES } from "@/lib/voom/workflow/state";
+import { MEDIA_GENERATION_HARD_TIMEOUT_MINUTES } from "@/lib/voom/workflow/state";
 import { isPastInstant } from "@/lib/voom/schedule-guard";
 import type { SocialCalendarItemView } from "@/lib/social/server-drafts";
 import { ChannelPill, StatePill } from "@/components/voom/workspace/ui";
@@ -39,21 +43,12 @@ import {
  */
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-const FILTERS = ["All", "Instagram Post", "Reel", "Instagram Story", "TikTok Video", "YouTube Short", "YouTube Video"] as const;
+const FILTERS = ["All", "Instagram Post", "Reel", "Instagram Story", "TikTok Video", "YouTube Short", "YouTube Video", "LinkedIn Text Post"] as const;
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-/** One calendar cell entry: an active Marketing Plan item or a standalone
- * approved TikTok/YouTube draft. Both surfaces use truthful queue status. */
-type CalendarEvent =
-  | { type: "workflow"; item: WorkflowView }
-  | { type: "social"; item: SocialCalendarItemView };
-
-function timeOf(event: CalendarEvent): string {
-  return event.item.localTime;
-}
 
 /** One truthful tooltip per cell — source, status, provider note, asset. */
 function eventTitle(event: CalendarEvent): string {
+  if (event.type === "scheduled") return `${event.item.channelLabel} · ${event.item.statusLabel}`;
   if (event.type === "social") {
     return [
       event.item.sourceLabel,
@@ -71,11 +66,12 @@ function eventTitle(event: CalendarEvent): string {
 }
 
 function channelOf(event: CalendarEvent): string {
-  return event.type === "workflow" ? event.item.channel : event.item.channel;
+  return event.item.channel;
 }
 
 /** Truthful provider confirmation for one cell — null unless Voom can prove it. */
 function confirmedOf(event: CalendarEvent): string | null {
+  if (event.type === "scheduled") return null;
   if (event.type === "workflow") {
     return providerConfirmationLabel(event.item.channel, {
       instagramMediaId: event.item.instagramMediaId,
@@ -101,7 +97,9 @@ type CalendarMode = "month" | "week";
 
 export default function CalendarPage() {
   const { open } = useModal();
+  const router = useRouter();
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot | null>(null);
+  const [scheduledPosts, setScheduledPosts] = useState<ScheduledPost[]>([]);
   const [socialItems, setSocialItems] = useState<SocialCalendarItemView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>("All");
@@ -115,11 +113,12 @@ export default function CalendarPage() {
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch("/api/voom/workflow", { cache: "no-store" });
-      const body = await response.json() as { snapshot?: WorkflowSnapshot; socialItems?: SocialCalendarItemView[]; error?: string };
+      const response = await fetch("/api/voom/workflow?view=calendar", { cache: "no-store" });
+      const body = await response.json() as { snapshot?: WorkflowSnapshot; socialItems?: SocialCalendarItemView[]; scheduledPosts?: ScheduledPost[]; error?: string };
       if (!response.ok || !body.snapshot) throw new Error(body.error ?? "Your schedule couldn't load.");
       setSnapshot(body.snapshot);
       setSocialItems(body.socialItems ?? []);
+      setScheduledPosts(body.scheduledPosts ?? []);
       setError(null);
       // The calendar always opens on the real current local month.
       setCursor((current) => current ?? monthOf(body.snapshot!.today));
@@ -151,23 +150,13 @@ export default function CalendarPage() {
         && (filter === "All" || item.contentTypeLabel === filter),
     );
   }, [socialItems, snapshot, filter]);
-  const byDate = useMemo(() => {
-    const map = new Map<string, CalendarEvent[]>();
-    for (const item of items) map.set(item.localDate, [...(map.get(item.localDate) ?? []), { type: "workflow", item }]);
-    for (const item of socialCells) map.set(item.localDate, [...(map.get(item.localDate) ?? []), { type: "social", item }]);
-    for (const list of map.values()) list.sort((a, b) => (timeOf(a) === timeOf(b) ? 0 : timeOf(a) < timeOf(b) ? -1 : 1));
-    return map;
-  }, [items, socialCells]);
+  const byDate = useMemo(() => calendarByDate(items, socialCells, scheduledPosts, filter), [items, socialCells, scheduledPosts, filter]);
 
   // Fallback before the first snapshot arrives: the real current local date,
   // not a hardcoded month and not the device's UTC date.
   const view = cursor ?? monthOf(currentScheduleDate());
   const cells = useMemo(() => buildCells(view.year, view.month), [view.year, view.month]);
-  const counts = useMemo(() => countByStatus(items), [items]);
-  const totalVisible = items.length + socialCells.length;
-  const scheduledCount = (counts.scheduled ?? 0) + (counts.publishing ?? 0) + socialCells.filter((item) => socialQueueTone(item.queueStatus) === "blue").length;
-  const approvalCount = (counts.needs_approval ?? 0) + (counts.ready_for_review ?? 0);
-  const draftCount = (counts.planned ?? 0) + (counts.needs_content ?? 0) + (counts.generating ?? 0) + (counts.waiting_for_media ?? 0);
+  const month = useMemo(() => calendarSummary(cells.flatMap((cell) => byDate.get(cell.date) ?? [])), [cells, byDate]);
 
   // "What needs attention" is a truthful projection of the real workflow state —
   // never a separate calculation: it lists the exact items the read model marks
@@ -189,6 +178,14 @@ export default function CalendarPage() {
     setMode("week");
   }
 
+  function selectEvent(event: CalendarEvent) {
+    if (event.item.channel === "linkedin") {
+      router.push(`/app/linkedin?draft=${encodeURIComponent(event.item.draftId)}`);
+    } else {
+      openEvent(event, open, load);
+    }
+  }
+
   return (
     <div className="min-w-0">
       <header className="mb-3 flex min-w-0 flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -200,7 +197,7 @@ export default function CalendarPage() {
           <p className="mt-1 text-[15px] text-text-2">
             {snapshot
               ? mode === "month"
-                ? `${scheduledCount} scheduled · ${approvalCount} need${approvalCount === 1 ? "s" : ""} your approval · ${draftCount} in progress · times in ${snapshot.timeZone.replace("_", " ")}`
+                ? `${month.total} item${month.total === 1 ? "" : "s"} · ${month.scheduled} scheduled to publish · ${month.approval} awaiting approval · times in ${snapshot.timeZone.replace("_", " ")}`
                 : "Pick a day to see everything scheduled for it."
               : "Loading your real schedule…"}
           </p>
@@ -258,7 +255,7 @@ export default function CalendarPage() {
               const date = cell.date;
               const events = cell.out ? [] : byDate.get(date) ?? [];
               const isToday = Boolean(snapshot) && date === snapshot!.today;
-              const needsApproval = events.some((event) => event.type === "workflow" && (event.item.status === "needs_approval" || event.item.status === "ready_for_review"));
+              const needsApproval = events.some(calendarNeedsApproval);
               const attentionInCell = events.filter((event) => event.type === "workflow" && attentionReason(event.item)).length;
               return (
                 <div key={index} className={cx("group relative flex min-h-[64px] min-w-0 flex-col gap-1 border-b border-r border-line p-1 [&:nth-child(7n)]:border-r-0 sm:min-h-[118px] sm:p-2.5", cell.out ? "bg-surface-2/60" : isToday ? "bg-[var(--brand-soft-2)]" : "bg-surface")}>
@@ -293,7 +290,7 @@ export default function CalendarPage() {
                         style={{ borderColor: eventAccent(event) }}
                         aria-label={`Open ${event.item.concept} (${event.item.contentTypeLabel}, ${event.item.statusLabel})`}
                         title={eventTitle(event)}
-                        onClick={() => openEvent(event, open, load)}
+                        onClick={() => selectEvent(event)}
                       >
                         <span className="truncate"><b className="font-semibold">{event.item.localTime}</b> {event.item.concept}</span>
                         {confirmedOf(event) && <Icon name="shield" size={10} className="flex-none text-[var(--green)]" />}
@@ -313,7 +310,7 @@ export default function CalendarPage() {
               .slice(0, 8)
               .map(({ date, event }) => (
                 <li key={`mobile-${date}-${event.item.draftId}`}>
-                  <button type="button" className="flex w-full min-w-0 items-center gap-2 rounded-[12px] border border-line bg-surface px-3 py-2 text-left" onClick={() => openEvent(event, open, load)}>
+                  <button type="button" className="flex w-full min-w-0 items-center gap-2 rounded-[12px] border border-line bg-surface px-3 py-2 text-left" onClick={() => selectEvent(event)}>
                     <span aria-hidden="true" className="h-2 w-2 flex-none rounded-full" style={{ background: eventAccent(event) }} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[12.5px] font-semibold text-text">{event.item.dayLabel} {event.item.localTime} · {event.item.concept}</span>
@@ -325,7 +322,7 @@ export default function CalendarPage() {
               ))}
           </ul>
 
-          {snapshot && totalVisible === 0 && <EmptyCalendar onCreate={() => open(<CreateContentModal onChanged={() => void load()} />)} />}
+          {snapshot && month.total === 0 && <EmptyCalendar onCreate={() => open(<CreateContentModal onChanged={() => void load()} />)} />}
         </section>
       ) : (
         <WeekView
@@ -334,10 +331,10 @@ export default function CalendarPage() {
           today={today}
           byDate={byDate}
           onSelect={setWeekDay}
-          onOpen={(event) => openEvent(event, open, load)}
+          onOpen={selectEvent}
           onCreate={() => open(<CreateContentModal onChanged={() => void load()} />)}
           onMonth={() => { setMode("month"); setCursor(monthOf(selectedDay)); }}
-          empty={Boolean(snapshot) && totalVisible === 0}
+          empty={Boolean(snapshot) && week.every((date) => !byDate.has(date))}
           travel={travel}
         />
       )}
@@ -360,7 +357,7 @@ export default function CalendarPage() {
                 </div>
                 <div className="flex min-w-0 items-center gap-2">
                   <p className="min-w-0 text-[12.5px] leading-relaxed text-text-2 sm:max-w-[52%]">{reason}</p>
-                  <button type="button" className={cx(BTN.outline, "h-9 px-4")} onClick={() => openEvent({ type: "workflow", item }, open, load)}>Open</button>
+                  <button type="button" className={cx(BTN.outline, "h-9 px-4")} onClick={() => selectEvent({ type: "workflow", item })}>Open</button>
                 </div>
               </li>
             ))}
@@ -381,9 +378,7 @@ export default function CalendarPage() {
           <StateNote status="published" label="Published" text="The provider itself confirmed it. Instagram shows Meta-confirmed; TikTok and YouTube show provider-confirmed." />
         </div>
         <p className="mt-3 text-[12px] leading-relaxed text-text-3">
-          {WORKFLOW_STATUSES.map((status) => counts[status] ?? 0).reduce((total, value) => total + value, 0) > 0
-            ? "Counts above come from the live workflow items on screen — no separate tally exists."
-            : "Items appear here the moment the Marketing Plan, the Studio or an approval creates real work."}
+          Scheduled totals count approved posts with eligible publishing jobs. Each post appears once on its local date.
         </p>
       </section>
     </div>
@@ -396,8 +391,8 @@ function EmptyCalendar({ onCreate }: { onCreate: () => void }) {
   return (
     <div className="flex flex-col items-start gap-3 border-t border-line p-5 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <h3 className="text-[15px] font-semibold text-text">Your calendar is empty</h3>
-        <p className="mt-0.5 max-w-xl text-[13px] leading-relaxed text-text-2">This calendar shows the content Voom is actually executing — planned drafts, items waiting for your approval, and what is scheduled or published, across Instagram, TikTok and YouTube. Build your rolling plan, or create content directly, and each item appears here with its real status.</p>
+        <h3 className="text-[15px] font-semibold text-text">No items in this view</h3>
+        <p className="mt-0.5 max-w-xl text-[13px] leading-relaxed text-text-2">This calendar shows the content Voom is actually executing — planned drafts, items waiting for your approval, and what is scheduled or published, across your social channels. Choose another date or format, or create content.</p>
       </div>
       <button type="button" className={BTN.outline} onClick={onCreate}><Icon name="plus" size={14} /> Create content</button>
     </div>
@@ -425,7 +420,7 @@ function WeekView({ week, selectedDay, today, byDate, onSelect, onOpen, onCreate
 }) {
   const weekEvents = week.flatMap((date) => (byDate.get(date) ?? []).map((event) => ({ date, event })));
   const dayEvents = byDate.get(selectedDay) ?? [];
-  const approvals = weekEvents.filter(({ event }) => event.type === "workflow" && (event.item.status === "needs_approval" || event.item.status === "ready_for_review"));
+  const approvals = weekEvents.filter(({ event }) => calendarNeedsApproval(event));
   const later = weekEvents.filter(({ date }) => date > selectedDay);
   return (
     <div className="mb-5 min-w-0 space-y-6">
@@ -438,7 +433,7 @@ function WeekView({ week, selectedDay, today, byDate, onSelect, onOpen, onCreate
           {week.map((date) => {
             const events = byDate.get(date) ?? [];
             const selected = date === selectedDay;
-            const pending = events.filter((event) => event.type === "workflow" && (event.item.status === "needs_approval" || event.item.status === "ready_for_review")).length;
+            const pending = events.filter(calendarNeedsApproval).length;
             return (
               <li key={date} className="min-w-0">
                 <button
@@ -485,7 +480,7 @@ function WeekView({ week, selectedDay, today, byDate, onSelect, onOpen, onCreate
         </WeekGroup>
       )}
 
-      <WeekGroup icon="clock" title="Later this week" hint={later.length ? `${later.length} still to go out` : "Nothing else this week"} action={<button type="button" onClick={onMonth} className="text-[13.5px] font-semibold text-[var(--brand-ink)] hover:underline">See the full month</button>}>
+      <WeekGroup icon="clock" title="Later this week" hint={later.length ? `${later.length} on the calendar` : "Nothing else this week"} action={<button type="button" onClick={onMonth} className="text-[13.5px] font-semibold text-[var(--brand-ink)] hover:underline">See the full month</button>}>
         {later.length ? later.map(({ event }) => <EventCard key={`later-${event.item.draftId}`} event={event} onOpen={onOpen} />)
           : <p className="col-span-full text-[13.5px] text-text-2">{empty ? "Nothing is planned yet. Build your plan in Marketing Plan or create content directly." : "No more items after this day in the selected week."}</p>}
       </WeekGroup>
@@ -532,6 +527,12 @@ function StateNote({ status, label, text }: { status: string; label: string; tex
 }
 
 function openEvent(event: CalendarEvent, open: ReturnType<typeof useModal>["open"], load: () => Promise<void> | void) {
+  if (event.type === "scheduled") {
+    open(event.item.channel === "instagram"
+      ? <PostEditorModal postId={event.item.draftId} onChanged={() => void load()} />
+      : <SocialEditorModal draftId={event.item.draftId} onChanged={() => void load()} />);
+    return;
+  }
   if (event.type === "social") {
     open(<SocialEditorModal draftId={event.item.draftId} onChanged={() => void load()} />);
     return;
@@ -634,16 +635,13 @@ function longDate(date: string): string {
 function iso(year: number, month: number, day: number) {
   return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
-function countByStatus(items: WorkflowView[]) {
-  return items.reduce<Record<string, number>>((acc, item) => { acc[item.status] = (acc[item.status] ?? 0) + 1; return acc; }, {});
-}
-
 /**
  * The tone of one calendar entry. Workflow items use their authoritative
  * status; TikTok/YouTube items use their durable queue state. Both are the
  * real reads — a label string is never pattern-matched into a colour.
  */
 function eventTone(event: CalendarEvent): WorkspaceTone {
+  if (event.type === "scheduled") return workflowTone("scheduled");
   return event.type === "workflow" ? workflowTone(event.item.status) : socialQueueTone(event.item.queueStatus);
 }
 

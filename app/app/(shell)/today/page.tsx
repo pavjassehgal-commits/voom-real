@@ -1,19 +1,14 @@
 import { TodayDashboard, type TodayChannel, type TodayContentCard } from "@/components/voom/today/TodayDashboard";
+import { readSocialChannelReadiness, SOCIAL_CHANNEL_READINESS_ORDER } from "@/lib/social/readiness";
+import { PLAN_CHANNEL_LABELS } from "@/lib/voom/workflow/channels";
 import { getResendAvailability } from "@/lib/email/config";
 import { automationModeConfirmed, normalizeAutomationMode } from "@/lib/voom/automation";
 import { normalizePlan } from "@/lib/billing/plans";
-import { readInstagramConfig } from "@/lib/instagram/config";
-import { getInstagramConnection } from "@/lib/instagram/data";
-import { readTikTokConfig } from "@/lib/tiktok/config";
-import { getTikTokConnection } from "@/lib/tiktok/data";
-import { readYouTubeConfig } from "@/lib/youtube/config";
-import { getYouTubeConnection } from "@/lib/youtube/data";
 import { getOperatingData } from "@/lib/voom/operating-data";
 import { buildTodayMetrics } from "@/lib/voom/today-metrics";
 import { buildTodayView } from "@/lib/voom/today-view";
 import { loadTodayScheduledItems } from "@/lib/voom/today-schedule";
 import { createAdminClient } from "@/utils/supabase/admin";
-import { createClient } from "@/utils/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -49,8 +44,8 @@ export default async function TodayPage() {
     view={view}
     performance={performance}
     metrics={metrics}
-    ideas={data.summary.needsApproval.slice(0, 4).map((item) => ({ draftId: item.draftId, concept: item.concept, contentType: item.contentType, channel: item.channel }))}
-    ideaCount={data.summary.needsApproval.length}
+    ideas={data.pendingActions.slice(0, 4).map((action) => ({ id: action.id, summary: action.summary }))}
+    ideaCount={data.pendingActions.length}
     channels={channels}
     recent={recentContent(data.snapshot.items, performance.items, now)}
     automationMode={normalizeAutomationMode(data.business.automation_level)}
@@ -61,19 +56,16 @@ export default async function TodayPage() {
 
 /** Real connection state, read exactly as the Channels screen reads it. */
 async function readChannels(userId: string): Promise<TodayChannel[]> {
-  const admin = createAdminClient();
-  const youTubeConfig = readYouTubeConfig();
-  const tikTokConfig = readTikTokConfig();
-  const [instagram, tikTok, youTube] = await Promise.all([
-    createClient().then((db) => getInstagramConnection(db, userId, Boolean(readInstagramConfig()))).catch(() => undefined),
-    getTikTokConnection(admin, userId, Boolean(tikTokConfig), tikTokConfig?.appAudited === true).catch(() => undefined),
-    getYouTubeConnection(admin, userId, Boolean(youTubeConfig), youTubeConfig?.projectAudited === true).catch(() => undefined),
-  ]);
-  const state = (read: unknown, connected: boolean): TodayChannel["state"] => read === undefined ? "unavailable" : connected ? "connected" : "not_connected";
+  const readiness = await readSocialChannelReadiness(createAdminClient(), userId);
+  const social = SOCIAL_CHANNEL_READINESS_ORDER.map((id): TodayChannel => {
+    const entry = readiness.find((row) => row.channel === id);
+    return {
+      id, name: PLAN_CHANNEL_LABELS[id], href: `/app/${id}`,
+      state: !entry ? "unavailable" : entry.connected ? "connected" : "not_connected",
+    };
+  });
   return [
-    { id: "instagram", name: "Instagram", href: "/app/instagram", state: state(instagram, Boolean(instagram?.connected)) },
-    { id: "tiktok", name: "TikTok", href: "/app/tiktok", state: state(tikTok, Boolean(tikTok?.connected) && Boolean(tikTok?.scopes.includes("video.publish"))) },
-    { id: "youtube", name: "YouTube", href: "/app/youtube", state: state(youTube, Boolean(youTube?.connected) && Boolean(youTube?.scopes.includes("https://www.googleapis.com/auth/youtube.upload"))) },
+    ...social,
     { id: "email", name: "Email", href: "/app/connections", state: getResendAvailability().configured ? "ready" : "not_set_up" },
   ];
 }

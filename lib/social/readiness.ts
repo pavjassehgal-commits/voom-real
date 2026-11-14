@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getInstagramConnection } from "@/lib/instagram/data";
+import { instagramPublishReadiness } from "@/lib/instagram/publish-readiness";
 import { readInstagramConfig } from "@/lib/instagram/config";
 import { getTikTokConnection } from "@/lib/tiktok/data";
 import { readTikTokConfig } from "@/lib/tiktok/config";
@@ -16,8 +17,7 @@ import { readLinkedInConfig } from "@/lib/linkedin/config";
  * Read-only, and deliberately the SAME rule the Connections page already
  * states: a channel is "connected" only when its own provider row says so AND
  * the publish scope that channel needs was really granted (TikTok
- * `video.publish`, YouTube `youtube.upload`; Instagram's publishing capability
- * is the connected professional account). Nothing here guesses a capability
+ * `video.publish`, YouTube `youtube.upload`; Instagram requires valid authorization and publishing permission). Nothing here guesses a capability
  * from billing, configuration or a selected channel — an unconfigured
  * deployment reports `configured: false` instead of pretending.
  *
@@ -43,7 +43,7 @@ export async function readSocialChannelReadiness(
 
   const [instagram, tikTok, youTube, linkedin] = await Promise.all([
     getInstagramConnection(db, ownerId, Boolean(instagramConfig))
-      .then((row) => ({ connected: Boolean(row.connected), configured: Boolean(row.configured) }))
+      .then((row) => ({ connected: instagramPublishReadiness(row) === "ready", configured: Boolean(row.configured) }))
       .catch(() => null),
     getTikTokConnection(db, ownerId, Boolean(tikTokConfig), tikTokConfig?.appAudited === true)
       .then((row) => ({ connected: Boolean(row?.connected) && Boolean(row?.scopes.includes("video.publish")), configured: Boolean(tikTokConfig) }))

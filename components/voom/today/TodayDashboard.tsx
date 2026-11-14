@@ -20,7 +20,7 @@ type View = {
 };
 
 export type TodayChannel = {
-  id: "instagram" | "tiktok" | "youtube" | "email";
+  id: "instagram" | "tiktok" | "youtube" | "linkedin" | "email";
   name: string;
   href: string;
   state: "connected" | "not_connected" | "ready" | "not_set_up" | "unavailable";
@@ -39,7 +39,7 @@ export type TodayContentCard = {
   stats: { likes: number | null; comments: number | null; shares: number | null } | null;
 };
 
-type Idea = { draftId: string; concept: string; contentType: string; channel: string };
+type Idea = { id: string; summary: string };
 
 /**
  * Today — redesign Batch 1 (Figma "15 — Today · Dashboard home", PDF p.52).
@@ -210,13 +210,13 @@ function MaraCard({ ideas, ideaCount, insight, automationMode, automationModeCon
       </div>
       <div className="mt-4 rounded-[16px] bg-[var(--brand-soft-2)] p-3">
         {ideaCount > 0 ? <>
-          <p className="px-1 text-[13.5px] leading-snug text-text">I’ve prepared {ideaCount} content idea{ideaCount === 1 ? "" : "s"} for your review.</p>
+          <p className="px-1 text-[13.5px] leading-snug text-text">{ideaCount} item{ideaCount === 1 ? " needs" : "s need"} your review.</p>
           <ul className="mt-3 overflow-hidden rounded-[14px] border border-line bg-surface">
             {ideas.map((idea) => (
-              <li key={idea.draftId} className="border-b border-line last:border-b-0">
+              <li key={idea.id} className="border-b border-line last:border-b-0">
                 <Link href="/app/approvals" className="flex items-center gap-2.5 px-3 py-2.5 transition hover:bg-surface-2">
-                  <ChannelGlyph channel={idea.channel} size={22} />
-                  <span className="min-w-0 flex-1 text-[13.5px] leading-snug text-text line-clamp-2">{idea.concept}</span>
+                  <Icon name="checkCircle" size={18} className="shrink-0 text-brand" />
+                  <span className="min-w-0 flex-1 text-[13.5px] leading-snug text-text line-clamp-2">{idea.summary}</span>
                   <Icon name="chevR" size={16} className="shrink-0 text-text-3" />
                 </Link>
               </li>
@@ -266,7 +266,7 @@ function NextUpCard({ item }: { item: TodayItem | null }) {
             </div>
             <div className="min-w-0 pt-0.5">
               <h3 className="line-clamp-2 text-[16px] font-semibold leading-snug tracking-[-0.015em] text-text">{item.concept}</h3>
-              <p className="mt-0.5 text-[13px] text-text-2">{item.channelLabel} {item.contentTypeLabel}</p>
+              <p className="mt-0.5 text-[13px] text-text-2">{item.contentTypeLabel.startsWith(item.channelLabel) ? item.contentTypeLabel : `${item.channelLabel} ${item.contentTypeLabel}`}</p>
               <p className="mt-1 text-[13px] text-text-2">{item.dayLabel ?? item.localDate}, {item.localTime}</p>
             </div>
           </div>

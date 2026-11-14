@@ -1,30 +1,27 @@
 import { getCurrentUser } from "@/lib/voom/server-data";
-import { loadWorkflowSnapshot } from "@/lib/voom/workflow/read";
+import { loadScheduledPosts } from "@/lib/voom/today-schedule";
+import { loadApprovalFeed } from "@/lib/voom/approval-feed";
+import { filterApprovalActionsForCurrentWorkflow, loadWorkflowSnapshot } from "@/lib/voom/workflow/read";
 import { listSocialCalendarItems } from "@/lib/social/server-drafts";
 import { createAdminClient } from "@/utils/supabase/admin";
 
 export const runtime = "nodejs";
 
-/**
- * Owner-scoped read of the ONE executable content workflow. Today, the
- * Marketing Plan and the Content Calendar all render this payload, so no
- * screen can invent content or dates of its own.
- *
- * Multi-Social Core: `socialItems` carries the approved + scheduled TikTok and
- * YouTube planning drafts so the ONE calendar is chronological across every
- * channel. The Instagram `snapshot` is untouched, and social items are read
- * only — no provider execution exists for them.
- */
-export async function GET() {
+/** Owner-scoped calendar, Studio and shell projections of the workflow. */
+export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "Please log in again." }, { status: 401 });
   try {
     const admin = createAdminClient();
-    const [snapshot, socialItems] = await Promise.all([
+    const scope = new URL(request.url).searchParams.get("view");
+    const [snapshot, socialItems, actions] = await Promise.all([
       loadWorkflowSnapshot(admin, user.id),
-      listSocialCalendarItems(admin, user.id),
+      scope === "badges" ? [] : listSocialCalendarItems(admin, user.id),
+      scope === "badges" ? loadApprovalFeed(admin, user.id, true) : null,
     ]);
-    return Response.json({ snapshot, socialItems }, { headers: { "Cache-Control": "no-store" } });
+    const scheduledPosts = scope === "calendar" ? await loadScheduledPosts(admin, user.id, snapshot.timeZone, new Date()) : undefined;
+    const pendingApprovalCount = actions && filterApprovalActionsForCurrentWorkflow(actions, snapshot).length;
+    return Response.json({ snapshot, socialItems, pendingApprovalCount, scheduledPosts }, { headers: { "Cache-Control": "no-store" } });
   } catch (reason) {
     const code = reason instanceof Error ? reason.message : "";
     if (code.endsWith("publish_queue_read_failed")) {

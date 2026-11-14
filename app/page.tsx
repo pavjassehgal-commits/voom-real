@@ -46,11 +46,11 @@ export default function Home() {
       <main className="relative z-10 flex flex-1 flex-col">
         <section className="mx-auto flex w-full max-w-[880px] flex-col items-center px-5 pb-10 pt-14 text-center sm:pt-20 md:pt-24" aria-labelledby="home-title">
           <h1 id="home-title" className="text-[clamp(2.5rem,7.2vw,4.6rem)] font-bold leading-[1.02] tracking-[-0.045em] text-text">
-            <span className="voom-home-in voom-home-title inline-block">Marketing that</span>{" "}
-            <span className="voom-home-in voom-home-gradient voom-brand-text inline-block">runs itself.</span>
+            <span className="voom-home-in voom-home-title inline-block">Your marketing,</span>{" "}
+            <span className="voom-home-in voom-home-gradient voom-brand-text inline-block">all in one place.</span>
           </h1>
           <p className="voom-home-in voom-home-sub mt-5 max-w-[620px] text-[17px] leading-[1.5] text-text-2 sm:text-[20px]">
-            Plan, create, schedule, and publish content across Instagram, TikTok, YouTube and email, all from one workspace.
+            Plan content with MARA, review posts for your connected social accounts and send email campaigns.
           </p>
           <div className="voom-home-in voom-home-cta mt-8">
             <Link

@@ -4,14 +4,16 @@ import { AutomationMode } from "@/components/voom/operating/AutomationMode";
 import { Icon } from "@/components/voom/icons";
 import { BTN, ChannelGlyph, PageHeader, StatCard, StatusChip } from "@/components/voom/redesign/ui";
 import type { PlanId } from "@/lib/billing/plans";
-import { AUTOMATION_MODE_STATUS_LINES, type AutomationModeValue } from "@/lib/voom/automation";
+import { AUTOPILOT_POST_APPROVAL, type AutomationModeValue } from "@/lib/voom/automation";
 import { formatLocalDate } from "@/lib/voom/timezone";
 
 export interface MaraOverviewProps {
   mode: AutomationModeValue;
   planId: PlanId;
   timeZone: string;
-  plannedCount: number;
+  modeConfirmed: boolean;
+  modeStatus: string;
+  effectiveMode: AutomationModeValue;
   pending: { id: string; summary: string; reason: string | null }[];
   mediaActiveCount: number;
   credits: { remaining: number; total: number } | null;
@@ -32,17 +34,17 @@ export interface MaraOverviewProps {
  * and ad-spend figures are omitted: the chat API is retired and Voom does not
  * measure those.
  */
-export function MaraOverview({ mode, planId, timeZone, plannedCount, pending, mediaActiveCount, credits, gapDates, disconnected, insights, days, knows, allowAutomaticPaidMedia, monthlyMediaBudgetUsd, activity }: MaraOverviewProps) {
+export function MaraOverview({ mode, planId, timeZone, modeConfirmed, modeStatus, effectiveMode, pending, mediaActiveCount, credits, gapDates, disconnected, insights, days, knows, allowAutomaticPaidMedia, monthlyMediaBudgetUsd, activity }: MaraOverviewProps) {
   const decisions = pending.length + (gapDates.length ? 1 : 0) + disconnected.length + insights.length;
   return <div className="min-w-0">
     <PageHeader
       title="Your AI marketing manager"
-      subtitle={`${mode === "autopilot" ? "Autopilot" : mode === "assisted" ? "Assisted" : "Manual"} mode · ${AUTOMATION_MODE_STATUS_LINES[mode]}`}
-      actions={<div className="flex items-center gap-2"><span className="text-[13px] text-text-3">Mode</span><AutomationMode compact showPlanSummary={false} initial={mode} plan={planId} /></div>}
+      subtitle={modeStatus}
+      actions={<div className="flex items-center gap-2"><span className="text-[13px] text-text-3">Mode</span><AutomationMode compact showPlanSummary={false} initial={mode} confirmed={modeConfirmed} plan={planId} /></div>}
     />
 
     <div className="mb-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-      <StatCard icon="cal" value={plannedCount} label="Posts planned this week" tone="brand" />
+      <StatCard icon="cal" value={days.reduce((total, day) => total + day.items.length, 0)} label="Planned posts · next 7 days" tone="brand" />
       <StatCard icon="checkCircle" value={pending.length} label="Waiting on you" tone="coral" note={pending.length ? <Link href="/app/approvals" className="text-[var(--brand-ink)] hover:underline">Review approvals</Link> : undefined} />
       <StatCard icon="video" value={mediaActiveCount} label="Media in progress" tone="blue" />
       <StatCard icon="sparkle" value={credits ? credits.remaining : "—"} label={credits ? `Credits left of ${credits.total}` : "Credits unavailable"} tone="green" />
@@ -127,8 +129,8 @@ export function MaraOverview({ mode, planId, timeZone, plannedCount, pending, me
         <section className="rounded-[22px] border border-[rgba(31,143,108,0.2)] bg-[var(--green-soft)] p-5 sm:p-6" aria-labelledby="mara-guardrails">
           <h2 id="mara-guardrails" className="text-[16px] font-semibold text-text">Guardrails</h2>
           <ul className="mt-3 space-y-2.5 text-[14px] text-text">
-            <Guard>{mode === "autopilot" ? "Auto-approves only posts that pass Voom’s safety checks; anything else waits for you" : "Never publishes without your approval"}</Guard>
-            <Guard>{allowAutomaticPaidMedia && mode === "autopilot" ? `Paid media only within your $${monthlyMediaBudgetUsd} monthly media budget and your credits` : "Asks before generating paid media"}</Guard>
+            <Guard>{effectiveMode === "autopilot" ? AUTOPILOT_POST_APPROVAL : "You approve new posts before they can be scheduled for publishing."}</Guard>
+            <Guard>{allowAutomaticPaidMedia && effectiveMode === "autopilot" ? `Paid media only within your $${monthlyMediaBudgetUsd} monthly media budget and your credits` : "Asks before generating paid media"}</Guard>
             <Guard>Never sends a campaign or spends ad money without your confirmation</Guard>
             <Guard>You can pause all automation at any time</Guard>
           </ul>

@@ -36,8 +36,8 @@ function refreshWorkflowCounts(): Promise<void> {
   if (workflowCountsInFlight) return workflowCountsInFlight;
   workflowCountsInFlight = (async () => {
     try {
-      const response = await fetch("/api/voom/workflow", { cache: "no-store" });
-      const body = (await response.json()) as { snapshot?: { items?: { status: string }[] } };
+      const response = await fetch("/api/voom/workflow?view=badges", { cache: "no-store" });
+      const body = (await response.json()) as { pendingApprovalCount: number; snapshot?: { items?: { status: string }[] } };
       if (response.ok && body.snapshot) {
         const items = body.snapshot.items ?? [];
         workflowCounts = {
@@ -48,7 +48,7 @@ function refreshWorkflowCounts(): Promise<void> {
               item.status === "media_delayed" ||
               item.status === "media_timed_out",
           ).length,
-          approvals: items.filter((item) => item.status === "needs_approval").length,
+          approvals: body.pendingApprovalCount,
         };
         workflowCountListeners.forEach((listener) => listener());
       }

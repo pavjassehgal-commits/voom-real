@@ -365,7 +365,8 @@ test("Content Calendar shows thumbnail, type, account, time, status and a safe r
   assert.match(ui, /item\.type/);
   assert.match(ui, /item\.account/);
   assert.match(ui, /formatDateTime\(item\.scheduledAt\)/);
-  assert.match(ui, /Voom will auto-publish/);
+  // Launch polish: shown only for a future, still-scheduled item (no promise for past-due or other states).
+  assert.match(ui, /item\.autoPublish && !pastDue && item\.status === "scheduled" \? " · Scheduled to publish"/);
   assert.match(ui, /item\.failureReason/);
   assert.match(ui, /Needs attention/);
   assert.match(ui, /Instagram publishing permission required/);
