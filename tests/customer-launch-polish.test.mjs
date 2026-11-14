@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { importApp, react, renderToStaticMarkup } from "./helpers/rendered-surface.mjs";
 import { createFakeClients, Trace } from "./perf/fake-supabase.mjs";
@@ -86,4 +87,10 @@ test("Calendar and the seven-day summary share approval, timezone, expiry and mi
   connection.token_expires_at = "2000-01-01T00:00:00Z";
   assert.equal((await instagram()).connected, false);
   assert.deepEqual(await week(), []);
+});
+
+test("the launch-polish review branch never auto-deploys a Preview that shares Production credentials", () => {
+  const vercel = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
+  assert.equal(vercel.git.deploymentEnabled["codex/customer-launch-polish-v2"], false);
+  assert.equal(vercel.git.deploymentEnabled.main, undefined, "Production main deployments are unchanged");
 });
