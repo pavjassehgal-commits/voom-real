@@ -33,12 +33,16 @@ const PROBE = `
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const toasts = () => [...document.querySelectorAll(".voom-toast")];
   const button = (label) => [...document.querySelectorAll("button")].find((b) => b.innerText.trim().startsWith(label));
+  // The Brand Kit v2 wizard (merged 2026-11-01) has no Skip on its required screens,
+  // so a button that is not on the current screen cannot be covered.
   const covered = (el) => {
+    if (!el) return false;
     const r = el.getBoundingClientRect();
     const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
     return !(hit === el || el.contains(hit));
   };
   const overlaps = (el) => {
+    if (!el) return false;
     const r = el.getBoundingClientRect();
     return toasts().some((t) => { const q = t.getBoundingClientRect(); return !(q.right <= r.left || q.left >= r.right || q.bottom <= r.top || q.top >= r.bottom); });
   };

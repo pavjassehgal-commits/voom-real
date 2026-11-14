@@ -1,4 +1,5 @@
 import type { AudienceEligibilityPreview } from "@/lib/contacts/types";
+import type { BrandAsset, BrandColours } from "@/lib/brand/assets";
 
 export type { AudienceEligibilityPreview } from "@/lib/contacts/types";
 
@@ -18,10 +19,111 @@ export interface OnboardingAnswers {
   goal: string;
   tone: string[];
   channels: string[];
-  budget: string;
   freq: string;
+  /** A real automation mode (manual | assisted | autopilot) or "" until chosen. */
   auto: string;
-  permission: string;
+  /** Brand Kit v2 answers collected by the new screens (kit-only, not on `businesses`). */
+  offerings: string[];
+  rules: string[];
+  words: string[];
+  notes: string;
+  facts: string[];
+  brief: string;
+  /**
+   * Slice 4: what MARA read from the description, or null when the read was
+   * skipped or failed. `learnedFor` is the description text that was read, so
+   * going back and pressing "Send to MARA" on the same text does not call
+   * the AI again.
+   */
+  learned: BrandLearned | null;
+  learnedFor: string;
+  /** "failed" after an AI read that did not work (the basics screen says so); "" otherwise. */
+  learnedNote: "" | "failed";
+  /** Kit answer keys whose current value is MARA's guess, accepted unchanged. Editing a field removes its key. */
+  fromMara: BrandLearnedKey[];
+  /** Facts MARA found that the owner has not ticked. Stored aside, never used in captions. */
+  factsUnconfirmed: string[];
+  /** Slice 5: images uploaded on "Give MARA your brand" (stored in the private bucket, saved with the kit at Finish). */
+  assets: BrandAsset[];
+  /** Slice 5: the two brand colours, computed from the logo or picked; null until a logo or a pick. */
+  colours: BrandColours | null;
+  /** Slice 5: one-hour preview links for the uploads, by path. Screen-only, never saved. */
+  assetPreviews: Record<string, string>;
+  /** Slice 6: the sample captions the owner sorted on the voice screen ("Sounds like us" / "Not us"). Saved as the kit's voice samples. */
+  liked: string[];
+  disliked: string[];
+  /**
+   * Slice 6: the captions MARA wrote for the voice screen (screen-only, not
+   * saved), the answers they were written from (`samplesFor`, so going back
+   * to the screen does not call the AI again for the same answers) and
+   * "failed" / "off" when the write did not work or no text model is set up.
+   */
+  samples: string[];
+  samplesFor: string;
+  samplesNote: "" | "failed" | "off";
+  /**
+   * Slice 7: the website read started when leaving "Give MARA your brand".
+   * `text` is the capped block the extraction gets (screen-only, never
+   * saved); `look` is what the homepage screenshot told MARA.
+   */
+  website: OnboardingWebsiteRead;
+  /** Which sources MARA's last read used ("" before any read). */
+  learnedWith: "" | "description" | "description+website";
+  /** True while the description box holds the draft taken from the website's own words; typing clears it. */
+  descFromWebsite: boolean;
+}
+
+export interface OnboardingWebsiteRead {
+  url: string;
+  status: "" | "reading" | "ready" | "empty" | "failed";
+  /** Plain reason when failed or empty. */
+  reason: string;
+  text: string;
+  pageTitles: string[];
+  fetchedAt: string;
+  look: { look: string; styleTags: string[]; subject: string } | null;
+  lookStatus: "" | "ready" | "off" | "failed";
+}
+
+/** The kit answer keys MARA's reading can fill (slice 4). `facts` means the unconfirmed list. */
+export type BrandLearnedKey = "name" | "category" | "offerings" | "audience" | "goal" | "personality" | "brief" | "facts";
+
+/** One structured AI read of the description; every value is a guess for the owner to confirm. */
+export interface BrandLearned {
+  name: string;
+  category: string;
+  offerings: string[];
+  audience: string[];
+  goal: string;
+  personality: string[];
+  brief: string;
+  facts: string[];
+}
+
+/** The kit-only answers onboarding saves as brand kit version 1. */
+export interface OnboardingKitInput {
+  brief: string;
+  offerings: string[];
+  rules: string[];
+  words: string[];
+  notes: string;
+  facts: string[];
+  /** The mode the user wanted when their plan did not allow it (for the upgrade prompt). */
+  wantedAutomation?: string;
+  /** Slice 4: answer keys whose saved value is MARA's reading of the description, accepted unchanged. */
+  fromDescription?: string[];
+  /** Slice 4: facts MARA found that the owner did not confirm. Never read by generation. */
+  factsUnconfirmed?: string[];
+  /** Slice 5: the uploaded logo, product photos and past posts (references only). Omitted when none. */
+  assets?: BrandAsset[];
+  /** Slice 5: the two brand colours (computed from the logo, or picked). Omitted when none. */
+  colours?: BrandColours;
+  /** Slice 6: the sample captions sorted on the voice screen. Omitted when none were sorted. */
+  voiceSamples?: { liked: string[]; disliked: string[] };
+  /** Slice 7: a small record of the website read (never the text or the image). Omitted when no site was read. */
+  website?: { url: string; status: "ready" | "empty"; fetchedAt: string; pageTitles: string[]; look?: { look: string; styleTags: string[] } };
+  /** Slice 7: what MARA's accepted guesses were read from; "description" when absent. */
+  readSource?: "description" | "website";
 }
 
 export interface Toast {
@@ -89,6 +191,8 @@ export interface BusinessProfileInput {
  */
 export interface OnboardingInput extends BusinessProfileInput {
   website?: string;
+  /** Brand Kit v2 (slice 3): written into brand kit version 1 alongside the core answers. */
+  kit?: OnboardingKitInput;
 }
 
 export type CampaignStatus = "draft" | "approved" | "rejected";

@@ -2,6 +2,9 @@
 
 Production runbook. Steps are ordered; each is required unless marked optional.
 
+**The fuller, kept-current version of this runbook is `handover/production-setup.md`. If the
+two disagree, the handover version wins.**
+
 ## 1. Supabase (production project, Pro plan recommended for backups/PITR)
 
 1. Apply migrations `0001` → `0051` in order (`supabase db push`, or run each
@@ -10,10 +13,14 @@ Production runbook. Steps are ordered; each is required unless marked optional.
    together with them — `0050` requires the updated API routes.
 2. Auth → URL configuration:
    - Site URL: `https://voom.today`
-   - Redirect URLs: `https://voom.today/auth/callback`
+   - Redirect URLs: `https://voom.today/**` (the wildcard is required: email links
+     return to `/auth/callback?next=/app` or `?next=/reset-password`)
    - Review Auth rate limits (sign-in / sign-up / email) for brute-force protection.
+   - Email Templates: "Confirm signup" and "Reset Password" both keep `{{ .ConfirmationURL }}`.
+   - Providers → Email: "Secure password change" off.
 3. Auth → SMTP: use a custom SMTP sender on the voom.today domain (the default
-   Supabase sender is heavily rate limited).
+   Supabase sender is heavily rate limited). Any provider works; see
+   `handover/production-setup.md` A6 for options.
 
 ## 2. Vercel (Pro plan — routes use up to 300 s)
 

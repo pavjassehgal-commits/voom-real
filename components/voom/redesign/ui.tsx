@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { Icon } from "@/components/voom/icons";
 import { cx } from "@/lib/voom/cx";
 import { TONE_CLASSES, workflowTone } from "@/lib/voom/workflow/presentation";
@@ -154,6 +154,66 @@ export const BTN = {
   quiet: "inline-flex h-11 items-center justify-center gap-2 rounded-[14px] border border-line bg-surface px-4 text-[14px] font-semibold text-text transition hover:border-[var(--line-2)] hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50",
   field: "h-11 rounded-[14px] border border-line bg-surface px-3.5 text-[14px] text-text outline-none transition focus:border-[var(--brand-line)] focus:shadow-[0_0_0_4px_var(--brand-soft)]",
 } as const;
+
+/**
+ * Form looks for our own screens (Brand page, onboarding, the images editor,
+ * the voice cards), matching the redesigned pages: white fields with the soft
+ * purple focus ring, pills that fill soft purple when chosen (no gradient),
+ * and light message boxes. Phase C polish, 2026-11-04.
+ */
+export const FORM = {
+  // Label, field and hint sizes match the Settings page (BTN.field, its Field helper).
+  label: "mb-1.5 block text-[13px] font-semibold text-text",
+  hint: "mt-1.5 block text-[12px] leading-relaxed text-text-3",
+  field: "h-11 w-full rounded-[14px] border border-line bg-surface px-3.5 text-[14px] text-text outline-none transition placeholder:text-text-3 focus:border-[var(--brand-line)] focus:shadow-[0_0_0_4px_var(--brand-soft)] disabled:opacity-60",
+  area: "w-full resize-y rounded-[14px] border border-line bg-surface px-3.5 py-3 text-[14px] leading-[1.6] text-text outline-none transition placeholder:text-text-3 focus:border-[var(--brand-line)] focus:shadow-[0_0_0_4px_var(--brand-soft)] disabled:opacity-60",
+  select: "h-11 w-full appearance-none rounded-[14px] border border-line bg-surface px-3.5 pr-9 text-[14px] text-text outline-none transition focus:border-[var(--brand-line)] focus:shadow-[0_0_0_4px_var(--brand-soft)] disabled:opacity-60",
+  card: "rounded-[16px] border border-line bg-surface p-4",
+  note: "rounded-[12px] border border-line bg-surface px-4 py-3 text-[13px] leading-relaxed text-text-2",
+  warn: "rounded-[12px] border border-[var(--amber)]/30 bg-[var(--amber-soft)] px-4 py-3 text-[13px] leading-relaxed text-text-2",
+  error: "rounded-[12px] border border-[var(--red)]/25 bg-[var(--red-soft)] px-4 py-3 text-[13.5px] text-[var(--red)]",
+  ok: "rounded-[12px] border border-[var(--green)]/25 bg-[var(--green-soft)] px-4 py-3 text-[13.5px] text-[var(--green)]",
+  smallBtn: "inline-flex h-9 items-center justify-center gap-1.5 rounded-[10px] border border-line bg-surface px-3 text-[13px] font-semibold text-text transition hover:border-[var(--line-2)] hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50",
+  smallPrimary: "voom-create-btn inline-flex h-9 items-center justify-center gap-1.5 rounded-full px-4 text-[13px] font-semibold text-white transition hover:brightness-[1.04] disabled:cursor-not-allowed disabled:opacity-50",
+} as const;
+
+const BADGE_TONES: Record<string, string> = {
+  "t-brand": "bg-[var(--brand-soft)] text-[var(--brand-ink)]",
+  "t-grey": "bg-surface-2 text-text-3",
+  "t-green": "bg-[var(--green-soft)] text-[var(--green)]",
+  "t-amber": "bg-[var(--amber-soft)] text-[var(--amber)]",
+};
+
+/**
+ * A small round badge ("MARA's guess", "In use", a count), the same shape as the
+ * dashboard's status chips. Tone names match the old `Tag` so screens could swap.
+ */
+export function Badge({ tone = "t-grey", className, children }: { tone?: keyof typeof BADGE_TONES | string; className?: string; children: ReactNode }) {
+  return (
+    <span className={cx("inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-[3px] text-[11.5px] font-semibold", BADGE_TONES[tone] ?? BADGE_TONES["t-grey"], className)}>
+      {children}
+    </span>
+  );
+}
+
+/** A choice pill: white, soft purple with a purple border when chosen. */
+export function Pill({ on, className, children, ...props }: { on?: boolean } & ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      className={cx(
+        "inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[13px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-line)] disabled:cursor-not-allowed disabled:opacity-50",
+        on ? "border-[var(--brand-line)] bg-[var(--brand-soft)] text-[var(--brand-ink)]" : "border-line bg-surface text-text-2 hover:border-[var(--line-2)] hover:text-text",
+        className,
+      )}
+      {...props}
+    >
+      {on && <Icon name="check" size={12} />}
+      {children}
+    </button>
+  );
+}
 
 export function formatShortDateTime(iso: string | null | undefined, timeZone?: string) {
   if (!iso) return null;

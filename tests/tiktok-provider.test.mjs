@@ -2464,9 +2464,10 @@ test("rolling-plan channel assignment requires no database migration", async (t)
     t.skip("git history with a `main` branch is unavailable in this checkout");
     return;
   }
-  // Future unrelated migrations are allowed. This regression concerns only
-  // the rolling-plan slot-assignment change: it must remain server-owned and
-  // must not add SQL coupling to its slot/channel fields.
+  // Future unrelated migrations are allowed (Trend Intelligence, Brand Kit v2 and main's
+  // 0059-0070 all ship their own). This regression concerns only the rolling-plan
+  // slot-assignment change: it must remain server-owned and must not add SQL coupling to
+  // its slot/channel fields.
   const added = current.filter((file) => !mainFiles.includes(file));
   const addedSql = (await Promise.all(added.map(async (file) => [file, await readFile(file, "utf8")])))
     .filter(([, body]) => /source_plan_item_key|planChannelAssignments|channel assignment/i.test(body));

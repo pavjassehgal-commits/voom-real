@@ -31,7 +31,9 @@ test("Performance shows only provider-returned numbers and keeps unavailable cha
 
 test("Settings keeps every real save path and shows no control without a backend", async () => {
   const page = await code("app/app/(shell)/settings/page.tsx");
-  for (const action of ["saveBrandSettings", "saveMediaSpend", "restartOnboarding", "setTheme", "toggleTone", "logoutAction"]) assert.match(page, new RegExp(action), `${action} is wired`);
+  // Brand tone (toggleTone) is edited on the Brand page since Brand Kit v2 slice 3; Settings links there (merged 2026-11-01).
+  for (const action of ["saveBrandSettings", "saveMediaSpend", "restartOnboarding", "setTheme", "logoutAction"]) assert.match(page, new RegExp(action), `${action} is wired`);
+  assert.match(page, /href="\/app\/brand"/, "the brand itself is edited on the Brand page");
   assert.match(page, /\/api\/billing\/summary/, "credits come from the real ledger summary");
   assert.match(page, /<EmailIdentityCard \/>/, "the email identity editor is kept");
   assert.match(page, /preferredChannels: channels/, "channel choices save through the existing profile payload");

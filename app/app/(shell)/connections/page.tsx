@@ -50,6 +50,8 @@ export default async function ConnectionsPage() {
   const youTubeConfig = readYouTubeConfig();
   const tikTokConfig = readTikTokConfig();
   const linkedInConfig = readLinkedInConfig();
+  // Every card reads its REAL connection row (Instagram included, 2026-10-17
+  // truthfulness fix). A failed read reports "not connected" rather than assuming.
   const [instagram, youTube, tikTok, linkedIn] = user ? await Promise.all([
     getInstagramConnection(admin, user.id, Boolean(instagramConfig)).catch(() => null),
     getYouTubeConnection(admin, user.id, Boolean(youTubeConfig), youTubeConfig?.projectAudited === true).catch(() => null),
@@ -197,6 +199,8 @@ export default async function ConnectionsPage() {
   );
 }
 
+// A card's status is always passed in by the caller, which proved it from the
+// provider's own connection row; no card can claim a connection by default.
 const TONES: Record<Tone, string> = {
   green: "bg-[var(--green-soft)] text-[var(--green)]",
   amber: "bg-[var(--amber-soft)] text-[var(--amber)]",

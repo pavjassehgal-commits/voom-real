@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useVoomActions, useVoomState } from "@/lib/voom/store";
-import { Q_INDUSTRY, OB_TONE, Q_CHANNELS, Q_CUSTOMER } from "@/lib/voom/onboardingData";
+import { Q_CHANNELS } from "@/lib/voom/onboardingData";
 import type { BusinessProfileInput } from "@/lib/voom/types";
 import { MANUAL_NEVER_AUTO_SPENDS } from "@/lib/mara/media-spend";
 import { automationModeDisplayLabel } from "@/lib/voom/automation";
@@ -30,6 +30,11 @@ import { HAPTICS_STORAGE_KEY, MOTION_STORAGE_KEY, applyMotionPreference, beginHa
  * billing email, Buy credits, data export, password change, active sessions
  * and self-serve workspace deletion — and the "Ask MARA" helper card (the MARA
  * chat is retired).
+ *
+ * Brand Kit v2 (Gurnoor's branch, slice 3, 2026-10-24): the brand itself is edited
+ * on the Brand page (/app/brand) with a history of every change, so the "Brand
+ * profile" section here links there instead of repeating the form. Settings keeps
+ * the display name and the planned channels.
  */
 type SectionId = "general" | "brand" | "channels" | "email" | "mara" | "billing" | "appearance" | "privacy" | "account" | "danger";
 
@@ -46,16 +51,10 @@ const SECTION_IDS = new Set<string>(NAV.flatMap((group) => group.items.map((item
 
 export default function SettingsPage() {
   const { brand, mediaSpend, theme, displayName, email, settingsSaving, settingsError, plan, automationMode } = useVoomState();
-  const { toggleTone, setTheme, toast, restartOnboarding, saveBrandSettings, saveMediaSpend } = useVoomActions();
+  const { setTheme, toast, restartOnboarding, saveBrandSettings, saveMediaSpend } = useVoomActions();
 
   const [section, setSection] = useState<SectionId>("general");
   const [nameInput, setNameInput] = useState(displayName);
-  const [brandNameInput, setBrandNameInput] = useState(brand.name);
-  // Loaded from the persisted businesses.brand_description, so saving any
-  // other field round-trips the existing value instead of wiping it.
-  const [descInput, setDescInput] = useState(brand.desc);
-  const [industryInput, setIndustryInput] = useState(brand.industry);
-  const [audience, setAudience] = useState(brand.audience);
   const [channels, setChannels] = useState(brand.channels);
   const [restarting, setRestarting] = useState(false);
   const [allowAutomaticMedia, setAllowAutomaticMedia] = useState(mediaSpend.allowAutomaticPaidMedia);
@@ -102,10 +101,12 @@ export default function SettingsPage() {
     const gesture = beginHapticGesture(); // synchronous: the Save click
     const payload: BusinessProfileInput = {
       displayName: nameInput,
-      brandName: brandNameInput,
-      brandDescription: descInput,
-      industry: industryInput,
-      targetCustomer: audience,
+      // Brand fields are edited on the Brand page; this save sends the stored
+      // values unchanged so the kit's carry-forward rule records no change.
+      brandName: brand.name,
+      brandDescription: brand.desc,
+      industry: brand.industry,
+      targetCustomer: brand.audience,
       mainGoal: brand.goals[0] ?? "",
       brandPersonality: brand.tone,
       preferredChannels: channels,
@@ -200,55 +201,28 @@ export default function SettingsPage() {
                 <Field label="Your name" hint="Shown in your greeting and account menu.">
                   <input className={cx(BTN.field, "w-full")} value={nameInput} onChange={(e) => setNameInput(e.target.value)} placeholder="Your name" />
                 </Field>
-                <Field label="Workspace name" hint="Your brand name — edit it in Brand profile.">
-                  <input className={cx(BTN.field, "w-full bg-surface-2 text-text-2")} value={brandNameInput || "Not set"} readOnly aria-readonly="true" />
+                <Field label="Workspace name" hint="Your brand name — edit it on the Brand page.">
+                  <input className={cx(BTN.field, "w-full bg-surface-2 text-text-2")} value={brand.name || "Not set"} readOnly aria-readonly="true" />
                 </Field>
               </div>
               {saveBar}
             </Panel>
           )}
 
-          {section === "brand" && <>
+          {section === "brand" && (
             <Panel title="Brand profile" hint="Keeps your brand consistent across content, campaigns and MARA's recommendations.">
-              <div className="grid gap-4 p-5 sm:grid-cols-2 sm:p-6">
-                <Field label="Brand name">
-                  <input className={cx(BTN.field, "w-full")} value={brandNameInput} onChange={(e) => setBrandNameInput(e.target.value)} placeholder="Your business name" />
-                </Field>
-                <Field label="Industry">
-                  <select className={cx(BTN.field, "w-full")} value={industryInput} onChange={(e) => setIndustryInput(e.target.value)}>
-                    <option value="">Not set</option>
-                    {Q_INDUSTRY.map(([, name]) => <option key={name} value={name}>{name}</option>)}
-                  </select>
-                </Field>
-                <div className="sm:col-span-2">
-                  <Field label="Brand description" hint={`MARA reads this before she writes or plans anything. Clear the field to remove the description. ${descInput.length} characters.`}>
-                    <textarea
-                      rows={5}
-                      className="w-full rounded-[14px] border border-line bg-surface px-3.5 py-3 text-[14px] leading-relaxed text-text outline-none transition focus:border-[var(--brand-line)] focus:shadow-[0_0_0_4px_var(--brand-soft)]"
-                      value={descInput}
-                      onChange={(e) => setDescInput(e.target.value)}
-                      placeholder="For example: We're a small café near the marina. Most of our customers are regulars who work nearby, and weekends are our busiest time."
-                    />
-                  </Field>
-                </div>
-              </div>
-              {saveBar}
-            </Panel>
-            <Panel title="Brand personality" hint="Help MARA understand how your brand should sound.">
               <div className="p-5 sm:p-6">
-                <h3 className="text-[13.5px] font-semibold text-text">Tone of voice <span className="font-normal text-text-3">· pick up to 3</span></h3>
-                <div className="mt-2.5 flex flex-wrap gap-2">
-                  {OB_TONE.map((t) => <Pill key={t} active={brand.tone.includes(t)} onClick={() => toggleTone(t)}>{t}</Pill>)}
-                </div>
-                <h3 className="mt-6 text-[13.5px] font-semibold text-text">Target audience</h3>
-                <div className="mt-2.5 flex flex-wrap gap-2">
-                  {Q_CUSTOMER.map((a) => <Pill key={a} active={audience.includes(a)} onClick={() => setAudience((prev) => prev.includes(a) ? prev.filter((x) => x !== a) : [...prev, a])}>{a}</Pill>)}
-                  {audience.filter((a) => !Q_CUSTOMER.includes(a)).map((a) => <Pill key={a} active onClick={() => setAudience((prev) => prev.filter((x) => x !== a))}>{a}</Pill>)}
+                <p className="max-w-xl text-[13.5px] leading-relaxed text-text-2">
+                  Everything MARA knows about {brand.name || "your business"} — description, audience, voice, rules, facts, pace and channels — lives on
+                  the Brand page, with a history of every change. The automation level is set on the Automations page.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Link href="/app/brand" className={BTN.primary}>Open Brand page <Icon name="arrow" size={14} /></Link>
+                  <Link href="/app/automations" className={BTN.outline}>Automation level</Link>
                 </div>
               </div>
-              {saveBar}
             </Panel>
-          </>}
+          )}
 
           {section === "channels" && (
             <Panel title="Channels" hint="Which channels MARA plans for. Connections live on the Channels page.">
@@ -431,15 +405,6 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       {children}
       {hint && <span className="mt-1.5 block text-[12px] text-text-3">{hint}</span>}
     </label>
-  );
-}
-
-function Pill({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
-  return (
-    <button type="button" aria-pressed={active} onClick={onClick}
-      className={cx("inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[13px] font-medium transition", active ? "border-[var(--brand-line)] bg-[var(--brand-soft)] text-[var(--brand-ink)]" : "border-line bg-surface text-text-2 hover:border-[var(--line-2)]")}>
-      {active && <Icon name="check" size={12} />}{children}
-    </button>
   );
 }
 

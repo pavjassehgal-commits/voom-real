@@ -66,6 +66,9 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
   const [time, setTime] = useState("");
   const [mediaBrief, setMediaBrief] = useState("");
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  /** Instagram Posts only: where the visual comes from. Sent with the next upload; switched on the server once a visual exists. */
+  const [source, setSource] = useState<"own_asset" | "existing_content">("own_asset");
   const [videoJob, setVideoJob] = useState<{ preparing: boolean; generation: ClientGeneration | null } | null>(null);
 
   const applyPost = useCallback((view: Post) => {
@@ -76,6 +79,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
     setHashtags(view.hashtags.join(" "));
     setFormat(view.format);
     setMediaBrief(view.mediaBrief ?? "");
+    if (view.origin === "existing_content" || view.origin === "own_asset") setSource(view.origin);
     const when = view.scheduledAt ? new Date(view.scheduledAt) : null;
     setDate(when ? isoToLocalDate(view.scheduledAt!, DEFAULT_TIMEZONE) : "");
     setTime(when ? toTimeInput(view.scheduledAt!) : "");
@@ -185,6 +189,25 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
     }
   }
 
+  /** Permanent delete: the server refuses in-flight or published posts, so a refusal shows as an error and nothing changes. */
+  async function deletePost() {
+    setBusy("delete");
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(endpoint, { method: "DELETE" });
+      const body = (await response.json()) as { deleted?: boolean; error?: string };
+      if (!response.ok || !body.deleted) throw new Error(body.error ?? "Voom couldn't delete that post. Please retry.");
+      onChanged?.();
+      close();
+    } catch (reason) {
+      setConfirmDelete(false);
+      setError(reason instanceof Error ? reason.message : "Voom couldn't delete that post. Please retry.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function send(url: string, init: RequestInit | undefined, action: string, okMessage: string) {
     setBusy(action);
     setError("");
@@ -264,6 +287,21 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
     form.set("file", file);
     form.set("origin", origin);
     await send(`${endpoint}/asset`, { method: "POST", body: form }, "upload", "Stored privately in Voom.");
+  }
+
+  async function chooseSource(value: "own_asset" | "existing_content") {
+    setSource(value);
+    if (!post?.visual) {
+      setError("");
+      setNotice(value === "existing_content" ? "Source set to Existing content. It applies to the visual you upload next." : "Source set to My own asset.");
+      return;
+    }
+    await send(
+      endpoint,
+      { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "source", origin: value }) },
+      "source",
+      "Source updated.",
+    );
   }
 
   async function chooseFormat(value: PostFormat) {
@@ -348,6 +386,23 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                     : "Private previews are short-lived signed URLs. The file path is never sent to your browser."}
               </p>
 
+              {isPost ? (
+                <div className="mt-3.5">
+                  <h3 className="mb-1.5 text-xs font-semibold text-text-2">Source</h3>
+                  <p className="mb-1.5 text-[11px] leading-relaxed text-text-3">
+                    Existing content is a photo you already shot: MARA can then suggest a caption, CTA and timing for it. When image reading is on, she first looks at a small copy of the photo, sent once to Voom&apos;s AI provider.
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    <Chip active={source === "own_asset"} disabled={busy !== null} onClick={() => void chooseSource("own_asset")}>
+                      My own asset
+                    </Chip>
+                    <Chip active={source === "existing_content"} disabled={busy !== null} onClick={() => void chooseSource("existing_content")}>
+                      Existing content
+                    </Chip>
+                  </div>
+                </div>
+              ) : null}
+
               <div className="mt-3.5">
                 <h3 className="mb-1.5 text-xs font-semibold text-text-2">Format</h3>
                 {isStory ? (
@@ -386,7 +441,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                   onChange={(event) => {
                     const file = event.target.files?.[0];
                     event.target.value = "";
-                    if (file) void uploadFile(file, post.origin === "existing_content" || post.kind === "reel" || post.kind === "story" ? "existing_content" : "own_asset");
+                    if (file) void uploadFile(file, post.kind === "reel" || post.kind === "story" ? "existing_content" : source);
                   }}
                 />
                 <Btn variant="outline" size="sm" block disabled={busy === "upload"} onClick={() => fileRef.current?.click()}>
@@ -405,11 +460,13 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                       setError("");
                       setNotice("");
                       try {
-                        const response = await fetch(`${endpoint}/suggest`, { method: "POST" });
+                        const response = await fetch(`${endpoint}/suggest`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ brief: mediaBrief }) });
                         const body = (await response.json()) as {
-                          suggestion?: { caption: string; cta: string; hashtags: string[]; suggestedPublishAt: string | null };
+                          suggestion?: { caption: string; cta: string; hashtags: string[]; suggestedPublishAt: string | null; timingReason?: string };
                           error?: string;
                           disclosure?: string;
+                          /** Slice 5b: what the vision model saw in the photo, when it looked. */
+                          visualDescription?: string;
                         };
                         if (!response.ok || !body.suggestion) throw new Error(body.error ?? "MARA couldn't suggest copy.");
                         setCaption(body.suggestion.caption);
@@ -420,7 +477,8 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                           setDate(isoToLocalDate(when, DEFAULT_TIMEZONE));
                           setTime(toTimeInput(when));
                         }
-                        setNotice(body.disclosure ?? "MARA suggested copy. Review it before saving.");
+                        // The timing reason also carries MARA's note when the purpose and the photo do not fit.
+                        setNotice(`${body.disclosure ?? "MARA suggested copy. Review it before saving."}${body.visualDescription ? ` MARA saw: ${body.visualDescription}` : ""}${body.suggestion.timingReason ? ` Timing: ${body.suggestion.timingReason}` : ""}`);
                       } catch (reason) {
                         setError(reason instanceof Error ? reason.message : "MARA couldn't suggest copy.");
                       } finally {
@@ -470,7 +528,8 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
 
               {post.origin === "existing_content" && !isStory ? (
                 <p className="mt-3 rounded-xl bg-surface-2 px-3 py-2.5 text-[11.5px] leading-relaxed text-text-3">
-                  MARA has not seen this file. Suggestions come from the file name, file type and your brand and plan context only.
+                  {mediaBrief.trim() ? "" : "Tell MARA what this post is for first; she writes a much better caption with it. "}
+                  Suggestions come from your brand and plan context plus, when image reading is on, one look at a small copy of a photo. Videos are never looked at. The note after each suggestion says what MARA saw, if anything.
                 </p>
               ) : null}
 
@@ -486,9 +545,15 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
             </div>
 
             <div>
-              <Field label="What should MARA create?" hint="Your direction for MARA. Saved with the draft so it survives reloads and regenerations. Max 800 characters.">
-                <Textarea rows={3} maxLength={800} value={mediaBrief} onChange={(event) => setMediaBrief(event.target.value)} placeholder="e.g. Summer swimwear flat lay on sand, bright and family-friendly" />
-              </Field>
+              {post.origin === "existing_content" && !isStory ? (
+                <Field label="What is this post for?" hint="The caption serves this. Saved with the draft. Max 800 characters.">
+                  <Textarea rows={3} maxLength={800} value={mediaBrief} onChange={(event) => setMediaBrief(event.target.value)} placeholder="e.g. Introducing our new sandwich to Gurgaon, or a weekend brunch reminder" />
+                </Field>
+              ) : (
+                <Field label="What should MARA create?" hint="Your direction for MARA. Saved with the draft so it survives reloads and regenerations. Max 800 characters.">
+                  <Textarea rows={3} maxLength={800} value={mediaBrief} onChange={(event) => setMediaBrief(event.target.value)} placeholder="e.g. Summer swimwear flat lay on sand, bright and family-friendly" />
+                </Field>
+              )}
               <Field label="Title / concept">
                 <Input value={concept} maxLength={160} onChange={(event) => setConcept(event.target.value)} />
               </Field>
@@ -534,7 +599,39 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
           Close
         </Btn>
         {post ? (
+          confirmDelete ? (
+            <div className="flex w-full flex-wrap items-center justify-end gap-2.5 rounded-xl border border-red/35 bg-red/10 px-3 py-2">
+              <p className="mr-auto text-[11.5px] leading-relaxed text-text-2">
+                Delete this post for good? Its caption, schedule and stored visual are removed. This cannot be undone.
+              </p>
+              <Btn variant="danger" size="sm" disabled={busy !== null} onClick={() => void deletePost()}>
+                {busy === "delete" ? "Deleting…" : "Yes, delete it"}
+              </Btn>
+              <Btn variant="ghost" size="sm" disabled={busy !== null} onClick={() => setConfirmDelete(false)}>
+                Keep it
+              </Btn>
+            </div>
+          ) : (
           <>
+            <Btn variant="ghost" className="mr-auto text-red" disabled={busy !== null} onClick={() => setConfirmDelete(true)}>
+              <Icon name="trash" size={14} /> Delete post
+            </Btn>
+            {post.internalState !== "draft" ? (
+              <Btn
+                variant="outline"
+                disabled={busy !== null}
+                onClick={() =>
+                  void send(
+                    endpoint,
+                    { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "cancel" }) },
+                    "cancel",
+                    "Approval cancelled. Voom will not publish this.",
+                  )
+                }
+              >
+                {busy === "cancel" ? "Cancelling…" : "Cancel approval"}
+              </Btn>
+            ) : null}
             <Btn variant="outline" disabled={busy !== null} onClick={submitSave}>
               {busy === "save" ? "Saving…" : "Save Draft"}
             </Btn>
@@ -553,6 +650,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
               {busy === "approve" ? "Approving…" : "Approve"}
             </Btn>
           </>
+          )
         ) : null}
       </ModalFoot>
     </ModalShell>
