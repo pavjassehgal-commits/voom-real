@@ -55,5 +55,5 @@ test('real auth routes verify ownership; recovery GET consumes no token; no sche
   assert.match(actions,/auth\.getUser\(\)/);assert.match(actions,/validRecoveryProof/);assert.match(actions,/auth\.updateUser\(\{\s*password\s*\}\)/);assert.doesNotMatch(actions,/auth\.admin|generateLink/);
   assert.doesNotMatch(await read('app/auth/recovery/page.tsx'),/exchangeCodeForSession|verifyOtp/);
   assert.match(await read('app/api/cron/transactional-email/route.ts'),/bearerMatches/);
-  const vercel=JSON.parse(await read('vercel.json'));assert.equal(vercel.git.deploymentEnabled['codex/transactional-customer-email'],false);assert.equal(vercel.crons.some(c=>c.path.includes('transactional')),false);
+  const vercel=JSON.parse(await read('vercel.json'));assert.equal(vercel.git.deploymentEnabled['codex/combined-auth-release'],false,'the combined release branch never auto-deploys a Preview');assert.equal(vercel.git.deploymentEnabled['codex/transactional-customer-email'],false);assert.equal(vercel.crons.some(c=>c.path.includes('transactional')),false);
 });

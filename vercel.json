@@ -16,7 +16,8 @@
       "fix/mara-automation-launch": false,
       "fix/automation-mode-normalization": false,
       "codex/mara-launch-readiness": false,
-      "merge-main-2026-10-31": false
+      "merge-main-2026-10-31": false,
+      "codex/combined-auth-release": false
     }
   },
   "crons": [
