@@ -23,10 +23,13 @@ export function LegalEmailLink() {
 export function LegalPage({
   title,
   lead,
+  lastUpdated = LEGAL_LAST_UPDATED,
   children,
 }: {
   title: string;
   lead: string;
+  /** Per-page override, so one page's revision does not re-date the others. */
+  lastUpdated?: string;
   children: ReactNode;
 }) {
   return (
@@ -47,7 +50,7 @@ export function LegalPage({
 
       <main className="mx-auto w-full max-w-3xl flex-1 px-5 py-10 sm:px-6 sm:py-14">
         <span className="inline-flex items-center rounded-full border border-line bg-surface-2 px-3 py-1 text-xs font-medium text-text-2">
-          Last updated {LEGAL_LAST_UPDATED}
+          Last updated {lastUpdated}
         </span>
         <h1 className="mt-4 font-display text-3xl font-bold tracking-tight text-balance sm:text-4xl">
           {title}

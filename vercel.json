@@ -18,7 +18,8 @@
       "codex/mara-launch-readiness": false,
       "merge-main-2026-10-31": false,
       "codex/combined-auth-release": false,
-      "codex/customer-launch-polish-v2": false
+      "codex/customer-launch-polish-v2": false,
+      "docs/privacy-tiktok-interim": false
     }
   },
   "crons": [
