@@ -18,6 +18,7 @@ export default function PrivacyPage() {
   return (
     <LegalPage
       title="Privacy Policy"
+      lastUpdated="November 19, 2026"
       lead="This Privacy Policy explains what data Voom collects when you use the Voom automated marketing platform (the Service), why we collect it, who we share it with, and the choices and rights you have. Voom helps businesses plan, create, schedule, and publish marketing content across connected channels, powered by MARA, an AI marketing manager."
     >
       <LegalSection title="Account and business data">
@@ -80,7 +81,7 @@ export default function PrivacyPage() {
         </p>
         <p>
           <b>TikTok:</b> When you connect TikTok through TikTok&apos;s OAuth,
-          Voom requests only <b>user.info.basic</b> (your TikTok account ID,
+          Voom requests <b>user.info.basic</b> (your TikTok account ID,
           display name, and avatar) and <b>video.publish</b> (to post videos
           you confirm). Voom uses TikTok&apos;s official Content Posting API to
           send a video to your TikTok account only after you review and confirm
@@ -89,10 +90,17 @@ export default function PrivacyPage() {
           commercial content disclosure. Before each post, Voom reads your
           current TikTok posting options (such as the privacy levels TikTok
           offers your account) and stores your confirmed choices with the post.
-          Voom does not request access to your TikTok videos, followers, or
-          analytics. While TikTok has not yet completed its review of
-          Voom&apos;s app, TikTok only allows posts from Voom to be visible to
-          you (private).
+          Voom is also introducing Upload to TikTok drafts, which may not yet be
+          available to your account. If you choose it, Voom first asks for{" "}
+          <b>video.upload</b> through a separate TikTok authorization that you
+          approve. Voom then sends the video only after you preview it and
+          consent: TikTok retrieves it from a temporary Voom link that expires
+          and delivers it to your TikTok inbox, where you edit it and finish
+          posting inside TikTok. Voom does not publish videos sent to your
+          drafts. Voom does not request access to your TikTok videos,
+          followers, or analytics. While TikTok has not yet completed its
+          review of Voom&apos;s app, TikTok only allows posts from Voom to be
+          visible to you (private).
         </p>
         <p>
           <b>OAuth Token Security:</b> All provider OAuth access tokens, refresh
