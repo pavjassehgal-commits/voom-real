@@ -18,7 +18,7 @@ export const PASSWORD_MAX_BYTES = 72;
 
 export const PASSWORD_TOO_SHORT_MESSAGE = "Password must be at least 8 characters.";
 export const PASSWORD_TOO_LONG_MESSAGE =
-  "Password is too long. Use at most 72 characters, or fewer if it includes emoji or accented letters.";
+  "Password is too long. Use a shorter password (maximum 72 bytes). Some characters, including emoji, Arabic and accented letters, use multiple bytes.";
 export const WEAK_PASSWORD_MESSAGE =
   "That password is too weak or has appeared in a known data breach. Choose a different one.";
 

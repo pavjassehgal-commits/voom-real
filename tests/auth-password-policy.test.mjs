@@ -157,7 +157,8 @@ const GENERATED_100='Xk9#'.repeat(25); // a 100-character generated password, as
 test('signup: a pasted 100-character password is refused with the clear "too long" message, never shortened and sent',async()=>{
   const state=await signup({},signupForm(GENERATED_100));
   assert.deepEqual(state,{fieldErrors:{password:policy.PASSWORD_TOO_LONG_MESSAGE}});
-  assert.match(policy.PASSWORD_TOO_LONG_MESSAGE,/too long/);assert.match(policy.PASSWORD_TOO_LONG_MESSAGE,/72 characters/);
+  assert.equal(policy.PASSWORD_TOO_LONG_MESSAGE,'Password is too long. Use a shorter password (maximum 72 bytes). Some characters, including emoji, Arabic and accented letters, use multiple bytes.');
+  assert.doesNotMatch(policy.PASSWORD_TOO_LONG_MESSAGE,/72 characters/,'the limit is bytes, not characters: a 40-letter Arabic password is over it');
   assert.equal(s.calls.length,0,'nothing, shortened or not, reaches Supabase');
 });
 test('reset: a pasted 100-character password is refused with the same message, and the recovery proof is kept for a retry',async()=>{
