@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import { resolveSiteUrl } from "@/utils/site-url";
 import { queueWelcome } from "@/lib/transactional-email/server";
+import { isWeakPasswordError, passwordPolicyError, WEAK_PASSWORD_MESSAGE } from "@/lib/auth/password-policy";
 
 export type SignupState = {
   success?: boolean;
@@ -30,8 +31,9 @@ export async function signup(
   } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     fieldErrors.email = "Enter a valid email address.";
   }
-  if (password.length < 8) {
-    fieldErrors.password = "Password must be at least 8 characters.";
+  const passwordError = passwordPolicyError(password);
+  if (passwordError) {
+    fieldErrors.password = passwordError;
   }
   if (confirmPassword !== password) {
     fieldErrors.confirmPassword = "Passwords do not match.";
@@ -59,6 +61,13 @@ export async function signup(
 
   if (error) {
     if(error.code==="user_already_exists")return {success:true};
+    // Supabase checks password strength (including leaked-password protection,
+    // when it is on) BEFORE looking up the address, so this answer is the same
+    // whether or not an account exists. Only the fixed code is read; provider
+    // text and its reasons are never shown.
+    if (isWeakPasswordError(error)) {
+      return { fieldErrors: { password: WEAK_PASSWORD_MESSAGE } };
+    }
     return {
       formError: "We couldn't create your account. Please try again.",
     };
