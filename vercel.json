@@ -20,7 +20,8 @@
       "codex/combined-auth-release": false,
       "codex/customer-launch-polish-v2": false,
       "docs/privacy-tiktok-interim": false,
-      "fix/login-unconfirmed-email": false
+      "fix/login-unconfirmed-email": false,
+      "security/auth-hardening": false
     }
   },
   "crons": [
