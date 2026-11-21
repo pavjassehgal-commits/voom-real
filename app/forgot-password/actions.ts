@@ -6,6 +6,7 @@ import { resolveSiteUrl } from "@/utils/site-url";
 import { allowAuthEmail, queueWelcome } from "@/lib/transactional-email/server";
 import { recoveryProof, validRecoveryProof } from "@/lib/transactional-email/core";
 import { requestAuthEmail, validAuthEmail } from "@/lib/transactional-email/auth-requests";
+import { passwordPolicyError, WEAK_PASSWORD_MESSAGE } from "@/lib/auth/password-policy";
 export type AccountEmailState = {
     success?: boolean;
     message?: string;
@@ -98,8 +99,9 @@ export async function continueRecovery(_state: AccountEmailState, form: FormData
 export async function changeRecoveredPassword(_state: AccountEmailState, form: FormData): Promise<AccountEmailState> {
     const password = String(form.get("password") || "");
     const confirmation = String(form.get("confirmPassword") || "");
-    if (password.length < 8 || password.length > 128)
-        return { error: "Use a password between 8 and 128 characters." };
+    const passwordError = passwordPolicyError(password);
+    if (passwordError)
+        return { error: passwordError };
     if (password !== confirmation)
         return { error: "Passwords do not match." };
     let allSessionsRevoked = false;
@@ -123,7 +125,12 @@ export async function changeRecoveredPassword(_state: AccountEmailState, form: F
             if (code === "same_password")
                 return { error: "Choose a password that is different from your current one." };
             if (code === "weak_password")
-                return { error: "That password is too weak. Choose a stronger one." };
+                return { error: WEAK_PASSWORD_MESSAGE };
+            // With "secure password change" on, Supabase asks for re-authentication when the
+            // session is over 24 hours old. A recovery session is always new, so this only
+            // happens if the reset page sat open for a day: a fresh link fixes it.
+            if (code === "reauthentication_needed")
+                return { error: "This reset session has expired. Request a new password-reset link." };
             return { error: "Your password could not be updated. Please try again or request a new link." };
         }
         jar.set("voom_password_recovery", "", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/reset-password", maxAge: 0 });

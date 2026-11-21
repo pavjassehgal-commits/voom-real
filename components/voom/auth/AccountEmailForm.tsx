@@ -40,7 +40,7 @@ export function EmailConfirmation({ tokenHash }: {
 export function NewPasswordForm() {
     const [state, action] = useActionState(changeRecoveredPassword, {} as AccountEmailState);
     return <form action={action} className="mt-6 flex flex-col gap-4">{state.error && <AuthAlert>{state.error}</AuthAlert>}
-    <AuthField label="New password" icon="lock" errorId="password-error"><input name="password" type="password" required minLength={8} maxLength={128} autoComplete="new-password" className={AUTH_INPUT}/></AuthField>
-    <AuthField label="Confirm new password" icon="lock" errorId="confirm-password-error"><input name="confirmPassword" type="password" required minLength={8} maxLength={128} autoComplete="new-password" className={AUTH_INPUT}/></AuthField><Submit>Update password</Submit>
+    <AuthField label="New password" icon="lock" errorId="password-error"><input name="password" type="password" required minLength={8} maxLength={72} autoComplete="new-password" className={AUTH_INPUT}/></AuthField>
+    <AuthField label="Confirm new password" icon="lock" errorId="confirm-password-error"><input name="confirmPassword" type="password" required minLength={8} maxLength={72} autoComplete="new-password" className={AUTH_INPUT}/></AuthField><Submit>Update password</Submit>
   </form>;
 }
