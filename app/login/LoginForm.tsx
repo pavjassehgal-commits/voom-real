@@ -5,8 +5,9 @@ import { useFormStatus } from "react-dom";
 import Link from "next/link";
 import GoogleButton from "../components/GoogleButton";
 import { Icon } from "@/components/voom/icons";
-import { AUTH_INPUT, AUTH_SUBMIT, AuthAlert, AuthField, PasswordToggle } from "@/components/voom/auth/AuthFrame";
+import { AUTH_INPUT, AUTH_SUBMIT, AuthField, PasswordToggle } from "@/components/voom/auth/AuthFrame";
 import { login, type LoginState } from "./actions";
+import { LoginAlert } from "./LoginAlert";
 
 const initialState: LoginState = {};
 
@@ -54,7 +55,7 @@ export default function LoginForm({
             {notice}
           </p>
         )}
-        {formError && <AuthAlert>{formError}</AuthAlert>}
+        {formError && <LoginAlert message={formError} unconfirmed={Boolean(state.formError && state.unconfirmed)} />}
 
         <AuthField label="Email" icon="mail" error={state.fieldErrors?.email} errorId="email-error">
           <input
