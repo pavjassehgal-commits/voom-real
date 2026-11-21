@@ -7,9 +7,9 @@
 // needs no PKCE verifier, so the link works in any browser or device. --app must be the exact origin
 // of the environment's app; images and the privacy link always come from https://voom.today.
 //
-// The wording lives in lib/transactional-email/auth-templates.ts. Its PLANNED_SUPPORT_EMAIL
-// (support@voom.today) is NOT YET VERIFIED: do not install or enable the password-changed or
-// email-changed notifications in Supabase until that mailbox exists and has been tested.
+// The wording lives in lib/transactional-email/auth-templates.ts. No template names a contact
+// address. There is deliberately NO email-changed template: that notification stays disabled
+// until a safe recovery or contact path exists (see docs/auth-security-hardening.md).
 import {mkdir,writeFile} from 'node:fs/promises';
 import {renderVoomAuthTemplate,voomAuthTemplates} from '../lib/transactional-email/auth-templates.ts';
 const arg=name=>{const i=process.argv.indexOf(name);return i>0?process.argv[i+1]:undefined;};
@@ -19,4 +19,4 @@ if(!/^voom-auth(-[a-z]+)?$/.test(out))throw new Error('unexpected output folder'
 const directory=new URL(`../supabase/templates/${out}/`,import.meta.url);
 await mkdir(directory,{recursive:true});
 for(const template of voomAuthTemplates(app))await writeFile(new URL(template.name+'.html',directory),renderVoomAuthTemplate(template));
-console.log(`Prepared four local VOOM Auth templates for ${app} in supabase/templates/${out}; no remote settings or emails changed.`);
+console.log(`Prepared ${voomAuthTemplates(app).length} local VOOM Auth templates for ${app} in supabase/templates/${out}; no remote settings or emails changed.`);
