@@ -95,7 +95,6 @@ export default function SignupForm({ googleEnabled }: { googleEnabled: boolean }
               type={showPassword ? "text" : "password"}
               required
               minLength={8}
-              maxLength={72}
               autoComplete="new-password"
               placeholder="At least 8 characters"
               value={password}
@@ -125,7 +124,6 @@ export default function SignupForm({ googleEnabled }: { googleEnabled: boolean }
             type={showPassword ? "text" : "password"}
             required
             minLength={8}
-            maxLength={72}
             autoComplete="new-password"
             placeholder="Re-enter your password"
             aria-invalid={state.fieldErrors?.confirmPassword ? "true" : undefined}

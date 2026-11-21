@@ -147,11 +147,30 @@ test('reset: a 72-byte password is accepted and still signs out every session',a
   assert.deepEqual(s.calls.filter(c=>c.name==='signout').map(c=>c.args[0]),[{scope:'global'}]);
 });
 
-// ── Forms carry the same browser-side limits ─────────────────────────────────
-test('the signup and reset password inputs use minLength 8 and maxLength 72',async()=>{
+// ── Overlong passwords are refused, never shortened ──────────────────────────
+// A browser `maxLength` silently cuts a PASTED value. A long generated password
+// pasted into both fields would be cut identically, the account would get the
+// shortened password, and the full one (in the password manager) would then fail
+// at login. So the inputs carry no maxLength and the server refuses an overlong
+// password with a clear message instead.
+const GENERATED_100='Xk9#'.repeat(25); // a 100-character generated password, as a manager might paste it
+test('signup: a pasted 100-character password is refused with the clear "too long" message, never shortened and sent',async()=>{
+  const state=await signup({},signupForm(GENERATED_100));
+  assert.deepEqual(state,{fieldErrors:{password:policy.PASSWORD_TOO_LONG_MESSAGE}});
+  assert.match(policy.PASSWORD_TOO_LONG_MESSAGE,/too long/);assert.match(policy.PASSWORD_TOO_LONG_MESSAGE,/72 characters/);
+  assert.equal(s.calls.length,0,'nothing, shortened or not, reaches Supabase');
+});
+test('reset: a pasted 100-character password is refused with the same message, and the recovery proof is kept for a retry',async()=>{
+  const proof=recoveryProof('owner','session',process.env.VOOM_AUTH_EMAIL_SECRET);s.values.set('voom_password_recovery',proof);
+  assert.deepEqual(await reset.changeRecoveredPassword({},form({password:GENERATED_100,confirmPassword:GENERATED_100})),{error:policy.PASSWORD_TOO_LONG_MESSAGE});
+  assert.equal(s.calls.length,0);assert.equal(s.values.get('voom_password_recovery'),proof);
+});
+test('the 72-byte rule is enforced only on the server: no password input has a maxLength that could truncate',async()=>{
   const {readFile}=await import('node:fs/promises');const read=p=>readFile(new URL('../'+p,import.meta.url),'utf8');
-  const signupForm=await read('app/signup/SignupForm.tsx'),resetForm=await read('components/voom/auth/AccountEmailForm.tsx');
-  assert.equal((signupForm.match(/minLength=\{8\}\s*maxLength=\{72\}/g)||[]).length,2);
-  assert.equal((resetForm.match(/minLength=\{8\} maxLength=\{72\}/g)||[]).length,2);
-  assert.doesNotMatch(resetForm,/maxLength=\{128\}/);
+  const sources={'app/signup/SignupForm.tsx':await read('app/signup/SignupForm.tsx'),'components/voom/auth/AccountEmailForm.tsx':await read('components/voom/auth/AccountEmailForm.tsx')};
+  for(const [file,source] of Object.entries(sources)){
+    const passwordInputs=[...source.matchAll(/<input\b[^>]*?name="(?:password|confirmPassword)"[\s\S]*?\/>/g)].map(m=>m[0]);
+    assert.equal(passwordInputs.length,2,`${file} has a password and a confirmation input`);
+    for(const input of passwordInputs){assert.doesNotMatch(input,/maxLength/,file);assert.match(input,/minLength=\{8\}/,file);}
+  }
 });
