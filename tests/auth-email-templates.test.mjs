@@ -1,27 +1,30 @@
 /**
- * Supabase Auth email templates (auth security hardening, 2026-11-21).
+ * Supabase Auth email templates (2026-11-21; no support mailbox, by owner decision).
  *
- * The four committed templates in supabase/templates/voom-auth (Production) and
+ * The committed templates in supabase/templates/voom-auth (Production) and
  * voom-auth-staging must equal what lib/transactional-email/auth-templates.ts
- * renders, so the files can never drift from their source. The password-changed
- * and email-changed notifications point people at the PLANNED support address
- * (support@voom.today, not yet verified), never at a no-reply sender, and link
- * only to the app's own pages, the privacy page and that mailbox.
+ * renders, so the files can never drift from their source.
+ *
+ * All of them are sent from the no-reply sender, so none names a contact
+ * address or invites a reply. The password-changed notification points only to
+ * the forgot-password flow. There is deliberately no email-changed template:
+ * Supabase recovers accounts by their current address only, so the old address
+ * that receives that notice could not recover the account. Without a safe path
+ * to offer, that notification stays disabled.
  */
 import './helpers/server-only-shim.mjs';
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
+import {readFile,readdir} from 'node:fs/promises';
 import {test} from 'node:test';
-const {voomAuthTemplates,renderVoomAuthTemplate,PLANNED_SUPPORT_EMAIL,TEMPLATE_ASSET_SITE}=await import('../lib/transactional-email/auth-templates.ts');
+const {voomAuthTemplates,renderVoomAuthTemplate,TEMPLATE_ASSET_SITE}=await import('../lib/transactional-email/auth-templates.ts');
 const read=p=>readFile(new URL('../'+p,import.meta.url),'utf8');
 const ENVIRONMENTS=[['voom-auth','https://voom.today'],['voom-auth-staging','http://localhost:3000']];
-const NAMES=['confirmation','recovery','password-changed','email-changed'];
-const NOTIFICATIONS=['password-changed','email-changed'];
+const NAMES=['confirmation','recovery','password-changed'];
 const files={};
 for(const [dir] of ENVIRONMENTS)for(const name of NAMES)files[`${dir}/${name}`]=await read(`supabase/templates/${dir}/${name}.html`);
 const hrefs=html=>[...html.matchAll(/href="([^"]+)"/g)].map(m=>m[1]);
 const text=html=>html.replace(/<[^>]+>/g,' ').replace(/&#39;/g,"'").replace(/\s+/g,' ').trim();
-const emails=html=>[...new Set(html.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g)||[])];
+const EMAIL=/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
 
 test('every committed template is exactly what the shared source renders, in both environments',()=>{
   for(const [dir,app] of ENVIRONMENTS){
@@ -30,38 +33,48 @@ test('every committed template is exactly what the shared source renders, in bot
     for(const template of rendered)assert.equal(files[`${dir}/${template.name}`],renderVoomAuthTemplate(template),`${dir}/${template.name} drifted; run scripts/prepare-voom-auth-emails.mjs`);
   }
 });
+test('each template folder holds exactly these three files: no email-changed template exists',async()=>{
+  for(const [dir] of ENVIRONMENTS){
+    const listed=(await readdir(new URL(`../supabase/templates/${dir}/`,import.meta.url))).filter(f=>f.endsWith('.html')).sort();
+    assert.deepEqual(listed,['confirmation.html','password-changed.html','recovery.html'],dir);
+  }
+});
 test('staging and Production differ only in the app origin',()=>{
   for(const name of NAMES)assert.equal(files[`voom-auth-staging/${name}`].replaceAll('http://localhost:3000','https://voom.today'),files[`voom-auth/${name}`],name);
   for(const name of NAMES)assert.doesNotMatch(files[`voom-auth/${name}`],/localhost/,`Production ${name} never links to localhost`);
 });
-test('no template names a no-reply address as a place to get help',()=>{
-  for(const [key,html] of Object.entries(files))assert.doesNotMatch(html,/no-?reply@/i,key);
-});
-test('notification templates name exactly one address: the planned support mailbox',()=>{
-  assert.equal(PLANNED_SUPPORT_EMAIL,'support@voom.today');
-  for(const [dir] of ENVIRONMENTS)for(const name of NOTIFICATIONS){
-    const html=files[`${dir}/${name}`];
-    assert.deepEqual(emails(html),[PLANNED_SUPPORT_EMAIL],`${dir}/${name}`);
-    assert.ok(text(html).includes(`contact Voom support`),`${dir}/${name} tells people who to contact`);
+test('no template names any email address or mailto link: no support inbox, and no-reply is never offered as a contact',()=>{
+  for(const [key,html] of Object.entries(files)){
+    assert.doesNotMatch(html,EMAIL,key);
+    assert.doesNotMatch(html,/mailto:/i,key);
+    assert.doesNotMatch(html,/support@|contact (us|voom)/i,key);
   }
 });
-test('notification links go only to the app, the privacy page and the support mailbox; images only to voom.today',()=>{
+test('password-changed: short, says replies are not read, and points only to the forgot-password flow',()=>{
   for(const [dir,app] of ENVIRONMENTS){
-    assert.deepEqual(hrefs(files[`${dir}/password-changed`]),[`${app}/forgot-password`,`${app}/forgot-password`,`${TEMPLATE_ASSET_SITE}/privacy`]);
-    assert.deepEqual(hrefs(files[`${dir}/email-changed`]),[`mailto:${PLANNED_SUPPORT_EMAIL}`,`mailto:${PLANNED_SUPPORT_EMAIL}`,`${TEMPLATE_ASSET_SITE}/privacy`]);
-    for(const name of NAMES){
-      const html=files[`${dir}/${name}`];
-      for(const src of [...html.matchAll(/src="([^"]+)"/g)].map(m=>m[1]))assert.ok(src.startsWith('https://voom.today/'),`${dir}/${name} image ${src}`);
-      for(const href of hrefs(html))assert.ok(href.startsWith(`${app}/`)||href.startsWith('https://voom.today/')||href===`mailto:${PLANNED_SUPPORT_EMAIL}`,`${dir}/${name} link ${href}`);
-    }
+    const html=files[`${dir}/password-changed`],t=text(html);
+    assert.deepEqual(hrefs(html),[`${app}/forgot-password`,`${app}/forgot-password`,`${TEMPLATE_ASSET_SITE}/privacy`]);
+    assert.match(t,/Your Voom password was changed/);
+    assert.match(t,/If you made this change, you don't need to do anything\./);
+    assert.match(t,/If you didn't, reset your password now with the button below; resetting signs you out on every device\./);
+    assert.match(t,/Replies to this email aren't read\./);
+    assert.match(t,/Reset your password/);
+    assert.doesNotMatch(html,/\{\{/,'needs no per-user data');
   }
+  const message=voomAuthTemplates('https://voom.today').find(t=>t.name==='password-changed').message;
+  assert.ok(message.length<=260,`message stays short (${message.length})`);
 });
-test('notifications are short and clear, and carry no Supabase placeholders',()=>{
-  const pw=text(files['voom-auth/password-changed']),em=text(files['voom-auth/email-changed']);
-  assert.match(pw,/Your Voom password was changed/);assert.match(pw,/If you made this change, you don't need to do anything\./);assert.match(pw,/reset your password now/);assert.match(pw,/Reset your password/);
-  assert.match(em,/Your Voom email address was changed/);assert.match(em,/If you made this change, you don't need to do anything\./);assert.match(em,/right away/);assert.match(em,/Contact Voom support/);
-  for(const t of voomAuthTemplates('https://voom.today').filter(t=>NOTIFICATIONS.includes(t.name)))assert.ok(t.message.length<=220,`${t.name} message stays short (${t.message.length})`);
-  for(const name of NOTIFICATIONS)assert.doesNotMatch(files[`voom-auth/${name}`],/\{\{/,'notifications need no per-user data');
+test('the reset the notice promises really signs out every session (no misleading recovery instruction)',async()=>{
+  const actions=await read('app/forgot-password/actions.ts');
+  assert.match(actions,/signOut\(\{ scope: "global" \}\)/);
+  assert.match(actions,/resetPasswordForEmail/);
+});
+test('images come only from voom.today; every link is the app, the privacy page or a token_hash page',()=>{
+  for(const [dir,app] of ENVIRONMENTS)for(const name of NAMES){
+    const html=files[`${dir}/${name}`];
+    for(const src of [...html.matchAll(/src="([^"]+)"/g)].map(m=>m[1]))assert.ok(src.startsWith('https://voom.today/'),`${dir}/${name} image ${src}`);
+    for(const href of hrefs(html))assert.ok(href.startsWith(`${app}/`)||href===`${TEMPLATE_ASSET_SITE}/privacy`,`${dir}/${name} link ${href}`);
+  }
 });
 test('confirmation and recovery keep their token_hash links and their exact wording',()=>{
   for(const [dir,app] of ENVIRONMENTS){
@@ -71,9 +84,13 @@ test('confirmation and recovery keep their token_hash links and their exact word
   assert.match(text(files['voom-auth/confirmation']),/Confirm your email address to finish creating your Voom account\./);
   assert.match(text(files['voom-auth/recovery']),/You requested a password reset\./);
 });
-test('the planned address is documented as unverified, and the legal contact is untouched',async()=>{
+test('the email-changed blocker is documented in the source, the script and the rollout plan; the legal contact is untouched',async()=>{
   const source=await read('lib/transactional-email/auth-templates.ts');
-  assert.match(source,/NOT YET VERIFIED/);assert.match(source,/MUST NOT be installed in Supabase/);
-  assert.match(await read('scripts/prepare-voom-auth-emails.mjs'),/NOT YET VERIFIED/);
-  assert.doesNotMatch(await read('lib/legal/contact.ts'),/support@voom\.today/,'this task does not change the public legal contact');
+  assert.match(source,/email-changed: deliberately NOT provided/);assert.match(source,/must stay\s+\*?\s*disabled/);
+  assert.doesNotMatch(source,/support@voom\.today/);
+  assert.match(await read('scripts/prepare-voom-auth-emails.mjs'),/NO email-changed template/);
+  const plan=await read('docs/auth-security-hardening.md');
+  assert.match(plan,/email-changed notification: blocked/i);
+  assert.doesNotMatch(plan,/support@voom\.today/,'the plan no longer depends on a support mailbox');
+  assert.doesNotMatch(await read('lib/legal/contact.ts'),/support@voom\.today/);
 });
