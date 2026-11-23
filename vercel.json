@@ -22,7 +22,8 @@
       "docs/privacy-tiktok-interim": false,
       "fix/login-unconfirmed-email": false,
       "security/auth-hardening": false,
-      "security/notification-templates": false
+      "security/notification-templates": false,
+      "fix/instagram-callbacks-narrow": false
     }
   },
   "crons": [
