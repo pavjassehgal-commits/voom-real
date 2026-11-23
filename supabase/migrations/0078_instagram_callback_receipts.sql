@@ -92,7 +92,9 @@ begin
   if not found then
     -- Duplicate delivery of the same signed event: same receipt, no second action.
     select * into receipt from public.instagram_callback_receipts where event_key = p_event_key;
-    if receipt.kind <> p_kind or receipt.subject_id is distinct from p_subject_id and receipt.status <> 'completed' then
+    -- The id may have been cleared after a completed deletion (data minimisation); a Meta
+    -- retry of that same event must still get its original code, never an error loop.
+    if receipt.kind <> p_kind or (receipt.subject_id is not null and receipt.subject_id <> p_subject_id) then
       raise exception 'event_key_conflict' using errcode = '23505';
     end if;
     return receipt.confirmation_code;
@@ -234,6 +236,12 @@ begin
   if coalesce(char_length(trim(p_reviewed_by)), 0) < 2 or p_review_reference !~ '^[A-Za-z0-9._:-]{3,80}$' then
     raise exception 'reviewer_required' using errcode = '22023';
   end if;
+  -- Data minimisation: once this deletion is complete, no other receipt keeps the person's
+  -- Instagram id (for example the deauthorize receipt Meta sends just before a deletion).
+  -- Another deletion for the same id that is still in progress keeps it until its own completion.
+  update public.instagram_callback_receipts set subject_id = null
+    where id <> receipt.id and subject_id = receipt.subject_id
+      and not (kind = 'deletion' and status in ('awaiting_erasure', 'awaiting_review'));
   update public.instagram_callback_receipts set
     status = 'completed', completed_at = now(), reviewed_by = trim(p_reviewed_by),
     review_reference = p_review_reference, backups_clear_by = p_backups_clear_by, subject_id = null

@@ -9,7 +9,7 @@ Preview environment points at the Production database.
 
 | Role | Who | Access |
 |---|---|---|
-| Accountable deletion-request operator | **The VOOM owner (Pavjas)** | Production Supabase SQL editor; the contact address already published on `/data-deletion` |
+| Accountable deletion-request operator | **The VOOM owner** | Production Supabase SQL editor; the contact address already published on `/data-deletion` |
 | Backup operator | **None designated.** No access is granted to Gurnoor or anyone else. | — |
 
 **Final operational responsibility must be confirmed by the owner before Production
@@ -166,13 +166,15 @@ Evidence required in the case log **before** completing:
 6. backup clear-by date and its source (§5.6).
 
 ```sql
-select public.complete_instagram_deletion('<confirmation_code>', 'Pavjas (VOOM owner)',
+select public.complete_instagram_deletion('<confirmation_code>', 'VOOM owner',
   '<case-ref e.g. IGDEL-2026-001>', true, true, true, '<backups clear-by date>');
 ```
 The three booleans are: identity reviewed, publishing history reviewed (§5.3), processors and
 AI-derived records reviewed (§5.4–5.5). The function refuses unless erasure ran, all three are
 true, a reviewer and an opaque reference are given, and the backup date is not before the
-erasure date. On completion the Instagram id is removed from the receipt; the status page
+erasure date. On completion the Instagram id is removed from this receipt and from the
+person's other receipts (for example the deauthorize receipt), except another deletion for the
+same id that is still in progress, which keeps it until its own completion. The status page
 then says completed with the backup date. Never complete to "close" a case early.
 
 ## 6. External processors and retention

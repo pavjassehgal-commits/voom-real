@@ -226,7 +226,7 @@ Instagram App Review (`instagram_business_basic`, `instagram_business_content_pu
   `/api/integrations/instagram/data-deletion`, `/data-deletion/status`. Off by default
   (`INSTAGRAM_LIFECYCLE_ENABLED`). Publishing, scheduling, renewal, insights and MARA code unchanged.
 - Runbook and release sequence: `docs/instagram-callbacks.md`. Decision: `DECISIONS.md` 2026-11-23.
-- Deletion operator: **the VOOM owner (Pavjas)**, accountable; no access granted to anyone else.
+- Deletion operator: **the VOOM owner**, accountable; no access granted to anyone else.
   Final responsibility must be confirmed before Production activation.
 - Production read-only facts (2026-11-23): ledger 61 rows ending 0075 (0078 has no conflict; all
   dependencies present); Instagram App ID `1798088134709951`; text AI = Groq, media AI = OpenRouter

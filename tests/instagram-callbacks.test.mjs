@@ -226,7 +226,7 @@ test('deletion: revoke on receipt -> operator erasure -> human review -> complet
   assert.equal((await q('select status from public.instagram_deletion_status($1)', [code]))[0].status, 'awaiting_erasure');
 
   const review = (o = {}) => q('select public.complete_instagram_deletion($1,$2,$3,$4,$5,$6,$7)',
-    [code, o.by ?? 'Pavjas (owner)', o.ref ?? 'CASE-2026-0001', 'identity' in o ? o.identity : true, 'history' in o ? o.history : true, 'processors' in o ? o.processors : true, o.backups === undefined ? new Date(Date.now() + 8 * 86400_000) : o.backups]);
+    [code, o.by ?? 'VOOM owner', o.ref ?? 'CASE-2026-0001', 'identity' in o ? o.identity : true, 'history' in o ? o.history : true, 'processors' in o ? o.processors : true, o.backups === undefined ? new Date(Date.now() + 8 * 86400_000) : o.backups]);
   await assert.rejects(review(), /erasure_not_finished/);
 
   const summary = (await q('select public.erase_instagram_deletion_data($1) as s', [code]))[0].s;
@@ -279,8 +279,43 @@ test('deletion with no matching connection can only complete after the identity 
   const code = await accept('17841400000000701', 'deletion');
   const s = (await q('select public.erase_instagram_deletion_data($1) as s', [code]))[0].s;
   assert.equal(s.owners, 0);
-  await assert.rejects(q('select public.complete_instagram_deletion($1,$2,$3,false,true,true,current_date+7)', [code, 'Pavjas', 'CASE-7']), /review_incomplete/);
-  assert.equal((await q('select public.complete_instagram_deletion($1,$2,$3,true,true,true,current_date+7) as ok', [code, 'Pavjas', 'CASE-7']))[0].ok, true);
+  await assert.rejects(q('select public.complete_instagram_deletion($1,$2,$3,false,true,true,current_date+7)', [code, 'VOOM owner', 'CASE-7']), /review_incomplete/);
+  assert.equal((await q('select public.complete_instagram_deletion($1,$2,$3,true,true,true,current_date+7) as ok', [code, 'VOOM owner', 'CASE-7']))[0].ok, true);
+});
+
+test('completed deletion clears the id from related receipts, but not from an in-progress deletion; Meta retries stay idempotent', async () => {
+  const subject = '17841400000000901'; await owner(subject);
+  const t0 = new Date(Date.now() - 120_000), t1 = new Date(Date.now() - 60_000), t2 = new Date(Date.now() - 30_000);
+  const deauthKey = 'd'.repeat(64), del1Key = 'e'.repeat(64), del2Key = 'f'.repeat(64);
+  const deauth = await accept(subject, 'deauthorize', t0, deauthKey);
+  const del1 = await accept(subject, 'deletion', t1, del1Key);
+  const del2 = await accept(subject, 'deletion', t2, del2Key); // a second, separate deletion request
+  const unrelated = await accept('17841400000000902', 'deauthorize');
+  await q('select public.erase_instagram_deletion_data($1)', [del1]);
+  await q('select public.complete_instagram_deletion($1,$2,$3,true,true,true,current_date+7)', [del1, 'VOOM owner', 'CASE-901']);
+
+  assert.equal((await receipt(del1)).subject_id, null);
+  assert.equal((await receipt(deauth)).subject_id, null, 'related deauthorize receipt no longer holds the id');
+  assert.equal((await receipt(deauth)).status, 'disconnected', 'only the id is cleared; the record stays');
+  assert.equal((await receipt(del2)).subject_id, subject, 'in-progress deletion keeps the id until its own completion');
+  assert.equal((await receipt(del2)).status, 'awaiting_erasure');
+  assert.equal((await receipt(unrelated)).subject_id, '17841400000000902', 'other people are untouched');
+
+  // Meta retries of already-processed events: same code, no error, no second action.
+  const before = Number((await q('select count(*) n from public.instagram_callback_receipts'))[0].n);
+  assert.equal(await accept(subject, 'deauthorize', t0, deauthKey), deauth);
+  assert.equal(await accept(subject, 'deletion', t1, del1Key), del1);
+  assert.equal(await accept(subject, 'deletion', t2, del2Key), del2);
+  assert.equal(Number((await q('select count(*) n from public.instagram_callback_receipts'))[0].n), before);
+  assert.equal((await receipt(del1)).status, 'completed');
+  // A fingerprint reused for a different person is still refused.
+  await assert.rejects(accept('17841400000000903', 'deletion', t2, del2Key), /event_key_conflict/);
+  await assert.rejects(accept(subject, 'deletion', t0, deauthKey), /event_key_conflict/);
+
+  // The second deletion can still complete; afterwards no receipt holds the id.
+  await q('select public.erase_instagram_deletion_data($1)', [del2]);
+  await q('select public.complete_instagram_deletion($1,$2,$3,true,true,true,current_date+7)', [del2, 'VOOM owner', 'CASE-902']);
+  assert.equal(Number((await q('select count(*) n from public.instagram_callback_receipts where subject_id=$1', [subject]))[0].n), 0);
 });
 
 test('authorization boundary: browsers can neither read receipts nor call any callback function', async () => {
