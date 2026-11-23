@@ -213,6 +213,29 @@ are not part of this release candidate. Check Supabase Support's answer on
 hosted provider isolation and test it before any Google activation decision.
 See `docs/combined-auth-release-readiness.md` for remaining release gates.
 
+## Instagram deauthorize and data-deletion callbacks — local release candidate (2026-11-23)
+
+Branch `fix/instagram-callbacks-narrow` (isolated clone `voom-real-instagram-callbacks`, from
+`main` 8c32c5f; opted out of Vercel Previews). **Not committed, pushed, merged, deployed or
+migrated.** Purpose: the two Meta callback URLs requested before submitting the three-permission
+Instagram App Review (`instagram_business_basic`, `instagram_business_content_publish`,
+`instagram_business_manage_insights`). The App Review draft is untouched and not submitted.
+
+- What: migration `0078_instagram_callback_receipts.sql` (one private table, four service-only
+  functions; rollback in `supabase/rollbacks/`), routes `/api/integrations/instagram/deauthorize`,
+  `/api/integrations/instagram/data-deletion`, `/data-deletion/status`. Off by default
+  (`INSTAGRAM_LIFECYCLE_ENABLED`). Publishing, scheduling, renewal, insights and MARA code unchanged.
+- Runbook and release sequence: `docs/instagram-callbacks.md`. Decision: `DECISIONS.md` 2026-11-23.
+- Deletion operator: **the VOOM owner**, accountable; no access granted to anyone else.
+  Final responsibility must be confirmed before Production activation.
+- Production read-only facts (2026-11-23): ledger 61 rows ending 0075 (0078 has no conflict; all
+  dependencies present); Instagram App ID `1798088134709951`; text AI = Groq, media AI = OpenRouter
+  (from `ai_usage_operations`).
+- Open before activation: owner authorisations for push, Production migration, three Vercel env
+  values, deploy, Meta URLs and one live deauthorize test (confirms Meta's signing secret and id
+  mapping); Data Handling answers (add OpenRouter as a processor; name the legal entity in the
+  privacy policy). Separate from the full lifecycle work in commit `4aeac7c` (still NO-GO).
+
 ## 6. Keeping up with `main`: every 2 or 3 days (Phase D of the merge plan)
 
 The 2026-10-31 merge took a full session because 20 days had passed. The habit that prevents a

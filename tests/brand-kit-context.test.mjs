@@ -70,7 +70,7 @@ const KIT_ROW = {
 
 test("migration 0075 applies after every earlier migration and keeps versions append-only per owner", async () => {
   const { db, applied } = await createSupabaseLite();
-  assert.equal(applied.at(-1), "0075_brand_kits.sql", "0075 (brand kits) is the newest migration");
+  assert.equal(applied.at(-1), "0078_instagram_callback_receipts.sql", "0078 Instagram callback receipts is the newest checked-in migration");
 
   const columns = await db.query(
     "select column_name from information_schema.columns where table_schema = 'public' and table_name = 'brand_kits' order by ordinal_position",
