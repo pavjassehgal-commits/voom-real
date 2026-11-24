@@ -891,7 +891,7 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
       ? db.from("campaign_sends").select("campaign_id,internal_status,updated_at").eq("owner_user_id", ownerId).in("campaign_id", emailIds)
       : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
     draftIds.length
-      ? db.from("mara_drafts").select("id,kind,status,title,content,proposed_publish_at,provider_ref").eq("owner_user_id", ownerId).in("id", draftIds)
+      ? db.from("mara_drafts").select("id,kind,status,title,content,proposed_publish_at,provider_ref,content_version").eq("owner_user_id", ownerId).in("id", draftIds)
       : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
     draftIds.length
       ? db.from("instagram_publish_queue").select("draft_id,status").eq("owner_user_id", ownerId).in("draft_id", draftIds)
@@ -970,6 +970,7 @@ export async function readAutomatedCampaign(db: Db, ownerId: string, id: string)
     const content = normalizeActionContent(action.mara_content);
     const base: CampaignActionView = {
       ...action,
+      contentVersion: action.draft_id ? Number(drafts.get(action.draft_id)?.content_version) : undefined,
       executionState: "proposed",
       executionLabel: ACTION_EXECUTION_LABELS.proposed,
       contentSource: action.content_source ?? "deterministic",
@@ -1356,6 +1357,7 @@ export async function decideCampaignAction(
   campaignId: string,
   actionId: string,
   decision: "approve" | "reject",
+  contentVersion?: number,
 ): Promise<{ ok: boolean; blockers?: string[]; action?: CampaignActionRecord }> {
   const { data: row, error } = await admin.from("voom_campaign_actions")
     .select(ACTION_SELECT)
@@ -1363,15 +1365,15 @@ export async function decideCampaignAction(
   if (error) throw new Error("campaign_action_unavailable");
   const action = row as CampaignActionRecord | null;
   if (!action) return { ok: false, blockers: ["That campaign action was not found."] };
+  if (action.status === "skipped" || action.status === "executed") return { ok: false, blockers: ["This action was already handled. Review its current state."] };
 
   if (isSocialVideoChannel(action.channel)) {
     // ── Multi-Social Core: TikTok / YouTube action decisions ──────────────
     //
-    // Approval runs through the shared social-draft layer, which mirrors an
-    // approved + scheduled item into its durable TikTok/YouTube provider queue.
-    // It makes no provider call: only the worker executes, and only provider
-    // confirmation establishes Published. Queue-sync errors throw before this
-    // campaign action is marked approved.
+    // Approval belongs to the platform editor, where the owner reviews the
+    // exact version and its platform declarations/consent. Campaign rejection
+    // continues through the existing guarded social-draft cancellation path.
+    if (decision === "approve") return { ok: false, blockers: ["Open the TikTok or YouTube publishing editor to review this version and confirm the platform settings."] };
     if (!action.draft_id) return { ok: false, blockers: ["That social draft was not found."] };
     const lock = await actionContentLock(admin, ownerId, action);
     if (lock) return { ok: false, blockers: [lock] };
@@ -1379,17 +1381,6 @@ export async function decideCampaignAction(
       const rejected = await updateSocialDraft(admin, ownerId, action.draft_id, { decision: "rejected" });
       if (!rejected) return { ok: false, blockers: ["That social draft could not be rejected."] };
       const { error: actionError } = await admin.from("voom_campaign_actions").update({ status: "skipped" })
-        .eq("owner_user_id", ownerId).eq("id", action.id);
-      if (actionError) throw new Error("campaign_action_decision_failed");
-    } else {
-      const social = await getSocialDraft(admin, ownerId, action.draft_id);
-      if (!social) return { ok: false, blockers: ["That social draft was not found."] };
-      if (!social.asset) {
-        return { ok: false, blockers: ["Attach the video file before approving this action."] };
-      }
-      const updated = await updateSocialDraft(admin, ownerId, action.draft_id, { decision: "approved" });
-      if (!updated) return { ok: false, blockers: ["That social draft could not be approved."] };
-      const { error: actionError } = await admin.from("voom_campaign_actions").update({ status: "approved" })
         .eq("owner_user_id", ownerId).eq("id", action.id);
       if (actionError) throw new Error("campaign_action_decision_failed");
     }
@@ -1416,9 +1407,8 @@ export async function decideCampaignAction(
       if (!post) return { ok: false, blockers: ["That Instagram draft was not found."] };
       const blockers = postApprovalBlockers({ caption: post.caption, hasVisual: post.visualReady, kind: post.kind });
       if (blockers.length) return { ok: false, blockers };
-      await approvePostDraft(admin, ownerId, action.draft_id);
-      await admin.from("voom_campaign_actions").update({ status: "approved" })
-        .eq("owner_user_id", ownerId).eq("id", action.id);
+      if (typeof contentVersion !== "number") return { ok: false, blockers: ["Review the latest content version before approving this action."] };
+      await approvePostDraft(admin, ownerId, action.draft_id, { expectedContentVersion: contentVersion, campaignActionId: action.id });
     }
   }
 

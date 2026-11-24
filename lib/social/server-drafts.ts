@@ -33,6 +33,7 @@
  */
 
 import "server-only";
+import { checkScheduleInstant } from "@/lib/voom/schedule-guard";
 import { youtubeMediaBucket } from "../youtube/upload-rules.ts";
 
 import { ensureStudioConversation } from "@/lib/post/server-data";
@@ -68,9 +69,10 @@ import type { createAdminClient } from "@/utils/supabase/admin";
 export type AdminClient = ReturnType<typeof createAdminClient>;
 
 const DRAFT_COLUMNS =
-  "id,conversation_id,kind,channel,title,content,proposed_publish_at,status,social_channel,social_format,content_meta,provider_ref,source_plan_id,source_plan_item_key,created_at,updated_at";
+  "id,conversation_id,kind,channel,title,content,proposed_publish_at,status,social_channel,social_format,content_meta,provider_ref,source_plan_id,source_plan_item_key,content_version,created_at,updated_at";
 
 export interface SocialDraftView {
+  contentVersion?: number;
   id: string;
   kind: SocialVideoDraftKind;
   typeLabel: string;
@@ -386,6 +388,7 @@ function toSocialDraftView(row: Record<string, unknown>, asset: Record<string, u
 
   return {
     id: String(row.id),
+    contentVersion: Number(row.content_version),
     kind,
     typeLabel: SOCIAL_VIDEO_TYPE_LABELS[kind],
     channel: pair.channel,
@@ -457,6 +460,7 @@ export function youTubeQueueLabel(queueStatus: string, providerPrivacy: string |
 }
 
 export interface UpdateSocialDraftInput {
+  contentVersion?: number;
   title?: string;
   caption?: string;
   description?: string;
@@ -531,6 +535,8 @@ async function cancelAndVerifyTikTokQueue(admin: AdminClient, ownerId: string, d
 export interface UpdateSocialDraftOptions {
   /** Trusted server caller already confirmed cancellation before a parent mutation. */
   queueCancellationConfirmed?: boolean;
+  /** Trusted TikTok consent endpoint only, after the owner explicitly chose Post now. */
+  allowImmediateSchedule?: boolean;
 }
 
 export async function updateSocialDraft(
@@ -542,6 +548,7 @@ export async function updateSocialDraft(
 ): Promise<SocialDraftView | null> {
   const existing = await getSocialDraft(admin, ownerId, draftId);
   if (!existing) return null;
+  if (input.contentVersion !== undefined && input.contentVersion !== existing.contentVersion) throw new Error("social_draft_changed");
 
   if (isProviderOwnedSocialQueue(existing.channel, existing.queueStatus)) {
     throw new Error("social_draft_provider_owned");
@@ -578,7 +585,14 @@ export async function updateSocialDraft(
   // same request explicitly approves the new version (decision "approved" or
   // a fresh TikTok post consent). The owner's own reschedule keeps it.
   const explicitAuthorization = input.decision === "approved" || Boolean(input.tiktokPostConsent);
-  const publishableChanged = title !== existing.title
+  if (explicitAuthorization && (!Number.isSafeInteger(input.contentVersion) || input.contentVersion !== existing.contentVersion)) throw new Error("social_draft_changed");
+  if (explicitAuthorization && existing.status === "rejected") throw new Error("social_draft_changed");
+  if (scheduledAt && (input.scheduledAt !== undefined || explicitAuthorization)
+    && !(options.allowImmediateSchedule && input.tiktokPostConsent)
+    && !checkScheduleInstant(scheduledAt).ok) throw new Error("approval_schedule_expired");
+  const publishableChanged = concept !== (existing.concept ?? "")
+    || JSON.stringify(script) !== JSON.stringify(existing.script)
+    || title !== existing.title
     || (caption || title) !== existing.caption
     || (description || null) !== (existing.description || null)
     || madeForKids !== existing.madeForKids
@@ -589,6 +603,7 @@ export async function updateSocialDraft(
   const wasApproved = existing.status === "approved";
   if (wasApproved && status === "approved" && !explicitAuthorization && publishableChanged) status = "draft";
   const ownerReschedule = wasApproved && status === "approved" && !explicitAuthorization && !publishableChanged && scheduleChanged;
+  if (ownerReschedule && input.contentVersion !== existing.contentVersion) throw new Error("social_draft_changed");
   const reapprove = wasApproved && status === "approved" && explicitAuthorization && (publishableChanged || scheduleChanged);
 
   // TikTok consent covers exactly what the owner reviewed. A new consent
@@ -643,20 +658,25 @@ export async function updateSocialDraft(
     await cancelAndVerifyTikTokQueue(admin, ownerId, draftId);
   }
 
-  const { data: written, error } = await admin.from("mara_drafts").update({
+  if (ownerReschedule) {
+    const { error: rescheduleError } = await admin.rpc("reschedule_reviewed_draft", {
+      p_owner_user_id: ownerId, p_draft_id: draftId, p_publish_at: scheduledAt, p_content_version: existing.contentVersion,
+    });
+    if (rescheduleError?.message.includes("approval_queue_cancelled")) throw new Error("approval_queue_cancelled");
+    if (rescheduleError) throw new Error(rescheduleError.message.includes("approval_schedule_expired") ? "approval_schedule_expired" : "social_draft_changed");
+  } else {
+  let write = admin.from("mara_drafts").update({
     title,
     content: caption || title,
-    ...(ownerReschedule ? {} : { proposed_publish_at: scheduledAt }),
+    proposed_publish_at: scheduledAt,
     status,
     content_meta: meta,
-  }).eq("owner_user_id", ownerId).eq("id", draftId).select("status,content_version").maybeSingle();
+  }).eq("owner_user_id", ownerId).eq("id", draftId);
+  if (explicitAuthorization || ownerReschedule || input.contentVersion !== undefined) write = write.eq("content_version", input.contentVersion).eq("status", existing.status);
+  const { data: written, error } = await write.select("status,content_version").maybeSingle();
+  if (!error && !written && (explicitAuthorization || ownerReschedule || input.contentVersion !== undefined)) throw new Error("social_draft_changed");
   if (error || !written) throw new Error("social_draft_update_failed");
-  if (ownerReschedule) {
-    const { error: rescheduleError } = await admin.rpc("reschedule_approved_draft", {
-      p_owner_user_id: ownerId, p_draft_id: draftId, p_publish_at: scheduledAt,
-    });
-    if (rescheduleError) throw new Error("social_draft_update_failed");
-  } else if (reapprove && written.status !== "approved") {
+    if (reapprove && written.status !== "approved") {
     // The edit moved the version (and the database withdrew the old
     // approval); this request's explicit approval covers exactly the version
     // it just wrote — never a concurrent edit that landed in between.
@@ -667,6 +687,8 @@ export async function updateSocialDraft(
       .select("id").maybeSingle();
     if (reapproveError) throw new Error("social_draft_update_failed");
     if (!reapproved) throw new Error("social_draft_changed");
+  }
+
   }
 
   // Calendar mirror: approved + scheduled shows on the one marketing

@@ -14,7 +14,7 @@ test("Approvals: a 409 replaces the stale card with the server's refreshed one a
 
 test("Approvals: Confirm is blocked while the post's media is unfinished", async () => {
   const board = await read("components/voom/operating/ApprovalsBoard.tsx");
-  assert.match(board, /disabled=\{busy \|\| Boolean\(confirmBlockedReason\)\}/);
+  assert.match(board, /disabled=\{busy \|\| Boolean\(confirmBlockedReason\) \|\| Boolean\(target\)\}/);
   assert.match(board, /selectedDraft && !selectedDraft\.hasMedia/, "the block comes from the draft's real media state");
   assert.match(board, /Awaiting media/);
   assert.match(board, /failed \? "Retry" : "Confirm"/, "failed actions keep the real retry");

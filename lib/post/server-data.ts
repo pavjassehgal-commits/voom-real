@@ -1,10 +1,12 @@
 import "server-only";
+import { automaticPublishExpired } from "@/lib/voom/schedule-policy";
+import { approvalErrorCode } from "./approval-safety";
 
 import { createHash } from "node:crypto";
 import { IngestionFailure, type IngestionStage, logIngestionStage, type IngestionLogContext } from "@/lib/media/ingestion-error";
 import type { createAdminClient } from "@/utils/supabase/admin";
 import {
-  assetOriginFor, buildPostDraftAssetWrite, calendarChannelFor, calendarStatusFor, composePostCaption, decodeDraftFormat,
+  assetOriginFor, buildPostDraftAssetWrite, composePostCaption, decodeDraftFormat,
   encodeDraftChannel, formatForKind, internalPostState, isPostDraftKind, originForAsset, postTypeLabel,
   splitPostCaption, type PostDraftKind, type PostFormat, type PostInternalState, type PostOrigin,
   POST_STATE_LABELS,
@@ -266,9 +268,10 @@ export interface SavePostInput {
 }
 
 /** Persists an edit and re-syncs the calendar row for approved posts. */
-export async function savePostDraft(admin: AdminClient, ownerId: string, draftId: string, input: SavePostInput): Promise<PostView | null> {
+export async function savePostDraft(admin: AdminClient, ownerId: string, draftId: string, input: SavePostInput, expectedContentVersion?: number): Promise<PostView | null> {
   const existing = await getPostDraft(admin, ownerId, draftId);
   if (!existing) return null;
+  if (expectedContentVersion !== undefined && existing.contentVersion !== expectedContentVersion) throw new Error(APPROVAL_CONTENT_CHANGED);
   const concept = input.concept !== undefined ? input.concept.trim().slice(0, 160) : existing.concept;
   if (!concept) throw new Error("post_concept_required");
   const caption = input.caption !== undefined ? input.caption : existing.caption;
@@ -301,15 +304,19 @@ export async function savePostDraft(admin: AdminClient, ownerId: string, draftId
     && patch.channel === encodeDraftChannel(existing.kind, existing.format)
     && (input.mediaBrief === undefined || (patch.media_brief ?? "") === existing.mediaBrief);
   if (scheduleOnly) {
-    const { error: rescheduleError } = await admin.rpc("reschedule_approved_draft", {
-      p_owner_user_id: ownerId, p_draft_id: draftId, p_publish_at: scheduledAt,
+    const { error: rescheduleError } = await admin.rpc("reschedule_reviewed_draft", {
+      p_owner_user_id: ownerId, p_draft_id: draftId, p_publish_at: scheduledAt, p_content_version: existing.contentVersion,
     });
-    if (rescheduleError) throw new Error("post_update_failed");
+    if (rescheduleError) throw new Error(approvalErrorCode(rescheduleError.message));
+    const view = await syncPostToCalendar(admin, ownerId, draftId);
+    if (view) await refreshPendingDraftApproval(admin, ownerId, view);
+    return view;
   }
   const writePatch = { ...patch };
-  if (scheduleOnly) delete writePatch.proposed_publish_at;
-  const { data, error } = await admin.from("mara_drafts").update(writePatch)
-    .eq("owner_user_id", ownerId).eq("id", draftId).select("id").maybeSingle();
+  let write = admin.from("mara_drafts").update(writePatch).eq("owner_user_id", ownerId).eq("id", draftId);
+  if (expectedContentVersion !== undefined) write = write.eq("content_version", expectedContentVersion);
+  const { data, error } = await write.select("id").maybeSingle();
+  if (!error && !data && expectedContentVersion !== undefined) throw new Error(APPROVAL_CONTENT_CHANGED);
   if (error || !data) throw new Error("post_update_failed");
   const view = await syncPostToCalendar(admin, ownerId, draftId);
   if (view) await refreshPendingDraftApproval(admin, ownerId, view);
@@ -459,30 +466,28 @@ export async function deletePostDraft(admin: AdminClient, ownerId: string, draft
 }
 
 /** Approves a post. Approval saves state only; nothing is published. */
-export async function approvePostDraft(admin: AdminClient, ownerId: string, draftId: string, options?: {
+export async function approvePostDraft(admin: AdminClient, ownerId: string, draftId: string, options: {
   approvalOrigin?: "user" | "autopilot";
   /**
-   * The content version the approver saw. When given, the approval is a
+   * The content version the approver saw. Required for every approval: a
    * compare-and-swap: a draft that changed since (caption, media, schedule,
    * metadata) is NOT approved and APPROVAL_CONTENT_CHANGED is thrown.
    */
-  expectedContentVersion?: number;
+  expectedContentVersion: number;
+  actionId?: string;
+  campaignActionId?: string;
 }): Promise<PostView | null> {
-  let query = admin.from("mara_drafts").update({
-    status: "approved",
-    approval_origin: options?.approvalOrigin ?? "user",
-  }).eq("owner_user_id", ownerId).eq("id", draftId);
-  if (options?.expectedContentVersion !== undefined) {
-    query = query.eq("content_version", options.expectedContentVersion).neq("status", "rejected");
-  }
-  const { data, error } = await query.select("id").maybeSingle();
-  if (error) throw new Error("post_approve_failed");
-  if (!data && options?.expectedContentVersion !== undefined) throw new Error(APPROVAL_CONTENT_CHANGED);
-  if (!data) throw new Error("post_approve_failed");
+  const expected = options?.expectedContentVersion;
+  if (!Number.isSafeInteger(expected) || Number(expected) < 1) throw new Error(APPROVAL_CONTENT_CHANGED);
+  const { error } = await admin.rpc("approve_reviewed_post", {
+    p_owner_user_id: ownerId, p_draft_id: draftId, p_content_version: expected,
+    p_origin: options?.approvalOrigin ?? "user", p_action_id: options?.actionId ?? null,
+    p_campaign_action_id: options?.campaignActionId ?? null,
+  });
+  if (error) throw new Error(approvalErrorCode(error.message));
+  // Idempotent synchronization is safe to retry at the SAME reviewed version.
   const view = await syncPostToCalendar(admin, ownerId, draftId);
-  if (options?.approvalOrigin !== "autopilot") {
-    await resolveDraftApprovalActions(admin, ownerId, draftId, "confirmed", "Approved explicitly by the user.");
-  }
+  if (!view || view.status !== "approved" || view.contentVersion !== expected) throw new Error(APPROVAL_CONTENT_CHANGED);
   return view;
 }
 
@@ -490,47 +495,16 @@ export async function approvePostDraft(admin: AdminClient, ownerId: string, draf
 export const APPROVAL_CONTENT_CHANGED = "approval_content_changed";
 
 /** Rejects one owned draft and closes its matching approval without deleting it. */
-export async function rejectPostDraft(admin: AdminClient, ownerId: string, draftId: string): Promise<PostView | null> {
-  const { data, error } = await admin.from("mara_drafts").update({ status: "rejected" })
-    .eq("owner_user_id", ownerId).eq("id", draftId).select("id").maybeSingle();
-  if (error) throw new Error("post_reject_failed");
+export async function rejectPostDraft(admin: AdminClient, ownerId: string, draftId: string, actionId?: string): Promise<PostView | null> {
+  const { data, error } = await admin.rpc("reject_reviewed_post", {
+    p_owner_user_id: ownerId, p_draft_id: draftId, p_action_id: actionId ?? null,
+  });
+  if (error) throw new Error(approvalErrorCode(error.message));
   if (!data) return null;
-  await cancelPostSchedule(admin, ownerId, draftId);
-  await resolveDraftApprovalActions(admin, ownerId, draftId, "cancelled", "Rejected by the user. Nothing was published.");
   return getPostDraft(admin, ownerId, draftId);
 }
 
-async function resolveDraftApprovalActions(
-  admin: AdminClient,
-  ownerId: string,
-  draftId: string,
-  status: "confirmed" | "cancelled",
-  summary: string,
-): Promise<void> {
-  const { data: actions } = await admin.from("mara_pending_actions").select("id")
-    .eq("owner_user_id", ownerId).eq("tool_name", "propose_calendar_item")
-    .in("status", ["pending", "failed"])
-    .contains("sanitized_arguments", { sourceDraftId: draftId });
-  const ids = (actions ?? []).map((action) => String(action.id));
-  if (!ids.length) return;
-  await admin.from("mara_pending_actions").update({
-    status,
-    result_summary: summary,
-    error_summary: null,
-    executed_at: new Date().toISOString(),
-  }).eq("owner_user_id", ownerId).in("id", ids).in("status", ["pending", "failed"]);
-  await admin.from("mara_tool_runs").update({
-    status: status === "confirmed" ? "succeeded" : "rejected",
-    result_summary: summary,
-    error_summary: null,
-    completed_at: new Date().toISOString(),
-  }).eq("owner_user_id", ownerId).in("pending_action_id", ids);
-}
 
-/**
- * Mirrors an approved post into the existing Content Calendar. Draft posts are
- * removed from the calendar so the calendar only ever shows approved content.
- */
 export async function syncPostToCalendar(admin: AdminClient, ownerId: string, draftId: string): Promise<PostView | null> {
   const view = await getPostDraft(admin, ownerId, draftId);
   if (!view) return null;
@@ -548,16 +522,10 @@ export async function syncPostToCalendar(admin: AdminClient, ownerId: string, dr
     await refreshPendingDraftApproval(admin, ownerId, view).catch(() => undefined);
     return getPostDraft(admin, ownerId, draftId);
   }
-  await admin.from("content_calendar_items").upsert({
-    owner_user_id: ownerId,
-    source_draft_id: draftId,
-    title: view.concept.slice(0, 160),
-    channel: calendarChannelFor(view.kind),
-    content: view.composedCaption.slice(0, 12000),
-    topic: view.typeLabel,
-    publish_at: publishAt,
-    status: calendarStatusFor(view.internalState),
-  }, { onConflict: "owner_user_id,source_draft_id" });
+  const { error: mirrorError } = await admin.rpc("sync_reviewed_post_calendar", {
+    p_owner_user_id: ownerId, p_draft_id: draftId, p_content_version: view.contentVersion,
+  });
+  if (mirrorError) throw new Error(approvalErrorCode(mirrorError.message));
   await syncPostToPublishQueue(admin, ownerId, draftId, view, publishAt);
   return getPostDraft(admin, ownerId, draftId);
 }
@@ -590,7 +558,7 @@ export async function syncPostToPublishQueue(
     // The schedule is already dead (well past its time with no media): never
     // re-arm it — the item derives Missed and the user decides.
     if (isLateSchedule(view.scheduledAt)) {
-      await cancelPublishItem(admin, ownerId, draftId).catch(() => false);
+      await admin.rpc("expire_instagram_publish_jobs", { p_now: new Date().toISOString(), p_owner_user_id: ownerId, p_draft_id: draftId });
       return;
     }
     const mediaKind = queueMediaKindForDraft(view);
@@ -608,6 +576,7 @@ export async function syncPostToPublishQueue(
       caption: mediaKind === "story" ? "" : truncateCaption(view.composedCaption),
       scheduledAt: view.scheduledAt ?? publishAt,
       waitingForMedia: true,
+      contentVersion: view.contentVersion,
     }).catch(() => null);
     return;
   }
@@ -619,7 +588,7 @@ export async function syncPostToPublishQueue(
   // arriving HOURS late never auto-publishes — the queue row is withdrawn and
   // the item derives Missed so the user explicitly chooses Post now.
   if (isLateSchedule(view.scheduledAt)) {
-    await cancelPublishItem(admin, ownerId, draftId).catch(() => false);
+    await admin.rpc("expire_instagram_publish_jobs", { p_now: new Date().toISOString(), p_owner_user_id: ownerId, p_draft_id: draftId });
     return;
   }
   const calendarItemId = await findCalendarItemId(admin, ownerId, draftId);
@@ -632,6 +601,7 @@ export async function syncPostToPublishQueue(
     // caption parameter, so Voom never promises or sends one.
     caption: mediaKind === "story" ? "" : truncateCaption(view.composedCaption),
     scheduledAt: view.scheduledAt ?? publishAt,
+    contentVersion: view.contentVersion,
   }).catch(() => null);
 }
 
@@ -642,7 +612,7 @@ export async function syncPostToPublishQueue(
 function isLateSchedule(scheduledAt: string | null): boolean {
   if (!scheduledAt) return false;
   const value = Date.parse(scheduledAt);
-  return Number.isFinite(value) && value < Date.now() - 20 * 60_000;
+  return Number.isFinite(value) && automaticPublishExpired(scheduledAt);
 }
 
 /** The publish media kind a draft will use once its visual exists. */

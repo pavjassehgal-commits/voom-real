@@ -63,6 +63,7 @@ function createCampaignRows(channel) {
     owner_user_id: OWNER,
     conversation_id: "studio-conversation",
     kind,
+    content_version: 1,
     channel: channel === "tiktok" ? "TikTok · 9:16" : "YouTube Video · 16:9",
     title: "Current campaign concept",
     content: "Current caption",
@@ -537,13 +538,13 @@ test("a regeneration uses the same pre-mutation gate, then later approval syncs 
   assert.equal(fixture.state.youtube_publish_queue[0].status, "cancelled");
   assert.equal(fixture.state.youtube_publish_queue.length, 1);
 
-  const approved = await socialDrafts.updateSocialDraft(fixture.admin, OWNER, DRAFT, { decision: "approved" });
+  const approved = await socialDrafts.updateSocialDraft(fixture.admin, OWNER, DRAFT, { decision: "approved", contentVersion: 1 });
   assert.equal(approved.queueStatus, "scheduled");
   assert.equal(fixture.state.youtube_publish_queue.length, 1);
   assert.equal(fixture.state.youtube_publish_queue[0].title, "MARA replacement title");
   assert.equal(fixture.state.youtube_publish_queue[0].description, "A clear replacement description with the outcome and useful context.");
 
-  const retriedApproval = await socialDrafts.updateSocialDraft(fixture.admin, OWNER, DRAFT, { decision: "approved" });
+  const retriedApproval = await socialDrafts.updateSocialDraft(fixture.admin, OWNER, DRAFT, { decision: "approved", contentVersion: 1 });
   assert.equal(retriedApproval.queueStatus, "scheduled");
   assert.equal(fixture.state.youtube_publish_queue.length, 1, "approval retry reuses the queue row");
 });

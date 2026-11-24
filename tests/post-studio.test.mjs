@@ -284,8 +284,8 @@ test("0021 is marked already-applied; 0018-0020 are untouched and 0022-0028 stay
   // slot leases (0070), the automation mode guard (0071), the coordinator email-flow guard
   // (0072) and Brand Kit v2 (0075; written as 0059 on Gurnoor's branch, renumbered at the
   // 2026-11-01 merge) follow; 0052-0054 remain reserved, 0060/0073 are gaps; 0074 adds transactional email.
-  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql", "0065_youtube_data_retention.sql", "0066_youtube_resumable_uploads.sql", "0067_youtube_upload_cleanup_fairness.sql", "0068_instagram_token_renewal.sql", "0069_youtube_deletion_delivery.sql", "0070_plan_slot_generation_leases.sql", "0071_automation_mode_entitlement_guard.sql", "0072_coordinator_email_flow_authorization.sql", "0074_voom_transactional_email.sql", "0075_brand_kits.sql", "0078_instagram_callback_receipts.sql"], "only reviewed post-0049 migrations are present");
-  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 78), "no unreviewed migration beyond 0078 (Instagram callback receipts) may exist");
+  assert.deepEqual(numbered.filter((name) => Number(name.slice(0, 4)) > 49).sort(), ["0050_approval_state_write_lockdown.sql", "0051_ai_request_rate_limits.sql", "0055_trend_intelligence.sql", "0056_trend_mara_workflow_context.sql", "0057_wikidata_event_source.sql", "0058_universal_trend_sources.sql", "0059_automation_emergency_pause.sql", "0061_ai_usage_cost_tracking.sql", "0062_linkedin_personal.sql", "0063_native_plan_video_generation.sql", "0064_youtube_uploaded_video.sql", "0065_youtube_data_retention.sql", "0066_youtube_resumable_uploads.sql", "0067_youtube_upload_cleanup_fairness.sql", "0068_instagram_token_renewal.sql", "0069_youtube_deletion_delivery.sql", "0070_plan_slot_generation_leases.sql", "0071_automation_mode_entitlement_guard.sql", "0072_coordinator_email_flow_authorization.sql", "0074_voom_transactional_email.sql", "0075_brand_kits.sql", "0078_instagram_callback_receipts.sql", "0080_approval_safety.sql"], "only reviewed post-0049 migrations are present");
+  assert.ok(numbered.every((name) => Number(name.slice(0, 4)) <= 80), "no unreviewed migration beyond 0080 (approval safety) may exist");
   assert.deepEqual(
     files.filter((name) => /^0032_/.test(name)),
     ["0032_instagram_performance_intelligence.sql"],
@@ -441,13 +441,13 @@ test("posts can be saved as a draft, scheduled, and approved without publishing"
   const route = await read("app/api/posts/[id]/route.ts");
   assert.match(route, /action === "approve"/);
   // Optionally bound to the content version the owner reviewed (approval integrity, 0059).
-  assert.match(route, /approvePostDraft\(admin, user\.id, id, expected === undefined \? undefined : \{ expectedContentVersion: expected \}\)/);
+  assert.match(route, /approvePostDraft\(admin, user\.id, id, \{ expectedContentVersion: expected \}\)/);
   assert.match(route, /postApprovalBlockers\(\{ caption: existing\.caption, hasVisual: existing\.visualReady, kind: existing\.kind \}\)/);
   assert.match(route, /checkScheduleInstant/);
   assert.match(route, /postApprovalMessage\(admin, user\.id, post\)/, "publish claims require persisted queue evidence");
   const data = await read("lib/post/server-data.ts");
-  assert.match(data, /status: "approved"/);
-  assert.match(data, /approval_origin: options\?\.approvalOrigin \?\? "user"/);
+  assert.match(data, /rpc\("approve_reviewed_post"/);
+  assert.match(data, /p_origin: options\?\.approvalOrigin \?\? "user"/);
   assert.match(data, /export async function syncPostToCalendar/);
 });
 
@@ -455,9 +455,10 @@ test("approved posts appear on the existing Content Calendar with a resolved typ
   const data = await read("lib/post/server-data.ts");
   // Only approved content is mirrored; drafts are removed again.
   assert.match(data, /if \(view\.internalState === "draft"\) \{/);
-  assert.match(data, /calendarStatusFor\(view\.internalState\)/);
-  assert.match(data, /channel: calendarChannelFor\(view\.kind\)/);
-  assert.match(data, /onConflict: "owner_user_id,source_draft_id"/);
+  assert.match(data, /rpc\("sync_reviewed_post_calendar"/);
+  const safety = await read("supabase/migrations/0080_approval_safety.sql");
+  assert.match(safety, /case d.kind when 'reel' then 'Reel'/);
+  assert.match(safety, /on conflict\(owner_user_id,source_draft_id\)/);
   assert.match(data, /from\("content_calendar_items"\)/);
   assert.match(data, /export async function resolveCalendarContentTypes/);
   assert.match(data, /originByDraft/);
@@ -546,7 +547,7 @@ test("Post Studio never calls Instagram and never claims a post went live", asyn
     read("app/app/(shell)/studio/page.tsx"),
   ]);
   const all = sources.join("\n");
-  assert.doesNotMatch(all, /graph\.instagram\.com|media_publish|instagram_publish_jobs/i);
+  assert.doesNotMatch(all, /graph\.instagram\.com|media_publish|claim_due_instagram_publish_jobs/i);
   assert.doesNotMatch(all, /publishToInstagram|publishPost|POST_TO_INSTAGRAM/i);
   // No status value or user-facing state label may report a post as live. The
   // source does mention the word in prose, to explain that Voom deliberately

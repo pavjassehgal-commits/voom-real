@@ -1,3 +1,48 @@
+## Step 1C final staging preparation — 24 November 2026
+
+Same isolated branch/base below. Candidate is being committed locally in this task; use
+`git log -1 --format=%H` to identify the commit containing this handover and staging plan.
+Step 1/1B uncommitted work was preserved and included. No push, hosted migration or deployment.
+
+Cancellation delta: canonical reschedule refuses cancelled IG/TikTok/YouTube rows; unschedule
+retains cancellation evidence. Plan/Post/native paths explain fresh explicit platform approval
+is required. Provider-owned expired Instagram jobs remain blocked from writes and support only
+bounded read-only recovery. Staging plan: `docs/approval-safety-staging-plan.md`.
+
+Checks: focused 260/260 pass, TypeScript pass, lint zero errors/16 warnings, diff check pass.
+Full suite not rerun for 1C; prior 1B comparison remains historical (no new failures then).
+Next: independent review of this cancellation delta and separately authorized isolated staging.
+Real multi-session PostgreSQL, browser/native consent, worker recovery and migration/rollback
+matrix remain unexecuted. Fence old workers and approval/scheduling writes through SQL-first
+migration/app deployment; revert/drain app before SQL rollback. Baseline publishers remain
+fenced on rollback. Do not act on older workflow instructions below as release authorization.
+
+---
+
+## Step 1B independent-review follow-up — 24 November 2026
+
+Same isolated branch/base below; prior uncommitted changes preserved. Implementation and
+local checks complete; see `docs/approval-safety-review-followup.md` (supersedes Step 1 report).
+Focused: 257/257 pass. Full: 2587 pass /70 fail /5 skipped versus untouched baseline
+2528 pass /71 fail /5 skipped: no new failing test names. TypeScript passes; lint zero
+errors, 16 warnings. True multi-session PostgreSQL contention and browser/staging journeys
+remain unverified. Next: independent code/SQL review, not deployment. Migration 0080 and
+its rollback remain unapplied to hosted databases. Do not push, merge, deploy or apply SQL.
+
+---
+
+## Local approval-safety candidate — 24 November 2026
+
+Branch `codex/approval-safety-569f27c`, isolated checkout from production SHA
+`569f27c74e247a3568fdbb089cf39c0ed71fdb0a`. Changes are uncommitted and local only.
+No push, merge, deployment, hosted database change, paid generation or account change.
+See `docs/approval-safety-review.md` for exact scope, validation, files and remaining gates.
+Proposed `0080_approval_safety.sql` has only run in embedded test PostgreSQL. Do not apply
+it or release this app without separate authorization and migration review. Memory and
+Gurnoor's existing checkouts are untouched.
+
+---
+
 # Next session: where we are, what is next, what is open
 
 **Read this after `ARCHITECTURE.md` and `DECISIONS.md`, before doing anything. Update it at the

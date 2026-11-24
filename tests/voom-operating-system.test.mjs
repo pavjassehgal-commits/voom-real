@@ -167,7 +167,7 @@ test("Autopilot auto-approval runs the one safety evaluator and clears Approvals
   assert.match(service, /status: "confirmed"/);
   // Risky content is never auto-approved; it is held for review.
   assert.match(service, /if \(!safety\.safe\) return \{ approved: false/);
-  assert.match(tools, /onConflict: "owner_user_id,source_draft_id"|createCalendarItem/);
+  assert.match(tools, /confirm_calendar_proposal/);
   assert.match(migration, /grant insert, update on table public\.content_calendar_items to service_role/);
   assert.match(board, /Autopilot approved/);
   assert.doesNotMatch(service + automation, /META_|send_campaign|ad spend/i);
@@ -347,10 +347,10 @@ test("approved plan content is independently and idempotently linked to the cale
   assert.match(ownerLinks, /foreign key \(source_plan_id, owner_user_id\)/);
   assert.match(ownerLinks, /foreign key \(source_draft_id, owner_user_id\)/);
   assert.match(data, /onConflict: "owner_user_id,source_draft_id"/);
-  assert.match(tools, /status: "approved"/);
+  assert.match(tools, /approvePostDraft/);
   assert.match(tools, /Nothing was published/);
   // approve_draft records user provenance and approves only the version it checked (0059).
-  assert.match(tools, /mara_drafts"\)\.update\(\{ status: "approved", approval_origin: "user" \}\)/);
+  assert.match(tools, /expectedContentVersion: a.contentVersion/);
 });
 
 test("approval edits persist atomically and confirmation uses the latest owned draft", async () => {
@@ -368,8 +368,8 @@ test("approval edits persist atomically and confirmation uses the latest owned d
   // Confirmation uses the owned draft's stored content and schedule, and only
   // when they still equal the card the user confirmed (compare-and-swap; see
   // lib/mara/draft-approval.ts and tests/automation-resume-reliability.test.mjs).
-  assert.match(tools, /approveDraftFromConfirmedSnapshot\(c\.db, c\.ownerId, a\.sourceDraftId as string, a, draft,/);
-  assert.match(tools, /content: draft\.content, topic: a\.topic, publish_at: draft\.proposed_publish_at/);
+  assert.match(tools, /approvePostDraft\(c\.db, c\.ownerId, draftId,/);
+  assert.match(tools, /actionId: action.id/);
 });
 
 test("saved calendar details are read-only, current, sanitized, and owner-scoped", async () => {

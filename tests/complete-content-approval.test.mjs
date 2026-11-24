@@ -275,8 +275,10 @@ test("Assisted and MARA approvals require the media; every async media path re-e
   assert.equal(approvalMod.approvalRequiresMedia("story"), true);
   assert.equal(approvalMod.approvalRequiresMedia("tiktok_video"), false, "TikTok's own consent fingerprint binds its video");
   const tools = await read("lib/mara/tools.ts");
-  assert.equal((tools.match(/if \(!asset\) throw new Error\(APPROVAL_INCOMPLETE\);/g) ?? []).length, 2, "propose_calendar_item and approve_draft both require the media");
-  assert.match(tools, /\.eq\("content_version", target\.content_version\)/, "approve_draft is bound to the checked version");
+  assert.match(tools, /approvePostDraft\(c\.db, c\.ownerId, draftId/);
+  const boundary = await read("supabase/migrations/0080_approval_safety.sql");
+  assert.match(boundary, /post_draft_assets/);
+  assert.match(boundary, /approval_incomplete/);
   const route = await read("app/api/mara/actions/[id]/route.ts");
   assert.match(route, /image or video isn't ready yet/);
   for (const path of ["lib/mara/video-poller.ts", "lib/mara/video-service.ts", "lib/voom/workflow/media.ts"]) {

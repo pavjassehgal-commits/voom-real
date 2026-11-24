@@ -344,7 +344,7 @@ test("approving with a schedule enqueues, and un-approving or rejecting cancels"
   const route = await read("app/api/posts/[id]/route.ts");
   assert.match(route, /action === "reject" \|\| action === "cancel"/);
   assert.match(route, /rejectPostDraft\(admin, user\.id, id\)/);
-  assert.match(data, /rejectPostDraft[\s\S]*cancelPostSchedule\(admin, ownerId, draftId\)/);
+  assert.match(data, /rejectPostDraft[\s\S]*rpc\("reject_reviewed_post"/);
   assert.match(route, /Voom will not publish this to Instagram/);
 });
 

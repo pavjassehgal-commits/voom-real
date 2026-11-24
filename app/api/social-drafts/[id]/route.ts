@@ -2,6 +2,8 @@ import { getCurrentUser } from "@/lib/voom/server-data";
 import { getSocialDraft, updateSocialDraft } from "@/lib/social/server-drafts";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { z } from "zod";
+import { checkScheduleInstant } from "@/lib/voom/schedule-guard";
+import { accountTimezone } from "@/lib/voom/timezone";
 
 export const runtime = "nodejs";
 
@@ -24,6 +26,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
  * No credit is spent and no media is generated.
  */
 const patchSchema = z.object({
+  contentVersion: z.number().int().positive().optional(),
   title: z.string().trim().min(1).max(160).optional(),
   caption: z.string().trim().max(4000).optional(),
   description: z.string().trim().max(5000).optional(),
@@ -69,13 +72,16 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) return Response.json({ error: "Check the content details before saving." }, { status: 400 });
 
-  const scheduledAt = parsed.data.scheduledAt;
-  if (scheduledAt && Date.parse(scheduledAt) < Date.now() - 5 * 60_000) {
-    return Response.json({ error: "Choose a date in the future to schedule this." }, { status: 400 });
-  }
-
   try {
-    const draft = await updateSocialDraft(createAdminClient(), user.id, id, parsed.data);
+    const admin = createAdminClient();
+    const scheduledAt = parsed.data.scheduledAt;
+    if (scheduledAt) {
+      const { data: business, error } = await admin.from("businesses").select("timezone").eq("owner_user_id", user.id).maybeSingle();
+      if (error || !business) return Response.json({ error: "Your business timezone could not be verified. Please retry." }, { status: 503 });
+      const guard = checkScheduleInstant(scheduledAt, new Date(), accountTimezone(business.timezone));
+      if (!guard.ok) return Response.json({ error: guard.error }, { status: 400 });
+    }
+    const draft = await updateSocialDraft(admin, user.id, id, parsed.data);
     if (!draft) return Response.json({ error: "That content was not found." }, { status: 404 });
     // The response is based on the row actually returned by the durable
     // provider queue. A successful approval write alone is never described as
@@ -89,6 +95,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     });
   } catch (reason) {
     const code = reason instanceof Error ? reason.message : "";
+    if (code === "approval_queue_cancelled") return Response.json({ error: "Publishing was cancelled. Changing the time cannot resume it. Review this video in its platform editor and explicitly approve again." }, { status: 409 });
+    if (code === "social_draft_changed" || code === "approval_schedule_expired") return Response.json({ error: code === "social_draft_changed" ? "This video changed after you reviewed it. Reload and review the latest version before approving." : "This schedule has expired. Choose a future time and review again." }, { status: 409 });
     if (code === "youtube_previous_submission_erased_do_not_retry") {
       return Response.json({error:"This video's earlier submission history was deleted. It cannot safely be retried. Create a new draft and review it before publishing."},{status:409});
     }

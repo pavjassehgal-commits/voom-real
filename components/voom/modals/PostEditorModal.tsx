@@ -22,6 +22,8 @@ interface PostVisual {
 
 interface Post {
   id: string;
+  contentVersion: number;
+  timeZone?: string;
   kind: "instagram_post" | "reel" | "story";
   typeLabel: string;
   concept: string;
@@ -53,6 +55,7 @@ const STORY_MAX_VIDEO_SECONDS = 60;
 export function PostEditorModal({ postId, onChanged }: { postId: string; onChanged?: () => void }) {
   const { close } = useModal();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [businessTimeZone, setBusinessTimeZone] = useState(DEFAULT_TIMEZONE);
   const [post, setPost] = useState<Post | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -72,6 +75,8 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
   const [videoJob, setVideoJob] = useState<{ preparing: boolean; generation: ClientGeneration | null } | null>(null);
 
   const applyPost = useCallback((view: Post) => {
+    if (view.timeZone) setBusinessTimeZone(view.timeZone);
+    const timeZone = view.timeZone ?? businessTimeZone;
     setPost(view);
     setConcept(view.concept);
     setCaption(view.caption);
@@ -81,9 +86,9 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
     setMediaBrief(view.mediaBrief ?? "");
     if (view.origin === "existing_content" || view.origin === "own_asset") setSource(view.origin);
     const when = view.scheduledAt ? new Date(view.scheduledAt) : null;
-    setDate(when ? isoToLocalDate(view.scheduledAt!, DEFAULT_TIMEZONE) : "");
-    setTime(when ? toTimeInput(view.scheduledAt!) : "");
-  }, []);
+    setDate(when ? isoToLocalDate(view.scheduledAt!, timeZone) : "");
+    setTime(when ? toTimeInput(view.scheduledAt!, timeZone) : "");
+  }, [businessTimeZone]);
 
   const load = useCallback(async () => {
     try {
@@ -225,8 +230,8 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
         setFormat(body.post.format);
         setMediaBrief(body.post.mediaBrief ?? "");
         const when = body.post.scheduledAt ? new Date(body.post.scheduledAt) : null;
-        setDate(when ? isoToLocalDate(body.post.scheduledAt!, DEFAULT_TIMEZONE) : "");
-        setTime(when ? toTimeInput(body.post.scheduledAt!) : "");
+        setDate(when ? isoToLocalDate(body.post.scheduledAt!, businessTimeZone) : "");
+        setTime(when ? toTimeInput(body.post.scheduledAt!, businessTimeZone) : "");
       }
       setNotice(`${body.message ?? okMessage}${body.disclosure ? ` ${body.disclosure}` : ""}`);
       onChanged?.();
@@ -240,9 +245,22 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
   const endpoint = `/api/posts/${encodeURIComponent(postId)}`;
   const isStory = post?.kind === "story";
 
+  async function approveReviewedPost() {
+    if (!post) return;
+    const savedDate = post.scheduledAt ? isoToLocalDate(post.scheduledAt, businessTimeZone) : "";
+    const savedTime = post.scheduledAt ? toTimeInput(post.scheduledAt, businessTimeZone) : "";
+    if (concept !== post.concept || caption !== post.caption || cta !== post.cta || hashtags !== post.hashtags.join(" ")
+      || format !== post.format || mediaBrief !== post.mediaBrief || date !== savedDate || time !== savedTime) {
+      setError("Save your changes, then review the saved post before approving.");
+      return;
+    }
+    await send(endpoint, { method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "approve", contentVersion: post.contentVersion }) }, "approve", "Approved inside Voom.");
+  }
+
   function validatedSchedule(): { body: string; ok: true } | { body: null; ok: false } {
     if (!date) return { ok: true, body: JSON.stringify(savePayload(null)) };
-    const check = checkSchedule({ date, time });
+    const check = checkSchedule({ date, time, timeZone: businessTimeZone });
     if (!check.ok) {
       setError(check.error);
       return { ok: false, body: null };
@@ -474,8 +492,8 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                         setHashtags(body.suggestion.hashtags.join(" "));
                         if (body.suggestion.suggestedPublishAt) {
                           const when = body.suggestion.suggestedPublishAt;
-                          setDate(isoToLocalDate(when, DEFAULT_TIMEZONE));
-                          setTime(toTimeInput(when));
+                          setDate(isoToLocalDate(when, businessTimeZone));
+                          setTime(toTimeInput(when, businessTimeZone));
                         }
                         // The timing reason also carries MARA's note when the purpose and the photo do not fit.
                         setNotice(`${body.disclosure ?? "MARA suggested copy. Review it before saving."}${body.visualDescription ? ` MARA saw: ${body.visualDescription}` : ""}${body.suggestion.timingReason ? ` Timing: ${body.suggestion.timingReason}` : ""}`);
@@ -577,11 +595,11 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
                 </>
               )}
               <div className="grid gap-2.5 sm:grid-cols-2">
-                <Field label="Schedule date" hint={date === minScheduleDate() ? "Today — pick a time later than now." : undefined}>
-                  <Input type="date" value={date} min={minScheduleDate()} onChange={(event) => { setDate(event.target.value); setError(""); }} />
+                <Field label="Schedule date" hint={date === minScheduleDate(new Date(), businessTimeZone) ? "Today — pick a time later than now." : undefined}>
+                  <Input type="date" value={date} min={minScheduleDate(new Date(), businessTimeZone)} onChange={(event) => { setDate(event.target.value); setError(""); }} />
                 </Field>
                 <Field label="Time">
-                  <Input type="time" value={time} min={date ? (minScheduleTime(date) ?? undefined) : undefined} onChange={(event) => { setTime(event.target.value); setError(""); }} />
+                  <Input type="time" value={time} min={date ? (minScheduleTime(date, new Date(), businessTimeZone) ?? undefined) : undefined} onChange={(event) => { setTime(event.target.value); setError(""); }} />
                 </Field>
               </div>
 
@@ -639,12 +657,7 @@ export function PostEditorModal({ postId, onChanged }: { postId: string; onChang
               variant="primary"
               disabled={busy !== null}
               onClick={() =>
-                void send(
-                  endpoint,
-                  { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "approve" }) },
-                  "approve",
-                  "Approved inside Voom.",
-                )
+                void approveReviewedPost()
               }
             >
               {busy === "approve" ? "Approving…" : "Approve"}
@@ -719,8 +732,8 @@ function ratioLabel(width: number, height: number): string {
   return `${Math.round(width / divisor)}:${Math.round(height / divisor)}`;
 }
 
-function toTimeInput(iso: string): string {
-  const label = formatLocalTime(iso, DEFAULT_TIMEZONE);
+function toTimeInput(iso: string, timeZone = DEFAULT_TIMEZONE): string {
+  const label = formatLocalTime(iso, timeZone);
   const match = label.match(/^(\d{1,2}):(\d{2})\s?(AM|PM)?$/i);
   if (!match) return "";
   let hour = Number(match[1]);

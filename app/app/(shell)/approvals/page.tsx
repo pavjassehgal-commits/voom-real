@@ -37,6 +37,7 @@ export default async function ApprovalsPage() {
   const upcoming = scheduled?.find((item) => Date.parse(item.publishAt) >= now.getTime());
 
   return <ApprovalsWorkspace
+    timeZone={data.snapshot.timeZone}
     initial={data.actions as ApprovalItem[]}
     reelTaskCount={data.reelTaskCount}
     drafts={drafts}

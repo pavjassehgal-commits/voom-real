@@ -22,6 +22,7 @@ import { YouTubeVideoUpload } from "./YouTubeVideoUpload";
  */
 
 interface SocialDraft {
+  contentVersion?: number;
   id: string;
   kind: "tiktok_video" | "youtube_short" | "youtube_video";
   typeLabel: string;
@@ -115,6 +116,7 @@ export function SocialEditorModal({ draftId, onChanged }: { draftId: string; onC
             : {}),
           script: script.split("\n").map((line) => line.trim()).filter(Boolean),
           scheduledAt: schedule ? new Date(schedule).toISOString() : null,
+          contentVersion: draft.contentVersion,
           ...(decision ? { decision } : {}),
         }),
       });

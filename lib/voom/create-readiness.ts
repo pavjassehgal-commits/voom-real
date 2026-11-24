@@ -9,6 +9,8 @@ import { postApprovalBlockers } from "../post/core.ts";
 export interface ReadinessCheck { label: string; detail: string; ok: boolean }
 
 export interface CreateDraft {
+  contentVersion?: number;
+  timeZone?: string;
   id: string;
   editor: "post" | "social";
   kind: string;

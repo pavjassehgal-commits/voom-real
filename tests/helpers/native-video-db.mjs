@@ -1,6 +1,6 @@
 /** Test-only PostgREST-shaped bridge to isolated embedded PostgreSQL. No network. */
 import assert from 'node:assert/strict';
-export function nativeVideoDb(db) {
+export function nativeVideoDb(db, { standalone = false } = {}) {
   const objects = new Map();
   const errors = [];
   const ident = value => { assert.match(value, /^[a-z_][a-z_0-9]*$/); return value; };
@@ -12,14 +12,14 @@ export function nativeVideoDb(db) {
   }
   async function request(sql, values) {
     // Real PostgREST errors don't abort the surrounding fixture transaction.
-    await db.exec('savepoint bridge_request');
+    await db.exec(standalone ? 'begin' : 'savepoint bridge_request');
     try {
       const result = await db.query(sql, values);
-      await db.exec('release savepoint bridge_request');
+      await db.exec(standalone ? 'commit' : 'release savepoint bridge_request');
       // PostgREST serializes PostgreSQL dates as ISO JSON, unlike PGlite's Dates.
       return { data: JSON.parse(JSON.stringify(result.rows)), error: null };
     } catch (error) {
-      await db.exec('rollback to savepoint bridge_request; release savepoint bridge_request');
+      await db.exec(standalone ? 'rollback' : 'rollback to savepoint bridge_request; release savepoint bridge_request');
       errors.push(error.message);
       return { data: null, error: { code: error.code, message: error.message } };
     }
@@ -29,7 +29,7 @@ export function nativeVideoDb(db) {
     errors,
     async rpc(name, args = {}) {
       const values = Object.values(args);
-      const result = await execute(`select public.${ident(name)}(${Object.keys(args).map((k, i) => `${ident(k)} => $${i + 1}`).join(',')}) as value`, values);
+      const result = await execute(`select to_jsonb(public.${ident(name)}(${Object.keys(args).map((k, i) => `${ident(k)} => $${i + 1}`).join(',')})) as value`, values);
       return { data: result.data?.[0]?.value ?? null, error: result.error };
     },
     from(table) {
@@ -40,6 +40,7 @@ export function nativeVideoDb(db) {
       const chain = {
         select(cols, options) { columns = cols; count = options?.head === true; return chain; },
         eq(key, value) { filters.push(`${ident(key)}=${bind(value)}`); return chain; },
+        contains(key, value) { filters.push(`${ident(key)} @> ${bind(JSON.stringify(value))}::jsonb`); return chain; },
         is(key, value) { assert.equal(value,null); filters.push(`${ident(key)} is null`); return chain; },
         gt(key, value) { filters.push(`${ident(key)}>${bind(value)}`); return chain; },
         in(key, list) { filters.push(`${ident(key)} in (${list.map(bind).join(',')})`); return chain; },

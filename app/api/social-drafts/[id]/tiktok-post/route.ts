@@ -140,6 +140,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       previewUrl = data?.signedUrl ?? null;
     }
     return json({
+      contentVersion: loaded.draft.contentVersion,
       creator: loaded.creator,
       appAudited: loaded.config.appAudited,
       caption: loaded.draft.caption,
@@ -158,6 +159,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 }
 
 const postSchema = z.object({
+  contentVersion: z.number().int().positive(),
   caption: z.string().trim().min(1).max(TIKTOK_TITLE_MAX),
   privacy: z.enum(["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"]),
   allowComment: z.boolean(),
@@ -192,7 +194,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
   const input = parsed.data;
   const scheduledAt = input.scheduledAt ?? new Date().toISOString();
-  if (input.scheduledAt && Date.parse(input.scheduledAt) < Date.now() - 5 * 60_000) {
+  if (input.scheduledAt && Date.parse(input.scheduledAt) <= Date.now() + 60_000) {
     return json({ error: "Choose a time in the future, or post now." }, 400);
   }
 
@@ -261,10 +263,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
     const draft = await updateSocialDraft(createAdminClient(), user.id, id, {
       caption: input.caption,
+      contentVersion: input.contentVersion,
       scheduledAt,
       decision: "approved",
       tiktokPostConsent: consent,
-    });
+    }, { allowImmediateSchedule: input.scheduledAt === null });
     if (!draft) return json({ error: "That content was not found." }, 404);
     return json({
       draft,
@@ -274,6 +277,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     });
   } catch (reason) {
     const code = reason instanceof Error ? reason.message : "";
+    if (code === "social_draft_changed") return json({ error: "This video changed after you reviewed it. Reload the preview and confirm the latest version." }, 409);
     if (code === "social_draft_provider_owned") {
       return json({ error: "TikTok already has this video, so it can't be changed here." }, 409);
     }

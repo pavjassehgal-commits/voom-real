@@ -403,3 +403,46 @@ action. Default off; this application gate does not stop direct Supabase Auth
 requests. Keep the Google provider disabled until the legacy account-linking
 risk is resolved at the provider level. The dedicated `/auth/recovery` flow
 remains responsible for recovery proofs, rather than the generic callback.
+
+## 2026-11-24 — Local approval-safety candidate (not deployed)
+
+Decision: require reviewed versions at approval boundaries, and use a service-role transaction
+to bind Instagram approval, current draft/action state and future scheduling checks. A card
+revision also travels from the browser, preventing a server refresh from substituting content
+the owner has not reviewed. Native editors retain their platform consent and add a base-version
+compare-and-swap. Campaign TikTok/YouTube approval redirects to that platform editor.
+
+Reason: optional versions and proposal-time-only checks allowed stale approvals. Independent
+HTTP reads/writes cannot make draft/action decisions atomic. Synchronization must also refuse
+withdrawn versions. Existing idempotent queues and provider-owned job boundaries are retained.
+
+Trade-off: proposed 0080 must be reviewed and deployed with the app in a separate authorized
+release. The code fails closed if its RPCs are missing. 0079 is left available for the separate
+Memory candidate; production 0078 Instagram work is preserved. No live migration was applied.
+
+## 2026-11-24 — Step 1B lateness and recovery policy (local only)
+
+Decision: allow automatic Instagram publication only before approved schedule +20 minutes.
+Keep the minimum new-schedule lead at one minute; reject rather than round invalid instants.
+Retry times cannot extend the approved window. Expired work retains content and provider
+identity and requires explicit owner recovery. Container-bearing work is reconciled read-only;
+provider-confirmed publication remains historical truth even when discovered late.
+
+Owner rescheduling uses the reviewed version and atomically parks unclaimed queues until
+synchronization completes. Legacy TikTok/YouTube and LinkedIn approval cards hand off to
+native editors; generic approval cannot replace platform consent.
+
+Release constraint: independently review and apply proposed 0080 before dependent application
+code. Revert dependent app code and drain in-flight invocations before SQL rollback. The
+rollback restores baseline function definitions without changing customer rows; it restores
+the old baseline lateness behavior, so it is not a safety mitigation. Nothing was deployed.
+
+## 2026-11-24 — Step 1C cancellation and rollout decision
+
+Changing time is not consent to resume cancelled publishing, including Pause all. Reject
+ordinary reschedule of cancelled rows before draft mutation; retain cancellation on unschedule.
+Fresh platform approval remains the explicit resume boundary and retains native consent.
+Expired provider submissions are read-only recovery cases, not automatic retry candidates.
+The migration-first/app-second compatibility interval must fence mutations and old workers,
+and rollback must revert/drain app before reverting SQL. Baseline publishers remain fenced
+after rollback because baseline lacks the lateness protection. Staging plan documents gates.

@@ -498,6 +498,7 @@ export interface CampaignActionContentRecord {
 
 /** One timeline row as presented (derived execution state included). */
 export interface CampaignActionView extends CampaignActionRecord {
+  contentVersion?: number;
   /** DERIVED from child campaign/queue state — never stored as fake progress. */
   executionState: import("./status").ActionExecutionState;
   executionLabel: string;

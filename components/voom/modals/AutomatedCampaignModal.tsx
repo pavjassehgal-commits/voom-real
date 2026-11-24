@@ -73,7 +73,7 @@ export function AutomatedCampaignModal({ campaignId, initial }: { campaignId: st
       const response = await fetch(`/api/voom/campaigns/${encodeURIComponent(campaignId)}/actions/${encodeURIComponent(action.id)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: decision }),
+        body: JSON.stringify({ action: decision, contentVersion: action.contentVersion }),
       });
       const data = await response.json() as { automated?: AutomatedCampaignView; error?: string; message?: string };
       if (data.automated) setView(data.automated);

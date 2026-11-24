@@ -295,7 +295,7 @@ test("the confirm route re-opens a stale card on the current draft instead of fa
   assert.match(route, /reopenStaleDraftApproval\(admin, user\.id, id, staleDraftId\)/);
   assert.match(route, /status: 409/);
   const tools = await read("lib/mara/tools.ts");
-  assert.match(tools, /approveDraftFromConfirmedSnapshot\(c\.db, c\.ownerId, a\.sourceDraftId as string, a, draft,/);
+  assert.match(tools, /approvePostDraft\(c\.db, c\.ownerId, draftId,/);
   assert.doesNotMatch(tools, /content: draft\?\.content \?\? a\.content/, "the live draft is no longer approved blindly");
   const data = await read("lib/post/server-data.ts");
   assert.match(data, /export async function reopenStaleDraftApproval[\s\S]*eq\("status", "executing"\)[\s\S]*refreshPendingDraftApproval\(admin, ownerId, view\)/);

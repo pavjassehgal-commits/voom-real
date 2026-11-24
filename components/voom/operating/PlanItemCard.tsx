@@ -167,7 +167,7 @@ function InstagramPlanItemCard({
       return <Btn key={action.id} variant="outline" size={size} disabled={busy !== null} onClick={() => fileRef.current?.click()}>{action.label}</Btn>;
     }
     if (action.id === "approve_schedule") {
-      return <Btn key={action.id} variant="primary" size={size} disabled={busy !== null} onClick={() => void run(action.id, () => approvePlanItem(item.draftId))}><Icon name="check" size={13} /> {action.label}</Btn>;
+      return <Btn key={action.id} variant="primary" size={size} disabled={busy !== null} onClick={() => void run(action.id, () => approvePlanItem(item.draftId, item.contentVersion))}><Icon name="check" size={13} /> {action.label}</Btn>;
     }
     if (action.id === "open_approvals") {
       return <Link key={action.id} href="/app/approvals" className="inline-flex"><Btn variant="primary" size={size}>Open Approvals</Btn></Link>;
@@ -185,7 +185,7 @@ function InstagramPlanItemCard({
       return <Btn key={action.id} variant="outline" size={size} disabled={busy !== null} onClick={() => { setRescheduling((value) => !value); setMessage(""); }}>{action.label}</Btn>;
     }
     if (action.id === "post_now") {
-      return <Btn key={action.id} variant="primary" size={size} disabled={busy !== null} onClick={() => void run(action.id, () => postPlanItemNow(item.draftId))}><Icon name="bolt" size={13} /> {action.label}</Btn>;
+      return <Btn key={action.id} variant="primary" size={size} disabled={busy !== null} onClick={() => void run(action.id, () => postPlanItemNow(item.draftId, item.contentVersion))}><Icon name="bolt" size={13} /> {action.label}</Btn>;
     }
     if (action.id === "cancel_schedule") {
       return <Btn key={action.id} variant="ghost" size={size} className="text-red" disabled={busy !== null} onClick={() => void run(action.id, () => cancelPlanItemSchedule(item.draftId))}><Icon name="trash" size={13} /> {action.label}</Btn>;
@@ -271,7 +271,7 @@ function InstagramPlanItemCard({
           timeZone={timeZone}
           defaults={{ date: item.localDate || currentScheduleDate(), time: (item.publishAt ? formatLocalTimeInput(item.publishAt, timeZone) : "") || "18:30" }}
           busy={busy !== null}
-          onSubmit={(date, time) => { setRescheduling(false); return run("reschedule", () => reschedulePlanItem(item.draftId, date, time)); }}
+          onSubmit={(date, time) => { setRescheduling(false); return run("reschedule", () => reschedulePlanItem(item.draftId, date, time, item.contentVersion)); }}
           onCancel={() => setRescheduling(false)}
         />}
 

@@ -10,6 +10,8 @@
  * implementations into these ports.
  */
 
+import { automaticPublishExpired, AUTOMATIC_PUBLISH_GRACE_MS, SCHEDULE_EXPIRED_CODE, SCHEDULE_EXPIRED_MESSAGE } from "../voom/schedule-policy.ts";
+
 import {
   hasPublishPermission,
   isContainerFatal,
@@ -35,11 +37,12 @@ export interface FlowItem {
   attempts: number;
   containerId: string | null;
   instagramMediaId: string | null;
+  publishAt?: string | null;
 }
 
 export interface FlowPorts {
   /** Server-side re-resolution of the draft. */
-  loadDraft(ownerId: string, draftId: string): Promise<{ status: string; content: string; contentVersion?: number } | null>;
+  loadDraft(ownerId: string, draftId: string): Promise<{ status: string; content: string; contentVersion?: number; publishAt?: string | null } | null>;
   /**
    * Approval-integrity re-check (migration 0059): true only while the draft is
    * still approved at `contentVersion`. Called right before the container is
@@ -102,13 +105,21 @@ export async function runPublishFlow(item: FlowItem, ports: FlowPorts): Promise<
   // approve. Only the latter is terminal: an unreadable draft is retried, so
   // one transient database blip can never permanently kill an approved
   // schedule by branding it "not approved".
-  let draft: { status: string; content: string; contentVersion?: number } | null;
+  let draft: { status: string; content: string; contentVersion?: number; publishAt?: string | null } | null;
   try {
     draft = await ports.loadDraft(item.ownerUserId, item.draftId);
   } catch {
     return fail(item, ports, timeline, endedAt, "draft_unavailable");
   }
   if (!draft) return fail(item, ports, timeline, endedAt, "draft_unavailable");
+  if ("publishAt" in draft) item.publishAt = draft.publishAt;
+  if (draft.publishAt && Date.parse(draft.publishAt) > endedAt()) {
+    await ports.markFailed(item, { code: "schedule_not_due", message: "The approved schedule is not due yet.", status: "scheduled", retryAt: draft.publishAt });
+    return { outcome: "retrying", code: "schedule_not_due" };
+  }
+  if ("publishAt" in draft && automaticPublishExpired(draft.publishAt, endedAt())) {
+    return expire(item, ports, timeline, item.containerId);
+  }
   if (draft.status !== "approved") {
     return fail(item, ports, timeline, endedAt, "not_approved_custom");
   }
@@ -162,6 +173,7 @@ export async function runPublishFlow(item: FlowItem, ports: FlowPorts): Promise<
   if (!containerId) {
     const blocked = await approvalCheck();
     if (blocked) return blocked;
+    if ("publishAt" in draft && automaticPublishExpired(draft.publishAt, endedAt())) return expire(item, ports, timeline, null);
     try {
       containerId = await ports.createContainer({
         kind: item.mediaKind, accessToken: credentials.accessToken, igUserId: credentials.igUserId, mediaUrl, caption, video,
@@ -171,6 +183,7 @@ export async function runPublishFlow(item: FlowItem, ports: FlowPorts): Promise<
     }
     if (!containerId) return fail(item, ports, timeline, endedAt, "container_failed");
     await ports.persistContainerId(item, containerId);
+    item.containerId = containerId;
     timeline("container_created", { containerId });
   } else {
     // The whole point of persisting the container before publishing: a retry
@@ -188,6 +201,7 @@ export async function runPublishFlow(item: FlowItem, ports: FlowPorts): Promise<
   let ready = false;
   let polls = 0;
   for (let poll = 0; poll < plan.attempts; poll++) {
+    if ("publishAt" in draft && automaticPublishExpired(draft.publishAt, endedAt())) return expire(item, ports, timeline, containerId);
     // Never start a call that cannot finish inside the shared budget.
     if (remainingBudgetMs() < PUBLISH_POLL_CALL_ALLOWANCE_MS) break;
     let status: string;
@@ -235,6 +249,7 @@ export async function runPublishFlow(item: FlowItem, ports: FlowPorts): Promise<
   //    sent, cancellation can no longer be guaranteed.
   const withdrawn = await approvalCheck();
   if (withdrawn) return withdrawn;
+  if ("publishAt" in draft && automaticPublishExpired(draft.publishAt, endedAt())) return expire(item, ports, timeline, containerId);
   timeline("publish_requested", { containerId });
   let mediaId: string | null = null;
   try {
@@ -269,6 +284,22 @@ async function safeRecover(ports: FlowPorts, accessToken: string, caption: strin
   } catch {
     return null;
   }
+}
+
+/** Expired provider work is reconciled read-only, never submitted or published. */
+async function expire(item: FlowItem, ports: FlowPorts, timeline: TimelineSink, containerId: string | null): Promise<FlowOutcome> {
+  if (containerId) {
+    try {
+      const credentials = await ports.loadCredentials(item.ownerUserId);
+      if (await ports.containerStatus(credentials.accessToken, containerId) === "PUBLISHED") {
+        const mediaId = await safeRecover(ports, credentials.accessToken, item.mediaKind === "story" ? "" : truncateCaption(item.caption));
+        if (mediaId) return publish(item, ports, timeline, mediaId, containerId);
+      }
+    } catch { /* Ambiguous provider state is retained; never creates permission to publish. */ }
+  }
+  await ports.markFailed(item, { code: SCHEDULE_EXPIRED_CODE, message: containerId ? "The publishing window expired. Voom will only check the existing submission. Review its status on Instagram before preparing another post." : SCHEDULE_EXPIRED_MESSAGE, status: "failed", retryAt: null });
+  timeline("failed", { code: SCHEDULE_EXPIRED_CODE });
+  return { outcome: "failed", code: SCHEDULE_EXPIRED_CODE };
 }
 
 type TimelineSink = (event: PublishTimelineEvent, input?: PublishTimelineInput) => void;
@@ -310,6 +341,9 @@ async function fail(
   const failure = resolveFailure(key, item.attempts);
   // Cron-aligned, never `now + N minutes`: see retryAt in ./publishing.ts.
   const nextRetryAt = failure.retryable ? retryAt(endedAt()) : null;
+  if ("publishAt" in item && (automaticPublishExpired(item.publishAt, endedAt()) || (nextRetryAt && item.publishAt && Date.parse(nextRetryAt) >= Date.parse(item.publishAt) + AUTOMATIC_PUBLISH_GRACE_MS))) {
+    return expire(item, ports, timeline, item.containerId);
+  }
   await ports.markFailed(item, {
     code: failure.code,
     message: failure.message,

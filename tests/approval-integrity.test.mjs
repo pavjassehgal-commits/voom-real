@@ -193,6 +193,8 @@ test("schedule changes: any writer revokes, except the owner's own reschedule th
   const kept = await state(db, byOwner);
   assert.equal(kept.status, "approved", "the owner's explicit reschedule keeps their approval");
   assert.equal(kept.av, kept.v);
+  assert.equal(await qstatus(db, "instagram_publish_queue", ownerJob), "failed", "the old queue is held until synchronization refreshes it");
+  await db.query("select public.upsert_instagram_publish_queue_item($1,$2,null,'image','Caption v1',$3,false)", [OWNER_A, byOwner, LATER]);
   assert.equal(await qstatus(db, "instagram_publish_queue", ownerJob), "scheduled");
 
   // The authorization is transaction-local: it does not leak to the next write.
@@ -454,7 +456,7 @@ test("Instagram worker: approval is re-checked at the claimed version right befo
 
 test("source guards: every editing path routes through the database invariant", async () => {
   const data = await read("lib/post/server-data.ts");
-  assert.match(data, /admin\.rpc\("reschedule_approved_draft"/);
+  assert.match(data, /admin\.rpc\("reschedule_reviewed_draft"/);
   assert.match(data, /expectedContentVersion/);
   assert.match(data, /contentVersion: view\.contentVersion/);
   const social = await read("lib/social/server-drafts.ts");

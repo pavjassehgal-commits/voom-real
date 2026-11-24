@@ -1,4 +1,5 @@
 "use server";
+import { approvalConflictMessage } from "@/lib/post/approval-safety";
 
 /**
  * Server actions behind the ONE Marketing Plan card.
@@ -28,8 +29,7 @@ import { createAdminClient } from "@/utils/supabase/admin";
 import type { AdminClient } from "@/lib/post/server-data";
 import { checkSchedule } from "@/lib/voom/schedule-guard";
 import { accountTimezone } from "@/lib/voom/timezone";
-import { enqueuePublishItem } from "@/lib/instagram/publish-queue";
-import { isPublishableMime, publishMediaKindForMime, truncateCaption } from "@/lib/instagram/publishing";
+import { isPublishableMime, publishMediaKindForMime } from "@/lib/instagram/publishing";
 import {
   approvePostDraft,
   cancelPostSchedule,
@@ -61,7 +61,7 @@ async function context() {
 async function loadOwnedDraft(admin: AdminClient, ownerId: string, draftId: string) {
   if (!UUID_RE.test(draftId)) return null;
   const { data, error } = await admin.from("mara_drafts")
-    .select("id,kind,channel,social_channel,social_format,title,content,proposed_publish_at,status,media_brief,conversation_id,source_plan_item_key")
+    .select("id,kind,channel,social_channel,social_format,title,content,proposed_publish_at,status,media_brief,conversation_id,source_plan_item_key,content_version")
     .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
   if (error || !data || !isPostDraftKind(data.kind)) return null;
   const identity = parseWorkflowSlotIdentity(data.source_plan_item_key);
@@ -160,32 +160,22 @@ function mediaRequest(ownerId: string, draft: Record<string, unknown>, contentTy
  * when it is still generating, the queue row is held truthfully in
  * 'waiting_for_media' and self-heals when the media arrives.
  */
-export async function approvePlanItem(draftId: string): Promise<ActionResult> {
+export async function approvePlanItem(draftId: string, contentVersion?: number): Promise<ActionResult> {
   const ctx = await context();
   if (!ctx) return { ok: false, error: "Your session has expired. Please log in again." };
   const draft = await loadOwnedDraft(ctx.admin, ctx.userId, draftId);
   if (!draft) return { ok: false, error: "That plan item was not found." };
+  if (typeof contentVersion !== "number" || !Number.isSafeInteger(contentVersion) || contentVersion < 1) return { ok: false, error: approvalConflictMessage("approval_content_changed")! };
   try {
-    const view = String(draft.status) === "approved"
-      ? await syncPostToCalendar(ctx.admin, ctx.userId, draftId)
-      : await approvePostDraft(ctx.admin, ctx.userId, draftId);
+    const view = await approvePostDraft(ctx.admin, ctx.userId, draftId, { expectedContentVersion: contentVersion });
     if (!view) return { ok: false, error: "That plan item was not found." };
-  } catch {
-    return { ok: false, error: "Voom couldn't approve that item safely. Nothing was published — please retry." };
+  } catch (reason) {
+    return { ok: false, error: (reason instanceof Error && approvalConflictMessage(reason.message)) || "Voom couldn't approve that item safely. Nothing was published — please retry." };
   }
-  await resolveOpenApprovalCard(ctx.admin, ctx.userId, draftId);
   revalidate();
   const post = await getPostDraft(ctx.admin, ctx.userId, draftId);
   if (!post) return { ok: false, error: "Approval was saved, but this item could not be reloaded. Refresh to verify its state." };
   return { ok: true, message: await postApprovalMessage(ctx.admin, ctx.userId, post) };
-}
-
-/** Resolves the item's open approval card, if any (approval happened in place). */
-async function resolveOpenApprovalCard(admin: AdminClient, ownerId: string, draftId: string) {
-  await admin.from("mara_pending_actions")
-    .update({ status: "confirmed", result_summary: "Approved from the Marketing Plan card. Nothing was published.", executed_at: new Date().toISOString() })
-    .eq("owner_user_id", ownerId).eq("tool_name", "propose_calendar_item")
-    .in("status", ["pending", "failed"]).contains("sanitized_arguments", { sourceDraftId: draftId });
 }
 
 /**
@@ -195,7 +185,7 @@ async function resolveOpenApprovalCard(admin: AdminClient, ownerId: string, draf
  * never moved into the past, and a published or in-flight item is never
  * touched (the queue function refuses).
  */
-export async function reschedulePlanItem(draftId: string, date: string, time: string): Promise<ActionResult> {
+export async function reschedulePlanItem(draftId: string, date: string, time: string, contentVersion?: number): Promise<ActionResult> {
   const ctx = await context();
   if (!ctx) return { ok: false, error: "Your session has expired. Please log in again." };
   const draft = await loadOwnedDraft(ctx.admin, ctx.userId, draftId);
@@ -204,10 +194,16 @@ export async function reschedulePlanItem(draftId: string, date: string, time: st
   const timeZone = accountTimezone((business as { timezone?: string | null } | null)?.timezone);
   const guard = checkSchedule({ date, time, now: new Date(), timeZone });
   if (!guard.ok) return { ok: false, error: guard.error };
-  const { error } = await ctx.admin.from("mara_drafts")
-    .update({ proposed_publish_at: guard.publishAt })
-    .eq("owner_user_id", ctx.userId).eq("id", draftId);
-  if (error) return { ok: false, error: "Voom couldn't save that schedule. Please retry." };
+  if (typeof contentVersion !== "number" || Number(draft.content_version) !== contentVersion) return { ok: false, error: "This item changed. Review its latest version before changing the schedule." };
+  if (draft.status === "approved") {
+    const { error } = await ctx.admin.rpc("reschedule_reviewed_draft", { p_owner_user_id: ctx.userId, p_draft_id: draftId, p_content_version: contentVersion, p_publish_at: guard.publishAt });
+    if (error?.message.includes("approval_queue_cancelled")) return { ok: false, error: "Publishing was cancelled. Changing the time cannot resume it. Open the platform editor, review and explicitly approve again." };
+    if (error) return { ok: false, error: "This approved item could not be rescheduled safely. If Instagram already has a submission, check its status there before trying again." };
+  } else {
+    const { data, error } = await ctx.admin.from("mara_drafts").update({ proposed_publish_at: guard.publishAt })
+      .eq("owner_user_id", ctx.userId).eq("id", draftId).eq("content_version", contentVersion).eq("status", "draft").select("id").maybeSingle();
+    if (error || !data) return { ok: false, error: "This item changed or was withdrawn. Review its current state before scheduling." };
+  }
   try { await syncPostToCalendar(ctx.admin, ctx.userId, draftId); } catch {
     return { ok: false, error: "The time was saved, but the schedule mirror could not be updated. Please retry." };
   }
@@ -223,7 +219,7 @@ export async function reschedulePlanItem(draftId: string, date: string, time: st
  * scheduled_at moves to now, and the existing worker claims it within
  * minutes. A published item can never be posted twice.
  */
-export async function postPlanItemNow(draftId: string): Promise<ActionResult> {
+export async function postPlanItemNow(draftId: string, contentVersion?: number): Promise<ActionResult> {
   const ctx = await context();
   if (!ctx) return { ok: false, error: "Your session has expired. Please log in again." };
   const draft = await loadOwnedDraft(ctx.admin, ctx.userId, draftId);
@@ -235,16 +231,18 @@ export async function postPlanItemNow(draftId: string): Promise<ActionResult> {
   const mediaKind = publishMediaKindForMime(view.visual.mimeType, view.kind);
   if (!mediaKind || !isPublishableMime(view.visual.mimeType)) return { ok: false, error: "This item's file type cannot publish to Instagram." };
   try {
-    await enqueuePublishItem(ctx.admin, {
-      ownerId: ctx.userId,
-      draftId,
-      calendarItemId: view.calendarItemId,
-      mediaKind,
-      caption: mediaKind === "story" ? "" : truncateCaption(view.composedCaption),
-      scheduledAt: new Date().toISOString(),
+    if (typeof contentVersion !== "number" || view.contentVersion !== contentVersion) throw new Error("approval_content_changed");
+    const { error } = await ctx.admin.rpc("schedule_reviewed_instagram_now", {
+      p_owner_user_id: ctx.userId, p_draft_id: draftId, p_content_version: contentVersion,
     });
-  } catch {
-    return { ok: false, error: "Voom couldn't queue that safely. Please retry — it cannot post twice." };
+    if (error?.message.includes("approval_queue_cancelled")) throw new Error("approval_queue_cancelled");
+    if (error) throw new Error(error.message.includes("approval_invalid_state") ? "post_already_submitted" : "post_now_not_available");
+    await syncPostToCalendar(ctx.admin, ctx.userId, draftId);
+  } catch (reason) {
+    if (reason instanceof Error && reason.message === "approval_queue_cancelled") return { ok: false, error: "Publishing was cancelled. Open the platform editor, review and explicitly approve again before posting." };
+    return { ok: false, error: reason instanceof Error && reason.message === "post_already_submitted"
+      ? "Instagram already has a submission for this item. Check its status on Instagram before preparing another post. Nothing new was queued."
+      : "This item could not be queued safely. Review its current version and schedule before trying again." };
   }
   revalidate();
   return { ok: true, message: "Queued to post now through the normal publishing worker. It cannot post twice." };

@@ -432,7 +432,7 @@ test("11. recovery actions route through the ONE idempotent queue identity", asy
   const actions = await read("lib/voom/workflow/actions-server.ts");
   // Post now uses the SAME idempotent enqueue (one row per owner+draft), never
   // a direct insert and never a second publish identity.
-  assert.match(actions, /enqueuePublishItem/, "post-now reuses the idempotent enqueue");
+  assert.match(actions, /schedule_reviewed_instagram_now/, "post-now changes only a reviewed owned schedule before normal idempotent sync");
   assert.doesNotMatch(actions, /from\("instagram_publish_queue"\)\.insert/, "no direct queue writes");
   // Reschedule validates with the existing business-timezone past-time guard.
   assert.match(actions, /checkSchedule/, "server-side past-time validation preserved");

@@ -55,7 +55,7 @@ function fixture({ plan = 'pro', legacy = false } = {}) {
     social_channel: channel, social_format: format,
     source_plan_item_key: legacy ? DATE : `${DATE}|${channel}_${format}`,
     title: `${channel} ${format}`, content: 'Approved only by the owner',
-    proposed_publish_at: `${DATE}T14:30:00.000Z`, status: 'draft', conversation_id: 'conversation',
+    content_version: 1, proposed_publish_at: `${DATE}T14:30:00.000Z`, status: 'draft', conversation_id: 'conversation',
   }));
   const tables = new Map([
     ['mara_drafts', rows], ['mara_pending_actions', rows.map((row) => ({
@@ -84,16 +84,22 @@ function fixture({ plan = 'pro', legacy = false } = {}) {
     async maybeSingle() { const { data, error } = this.execute(); return { data: data?.[0] ?? null, error }; }
     then(resolve, reject) { return Promise.resolve(this.execute()).then(resolve, reject); }
   }
-  const db = { from: (table) => new Query(table), rpc: ledger.rpc };
+  const db = { from: (table) => new Query(table), async rpc(name,args) {
+    if (name !== 'schedule_reviewed_instagram_now') return ledger.rpc(name,args);
+    const row=rows.find(r=>r.id===args.p_draft_id&&r.owner_user_id===args.p_owner_user_id);
+    if (!row || row.status !== 'approved' || row.content_version !== args.p_content_version) return {error:{message:'approval_content_changed'}};
+    calls.push(['post_now',args.p_owner_user_id,args.p_draft_id]);row.proposed_publish_at=new Date(Date.now()+61_000).toISOString();row.content_version++;jobs.set(row.id,{owner:row.owner_user_id,id:row.id});return {data:null,error:null};
+  } };
   const post = async (_db, owner, id) => {
     const row = rows.find((row) => row.owner_user_id === owner && row.id === id);
     if (!row) return null;
-    return { ...row, visualReady: true, visual: { mimeType: row.kind === 'reel' ? 'video/mp4' : 'image/png' }, composedCaption: row.content, calendarItemId: `calendar-${id}` };
+    return { ...row, contentVersion: row.content_version, visualReady: true, visual: { mimeType: row.kind === 'reel' ? 'video/mp4' : 'image/png' }, composedCaption: row.content, calendarItemId: `calendar-${id}` };
   };
   const state = {
     user: { id: OWNER }, db, rows, tables, calls, reads, writes, jobs, ledger,
     post,
-    async approve(_db, owner, id) {
+    async approve(_db, owner, id, options) {
+      if (options?.expectedContentVersion !== 1) throw new Error("approval_content_changed");
       calls.push(['approve', owner, id]);
       const row = rows.find((row) => row.id === id && row.owner_user_id === owner);
       row.status = 'approved'; jobs.set(id, { owner, id }); return post(db, owner, id);
@@ -122,9 +128,9 @@ function fixture({ plan = 'pro', legacy = false } = {}) {
 }
 const operations = [
   ['Generate', (id) => actions.producePlanItemMedia(id)],
-  ['Approve', (id) => actions.approvePlanItem(id)],
-  ['Reschedule', (id) => actions.reschedulePlanItem(id, DATE, '15:30')],
-  ['Post now', (id) => actions.postPlanItemNow(id)],
+  ['Approve', (id) => actions.approvePlanItem(id, 1)],
+  ['Reschedule', (id) => actions.reschedulePlanItem(id, DATE, '15:30', 1)],
+  ['Post now', (id) => actions.postPlanItemNow(id, 1)],
   ['Cancel', (id) => actions.cancelPlanItemSchedule(id)],
   ['Production choice', (id) => actions.choosePlanItemProduction(id, 'upload_asset')],
 ];
@@ -230,7 +236,7 @@ test('insufficient credits block generation and repeated approval retains one qu
   assert.equal((await actions.producePlanItemMedia(state.rows[0].id)).ok, false);
   assert.equal(state.ledger.usage(OWNER).used, 150);
   assert.equal((await actions.postPlanItemNow(state.rows[0].id)).ok, false, 'generation does not confer approval');
-  assert.equal((await actions.approvePlanItem(state.rows[0].id)).ok, true);
-  assert.equal((await actions.approvePlanItem(state.rows[0].id)).ok, true);
-  assert.equal(state.jobs.size, 1); assert.equal(state.calls.filter(([name]) => name === 'approve').length, 1);
+  assert.equal((await actions.approvePlanItem(state.rows[0].id, 1)).ok, true);
+  assert.equal((await actions.approvePlanItem(state.rows[0].id, 1)).ok, true);
+  assert.equal(state.jobs.size, 1); assert.equal(state.calls.filter(([name]) => name === 'approve').length, 2);
 });

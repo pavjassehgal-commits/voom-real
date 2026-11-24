@@ -68,6 +68,7 @@ export interface WorkflowProductionView {
 
 export interface WorkflowView {
   draftId: string;
+  contentVersion?: number;
   calendarItemId: string | null;
   slotDate: string;
   /** Actual immutable social assignment; never inferred as Instagram for unknown rows. */
@@ -463,9 +464,7 @@ export async function loadWorkflowSnapshot(
     const queueStatus = isInstagram
       ? (instagramRow?.status ?? null)
       : (linkedinRow?.status ?? socialQueue?.status ?? null);
-    const executionTime = instagramRow?.scheduled_at ?? socialQueue?.scheduled_at ?? linkedinRow?.scheduled_at;
-    const publishAt = queueStatus === "scheduled" && isValidPublishInstant(executionTime)
-      ? String(executionTime) : String(row.proposed_publish_at ?? "");
+    const publishAt = String(row.proposed_publish_at ?? "");
     const draftStatus = String(row.status ?? "draft") as "draft" | "approved" | "rejected";
     const approvalGranted = draftStatus === "approved" && Number(row.approved_content_version) > 0
       && row.approved_content_version === row.content_version;
@@ -516,6 +515,7 @@ export async function loadWorkflowSnapshot(
 
     snapshot.items.push({
       draftId,
+      contentVersion: Number(row.content_version),
       calendarItemId: calendarIds.get(draftId) ?? null,
       slotDate: identity.date,
       channel: pair.channel,

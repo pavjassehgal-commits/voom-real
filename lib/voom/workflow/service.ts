@@ -707,9 +707,10 @@ export async function approveWorkflowItem(
   // approvePostDraft -> syncPostToCalendar -> syncPostToPublishQueue reuses the
   // existing calendar mirror and the existing Instagram publishing queue. No
   // new scheduler exists.
+  if (typeof expectedContentVersion !== "number") throw new Error(APPROVAL_CONTENT_CHANGED);
   const view = await approvePostDraft(admin, ownerId, draftId, {
     approvalOrigin,
-    ...(expectedContentVersion !== undefined ? { expectedContentVersion } : {}),
+    expectedContentVersion,
   });
   if (!view) throw new Error("draft_not_found");
   return view;

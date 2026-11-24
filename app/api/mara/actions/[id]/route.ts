@@ -1,3 +1,5 @@
+import { draftApprovalTarget } from "@/lib/mara/approval-target";
+import { approvalConflictMessage } from "@/lib/post/approval-safety";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { APPROVAL_INCOMPLETE, APPROVAL_STALE, executeConfirmedAction } from "@/lib/mara/tools";
 import { createClient } from "@/utils/supabase/server";
@@ -5,6 +7,8 @@ import { createAdminClient } from "@/utils/supabase/admin";
 import { resyncWorkflowItem } from "@/lib/voom/workflow/service";
 import { rejectPostDraft, reopenStaleDraftApproval } from "@/lib/post/server-data";
 import { z } from "zod";
+import { checkScheduleInstant } from "@/lib/voom/schedule-guard";
+import { accountTimezone } from "@/lib/voom/timezone";
 import { productionStatusFor, reelProductionMethods } from "@/lib/mara/reel-production";
 
 export const runtime = "nodejs";
@@ -24,6 +28,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   // service-role client (owner-filtered), because authenticated users have no
   // direct write access to approval state (migration 0050).
   const admin = createAdminClient();
+
+  async function businessTimezone() {
+    const { data, error } = await admin.from("businesses").select("timezone").eq("owner_user_id", user!.id).maybeSingle();
+    if (error || !data) throw new Error("approval_timezone_unavailable");
+    return accountTimezone(data.timezone);
+  }
 
   if (decision === "production") {
     const method = body && typeof body === "object" && "method" in body ? (body as { method?: unknown }).method : null;
@@ -50,7 +60,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (!current) return currentAction(db, user.id, id);
     if (current.tool_name === "propose_calendar_item" && typeof current.sanitized_arguments?.sourceDraftId === "string") {
       const parsed = calendarContentEdit.safeParse(changes);
-      if (!parsed.success || new Date(parsed.data.publishAt).getTime() < Date.now() - 300000 || new Date(parsed.data.publishAt).getTime() > Date.now() + 2 * 365 * 86400000) {
+      if (!parsed.success || !checkScheduleInstant(parsed.data.publishAt, new Date(), await businessTimezone()).ok || new Date(parsed.data.publishAt).getTime() > Date.now() + 2 * 365 * 86400000) {
         return Response.json({ error: "Enter a caption and a valid future date within the next two years." }, { status: 400 });
       }
       const { error } = await db.rpc("edit_mara_calendar_approval", { p_action_id: id, p_content: parsed.data.content.trim(), p_publish_at: parsed.data.publishAt });
@@ -60,6 +70,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const allowed = new Set(["title", "channel", "content", "topic", "publishAt", "proposedPublishAt", "name", "objective", "audience", "subject", "previewText", "proposedSendAt", "budget"]);
     const clean = Object.fromEntries(Object.entries(changes as Record<string, unknown>).filter(([key, value]) => allowed.has(key) && (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null)));
     if (!Object.keys(clean).length || JSON.stringify(clean).length > 14000) return Response.json({ error: "Those changes are not valid." }, { status: 400 });
+    if (typeof clean.publishAt === "string") {
+      const guard = checkScheduleInstant(clean.publishAt, new Date(), await businessTimezone());
+      if (!guard.ok) return Response.json({ error: guard.error }, { status: 400 });
+    }
     const nextArguments = { ...(current.sanitized_arguments ?? {}), ...clean };
     const { data, error } = await admin.from("mara_pending_actions").update({ sanitized_arguments: nextArguments, new_value: { ...(current.new_value ?? {}), ...clean }, status: "pending", error_summary: null, result_summary: "Updated proposal. Review it before confirming." }).eq("id", id).eq("owner_user_id", user.id).in("status", ["pending", "failed"]).select("id,conversation_id,message_id,tool_name,summary,old_value,new_value,status,result_summary,error_summary,created_at,updated_at,executed_at").single();
     if (error) return friendlyFailure();
@@ -73,7 +87,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (!current) return currentAction(db, user.id, id);
     const sourceDraftId = current.sanitized_arguments?.sourceDraftId;
     if (current.tool_name === "propose_calendar_item" && typeof sourceDraftId === "string") {
-      const rejected = await rejectPostDraft(admin, user.id, sourceDraftId).catch(() => null);
+      const rejected = await rejectPostDraft(admin, user.id, sourceDraftId, id).catch(() => null);
       if (!rejected) return friendlyFailure();
     }
     const { data, error } = await admin.from("mara_pending_actions").update({ status: "cancelled", result_summary: "Cancelled. Nothing changed.", executed_at: new Date().toISOString() })
@@ -85,13 +99,47 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     return Response.json({ action: data, message: "Cancelled. Nothing changed." });
   }
 
+  const reviewedAt = body && typeof body === "object" && "reviewedAt" in body ? (body as { reviewedAt?: unknown }).reviewedAt : null;
+  if (typeof reviewedAt !== "string" || !Number.isFinite(Date.parse(reviewedAt))) {
+    return Response.json({ error: "Refresh and review this approval before confirming it." }, { status: 409 });
+  }
   const { data: claimed, error: claimError } = await admin.from("mara_pending_actions").update({ status: "executing", error_summary: null })
-    .eq("id", id).eq("owner_user_id", user.id).in("status", ["pending", "failed"])
+    .eq("id", id).eq("owner_user_id", user.id).eq("updated_at", reviewedAt).in("status", ["pending", "failed"])
     .select("id,conversation_id,tool_name,sanitized_arguments,status").maybeSingle();
   if (claimError) return friendlyFailure();
-  if (!claimed) return currentAction(db, user.id, id);
+  if (!claimed) {
+    const current = await currentAction(db, user.id, id);
+    const value = await current.json();
+    return Response.json({ ...value, error: "This approval changed or was already handled. Review its current state before continuing." }, { status: 409 });
+  }
+  const source = claimed.sanitized_arguments?.sourceDraftId ?? claimed.sanitized_arguments?.draftId;
+  if (claimed.tool_name === "approve_draft" && typeof source === "string") {
+    const { data: draft, error } = await admin.from("mara_drafts").select("kind").eq("owner_user_id", user.id).eq("id", source).maybeSingle();
+    const target = draft ? draftApprovalTarget(String(draft.kind), source) : null;
+    if (error || !draft || target) {
+      const reason = target?.reason ?? "This draft could not be verified. Refresh the content list before reviewing it.";
+      await admin.from("mara_pending_actions").update({ status: "failed", error_summary: reason })
+        .eq("id", id).eq("owner_user_id", user.id).eq("status", "executing");
+      const response = await (await currentAction(db, user.id, id)).json();
+      if (response.action && draft) response.action.new_value = { ...response.action.new_value, draftKind: draft.kind, draftId: source };
+      return Response.json({ ...response, error: reason, editorHref: target?.href }, { status: error ? 503 : 409 });
+    }
+  }
+  const reviewedVersion = body && typeof body === "object" && "contentVersion" in body ? (body as { contentVersion?: unknown }).contentVersion : null;
+  if ((claimed.tool_name === "propose_calendar_item" || claimed.tool_name === "approve_draft") && typeof source === "string"
+    && (typeof reviewedVersion !== "number" || !Number.isSafeInteger(reviewedVersion) || reviewedVersion < 1 || reviewedVersion !== claimed.sanitized_arguments?.contentVersion)) {
+    if (claimed.tool_name === "propose_calendar_item") await reopenStaleDraftApproval(admin, user.id, id, source);
+    await admin.from("mara_pending_actions").update({ status: "failed", error_summary: "Review the latest content version before confirming." })
+      .eq("id", id).eq("owner_user_id", user.id).eq("status", "executing");
+    return Response.json({ ...(await (await currentAction(db, user.id, id)).json()), error: "This content changed or has no reviewed version. Review the latest content before confirming." }, { status: 409 });
+  }
   try {
     const result = await executeConfirmedAction({ db: admin, ownerId: user.id, conversationId: claimed.conversation_id }, claimed);
+    if ("requiresEditor" in result && result.requiresEditor) {
+      await admin.from("mara_pending_actions").update({ status: "failed", error_summary: result.summary })
+        .eq("id", id).eq("owner_user_id", user.id).eq("status", "executing");
+      return Response.json({ ...(await (await currentAction(db, user.id, id)).json()), error: result.summary, editorHref: result.requiresEditor.href }, { status: 409 });
+    }
     // Approval advances the SAME workflow item: the approved draft is mirrored
     // onto the Content Calendar and, when its media is ready, into the
     // existing Instagram publishing queue. No second copy is created.
@@ -104,6 +152,15 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     return Response.json({ action: data, message: result.summary });
   } catch (err) {
     const staleDraftId = claimed.sanitized_arguments?.sourceDraftId;
+    const conflict = err instanceof Error ? approvalConflictMessage(err.message) : null;
+    if (conflict) {
+      if (err instanceof Error && err.message === "approval_content_changed" && claimed.tool_name === "propose_calendar_item" && typeof staleDraftId === "string") {
+        await reopenStaleDraftApproval(admin, user.id, id, staleDraftId);
+      }
+      await admin.from("mara_pending_actions").update({ status: "failed", error_summary: conflict })
+        .eq("id", id).eq("owner_user_id", user.id).eq("status", "executing");
+      return Response.json({ error: conflict, ...(await (await currentAction(db, user.id, id)).json()) }, { status: 409 });
+    }
     const incomplete = err instanceof Error && err.message === APPROVAL_INCOMPLETE;
     if (err instanceof Error && (err.message === APPROVAL_STALE || incomplete) && claimed.tool_name === "propose_calendar_item" && typeof staleDraftId === "string") {
       // Nothing was approved: the draft changed after this card was shown.

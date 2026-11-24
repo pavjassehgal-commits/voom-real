@@ -71,7 +71,8 @@ test("TikTok and YouTube readiness require the platform declarations, never assu
 test("Create schedule approves through the existing route and hands social posts to the compliant editor", async () => {
   const schedule = await read("components/voom/create/CreateSchedule.tsx");
   assert.match(schedule, /`\/api\/posts\/\$\{draft\.id\}`/);
-  assert.match(schedule, /action: "approve"/);
+  assert.match(schedule, /scheduleReviewedPost/);
+  assert.match(await read("lib/voom/create-scheduling.ts"), /action: "approve", contentVersion: expected/);
   assert.match(schedule, /contentVersion/, "approval is bound to the saved content version");
   assert.match(schedule, /SocialEditorModal/, "TikTok/YouTube consent stays in the existing publishing editor");
   assert.doesNotMatch(schedule, /Best time|MARA PICK|higher engagement|Publish now/i, "no invented best-time or instant-publish claims");

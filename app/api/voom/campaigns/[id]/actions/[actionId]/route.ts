@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { approvalConflictMessage } from "@/lib/post/approval-safety";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { createClient } from "@/utils/supabase/server";
@@ -13,7 +14,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 
 // Approving/rejecting a timeline action changes approval STATE only. It never
 // sends an email and never publishes to Instagram.
-const decisionSchema = z.object({ action: z.enum(["approve", "reject"]) }).strict();
+const decisionSchema = z.object({ action: z.enum(["approve", "reject"]), contentVersion: z.number().int().positive().optional() }).strict();
 const productionSchema = z.object({
   action: z.literal("production"),
   method: z.enum(["create_with_mara", "upload_asset", "film_yourself"]),
@@ -88,7 +89,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
     if (!parsed.success) return Response.json({ error: "Choose approve or reject." }, { status: 400 });
 
-    const result = await decideCampaignAction(admin, user.id, id, actionId, parsed.data.action);
+    const result = await decideCampaignAction(admin, user.id, id, actionId, parsed.data.action, parsed.data.contentVersion);
     if (!result.ok) {
       // e.g. an Instagram action with no visual yet — the existing Post
       // Studio approval gate, surfaced truthfully.
@@ -104,6 +105,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       : "Action rejected. Nothing was sent or published.";
     return Response.json({ message, automated });
   } catch (reason) {
+    const conflict = reason instanceof Error ? approvalConflictMessage(reason.message) : null;
+    if (conflict) return Response.json({ error: conflict }, { status: 409 });
     const queueError = campaignQueueSyncFailure(reason);
     return Response.json({ error: queueError ?? "Voom couldn't update that campaign action. Please retry." }, { status: 503 });
   }
@@ -147,6 +150,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const automated = await readAutomatedCampaign(db, user.id, id);
     return Response.json({ message: "Draft saved. Nothing has been sent or published.", automated });
   } catch (reason) {
+    const conflict = reason instanceof Error ? approvalConflictMessage(reason.message) : null;
+    if (conflict) return Response.json({ error: conflict }, { status: 409 });
     const queueError = campaignQueueSyncFailure(reason);
     return Response.json({ error: queueError ?? "Voom couldn't save that draft. Please retry." }, { status: 503 });
   }

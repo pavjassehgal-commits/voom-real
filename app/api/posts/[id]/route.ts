@@ -1,6 +1,8 @@
+import { approvalConflictMessage } from "@/lib/post/approval-safety";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { isSocialVideoDraftKind, normalizePostFormat, normalizeSchedule, postApprovalBlockers } from "@/lib/post/core";
-import { APPROVAL_CONTENT_CHANGED, approvePostDraft, deletePostDraft, getPostDraft, normalizeMediaBrief, rejectPostDraft, savePostDraft, setPostAssetOrigin } from "@/lib/post/server-data";
+import { approvePostDraft, deletePostDraft, getPostDraft, normalizeMediaBrief, rejectPostDraft, savePostDraft, setPostAssetOrigin } from "@/lib/post/server-data";
+import { accountTimezone } from "@/lib/voom/timezone";
 import { checkScheduleInstant } from "@/lib/voom/schedule-guard";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { postApprovalMessage } from "@/lib/post/approval-message";
@@ -16,7 +18,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   try {
     const post = await getPostDraft(createAdminClient(), user.id, id);
     if (!post) return Response.json({ error: "That post was not found." }, { status: 404 });
-    return Response.json({ post }, { headers: { "Cache-Control": "no-store" } });
+    const { data: business, error: timezoneError } = await createAdminClient().from("businesses").select("timezone").eq("owner_user_id", user.id).maybeSingle();
+    if (timezoneError || !business) return Response.json({ error: "Your business timezone could not be loaded. Please retry." }, { status: 503 });
+    return Response.json({ post: { ...post, timeZone: accountTimezone(business.timezone) } }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return Response.json({ error: "That post couldn't load. Please retry." }, { status: 503 });
   }
@@ -71,20 +75,22 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (!existing) return Response.json({ error: "That post was not found." }, { status: 404 });
     const blockers = postApprovalBlockers({ caption: existing.caption, hasVisual: existing.visualReady, kind: existing.kind });
     if (blockers.length) return Response.json({ error: blockers.join(" ") }, { status: 409 });
-    // Optional: the content version the owner reviewed (GET returns it as
-    // post.contentVersion). When sent, Voom approves exactly that version.
+    // Required: approve only the content version the owner actually reviewed.
     const expected = body.contentVersion;
-    if (expected !== undefined && (typeof expected !== "number" || !Number.isSafeInteger(expected) || expected < 1)) {
+    if (typeof expected !== "number" || !Number.isSafeInteger(expected) || expected < 1) {
       return Response.json({ error: "That request was not valid." }, { status: 400 });
     }
     try {
-      const post = await approvePostDraft(admin, user.id, id, expected === undefined ? undefined : { expectedContentVersion: expected });
+      const post = await approvePostDraft(admin, user.id, id, { expectedContentVersion: expected });
       if (!post) return Response.json({ error: "Approval could not be verified. Refresh this post." }, { status: 503 });
-      return Response.json({ post, message: await postApprovalMessage(admin, user.id, post) });
+      const { data: queue, error: queueError } = await admin.from("instagram_publish_queue").select("status")
+        .eq("owner_user_id", user.id).eq("draft_id", id).maybeSingle();
+      return Response.json({ post, scheduled: !queueError && queue?.status === "scheduled", message: await postApprovalMessage(admin, user.id, post) });
     } catch (err) {
-      if (err instanceof Error && err.message === APPROVAL_CONTENT_CHANGED) {
+      const conflict = err instanceof Error ? approvalConflictMessage(err.message) : null;
+      if (conflict) {
         const post = await getPostDraft(admin, user.id, id).catch(() => null);
-        return Response.json({ post, error: "This post changed after you reviewed it. Nothing was approved — review the latest version and approve again." }, { status: 409 });
+        return Response.json({ post, error: conflict }, { status: 409 });
       }
       return Response.json({ error: "Voom couldn't approve that post. Please retry." }, { status: 503 });
     }
@@ -140,7 +146,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       if (!normalized) return Response.json({ error: "That schedule date is not valid." }, { status: 400 });
       // Same shared guard the client runs: no past dates, no same-day past
       // times, evaluated in the business timezone.
-      const check = checkScheduleInstant(normalized);
+      const { data: business, error: timezoneError } = await admin.from("businesses").select("timezone").eq("owner_user_id", user.id).maybeSingle();
+      if (timezoneError || !business) return Response.json({ error: "Your business timezone could not be verified. Please retry." }, { status: 503 });
+      const check = checkScheduleInstant(normalized, new Date(), accountTimezone(business.timezone));
       if (!check.ok) return Response.json({ error: check.error }, { status: 400 });
       scheduledAt = normalized;
     }
@@ -158,8 +166,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     return Response.json({ error: "There was nothing to save." }, { status: 400 });
   }
 
+  if ("contentVersion" in body && (typeof body.contentVersion !== "number" || !Number.isSafeInteger(body.contentVersion) || body.contentVersion < 1)) {
+    return Response.json({ error: "Refresh and review this post before saving." }, { status: 409 });
+  }
   try {
-    const post = await savePostDraft(admin, user.id, id, { concept, caption, cta, hashtags, format, scheduledAt, mediaBrief });
+    const post = await savePostDraft(admin, user.id, id, { concept, caption, cta, hashtags, format, scheduledAt, mediaBrief }, typeof body.contentVersion === "number" ? body.contentVersion : undefined);
     if (!post) return Response.json({ error: "That post was not found." }, { status: 404 });
     // Editing approved content withdraws its approval (migration 0059); only
     // the owner's own schedule change keeps it.
@@ -170,6 +181,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         : "Saved as a draft inside Voom. Nothing was published. Approve it when it's ready to publish.",
     });
   } catch (reason) {
+    const conflict = reason instanceof Error ? approvalConflictMessage(reason.message) : null;
+    if (conflict) return Response.json({ error: conflict }, { status: 409 });
     if (reason instanceof Error && reason.message === "post_concept_required") {
       return Response.json({ error: "Give this post a title before saving." }, { status: 400 });
     }

@@ -853,7 +853,7 @@ test("migration 0046 backfills Instagram rows and keeps every channel on one cal
   );
 
   const applied = await applyPending();
-  assert.equal(applied[applied.length - 1], "0078_instagram_callback_receipts.sql", "0078 Instagram callback receipts is the newest checked-in migration");
+  assert.equal(applied[applied.length - 1], "0080_approval_safety.sql", "0080 approval safety is the newest checked-in migration");
   assert.ok(applied.includes("0072_coordinator_email_flow_authorization.sql"), "the coordinator email-flow guard follows the automation mode guard without rewriting installed migrations");
   assert.ok(applied.includes("0071_automation_mode_entitlement_guard.sql"), "the automation mode guard is retained");
   assert.ok(applied.includes("0070_plan_slot_generation_leases.sql"), "plan slot leases are retained");
@@ -1065,7 +1065,7 @@ test("the social drafts layer never executes: TikTok and YouTube only mirror the
   );
 });
 
-test("social campaign approval syncs through the durable queue boundary without a provider call", async () => {
+test("social campaign approval requires the platform consent editor without a provider call", async () => {
   const server = await read("lib/campaign/server.ts");
   const socialBranch = server.slice(
     server.indexOf("if (isSocialVideoChannel(action.channel)) {"),
@@ -1073,10 +1073,8 @@ test("social campaign approval syncs through the durable queue boundary without 
   );
   assert.ok(socialBranch.length > 0, "the social decision branch exists");
   assert.match(socialBranch, /updateSocialDraft/, "approval goes through the shared social-draft queue-sync boundary");
-  assert.match(socialBranch, /Attach the video file before approving/, "a social action needs its asset before approval");
-  assert.match(server, /Queue-sync errors throw before this/);
-  assert.match(server, /campaign action is marked approved/,
-    "a queue-sync failure cannot become a successful campaign approval response");
+  assert.match(socialBranch, /Open the TikTok or YouTube publishing editor/, "campaign decisions cannot bypass platform consent");
+  assert.match(socialBranch, /if \(decision === "approve"\) return \{ ok: false/, "campaign approval cannot substitute for platform consent");
   assert.doesNotMatch(socialBranch, /publishSocialContent|fetch\(|startYouTubeUpload|startTikTokPost/, "approval never performs the provider call");
 });
 

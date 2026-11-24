@@ -363,7 +363,7 @@ test("the worker shares ONE deadline across the whole claimed batch", async () =
   assert.match(worker, /const deadlineAt = startedAt \+ budgetMs/);
   assert.match(worker, /const remainingBudgetMs = \(\) => deadlineAt - Date\.now\(\)/);
   // ONE deadline, computed once before the loop and passed to every item.
-  assert.match(worker, /buildPorts\(db, client, config, sleep, \{ remainingBudgetMs, timeline \}\)/);
+  assert.match(worker, /buildPorts\(db, client, config, sleep, \{ remainingBudgetMs, timeline, now: \(\) => now\(\)\.getTime\(\) \}\)/);
   assert.match(worker, /\.\.\.\(options\.remainingBudgetMs \? \{ remainingBudgetMs: options\.remainingBudgetMs \} : \{\}\)/);
   // The deadline is computed before claiming, so the claim itself is inside it.
   assert.ok(
@@ -492,10 +492,10 @@ test("media_publish fires in the same invocation the container becomes ready", a
 test("the 20-minute late-media policy is untouched by the precision change", async () => {
   assert.equal(workflow.MISSED_GRACE_MINUTES, 20);
   const state = await read("lib/voom/workflow/state.ts");
-  assert.match(state, /export const MISSED_GRACE_MINUTES = 20;/);
+  assert.match(state, /export const MISSED_GRACE_MINUTES = AUTOMATIC_PUBLISH_GRACE_MS \/ 60_000;/);
   const serverData = await read("lib/post/server-data.ts");
-  assert.match(serverData, /value < Date\.now\(\) - 20 \* 60_000/);
-  assert.match(serverData, /if \(isLateSchedule\(view\.scheduledAt\)\) \{\s+await cancelPublishItem/);
+  assert.match(serverData, /automaticPublishExpired\(scheduledAt\)/);
+  assert.match(serverData, /if \(isLateSchedule\(view\.scheduledAt\)\) \{\s+await admin\.rpc\("expire_instagram_publish_jobs"/);
 });
 
 test("materially late content still derives Missed / Needs attention, never a silent late publish", () => {

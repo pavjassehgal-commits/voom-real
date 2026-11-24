@@ -1,4 +1,5 @@
 import "server-only";
+import { accountTimezone } from "./timezone";
 
 import { getPostDraft } from "@/lib/post/server-data";
 import { readSocialChannelReadiness } from "@/lib/social/readiness";
@@ -18,17 +19,20 @@ export async function loadCreateDraft(admin: AdminClient, ownerId: string, id: s
   }).catch(() => null);
   if (!found) return null;
   const { post, social } = found;
+  const { data: business, error: timezoneError } = await admin.from("businesses").select("timezone").eq("owner_user_id", ownerId).maybeSingle();
+  if (timezoneError || !business) throw new Error("business_timezone_unavailable");
+  const timeZone = accountTimezone(business.timezone);
   const readiness = await readSocialChannelReadiness(admin, ownerId).catch(() => []);
   const channel = post ? "instagram" : social!.channel;
   const connection = readiness.find((entry) => entry.channel === channel);
   const draft: CreateDraft = post ? {
-    id: post.id, editor: "post", kind: post.kind, channel: "instagram", typeLabel: post.typeLabel,
+    timeZone, id: post.id, contentVersion: post.contentVersion, editor: "post", kind: post.kind, channel: "instagram", typeLabel: post.typeLabel,
     title: post.concept, caption: post.caption, description: null, hashtags: post.hashtags, format: post.format,
     previewUrl: post.visual?.previewUrl ?? null, mimeType: post.visual?.mimeType ?? null, mediaName: post.visual?.displayName || null,
     mediaReady: post.visualReady, status: post.status, scheduledAt: post.scheduledAt,
     privacy: null, madeForKids: null, tiktokPrivacy: null, tiktokConsent: false,
   } : {
-    id: social!.id, editor: "social", kind: social!.kind, channel: social!.channel, typeLabel: social!.typeLabel,
+    timeZone, id: social!.id, contentVersion: social!.contentVersion, editor: "social", kind: social!.kind, channel: social!.channel, typeLabel: social!.typeLabel,
     title: social!.title, caption: social!.caption, description: social!.description, hashtags: [], format: social!.format,
     previewUrl: null, mimeType: social!.asset?.mimeType ?? null, mediaName: social!.asset?.displayName ?? null,
     mediaReady: Boolean(social!.asset), status: social!.status, scheduledAt: social!.scheduledAt,

@@ -1,3 +1,4 @@
+import { AUTOMATIC_PUBLISH_GRACE_MS } from "../schedule-policy.ts";
 /**
  * The single content workflow state machine.
  *
@@ -84,7 +85,7 @@ export const WORKFLOW_STATUS_LABELS: Record<WorkflowStatus, string> = {
 };
 
 /** How long past the scheduled time an unpublished item is "late", not missed. */
-export const MISSED_GRACE_MINUTES = 20;
+export const MISSED_GRACE_MINUTES = AUTOMATIC_PUBLISH_GRACE_MS / 60_000;
 
 export type PublishStatusFact =
   | "scheduled" | "waiting_for_media" | "permission_required" | "publishing"
@@ -200,7 +201,7 @@ export function isMediaGenerationTimedOut(media: MediaGenerationTimingFacts, now
 function isPast(instance: string | null | undefined, now: Date): boolean {
   if (!instance) return false;
   const value = Date.parse(instance);
-  return Number.isFinite(value) && value < now.getTime() - MISSED_GRACE_MINUTES * 60_000;
+  return Number.isFinite(value) && value <= now.getTime() - MISSED_GRACE_MINUTES * 60_000;
 }
 
 /**

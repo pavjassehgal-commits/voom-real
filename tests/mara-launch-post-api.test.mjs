@@ -11,7 +11,7 @@ registerHooks({resolve(s,c,next){
       export function normalizeMediaBrief(v){return v?.trim()||null}
       export async function getPostDraft(db,owner,id){return globalThis.__launchPost.read(owner,id)}
       export async function savePostDraft(db,owner,id,patch){return globalThis.__launchPost.save(owner,id,patch)}
-      export async function approvePostDraft(){throw Error('No approval in save tests')}
+      export async function approvePostDraft(db,owner,id,options){return globalThis.__launchPost.approve(owner,id,options)}
       export async function rejectPostDraft(){throw Error('No rejection in save tests')}
       export async function deletePostDraft(){throw Error('No delete in save tests')}
       export async function setPostAssetOrigin(){throw Error('No origin change in save tests')}`,
@@ -24,11 +24,11 @@ const {GET,PATCH}=await import('../app/api/posts/[id]/route.ts');
 globalThis.fetch=async()=>{throw new Error('External HTTP forbidden in post save tests')};
 const params={params:Promise.resolve({id:ID})};
 function fixture(){
-  const state={user:{id:'owner'},reads:0,writes:0,post:{id:ID,status:'draft',caption:'Original',concept:'Original concept',hashtags:['Original'],visual:{id:'private-asset'},contentVersion:1}};
-  state.db={from(){state.reads++;const q={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:{kind:'instagram_post'},error:null})};return q}};
+  const state={user:{id:'owner'},reads:0,writes:0,approvals:0,queue:null,post:{id:ID,status:'draft',kind:'instagram_post',visualReady:true,caption:'Original',concept:'Original concept',hashtags:['Original'],visual:{id:'private-asset'},contentVersion:1}};
+  state.db={from(table){state.reads++;const q={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:table==='instagram_publish_queue'?state.queue:{kind:'instagram_post',timezone:'Asia/Dubai'},error:null})};return q}};
   state.read=(owner,id)=>owner==='owner'&&id===ID?state.post:null;
   state.save=(owner,id,patch)=>{assert.equal(owner,'owner');assert.equal(id,ID);state.writes++;for(const [k,v]of Object.entries(patch))if(v!==undefined)state.post[k]=v;return state.post};
-  globalThis.__launchPost=state;return state;
+  state.approve=(owner,id,options)=>{assert.equal(owner,'owner');assert.equal(id,ID);if(options?.expectedContentVersion!==state.post.contentVersion)throw Error('approval_content_changed');state.approvals++;state.post.status='approved';return state.post};globalThis.__launchPost=state;return state;
 }
 const request=body=>new Request('https://test.invalid/api/posts/'+ID,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
 test('double-encoded JSON, null and arrays fail with 400 instead of crashing or touching a draft',async()=>{
@@ -43,3 +43,7 @@ test('a single JSON object preserves structured hashtags and existing media thro
 test('saving still requires the authenticated owner; malformed bodies cannot bypass authentication',async()=>{
   const s=fixture();s.user=null;assert.equal((await PATCH(request({action:'save',caption:'Forged'}),params)).status,401);assert.equal(s.writes,0);
 });
+
+test('approval without a reviewed version is rejected before any approval write',async()=>{const s=fixture();const response=await PATCH(request({action:'approve'}),params);assert.equal(response.status,400);assert.equal(s.approvals,0);});
+test('Post Editor cannot silently approve content changed since its review',async()=>{const s=fixture();s.post.contentVersion=2;const response=await PATCH(request({action:'approve',contentVersion:1}),params);assert.equal(response.status,409);assert.equal(s.approvals,0);assert.match((await response.json()).error,/changed after/);});
+test('the API passes exactly the reviewed version and distinguishes approval from queue scheduling',async()=>{const s=fixture();const response=await PATCH(request({action:'approve',contentVersion:1}),params);assert.equal(response.status,200);assert.equal(s.approvals,1);assert.equal((await response.json()).scheduled,false);});

@@ -2153,10 +2153,10 @@ test("approval alone (Autopilot, campaigns, an old privacy choice or owner defau
   const draftId = await makeDraft(OWNER_A, { status: "draft" });
   await db.query("update public.mara_drafts set content_meta = '{\"tiktokPrivacy\":\"SELF_ONLY\"}'::jsonb where id = $1", [draftId]);
   await makeAsset(OWNER_A, draftId, { byteSize: 1024 });
-  const scheduledAt = nowIso(-60_000);
+  const scheduledAt = nowIso(600_000);
 
   // 1. A plain approval with a schedule, as Autopilot or a campaign approval does.
-  await socialDrafts.updateSocialDraft(admin, OWNER_A, draftId, { decision: "approved", scheduledAt });
+  await socialDrafts.updateSocialDraft(admin, OWNER_A, draftId, { decision: "approved", scheduledAt, contentVersion: (await socialDrafts.getSocialDraft(admin, OWNER_A, draftId)).contentVersion });
   let row = await one("select status, privacy_level, disable_comment from public.tiktok_publish_queue where draft_id = $1", [draftId]);
   assert.equal(row.status, "needs_declaration", "approval is not consent: the item waits for the owner");
   assert.equal(row.privacy_level, null, "no default or stored value stands in for the owner's per-post choice");
@@ -2180,7 +2180,7 @@ test("approval alone (Autopilot, campaigns, an old privacy choice or owner defau
       videoDurationSec: 30,
     }),
   };
-  const confirmed = await socialDrafts.updateSocialDraft(admin, OWNER_A, draftId, { caption, scheduledAt, decision: "approved", tiktokPostConsent: consent });
+  const confirmed = await socialDrafts.updateSocialDraft(admin, OWNER_A, draftId, { caption, scheduledAt, decision: "approved", contentVersion: (await socialDrafts.getSocialDraft(admin, OWNER_A, draftId)).contentVersion, tiktokPostConsent: consent });
   assert.equal(confirmed.tiktokPost.settings.privacy, "SELF_ONLY");
   assert.equal(confirmed.tiktokPost.creatorNickname, "Voom Studio");
   assert.equal("fingerprint" in confirmed.tiktokPost || "creatorOpenId" in confirmed.tiktokPost, false, "the browser view stays sanitized");
@@ -2195,7 +2195,7 @@ test("approval alone (Autopilot, campaigns, an old privacy choice or owner defau
 
   // 3. The worker accepts exactly that confirmation and posts with those settings.
   const tiktok = fakeTikTok();
-  const result = await workerMod.runTikTokPublishing({ db: admin, config: fakeConfig(), clientFor: () => tiktok, sleep: noopSleep, inspectVideoDuration: inspectStoredVideoDuration });
+  const result = await workerMod.runTikTokPublishing({ db: admin, config: fakeConfig(), clientFor: () => tiktok, sleep: noopSleep, inspectVideoDuration: inspectStoredVideoDuration, now: () => new Date(Date.now() + 11 * 60_000) });
   assert.equal(result.published, 1);
   const init = tiktok.calls.find(([kind]) => kind === "init");
   assert.deepEqual(init[1].metadata.post_info, {
@@ -2211,7 +2211,7 @@ test("approval alone (Autopilot, campaigns, an old privacy choice or owner defau
     assetStoragePath: `tiktok/${OWNER_A}/${second}-video.mp4`, assetByteSize: 1024,
     videoDurationSec: 30,
   }) };
-  await socialDrafts.updateSocialDraft(admin, OWNER_A, second, { caption, scheduledAt, decision: "approved", tiktokPostConsent: secondConsent });
+  await socialDrafts.updateSocialDraft(admin, OWNER_A, second, { caption, scheduledAt, decision: "approved", contentVersion: (await socialDrafts.getSocialDraft(admin, OWNER_A, second)).contentVersion, tiktokPostConsent: secondConsent });
   // (scheduledAt is passed because PGlite returns timestamps as Date objects, unlike Supabase's ISO strings.)
   const edited = await socialDrafts.updateSocialDraft(admin, OWNER_A, second, { caption: "A different caption", scheduledAt });
   assert.equal(edited.tiktokPost, null, "the confirmation no longer covers the edited caption");

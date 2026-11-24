@@ -757,19 +757,20 @@ test("TikTok/YouTube approval never reports queued success when durable queue sy
       channel: `${channel} native video`,
       title: `${channel} video concept`,
       content: "A native caption.",
-      proposed_publish_at: timezone.localToUtcIso("2026-09-14", 18 * 60 + 30, TZ),
+      proposed_publish_at: "2035-01-01T10:00:00.000Z",
       status: "draft",
       social_channel: channel,
       social_format: format,
       content_meta: channel === "youtube"
         ? { description: "A useful description for this YouTube Short.", madeForKids: false, privacy: "unlisted", script: ["Open", "Explain", "Payoff"] }
         : { tiktokPrivacy: "SELF_ONLY", script: ["Open", "Explain", "Payoff"] },
+      content_version: 1,
       created_at: NOW.toISOString(),
       updated_at: NOW.toISOString(),
     };
     const admin = createMemoryAdmin(adminSeed({ preferredChannels: [channel], drafts: [draft] }));
     await assert.rejects(
-      () => socialDrafts.updateSocialDraft(admin, OWNER, id, { decision: "approved" }),
+      async () => socialDrafts.updateSocialDraft(admin, OWNER, id, { decision: "approved", contentVersion: (await socialDrafts.getSocialDraft(admin, OWNER, id)).contentVersion }),
       new RegExp(`${channel}_publish_enqueue_failed`),
     );
     assert.equal(admin.tables.get("mara_drafts")[0].status, "approved", "approval is durable even when queue sync needs retry");
@@ -791,6 +792,7 @@ test("queue cancellation errors leave draft and Calendar unchanged, and provider
       channel: `${channel} native video`, title: "Current video", content: "Current caption",
       proposed_publish_at: timezone.localToUtcIso("2026-09-14", 18 * 60 + 30, TZ), status: "approved",
       social_channel: channel, social_format: format, content_meta: {},
+      content_version: 1,
       created_at: NOW.toISOString(), updated_at: NOW.toISOString(),
     };
     const admin = createMemoryAdmin(adminSeed({ preferredChannels: [channel], drafts: [draft] }));
@@ -815,6 +817,7 @@ test("queue cancellation errors leave draft and Calendar unchanged, and provider
       channel: `${channel} native video`, title: "Provider-owned video", content: "Published history",
       proposed_publish_at: timezone.localToUtcIso("2026-09-14", 18 * 60 + 30, TZ), status: "approved",
       social_channel: channel, social_format: format, content_meta: {},
+      content_version: 1,
       created_at: NOW.toISOString(), updated_at: NOW.toISOString(),
     };
     const admin = createMemoryAdmin(adminSeed({ preferredChannels: [channel], drafts: [draft] }));
@@ -861,6 +864,7 @@ test("Calendar labels TikTok/YouTube from their durable queues and exposes only 
       channel: "TikTok · 9:16", title: "TikTok item", content: "Caption", proposed_publish_at: scheduledAt,
       status: "approved", social_channel: "tiktok", social_format: "video", content_meta: {},
       source_plan_id: "plan-calendar", source_plan_item_key: "2026-09-14|tiktok_video",
+      content_version: 1,
       created_at: NOW.toISOString(), updated_at: NOW.toISOString(),
     },
     {
@@ -868,6 +872,7 @@ test("Calendar labels TikTok/YouTube from their durable queues and exposes only 
       channel: "YouTube Short · 9:16", title: "YouTube item", content: "Caption", proposed_publish_at: scheduledAt,
       status: "approved", social_channel: "youtube", social_format: "short", content_meta: {},
       source_plan_id: null, source_plan_item_key: null,
+      content_version: 1,
       created_at: NOW.toISOString(), updated_at: NOW.toISOString(),
     },
   ];

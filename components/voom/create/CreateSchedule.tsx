@@ -1,6 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { scheduleReviewedPost } from "@/lib/voom/create-scheduling";
+import { checkSchedule } from "@/lib/voom/schedule-guard";
+import { DEFAULT_TIMEZONE, localDate, localMinutes } from "@/lib/voom/timezone";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/voom/icons";
@@ -28,28 +31,29 @@ export function CreateSchedule({ draft, connected, checks }: { draft: CreateDraf
   const router = useRouter();
   const { open } = useModal();
   const [when, setWhen] = useState<When>("pick");
-  // The input shows the browser's local time, which the server cannot know,
-  // so the default is filled in after mount (deferred, not a synchronous
+  // The input shows business-local time.
+  // The default is filled in after mount (deferred, not a synchronous
   // setState in the effect body).
   const [local, setLocal] = useState("");
   useEffect(() => {
-    const timer = window.setTimeout(() => setLocal((current) => current || toLocalInput(draft.scheduledAt && Date.parse(draft.scheduledAt) > Date.now() ? draft.scheduledAt : nextHour())), 0);
+    const timer = window.setTimeout(() => setLocal((current) => current || toLocalInput(draft.scheduledAt && Date.parse(draft.scheduledAt) > Date.now() ? draft.scheduledAt : nextHour(), draft.timeZone ?? DEFAULT_TIMEZONE)), 0);
     return () => window.clearTimeout(timer);
-  }, [draft.scheduledAt]);
+  }, [draft.scheduledAt, draft.timeZone]);
   const [busy, setBusy] = useState<"save" | "schedule" | null>(null);
   const [error, setError] = useState("");
   const [done, setDone] = useState<{ at: string } | null>(null);
 
   const failing = checks.filter((check) => !check.ok);
-  const iso = when === "pick" && local ? new Date(local).toISOString() : null;
-  const goesLive = iso ? formatWhen(iso) : null;
+  const scheduleCheck = when === "pick" && local ? checkSchedule({ date: local.slice(0, 10), time: local.slice(11, 16), timeZone: draft.timeZone ?? DEFAULT_TIMEZONE }) : null;
+  const iso = scheduleCheck?.ok ? scheduleCheck.publishAt : null;
+  const goesLive = iso ? formatWhen(iso, draft.timeZone ?? DEFAULT_TIMEZONE) : null;
   const isInstagram = draft.editor === "post";
 
   async function patch(body: Record<string, unknown>) {
     const response = await fetch(isInstagram ? `/api/posts/${draft.id}` : `/api/social-drafts/${draft.id}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
-    const json = await response.json() as { post?: { contentVersion?: number }; error?: string };
+    const json = await response.json() as { post?: { contentVersion?: number }; scheduled?: boolean; error?: string };
     if (!response.ok) throw new Error(json.error ?? "Voom couldn't save that. Please retry.");
     return json;
   }
@@ -57,7 +61,7 @@ export function CreateSchedule({ draft, connected, checks }: { draft: CreateDraf
   async function saveDraft() {
     setBusy("save"); setError("");
     try {
-      await patch({ scheduledAt: iso });
+      await patch({ scheduledAt: iso, contentVersion: draft.contentVersion });
       window.dispatchEvent(new Event("voom:data-changed"));
       router.push(`/app/content/${draft.id}`);
     } catch (reason) {
@@ -72,7 +76,7 @@ export function CreateSchedule({ draft, connected, checks }: { draft: CreateDraf
     if (!isInstagram) {
       // Save the chosen time, then confirm privacy/consent in the publishing editor.
       try {
-        await patch({ scheduledAt: iso });
+        await patch({ scheduledAt: iso, contentVersion: draft.contentVersion });
         window.dispatchEvent(new Event("voom:data-changed"));
         open(<SocialEditorModal draftId={draft.id} onChanged={() => router.refresh()} />);
       } catch (reason) {
@@ -83,8 +87,7 @@ export function CreateSchedule({ draft, connected, checks }: { draft: CreateDraf
       return;
     }
     try {
-      const saved = await patch({ scheduledAt: iso });
-      await patch({ action: "approve", ...(typeof saved.post?.contentVersion === "number" ? { contentVersion: saved.post.contentVersion } : {}) });
+      await scheduleReviewedPost(patch, { contentVersion: draft.contentVersion, scheduledAt: draft.scheduledAt, publishAt: iso });
       window.dispatchEvent(new Event("voom:data-changed"));
       setDone({ at: iso });
     } catch (reason) {
@@ -118,7 +121,7 @@ export function CreateSchedule({ draft, connected, checks }: { draft: CreateDraf
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
               <span className="flex items-center gap-3"><ChannelGlyph channel={draft.channel} size={26} /><span><span className="block font-semibold text-text">{CHANNEL_NAME[draft.channel]}</span><span className="block text-[13px] text-text-2">{draft.typeLabel}</span></span></span>
               <span className="flex items-center gap-3">
-                <span className="text-[14px] font-semibold text-text">{iso ? new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(new Date(iso)) : "No time"}</span>
+                <span className="text-[14px] font-semibold text-text">{iso ? new Intl.DateTimeFormat("en-US", { timeZone: draft.timeZone ?? DEFAULT_TIMEZONE, hour: "numeric", minute: "2-digit" }).format(new Date(iso)) : "No time"}</span>
                 <StatusChip status={connected === false ? "connection_required" : failing.length ? "needs_approval" : "published"} label={connected === false ? "Not connected" : failing.length ? `${failing.length} to fix` : "Ready"} small />
               </span>
             </div>
@@ -153,7 +156,7 @@ export function CreateSchedule({ draft, connected, checks }: { draft: CreateDraf
           <div className="mt-4 rounded-[16px] border border-[var(--brand-line)] bg-[var(--brand-soft-2)] p-4">
             <div className="text-[11.5px] font-semibold uppercase tracking-[0.14em] text-[var(--brand-ink)]">Goes live</div>
             <div className="mt-1 text-[20px] font-bold tracking-[-0.02em] text-text">{goesLive ?? "Not scheduled"}</div>
-            <div className="mt-0.5 text-[13px] text-text-2">{goesLive ? "Your local time" : "Saved as a draft without a date"}</div>
+            <div className="mt-0.5 text-[13px] text-text-2">{goesLive ? `Business time · ${draft.timeZone ?? DEFAULT_TIMEZONE}` : "Saved as a draft without a date"}</div>
           </div>
           <dl className="mt-4 space-y-2.5 text-[14px]">
             <Row label="Channel" value={CHANNEL_NAME[draft.channel]} />
@@ -205,13 +208,13 @@ function Confirmation({ draft, at, connected }: { draft: CreateDraft; at: string
     <div className="fixed inset-0 z-[95] grid place-items-center bg-[rgba(26,31,48,0.35)] p-4 backdrop-blur-[3px]" role="dialog" aria-modal="true" aria-labelledby="scheduled-title">
       <div className="w-full max-w-[480px] rounded-[24px] bg-surface p-6 text-center shadow-[var(--shadow-lg)] sm:p-7">
         <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-[var(--green-soft)] text-[var(--green)]"><Icon name="check" size={22} /></span>
-        <h2 id="scheduled-title" className="mt-4 text-[22px] font-bold leading-tight tracking-[-0.03em] text-text">Scheduled for {formatWhen(at)}</h2>
+        <h2 id="scheduled-title" className="mt-4 text-[22px] font-bold leading-tight tracking-[-0.03em] text-text">Scheduled for {formatWhen(at, draft.timeZone ?? DEFAULT_TIMEZONE)}</h2>
         <p className="mt-2 text-[14px] leading-relaxed text-text-2">Your {draft.typeLabel} will publish to {CHANNEL_NAME[draft.channel]}. It shows “Published” only after {CHANNEL_NAME[draft.channel]} confirms.</p>
         <div className="mt-4 flex items-center justify-between rounded-[14px] border border-line px-4 py-3">
           <span className="flex items-center gap-2.5 font-semibold text-text"><ChannelGlyph channel={draft.channel} size={20} />{CHANNEL_NAME[draft.channel]}</span>
           <StatusChip status="scheduled" label="Scheduled" small />
         </div>
-        {connected === false && <p className="mt-3 rounded-[14px] bg-[var(--coral-soft)] px-4 py-3 text-left text-[13.5px] text-[var(--coral)]">Connect {CHANNEL_NAME[draft.channel]} before {formatWhen(at)} so this post can go out on time.</p>}
+        {connected === false && <p className="mt-3 rounded-[14px] bg-[var(--coral-soft)] px-4 py-3 text-left text-[13.5px] text-[var(--coral)]">Connect {CHANNEL_NAME[draft.channel]} before {formatWhen(at, draft.timeZone ?? DEFAULT_TIMEZONE)} so this post can go out on time.</p>}
         <div className="mt-5 grid grid-cols-2 gap-3">
           <Link href="/app/studio" className={cx(BTN.quiet, "rounded-full")}>Create another</Link>
           <Link href="/app/calendar" className={BTN.primary}>View in calendar <Icon name="arrow" size={14} /></Link>
@@ -227,15 +230,15 @@ function nextHour() {
   return date.toISOString();
 }
 
-function toLocalInput(iso: string) {
-  const date = new Date(iso);
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+function toLocalInput(iso: string, timeZone: string): string {
+  const at = new Date(iso);
+  const minutes = localMinutes(at, timeZone);
+  return `${localDate(at, timeZone)}T${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
-function formatWhen(iso: string) {
+function formatWhen(iso: string, timeZone: string) {
   const date = new Date(iso);
   const today = new Date();
-  const prefix = date.toDateString() === today.toDateString() ? "Today, " : "";
-  return `${prefix}${new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short" }).format(date)} · ${new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(date)}`;
+  const prefix = localDate(date, timeZone) === localDate(today, timeZone) ? "Today, " : "";
+  return `${prefix}${new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "short", day: "numeric", month: "short" }).format(date)} · ${new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }).format(date)}`;
 }

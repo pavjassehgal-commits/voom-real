@@ -1,4 +1,5 @@
 import "server-only";
+import { draftApprovalTarget } from "./approval-target";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { BusinessRecord, ProfileRecord } from "@/lib/voom/types";
@@ -13,11 +14,12 @@ import { readYouTubeConfig } from "@/lib/youtube/config";
 import { getYouTubeConnection } from "@/lib/youtube/data";
 import { getPlanConfig, normalizePlan } from "@/lib/billing/plans";
 import { classifyReelProduction } from "@/lib/mara/reel-production";
-import { APPROVAL_INCOMPLETE, APPROVAL_STALE as APPROVAL_STALE_DRAFT, approvalRequiresMedia, approveDraftFromConfirmedSnapshot } from "./draft-approval";
+import { approvePostDraft } from "@/lib/post/server-data";
+import { approvalErrorCode } from "@/lib/post/approval-safety";
 export { APPROVAL_INCOMPLETE, APPROVAL_STALE } from "./draft-approval";
 import {
-  createCalendarItem, createCampaign, deleteCalendarItem, getBrandProfile, getCalendarItem, getCampaign,
-  getDraft, listCalendarItems, listCampaigns, listDrafts, updateCalendarItem, updateCampaign,
+  createCampaign, deleteCalendarItem, getBrandProfile, getCalendarItem, getCampaign,
+  getDraft, listCalendarItems, listCampaigns, listDrafts, updateCampaign,
 } from "./internal-data";
 
 const uuid = z.string().uuid();
@@ -178,7 +180,13 @@ async function runTool(c: ToolContext, name: MaraToolName, a: Record<string, unk
 
   if (name === "approve_draft") {
     const old = await getDraft(c.db, c.ownerId, a.draftId as string); if (!old) return success(null, "That draft was not found.");
-    return pending(c, name, a, key!, `Approve draft “${old.title}”. This saves approval only and does not publish.`, { status: old.status }, { status: "approved", draftId: old.id });
+    return pending(c, name, { ...a, contentVersion: Number(old.content_version) }, key!, `Approve draft “${old.title}”. This saves approval only and does not publish.`, { status: old.status }, { status: "approved", draftId: old.id, draftKind: old.kind, content: old.content, contentVersion: Number(old.content_version) });
+  }
+  if (name === "propose_calendar_item" && typeof a.sourceDraftId === "string") {
+    const draft = await getDraft(c.db, c.ownerId, a.sourceDraftId);
+    if (!draft) throw new Error("draft_missing");
+    const snapshot = { ...a, content: draft.content, publishAt: draft.proposed_publish_at, contentVersion: Number(draft.content_version) };
+    return pending(c, name, snapshot, key!, `Review the proposed schedule for “${draft.title}”.`, null, snapshot);
   }
   if (name === "propose_calendar_item") return pending(c, name, a, key!, `Add “${a.title}” to the ${a.channel} calendar for ${new Date(a.publishAt as string).toLocaleString("en-US", { timeZone: "Asia/Dubai" })}.`, null, a);
   if (name === "choose_reel_production") {
@@ -201,46 +209,35 @@ export async function executeConfirmedAction(c: Omit<ToolContext, "profile" | "b
   if (action.status !== "executing") return { ok: true, summary: "This action was already handled." };
   const a = action.sanitized_arguments;
   let result: unknown; let summary: string;
-  if (action.tool_name === "approve_draft") {
-    // Complete-content approval: an Instagram draft is approved only with its media.
-    const target = await getDraft(c.db, c.ownerId, a.draftId as string);
-    if (!target) throw new Error("approval_failed");
-    if (approvalRequiresMedia(target.kind)) {
-      const { data: asset, error: assetError } = await c.db.from("post_draft_assets").select("id")
-        .eq("owner_user_id", c.ownerId).eq("draft_id", a.draftId as string).eq("status", "uploaded").maybeSingle();
-      if (assetError) throw new Error("draft_media_unavailable");
-      if (!asset) throw new Error(APPROVAL_INCOMPLETE);
-    }
-    // Bound to the version just checked: a concurrent edit or media swap approves nothing.
-    const { data, error } = await c.db.from("mara_drafts").update({ status: "approved", approval_origin: "user" })
-      .eq("owner_user_id", c.ownerId).eq("id", a.draftId as string).eq("content_version", target.content_version).neq("status", "rejected")
-      .select("id,title").maybeSingle();
-    if (error) throw new Error("approval_failed");
-    if (!data) throw new Error(APPROVAL_STALE_DRAFT);
-    result = data; summary = `Approved “${data.title}”. Nothing was published.`;
-  }
-  else if (action.tool_name === "propose_calendar_item") {
-    const draft = a.sourceDraftId ? await getDraft(c.db, c.ownerId, a.sourceDraftId as string) : null;
-    if (a.sourceDraftId && (!draft || !draft.content.trim() || !draft.proposed_publish_at)) throw new Error("draft_missing");
-    if (a.sourceDraftId && draft) {
-      // Complete-content approval: an Instagram post is approved WITH its media.
-      // A card confirmed before the visual exists approves nothing. (A visual
-      // attached meanwhile also moves the version, so the CAS below catches it.)
-      if (approvalRequiresMedia(draft.kind)) {
-        const { data: asset, error: assetError } = await c.db.from("post_draft_assets").select("id")
-          .eq("owner_user_id", c.ownerId).eq("draft_id", a.sourceDraftId as string).eq("status", "uploaded").maybeSingle();
-        if (assetError) throw new Error("draft_media_unavailable");
-        if (!asset) throw new Error(APPROVAL_INCOMPLETE);
+  if (action.tool_name === "approve_draft" || action.tool_name === "propose_calendar_item") {
+    const draftId = (a.sourceDraftId ?? a.draftId) as string | undefined;
+    if (draftId) {
+      if (action.tool_name === "approve_draft") {
+        const draft = await getDraft(c.db, c.ownerId, draftId);
+        if (!draft) throw new Error("draft_missing");
+        const target = draftApprovalTarget(draft.kind, draftId);
+        if (target) return { ok: false, summary: target.reason, requiresEditor: target };
       }
-      // Compare-and-swap against the confirmed card snapshot (see draft-approval.ts).
-      result = await approveDraftFromConfirmedSnapshot(c.db, c.ownerId, a.sourceDraftId as string, a, draft,
-        () => createCalendarItem(c.db, c.ownerId, { title: a.title, channel: a.channel, content: draft.content, topic: a.topic, publish_at: draft.proposed_publish_at, status: "approved", source_draft_id: a.sourceDraftId }));
+      if (typeof a.contentVersion !== "number") throw new Error("approval_content_changed");
+      result = await approvePostDraft(c.db, c.ownerId, draftId, {
+        expectedContentVersion: a.contentVersion,
+        actionId: action.id,
+      });
+      summary = "Approved the reviewed content version. Nothing was published.";
     } else {
-      result = await createCalendarItem(c.db, c.ownerId, { title: a.title, channel: a.channel, content: a.content, topic: a.topic, publish_at: a.publishAt, status: "approved", source_draft_id: null });
+      const confirmed = await c.db.rpc("confirm_calendar_proposal", { p_owner_user_id: c.ownerId, p_action_id: action.id });
+      if (confirmed.error) throw new Error(approvalErrorCode(confirmed.error.message));
+      result = confirmed.data;
+      summary = "Added the reviewed proposal to the calendar. Nothing was published.";
     }
-    summary = `Approved “${(result as { title: string }).title}” and added it to the Voom calendar. Nothing was published.`;
+    // The transaction finalizes the action; do not perform a second claim or insert.
+    return { ok: true, summary, result };
   }
-  else if (action.tool_name === "update_calendar_item") { const id = a.itemId as string; result = await updateCalendarItem(c.db, c.ownerId, id, compact({ title: a.title, channel: a.channel, content: a.content, topic: a.topic, publish_at: a.publishAt })); if (!result) throw new Error("item_missing"); summary = `Updated “${(result as { title: string }).title}” on the calendar.`; }
+  else if (action.tool_name === "update_calendar_item") {
+    const updated = await c.db.rpc("confirm_calendar_update", { p_owner_user_id: c.ownerId, p_action_id: action.id });
+    if (updated.error) throw new Error(approvalErrorCode(updated.error.message));
+    return { ok: true, result: updated.data, summary: "Updated the reviewed calendar item. Nothing was published." };
+  }
   else if (action.tool_name === "delete_calendar_item") { const deleted = []; for (const id of a.itemIds as string[]) { const item = await deleteCalendarItem(c.db, c.ownerId, id); if (item) deleted.push(item); } result = deleted; summary = `Deleted ${deleted.length} calendar item${deleted.length === 1 ? "" : "s"}.`; }
   else throw new Error("action_not_confirmable");
   const { data: completed, error: completionError } = await c.db.from("mara_pending_actions").update({ status: "confirmed", result_summary: summary, executed_at: new Date().toISOString() }).eq("id", action.id).eq("owner_user_id", c.ownerId).eq("status", "executing").select("id").maybeSingle();

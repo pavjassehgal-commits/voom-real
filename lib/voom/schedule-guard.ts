@@ -14,6 +14,7 @@
  * `tests/production-readiness.test.mjs`.
  */
 
+import { SCHEDULE_LEAD_MS } from "./schedule-policy.ts";
 import { DEFAULT_TIMEZONE, localDate, localMinutes, localToUtcIso } from "./timezone.ts";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -95,7 +96,7 @@ export function checkSchedule(input: ScheduleInput): ScheduleResult {
   }
 
   const [hour, minute] = time.split(":").map(Number);
-  return { ok: true, publishAt: localToUtcIso(date, hour * 60 + minute, timeZone) };
+  return checkScheduleInstant(localToUtcIso(date, hour * 60 + minute, timeZone), now, timeZone, lead);
 }
 
 /** True when an absolute UTC instant is already before "now" (with tolerance). */
@@ -115,14 +116,10 @@ export function checkScheduleInstant(iso: string, now: Date = new Date(), timeZo
   if (Number.isNaN(value.getTime())) {
     return { ok: false, error: "That schedule date is not valid.", field: "date" };
   }
-  return checkSchedule({ date: localDate(value, timeZone), time: toTimeInputValue(value, timeZone), now, timeZone, leadMinutes });
-}
-
-function toTimeInputValue(at: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(at);
-  const hour = parts.find((part) => part.type === "hour")?.value ?? "00";
-  const minute = parts.find((part) => part.type === "minute")?.value ?? "00";
-  return `${hour}:${minute}`;
+  if (value.getTime() < now.getTime() + leadMinutes * SCHEDULE_LEAD_MS) {
+    return { ok: false, error: `Choose a future time at least ${leadMinutes} minute ahead — it is now ${formatClock(localMinutes(now, timeZone))} in your business timezone.`, field: "time" };
+  }
+  return { ok: true, publishAt: value.toISOString() };
 }
 
 function formatClock(minutes: number): string {

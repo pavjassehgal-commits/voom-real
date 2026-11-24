@@ -229,3 +229,36 @@ All keys go in `.env.local` (copy from `.env.example`). Never commit real values
 Instagram import (`docs/brand-kit-v2-design.md`, slice 8) · the brand kit in Reel video
 plans (slice 9) · reference images in image generation · 3D icons for the six avoid-rules and the
 LinkedIn "coming soon" card (plain cards today).
+
+## Local approval-safety candidate — 24 November 2026
+
+Not deployed. `approvePostDraft` now requires the browser-reviewed content version and delegates
+to service-role RPC `approve_reviewed_post` in proposed migration 0080. It locks decisions and
+the owned draft, validates state/media/future schedules and records the exact version. Approval
+cards additionally compare the card revision (`updated_at`) and the displayed draft version.
+Standalone calendar proposals/updates finalize atomically; draft-backed calendar edits use the
+source editor. Calendar/Instagram queue synchronization checks the still-approved version under
+a draft lock. Existing provider workers, native consent/declarations and publish confirmation
+remain authoritative. This candidate requires independently reviewed migration + app release;
+no hosted database has received migration 0080.
+
+## Local Step 1B review follow-up — 24 November 2026
+
+Not deployed. Automatic Instagram publishing has a 20-minute grace measured from the
+owned draft's approved schedule, never the queue retry timestamp. At the cutoff, unsubmitted
+work becomes terminal failed (`instagram_schedule_expired`); existing provider submissions
+permit read-only reconciliation only. Claim, retry, synchronization and worker boundaries
+enforce this policy. Future schedule choices require at least one minute of lead.
+Versioned explicit owner rescheduling parks unclaimed queues before metadata sync so an old
+due time cannot be claimed during the handoff. Native editor declarations and consent remain
+required. Legacy non-Instagram approval cards route to the appropriate editor.
+See `docs/approval-safety-review-followup.md` for implementation, validation and rollout order.
+
+## Local Step 1C cancellation boundary — 24 November 2026
+
+The canonical reschedule RPC rejects future scheduling of any cancelled Instagram/TikTok/
+YouTube queue under lock; unscheduling retains the cancelled row unchanged. Reactivation
+requires fresh explicit reviewed platform approval, never an ordinary reschedule or Post now
+shortcut. Expired provider-owned Instagram jobs permit bounded read-only reconciliation only.
+SQL-first rollout requires fencing old workers and approval writes until the new app is active;
+see `docs/approval-safety-staging-plan.md`. No hosted changes were performed.

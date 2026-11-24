@@ -17,8 +17,9 @@ import { PageHeader, StatCard } from "@/components/voom/redesign/ui";
  * Nothing here publishes, sends, spends or changes Autopilot behaviour: every
  * decision is the existing `/api/mara/actions/{id}` call.
  */
-export function ApprovalsWorkspace({ initial, reelTaskCount = 0, drafts = {}, publishesThisWeek = null }: {
+export function ApprovalsWorkspace({ initial, reelTaskCount = 0, drafts = {}, publishesThisWeek = null, timeZone = "Asia/Dubai" }: {
   initial: ApprovalItem[];
+  timeZone?: string;
   reelTaskCount?: number;
   drafts?: Record<string, ApprovalDraftFacts>;
   publishesThisWeek?: { count: number; next: string | null } | null;
@@ -49,7 +50,7 @@ export function ApprovalsWorkspace({ initial, reelTaskCount = 0, drafts = {}, pu
         <StatCard icon="cal" value={publishesThisWeek?.count ?? "—"} label="Scheduled · next 7 days" tone="brand" note={publishesThisWeek?.next ? <span className="font-normal text-text-2">Next: {publishesThisWeek.next}</span> : undefined} />
         <StatCard icon="warn" value={retryable} label="Retry needed" tone={retryable ? "coral" : "green"} note={reelTaskCount > 0 ? <span className="font-normal text-text-2">{reelTaskCount} Reel production choice{reelTaskCount === 1 ? "" : "s"}</span> : undefined} />
       </div>
-      <ApprovalsBoard items={items} setItems={setItems} drafts={drafts} onDecision={() => router.refresh()} />
+      <ApprovalsBoard timeZone={timeZone} items={items} setItems={setItems} drafts={drafts} onDecision={() => router.refresh()} />
     </div>
   );
 }

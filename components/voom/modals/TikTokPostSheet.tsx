@@ -45,6 +45,7 @@ interface SheetData {
   caption: string;
   scheduledAt: string | null;
   settings: TikTokPostSettings | null;
+  contentVersion: number;
   video: { previewUrl: string | null; mimeType: string; displayName: string; publishable: boolean } | null;
 }
 
@@ -177,6 +178,7 @@ export function TikTokPostSheet({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           caption: caption.trim(),
+          contentVersion: data.contentVersion,
           ...settings,
           scheduledAt: when === "schedule" ? new Date(schedule).toISOString() : null,
           videoDurationSec: duration,

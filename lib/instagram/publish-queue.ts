@@ -56,9 +56,11 @@ export async function enqueuePublishItem(
     caption: string;
     scheduledAt: string;
     waitingForMedia?: boolean;
+    contentVersion?: number;
   },
 ): Promise<PublishQueueRow | null> {
-  const { data, error } = await db.rpc("upsert_instagram_publish_queue_item", {
+  const { data, error } = await db.rpc(input.contentVersion === undefined ? "upsert_instagram_publish_queue_item" : "enqueue_reviewed_instagram_post", {
+    ...(input.contentVersion === undefined ? {} : { p_content_version: input.contentVersion }),
     p_owner_user_id: input.ownerId,
     p_draft_id: input.draftId,
     p_calendar_item_id: input.calendarItemId,
@@ -159,6 +161,9 @@ export async function repairNotApprovedItems(
   db: SupabaseClient,
   options: { limit?: number; now?: Date } = {},
 ): Promise<number> {
+  // The SQL boundary expires old candidates before this best-effort repair.
+  const { error: expiryError } = await db.rpc("expire_instagram_publish_jobs", { p_now: (options.now ?? new Date()).toISOString() });
+  if (expiryError) return 0;
   const limit = Math.min(Math.max(options.limit ?? 25, 1), 100);
   const { data, error } = await db.from(PUBLISH_QUEUE_TABLE)
     .select(PUBLISH_QUEUE_COLUMNS)

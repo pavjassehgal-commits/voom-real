@@ -256,7 +256,7 @@ test("0045 backfills existing Campaigns v2 rows and leaves every one of them rea
   // ── Migrate ──
   const applied = await applyPending();
   assert.ok(applied.includes(MIGRATION_0045), "0045 is applied to the legacy database");
-  assert.equal(applied[applied.length - 1], "0078_instagram_callback_receipts.sql", "0078 Instagram callback receipts is the newest checked-in migration");
+  assert.equal(applied[applied.length - 1], "0080_approval_safety.sql", "0080 approval safety is the newest checked-in migration");
 
   const q = async (sql, params = []) => (await legacy.query(sql, params)).rows;
 

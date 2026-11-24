@@ -5,6 +5,9 @@
 import { beginHapticGesture, haptic } from "@/lib/voom/haptics";
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import Link from "next/link";
+import { draftApprovalTarget } from "@/lib/mara/approval-target";
+import { checkSchedule } from "@/lib/voom/schedule-guard";
+import { localDate, localMinutes } from "@/lib/voom/timezone";
 import { useRouter } from "next/navigation";
 import { PostEditorModal } from "@/components/voom/modals/PostEditorModal";
 import { SocialEditorModal } from "@/components/voom/modals/SocialEditorModal";
@@ -48,8 +51,9 @@ const QUEUE_TABS: { id: QueueTab; label: string }[] = [
  * (the draft changed, or its media is not ready) the refreshed card it returns
  * replaces the stale one and the reason stays visible — nothing is approved.
  */
-export function ApprovalsBoard({ items, setItems, onDecision, drafts = {} }: {
+export function ApprovalsBoard({ items, setItems, onDecision, drafts = {}, timeZone = "Asia/Dubai" }: {
   items: ApprovalItem[];
+  timeZone?: string;
   setItems: Dispatch<SetStateAction<ApprovalItem[]>>;
   onDecision: () => void;
   drafts?: Record<string, ApprovalDraftFacts>;
@@ -59,7 +63,7 @@ export function ApprovalsBoard({ items, setItems, onDecision, drafts = {} }: {
   async function decide(id: string, decision: "confirm" | "cancel" | "edit" | "production", changes?: Record<string, unknown>) {
     const gesture = beginHapticGesture(); // synchronous: the click that made this decision
     setBusy(id); setError("");
-    const payload = decision === "production" ? { decision, method: changes?.method } : { decision, changes };
+    const payload = decision === "production" ? { decision, method: changes?.method } : { decision, changes, reviewedAt: items.find((item) => item.id === id)?.updated_at, contentVersion: items.find((item) => item.id === id)?.new_value?.contentVersion };
     const response = await fetch(`/api/mara/actions/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     const body = await response.json() as { action?: ApprovalItem; error?: string };
     if (body.action) { const action = body.action; setItems((current) => current.map((item) => item.id === id ? action : item)); window.dispatchEvent(new Event("voom:data-changed")); }
@@ -162,7 +166,7 @@ export function ApprovalsBoard({ items, setItems, onDecision, drafts = {} }: {
                   <span className="block truncate text-[14.5px] font-semibold text-text">{titleOf(item)}</span>
                   <span className="block truncate text-[12.5px] text-text-2">{draft ? `${draft.contentTypeLabel} · ${draft.channelLabel}` : String(item.new_value?.channel ?? labelForTool(item.tool_name))}</span>
                 </span>
-                <span className="hidden shrink-0 text-right text-[12.5px] text-text-2 sm:block">{scheduledFact(item)}</span>
+                <span className="hidden shrink-0 text-right text-[12.5px] text-text-2 sm:block">{scheduledFact(item, timeZone)}</span>
                 <QueueStatus item={item} draft={draft} />
               </button>
             </li>;
@@ -208,7 +212,7 @@ export function ApprovalsBoard({ items, setItems, onDecision, drafts = {} }: {
           {selected.tool_name === "choose_reel_production"
             ? <ReelProductionCard item={selected} busy={busy === selected.id} onDecision={decide} onProduce={produce} onProduceVideo={produceVideo} onRefresh={refreshItem} />
             : selected.status === "pending" || selected.status === "failed"
-              ? <ApprovalCard key={selected.id} item={selected} busy={busy === selected.id} onDecision={decide} confirmBlockedReason={mediaBlocked} />
+              ? <ApprovalCard key={`${selected.id}:${selected.updated_at}`} timeZone={timeZone} item={selected} busy={busy === selected.id} onDecision={decide} confirmBlockedReason={mediaBlocked} />
               : <p className="text-sm text-text-2">{selected.result_summary || selected.summary}</p>}
         </div>
         <section className="mt-5">
@@ -405,17 +409,19 @@ function uploadFormData(url: string, form: FormData, onProgress: (percent: numbe
 }
 function formatBytes(bytes: number) { return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`; }
 
-function ApprovalCard({ item, busy, onDecision, confirmBlockedReason }: { item: ApprovalItem; busy: boolean; onDecision: Decision; confirmBlockedReason?: string }) {
+function ApprovalCard({ item, busy, onDecision, confirmBlockedReason, timeZone }: { timeZone: string; item: ApprovalItem; busy: boolean; onDecision: Decision; confirmBlockedReason?: string }) {
   const [editing, setEditing] = useState(false); const [text, setText] = useState(() => editableText(item.new_value));
-  const [publishAt, setPublishAt] = useState(() => toDubaiLocal(item.new_value?.publishAt)); const [validation, setValidation] = useState("");
-  const failed = item.status === "failed"; const detail = details(item); const contentApproval = isEditableCalendarContent(item);
+  const [publishAt, setPublishAt] = useState(() => toBusinessLocal(item.new_value?.publishAt, timeZone)); const [validation, setValidation] = useState("");
+  const target = item.tool_name === "approve_draft" && typeof item.new_value?.draftKind === "string"
+    ? draftApprovalTarget(item.new_value.draftKind, String(item.new_value.draftId ?? "")) : null;
+  const failed = item.status === "failed"; const detail = target ? { ...details(item), href: target.href, link: target.label } : details(item); const contentApproval = isEditableCalendarContent(item);
   async function save() {
     setValidation("");
     if (contentApproval) {
-      const content = text.trim(); const scheduled = fromDubaiLocal(publishAt);
+      const content = text.trim(); const checked = checkSchedule({ date: publishAt.slice(0, 10), time: publishAt.slice(11, 16), timeZone }); const scheduled = checked.ok ? checked.publishAt : null;
       if (!content) return setValidation("Caption cannot be empty.");
-      if (!scheduled) return setValidation("Choose a valid publishing date and time.");
-      if (new Date(scheduled).getTime() < Date.now() - 300000) return setValidation("Choose a time that has not already passed.");
+      if (!scheduled) return setValidation(checked.ok ? "Choose a future time." : checked.error);
+      if (new Date(scheduled).getTime() <= Date.now() + 60_000) return setValidation("Choose a time that has not already passed.");
       if (await onDecision(item.id, "edit", { content, publishAt: scheduled })) setEditing(false);
       return;
     }
@@ -427,24 +433,25 @@ function ApprovalCard({ item, busy, onDecision, confirmBlockedReason }: { item: 
     <dl className="mt-4 grid min-w-0 gap-3 text-sm sm:grid-cols-2">
       <Info label="Why Voom recommends it" value={detail.why} />
       <Info label="Channel" value={detail.channel} />
-      <Info label="Scheduled for" value={scheduledFact(item)} />
+      <Info label="Scheduled for" value={scheduledFact(item, timeZone)} />
     </dl>
     {contentApproval && !editing && <div className="mt-4 min-w-0 rounded-2xl border border-line bg-[var(--surface)]/70 p-3.5">
       <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-text-3">Content preview</span>
       <p className="mt-1.5 max-h-[220px] overflow-hidden whitespace-pre-wrap text-[13px] leading-relaxed text-text-2">{String(item.new_value?.content ?? "").slice(0, 1500)}</p>
       {typeof item.new_value?.topic === "string" && item.new_value.topic ? <p className="mt-2 text-[11.5px] text-text-3">Topic: {String(item.new_value.topic)}</p> : null}
     </div>}
-    {item.old_value && <Values title="Current" value={item.old_value} />}
-    {editing ? <div className="mt-4 space-y-3"><label className="block"><span className="mb-1.5 block text-xs font-semibold text-text-2">{contentApproval ? "Instagram caption" : `Edit proposed ${editableKey(item.new_value)?.replaceAll("_", " ") ?? "content"}`}</span><Textarea rows={7} value={text} maxLength={12000} onChange={(event) => setText(event.target.value)} /></label>{contentApproval && <label className="block"><span className="mb-1.5 block text-xs font-semibold text-text-2">Scheduled date and time</span><Input type="datetime-local" value={publishAt} onInput={(event) => setPublishAt(event.currentTarget.value)} /></label>}{validation && <p role="alert" className="text-sm text-red">{validation}</p>}</div> : item.new_value && <Values title="Exact proposed change" value={item.new_value} />}
+    {item.old_value && <Values timeZone={timeZone} title="Current" value={item.old_value} />}
+    {editing ? <div className="mt-4 space-y-3"><label className="block"><span className="mb-1.5 block text-xs font-semibold text-text-2">{contentApproval ? "Instagram caption" : `Edit proposed ${editableKey(item.new_value)?.replaceAll("_", " ") ?? "content"}`}</span><Textarea rows={7} value={text} maxLength={12000} onChange={(event) => setText(event.target.value)} /></label>{contentApproval && <label className="block"><span className="mb-1.5 block text-xs font-semibold text-text-2">Scheduled date and time ({timeZone})</span><Input type="datetime-local" value={publishAt} onInput={(event) => setPublishAt(event.currentTarget.value)} /></label>}{validation && <p role="alert" className="text-sm text-red">{validation}</p>}</div> : item.new_value && <Values timeZone={timeZone} title="Exact proposed change" value={item.new_value} />}
+    {target && <p className="mt-3 text-sm text-text-2">{target.reason}</p>}
     {failed && <p className="mt-3 text-sm text-red">{item.error_summary ?? "The previous attempt failed safely. Nothing was changed."}</p>}
-    <div className="mt-4 flex flex-wrap gap-2">{editing ? <><Btn size="sm" variant="primary" disabled={busy || !text.trim() || (contentApproval && !publishAt)} onClick={() => void save()}>Save edit</Btn><Btn size="sm" variant="ghost" onClick={() => { setEditing(false); setValidation(""); setText(editableText(item.new_value)); setPublishAt(toDubaiLocal(item.new_value?.publishAt)); }}>Cancel edit</Btn></> : <><Btn size="sm" variant="primary" disabled={busy || Boolean(confirmBlockedReason)} title={confirmBlockedReason} onClick={() => void onDecision(item.id, "confirm")}>{failed ? "Retry" : "Confirm"}</Btn><Btn size="sm" variant="outline" disabled={busy || !editableKey(item.new_value)} onClick={() => setEditing(true)}>Edit</Btn>{!failed && <Btn size="sm" variant="danger" disabled={busy} onClick={() => void onDecision(item.id, "cancel")}>Cancel</Btn>}<Link href={detail.href} className="inline-flex h-[34px] items-center rounded-[9px] border border-line px-3.5 text-[13px] font-semibold hover:border-brand">{detail.link} →</Link></> }</div>
+    <div className="mt-4 flex flex-wrap gap-2">{editing ? <><Btn size="sm" variant="primary" disabled={busy || !text.trim() || (contentApproval && !publishAt)} onClick={() => void save()}>Save edit</Btn><Btn size="sm" variant="ghost" onClick={() => { setEditing(false); setValidation(""); setText(editableText(item.new_value)); setPublishAt(toBusinessLocal(item.new_value?.publishAt, timeZone)); }}>Cancel edit</Btn></> : <><Btn size="sm" variant="primary" disabled={busy || Boolean(confirmBlockedReason) || Boolean(target)} title={target?.reason ?? confirmBlockedReason} onClick={() => void onDecision(item.id, "confirm")}>{failed ? "Retry" : "Confirm"}</Btn><Btn size="sm" variant="outline" disabled={busy || !editableKey(item.new_value)} onClick={() => setEditing(true)}>Edit</Btn>{!failed && <Btn size="sm" variant="danger" disabled={busy} onClick={() => void onDecision(item.id, "cancel")}>Cancel</Btn>}<Link href={detail.href} className="inline-flex h-[34px] items-center rounded-[9px] border border-line px-3.5 text-[13px] font-semibold hover:border-brand">{detail.link} →</Link></> }</div>
     <p className="mt-3 text-[11px] leading-relaxed text-text-3">Confirm changes Voom data only. It never publishes, sends, deletes externally, or spends money without separate permission.</p>
   </div></div>;
 }
 const MONTH_ABBREVIATIONS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 /** The action's own proposed publish instant, in the business timezone. */
-function scheduledFact(item: ApprovalItem) {
-  const local = toDubaiLocal(item.new_value?.publishAt);
+function scheduledFact(item: ApprovalItem, timeZone: string) {
+  const local = toBusinessLocal(item.new_value?.publishAt, timeZone);
   if (!local) return "Not scheduled yet";
   const [date, time] = local.split("T");
   const [year, month, day] = date.split("-").map(Number);
@@ -454,13 +461,16 @@ function scheduledFact(item: ApprovalItem) {
   return `${MONTH_ABBREVIATIONS[month - 1] ?? ""} ${day}, ${year} · ${hour12}:${String(minute).padStart(2, "0")} ${suffix}`;
 }
 function Info({ label, value }: { label: string; value: string }) { return <div><dt className="text-xs font-semibold text-text-3">{label}</dt><dd className="mt-1 leading-relaxed text-text-2">{value}</dd></div>; }
-function Values({ title, value }: { title: string; value: Record<string, unknown> }) { const rows = Object.entries(value).filter(([key, entry]) => !key.toLowerCase().includes("id") && (typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean")).slice(0, 12); if (!rows.length) return null; return <div className="mt-4 rounded-xl border border-line bg-surface-2 p-3.5"><b className="text-xs uppercase tracking-wide text-text-3">{title}</b><dl className="mt-2 grid gap-2">{rows.map(([key, entry]) => <div key={key} className="grid gap-1 text-sm sm:grid-cols-[150px_1fr]"><dt className="capitalize text-text-3">{key.replaceAll("_", " ").replaceAll(/([A-Z])/g, " $1")}</dt><dd className="whitespace-pre-wrap break-words">{formatValue(key, entry)}</dd></div>)}</dl></div>; }
+function Values({ title, value, timeZone = "Asia/Dubai" }: { title: string; value: Record<string, unknown>; timeZone?: string }) { const rows = Object.entries(value).filter(([key, entry]) => !key.toLowerCase().includes("id") && (typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean")).slice(0, 12); if (!rows.length) return null; return <div className="mt-4 rounded-xl border border-line bg-surface-2 p-3.5"><b className="text-xs uppercase tracking-wide text-text-3">{title}</b><dl className="mt-2 grid gap-2">{rows.map(([key, entry]) => <div key={key} className="grid gap-1 text-sm sm:grid-cols-[150px_1fr]"><dt className="capitalize text-text-3">{key.replaceAll("_", " ").replaceAll(/([A-Z])/g, " $1")}</dt><dd className="whitespace-pre-wrap break-words">{formatValue(key, entry, timeZone)}</dd></div>)}</dl></div>; }
 function details(item: ApprovalItem) { const calendar = item.tool_name.includes("calendar"); const campaign = item.tool_name.includes("campaign"); const approval = item.tool_name.includes("approve"); return { why: typeof item.new_value?.reason === "string" ? item.new_value.reason : calendar ? "This keeps the proposed content timing aligned with your current plan." : campaign ? "This prepares campaign work for review without sending it." : approval ? "This records your decision before any later execution step." : "This protected change needs your review before Voom applies it.", channel: String(item.new_value?.channel ?? (campaign ? "Campaign" : approval ? "Content" : "Voom")), href: calendar ? "/app/calendar" : campaign ? "/app/campaigns" : "/app/plan", link: calendar ? "View calendar" : campaign ? "View campaign" : "View plan" }; }
 function editableKey(value: Record<string, unknown> | null) { if (!value) return null; return ["content", "caption", "title", "topic", "objective", "publishAt", "proposedSendAt", "budget"].find((key) => typeof value[key] === "string") ?? null; }
 function editableText(value: Record<string, unknown> | null) { const key = editableKey(value); return key ? String(value?.[key] ?? "") : ""; }
-function formatValue(key: string, value: unknown) { if (typeof value === "string" && /(at|time|date)$/i.test(key) && !Number.isNaN(Date.parse(value))) return new Date(value).toLocaleString("en-AE", { timeZone: "Asia/Dubai" }); return String(value); }
-function isEditableCalendarContent(item: ApprovalItem) { return item.tool_name === "propose_calendar_item" && typeof item.new_value?.content === "string" && typeof item.new_value?.publishAt === "string" && typeof item.new_value?.sourceDraftId === "string"; }
-function toDubaiLocal(value: unknown) { if (typeof value !== "string" || Number.isNaN(Date.parse(value))) return ""; const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dubai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(value)); const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? ""; return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`; }
-function fromDubaiLocal(value: string) { return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}:00+04:00`)) ? `${value}:00+04:00` : null; }
+function formatValue(key: string, value: unknown, timeZone: string) { if (typeof value === "string" && /(at|time|date)$/i.test(key) && !Number.isNaN(Date.parse(value))) return new Date(value).toLocaleString("en-AE", { timeZone }); return String(value); }
+function isEditableCalendarContent(item: ApprovalItem) { return item.tool_name === "propose_calendar_item" && typeof item.new_value?.content === "string" && typeof item.new_value?.publishAt === "string"; }
+function toBusinessLocal(value: unknown, timeZone: string) {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return "";
+  const at = new Date(value); const minutes = localMinutes(at, timeZone);
+  return `${localDate(at, timeZone)}T${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
 function methodLabel(method: string) { return method === "create_with_mara" ? "Create with MARA" : method === "film_yourself" ? "Film it myself" : "Use existing asset"; }
 function statusLabel(status: string) { return status === "produced" ? "Ready for review" : status === "video_generating" ? "Generating video" : status === "video_processing" ? "Processing video" : status === "video_preparing" ? "Preparing video" : status === "video_failed" ? "Video needs retry" : status === "producing" ? "Producing" : status === "preparing" ? "Preparing" : status === "production_failed" ? "Production needs retry" : status === "ready_for_mara_production" ? "Ready for MARA" : status === "waiting_for_filming" ? "Waiting for filming" : status === "waiting_for_asset_upload" ? "Waiting for upload" : "Choice saved"; }

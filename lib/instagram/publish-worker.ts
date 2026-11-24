@@ -102,7 +102,7 @@ export async function runInstagramPublishing(deps: WorkerDeps = {}): Promise<Pub
   result.claimed = items.length;
   timeline("run_started", { budgetMs });
   const client = (deps.clientFor ?? ((value: InstagramConfig) => new InstagramClient(value)))(config);
-  const ports = buildPorts(db, client, config, sleep, { remainingBudgetMs, timeline });
+  const ports = buildPorts(db, client, config, sleep, { remainingBudgetMs, timeline, now: () => now().getTime() });
 
   for (const row of items) {
     const item = toFlowItem(row);
@@ -157,13 +157,14 @@ export function buildPorts(
   sleep: (ms: number) => Promise<void>,
   options: {
     remainingBudgetMs?: () => number;
+    now?: () => number;
     timeline?: (event: PublishTimelineEvent, input?: PublishTimelineInput) => void;
   } = {},
 ): FlowPorts {
   const timeline = options.timeline;
   return {
     async loadDraft(ownerId, draftId) {
-      const { data } = await db.from("mara_drafts").select("status,content,content_version,approved_content_version")
+      const { data } = await db.from("mara_drafts").select("status,content,content_version,approved_content_version,proposed_publish_at")
         .eq("owner_user_id", ownerId).eq("id", draftId).maybeSingle();
       if (!data) return null;
       // An approval that does not cover the current version is no approval.
@@ -173,6 +174,7 @@ export function buildPorts(
         status: data.status === "approved" && !current ? "draft" : String(data.status ?? ""),
         content: String(data.content ?? ""),
         contentVersion: Number(data.content_version),
+        publishAt: data.proposed_publish_at ? String(data.proposed_publish_at) : null,
       };
     },
     async approvalStillCurrent(ownerId, draftId, contentVersion) {
@@ -251,6 +253,7 @@ export function buildPorts(
       });
     },
     sleep,
+    ...(options.now ? { now: options.now } : {}),
     ...(options.remainingBudgetMs ? { remainingBudgetMs: options.remainingBudgetMs } : {}),
     ...(timeline ? { timeline: (event: PublishTimelineEvent, input: PublishTimelineInput) => timeline(event, input) } : {}),
   };

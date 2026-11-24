@@ -131,13 +131,13 @@ test("both scheduling endpoints enforce the shared business-timezone guard", asy
 
 test("the post editor guards on the client too — never just HTML min attributes", async () => {
   const editor = await read("components/voom/modals/PostEditorModal.tsx");
-  assert.match(editor, /minScheduleDate\(\)/);
-  assert.match(editor, /minScheduleTime\(date\)/);
-  assert.match(editor, /checkSchedule\(\{ date, time \}\)/);
+  assert.match(editor, /minScheduleDate\(new Date\(\), businessTimeZone\)/);
+  assert.match(editor, /minScheduleTime\(date, new Date\(\), businessTimeZone\)/);
+  assert.match(editor, /checkSchedule\(\{ date, time, timeZone: businessTimeZone \}\)/);
   // The stored instant comes from the guard, not a browser-local Date.
   assert.doesNotMatch(editor, /new Date\`\$\{date\}T\$\{time|new Date\(\`\$\{date\}/);
   // Schedule fields are read in the business timezone.
-  assert.match(editor, /isoToLocalDate\(.*DEFAULT_TIMEZONE\)/);
+  assert.match(editor, /isoToLocalDate\(.*businessTimeZone\)/);
 });
 
 test("the approval edit dialog validates the edited schedule too", async () => {

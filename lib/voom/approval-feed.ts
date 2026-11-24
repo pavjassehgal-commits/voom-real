@@ -23,5 +23,12 @@ export async function loadApprovalFeed(db: SupabaseClient, ownerId: string, pend
     if (page.data.length < 250) break;
     page = await openPage(page.data[page.data.length - 1].id);
   }
+  const legacy = [...actions.values()].filter((row) => row.tool_name === "approve_draft" && typeof row.new_value?.draftId === "string");
+  if (legacy.length) {
+    const { data: drafts, error } = await db.from("mara_drafts").select("id,kind").eq("owner_user_id", ownerId).in("id", legacy.map((row) => row.new_value.draftId));
+    if (error) throw new Error("approval_feed_unavailable");
+    const kinds = new Map((drafts ?? []).map((row) => [row.id, row.kind]));
+    for (const row of legacy) row.new_value = { ...row.new_value, draftKind: kinds.get(row.new_value.draftId) ?? "missing" };
+  }
   return [...actions.values()].sort((a, b) => b.created_at.localeCompare(a.created_at));
 }

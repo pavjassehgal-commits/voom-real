@@ -100,9 +100,10 @@ test("approval and rejection are owner-scoped and rejection withdraws publishabl
   const actionRoute = await readFile(new URL("app/api/mara/actions/[id]/route.ts", ROOT), "utf8");
   const postData = await readFile(new URL("lib/post/server-data.ts", ROOT), "utf8");
   assert.match(actionRoute, /executeConfirmedAction/);
-  assert.match(actionRoute, /rejectPostDraft\(admin, user\.id, sourceDraftId\)/);
+  assert.match(actionRoute, /rejectPostDraft\(admin, user\.id, sourceDraftId, id\)/);
   assert.match(postData, /export async function rejectPostDraft/);
-  assert.match(postData, /cancelPostSchedule\(admin, ownerId, draftId\)/);
-  assert.match(postData, /resolveDraftApprovalActions\(admin, ownerId, draftId, "cancelled"/);
+  assert.match(postData, /rpc\("reject_reviewed_post"/);
+  const sql = await readFile(new URL("supabase/migrations/0080_approval_safety.sql", ROOT), "utf8");
+  assert.match(sql, /set status='cancelled'/);
   assert.match(postData, /\.eq\("owner_user_id", ownerId\)/);
 });
