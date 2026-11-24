@@ -504,4 +504,113 @@ begin
 end $$;
 revoke all on function public.reschedule_reviewed_draft(uuid,uuid,bigint,timestamptz) from public,anon,authenticated;
 grant execute on function public.reschedule_reviewed_draft(uuid,uuid,bigint,timestamptz) to service_role;
+
+-- Extend 0059 Pause-all for 0080 intermediate queue states; same signature,
+-- owner/business locking, provenance, idempotency and service-only ACL.
+create or replace function public.pause_all_automation(
+  p_owner_user_id uuid,
+  p_idempotency_key text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_business public.businesses;
+  v_existing jsonb;
+  v_existing_action text;
+  v_instagram integer := 0;
+  v_youtube integer := 0;
+  v_tiktok integer := 0;
+  v_flows integer := 0;
+  v_inflight integer := 0;
+  v_published integer := 0;
+  v_result jsonb;
+begin
+  if p_owner_user_id is null or char_length(coalesce(p_idempotency_key, '')) not between 16 and 200 then
+    raise exception 'invalid_automation_pause_request';
+  end if;
+  select result, action into v_existing, v_existing_action from public.automation_pause_events
+    where owner_user_id = p_owner_user_id and idempotency_key = p_idempotency_key;
+  if found then
+    if v_existing_action <> 'pause' then raise exception 'automation_idempotency_key_reused'; end if;
+    return v_existing;
+  end if;
+
+  -- Pause and resume both take this owner row lock first, so they serialize.
+  select * into v_business from public.businesses
+    where owner_user_id = p_owner_user_id for update;
+  if not found then raise exception 'automation_owner_not_found'; end if;
+
+  -- A concurrent replay may have committed while this call waited for the
+  -- owner lock. Re-check under that lock so the operation is truly idempotent.
+  select result, action into v_existing, v_existing_action from public.automation_pause_events
+    where owner_user_id = p_owner_user_id and idempotency_key = p_idempotency_key;
+  if found then
+    if v_existing_action <> 'pause' then raise exception 'automation_idempotency_key_reused'; end if;
+    return v_existing;
+  end if;
+
+  update public.businesses set automation_paused_at = coalesce(automation_paused_at, now())
+    where id = v_business.id;
+
+  update public.voom_email_flows set status = 'paused', paused_at = now()
+    where owner_user_id = p_owner_user_id and status = 'active';
+  get diagnostics v_flows = row_count;
+
+  -- Include unclaimed failed rows: 0080 parks reschedule/approval work there
+  -- until queue synchronization. Pause wins even if it waits for that UPDATE.
+  -- Preserve provider identities and claimed/in-progress/published records.
+  -- Resume and ordinary sync must not rearm any row cancelled here.
+  update public.instagram_publish_queue q set status = 'cancelled', claimed_at = null
+    from public.mara_drafts d
+    where q.owner_user_id = p_owner_user_id and q.draft_id = d.id
+      and d.owner_user_id = p_owner_user_id and d.approval_origin = 'autopilot'
+      and q.status in ('scheduled', 'waiting_for_media', 'permission_required', 'failed')
+      and q.claimed_at is null and q.container_id is null and q.instagram_media_id is null;
+  get diagnostics v_instagram = row_count;
+
+  update public.youtube_publish_queue q set status = 'cancelled', claimed_at = null
+    from public.mara_drafts d
+    where q.owner_user_id = p_owner_user_id and q.draft_id = d.id
+      and d.owner_user_id = p_owner_user_id and d.approval_origin = 'autopilot'
+      and q.status in ('scheduled', 'waiting_for_media', 'needs_declaration', 'permission_required', 'failed')
+      and q.claimed_at is null and q.upload_session_url is null and q.youtube_video_id is null;
+  get diagnostics v_youtube = row_count;
+
+  update public.tiktok_publish_queue q set status = 'cancelled', claimed_at = null
+    from public.mara_drafts d
+    where q.owner_user_id = p_owner_user_id and q.draft_id = d.id
+      and d.owner_user_id = p_owner_user_id and d.approval_origin = 'autopilot'
+      and q.status in ('scheduled', 'waiting_for_media', 'needs_declaration', 'permission_required', 'failed')
+      and q.claimed_at is null and q.tiktok_publish_id is null;
+  get diagnostics v_tiktok = row_count;
+
+  select count(*) into v_inflight from (
+    select q.id from public.instagram_publish_queue q join public.mara_drafts d on d.id=q.draft_id and d.owner_user_id=q.owner_user_id
+      where q.owner_user_id=p_owner_user_id and d.approval_origin='autopilot' and q.status <> 'published' and (q.status='publishing' or q.container_id is not null)
+    union all
+    select q.id from public.youtube_publish_queue q join public.mara_drafts d on d.id=q.draft_id and d.owner_user_id=q.owner_user_id
+      where q.owner_user_id=p_owner_user_id and d.approval_origin='autopilot' and q.status <> 'published' and (q.status in ('uploading','provider_processing') or q.upload_session_url is not null)
+    union all
+    select q.id from public.tiktok_publish_queue q join public.mara_drafts d on d.id=q.draft_id and d.owner_user_id=q.owner_user_id
+      where q.owner_user_id=p_owner_user_id and d.approval_origin='autopilot' and q.status <> 'published' and (q.status in ('posting','provider_processing') or q.tiktok_publish_id is not null)
+  ) x;
+  select count(*) into v_published from (
+    select q.id from public.instagram_publish_queue q join public.mara_drafts d on d.id=q.draft_id and d.owner_user_id=q.owner_user_id where q.owner_user_id=p_owner_user_id and d.approval_origin='autopilot' and q.status='published'
+    union all select q.id from public.youtube_publish_queue q join public.mara_drafts d on d.id=q.draft_id and d.owner_user_id=q.owner_user_id where q.owner_user_id=p_owner_user_id and d.approval_origin='autopilot' and q.status='published'
+    union all select q.id from public.tiktok_publish_queue q join public.mara_drafts d on d.id=q.draft_id and d.owner_user_id=q.owner_user_id where q.owner_user_id=p_owner_user_id and d.approval_origin='autopilot' and q.status='published'
+  ) x;
+
+  v_result := jsonb_build_object(
+    'alreadyPaused', v_business.automation_paused_at is not null,
+    'socialJobsStopped', jsonb_build_object('instagram',v_instagram,'youtube',v_youtube,'tiktok',v_tiktok),
+    'lifecycleFlowsPaused', v_flows,
+    'untouched', jsonb_build_object('claimedOrSubmitted',v_inflight,'published',v_published)
+  );
+  insert into public.automation_pause_events(owner_user_id,business_id,idempotency_key,action,result)
+    values (p_owner_user_id,v_business.id,p_idempotency_key,'pause',v_result);
+  return v_result;
+end;
+$$;
 commit;

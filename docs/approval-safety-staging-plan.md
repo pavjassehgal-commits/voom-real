@@ -2,6 +2,28 @@
 
 24 November 2026, Dubai. Local preparation only. Claude's Step 1B verdict was READY FOR STAGING; this document records the small subsequent cancellation fix and the staging gates. It is not evidence that staging was performed or authorization to change a hosted environment.
 
+## Step 1J — Pause-all / rescheduling race (S5)
+
+This correction follows candidate `d9d3442bcac2e40448a7faff63330229b5564ec7` on the same isolated branch. The commit containing this section identifies the new local candidate. Claude reported a real two-session PostgreSQL reproduction; the local regressions below are deterministic SQL interleavings in PGlite, not a repeat of that contention test.
+
+Root cause: 0080 parks a rescheduled queue as `failed / owner_rescheduled_sync_required` while its metadata is synchronized. Pause-all's existing definition in 0059 only cancelled `scheduled` and `waiting_for_media` rows. If reschedule won the row lock first, Pause missed the resulting failed row; subsequent synchronization and Resume could restore publishing without a new review.
+
+Fix: 0080 now replaces `pause_all_automation(uuid,text)` with the same owner-scoped, service-only, idempotent function and existing business/queue lock contract, extending only its queue cancellation predicates. It cancels eligible unclaimed Autopilot failures (including `owner_rescheduled_sync_required` and `owner_approved_sync_required`) and permission/declaration waits as well as scheduled/media waits. It requires `claimed_at IS NULL` and no platform submission/publication identity. Published and in-progress statuses remain excluded. Explicit user-origin drafts and other owners are untouched. No worker, provider, native consent or Resume behavior changed.
+
+The Instagram canonical upsert already refuses cancelled rows. Tests verify both Pause-before-reschedule and reschedule-park-before-Pause, cancellation across synchronization and Resume, repeated Autopilot approval, stale-version refusal, and fresh reviewed owner approval recovering the same queue identity. Additional fixtures cover cancellation states on all three queues, manual/other-owner isolation, claimed/provider-submitted/published preservation and idempotent Pause replay. No native consent shortcut was added.
+
+Migration implications: do not edit or reapply historical 0059. This still-unshipped 0080 candidate adds the replacement; its rollback now also restores the exact original 0059 Pause-all definition, alongside the other four replaced functions. The rollback regression compares all five definitions and ACLs and preserves fixture records. Neither SQL file was applied to a hosted database. If an older 0080 candidate is already installed anywhere, stop and prepare a separately reviewed forward migration with a verified unused number; do not assume rerunning 0080 is a valid release path. Migration-first deployment and app-first rollback fencing remain mandatory. Rollback restores the original narrow Pause predicates and is not an S5 mitigation.
+
+Validation: **273 focused tests passed, zero failed/skipped**; TypeScript passed; lint zero errors /16 existing warnings; whitespace checks passed. The full suite was not rerun for this scoped correction. Logs: `/tmp/voom-step1j-focused.log`, `/tmp/voom-step1j-typecheck.log`, `/tmp/voom-step1j-lint.log` (transient). The new S5 regression failed against the previous Pause predicate and passes with the replacement.
+
+**Claude should rerun S5 on the new commit**, with two real PostgreSQL sessions and the actual migration SQL:
+
+1. Pause A commits first; B's reviewed reschedule must reject cancellation. Resume plus raw/reviewed sync cannot restore the queue.
+2. B begins a transaction, calls reviewed reschedule and holds its parked queue row uncommitted. A starts Pause and must block on that row. B commits; A must cancel the newly committed failed row and report it stopped. After A commits, complete B's delayed metadata sync, Resume and sync again; the row must remain cancelled.
+3. Reverse release order and repeat with approval-sync states; use bounded lock/statement timeouts and capture both backend PIDs, waits and final rows. No provider calls. Verify manual, claimed, provider-owned and published controls remain unchanged. Fresh explicit owner approval of the latest version remains the only allowed Instagram recovery; native recovery retains platform consent.
+
+All hosted staging isolation/fencing prerequisites below remain open. No push, merge, deployment, hosted migration, Production change, external generation or publishing occurred.
+
 ## Step 1D — Final Autopilot cancellation guard
 
 This correction follows reviewed commit `47f9e457dab00dfb5da494c1558913db7c0bf2b4` on the same branch. The commit containing this section is the new local candidate; earlier Step 1C details below are historical.
@@ -30,7 +52,7 @@ Step 1C implementation/test files:
 - `tests/approval-safety-review.test.mjs`
 - `tests/native-approval-review.test.mjs`
 
-Documentation updates are this plan, `docs/approval-safety-review-followup.md`, `ARCHITECTURE.md`, `DECISIONS.md` and `handover/next-session.md`. The rollback SQL is unchanged since Step 1B. The historical Step 1B report records its then-current migration checksum; use the current Step 1D checksum below for this candidate.
+Documentation updates are this plan, `docs/approval-safety-review-followup.md`, `ARCHITECTURE.md`, `DECISIONS.md` and `handover/next-session.md`. The rollback SQL is unchanged since Step 1B. The historical Step 1B report records its then-current migration checksum; use the current Step 1J checksums below for this candidate.
 
 ## Non-negotiable expiry and recovery rules
 
@@ -144,5 +166,5 @@ Step 1C focused suite: **260 passed, zero failed, zero skipped**, adding cancell
 
 No live browser journey, real multi-session PostgreSQL contention, hosted migration/rollback, provider call or staging deployment has occurred here. Independent review of the small cancellation delta and execution of this staging plan remain gates. Ready to stage under separate authorization; not a Production release approval.
 
-Candidate migration SHA-256 (Step 1D): `a186c46be41cb3bc69ce8a361b8f52aad2c9be714c9c5f7276efe7d0119c8a87`.
-Rollback SHA-256 (unchanged): `352bcb281990d59b7be747826b42b960215871b67a59c07d30f449490780565d`.
+Candidate migration SHA-256 (Step 1J): `870c13f40bac51852e69ec99ce918cf2aa9c84e4307fca1cc5123a0c9629d9c1`.
+Rollback SHA-256 (Step 1J): `059597186be2229ac86c52ad3bc80b17ff3fd10125e2a785edd38e148340b1a2`.

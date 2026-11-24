@@ -181,7 +181,7 @@ test('late reconciliation records only provider-confirmed prior publication, nev
 });
 test('rollback restores original functions and leaves approval, cancelled, expired and published records unchanged',async()=>{
  const fixture=await createSupabaseLite({stopBefore:'0080'});const local=fixture.db;
- const names=['claim_due_instagram_publish_jobs','fail_instagram_publish_job','upsert_instagram_publish_queue_item','reschedule_approved_draft'];
+ const names=['claim_due_instagram_publish_jobs','fail_instagram_publish_job','upsert_instagram_publish_queue_item','reschedule_approved_draft','pause_all_automation'];
  const defs=async()=>JSON.stringify((await local.query("select proname,pg_get_functiondef(p.oid) def,proacl::text acl from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname=any($1) order by proname",[names])).rows);
  const before=await defs();await fixture.applyPending();
  await local.query('insert into auth.users(id) values($1)',[OWNER]);await local.query("insert into public.businesses(owner_user_id) values($1)",[OWNER]);
