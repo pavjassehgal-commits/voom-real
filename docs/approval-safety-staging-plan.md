@@ -1,6 +1,16 @@
-# VOOM Step 1C — Staging candidate and validation plan
+# VOOM Approval Safety — Staging candidate and validation plan
 
 24 November 2026, Dubai. Local preparation only. Claude's Step 1B verdict was READY FOR STAGING; this document records the small subsequent cancellation fix and the staging gates. It is not evidence that staging was performed or authorization to change a hosted environment.
+
+## Step 1D — Final Autopilot cancellation guard
+
+This correction follows reviewed commit `47f9e457dab00dfb5da494c1558913db7c0bf2b4` on the same branch. The commit containing this section is the new local candidate; earlier Step 1C details below are historical.
+
+The terminal-row reopening UPDATE in `approve_reviewed_post` now requires `p_origin = 'user'`. Autopilot can no longer reopen a Pause-all cancellation (or reopen an expired terminal row through this UPDATE). Approval behavior outside this UPDATE is unchanged. Provider-owned/published state, exact reviewed version, ownership, media and future-schedule guards remain in place.
+
+A real SQL regression first failed against the reviewed migration, then passed with the guard. For both draft and already-approved items it exercises repeated Autopilot approval followed by ordinary and reviewed queue synchronization; the complete cancelled queue row stays unchanged. The owner test rejects a stale version, then verifies correct reviewed approval schedules the same queue identity without provider IDs. These are embedded PostgreSQL tests, not hosted or multi-session testing.
+
+Step 1D validation: **261 focused tests passed, zero failed/skipped**; TypeScript passed; lint zero errors /16 warnings. Full suite was not rerun for this minimal correction. Staging must additionally exercise Autopilot after Pause all and verify no queue reopening before a fresh explicit owner approval. Existing migration-first fencing, rollback sequence and all unexecuted staging gates below still apply. No hosted SQL, deployment or publishing occurred.
 
 ## Candidate and change since review
 
@@ -20,7 +30,7 @@ Step 1C implementation/test files:
 - `tests/approval-safety-review.test.mjs`
 - `tests/native-approval-review.test.mjs`
 
-Documentation updates are this plan, `docs/approval-safety-review-followup.md`, `ARCHITECTURE.md`, `DECISIONS.md` and `handover/next-session.md`. The rollback SQL is unchanged since Step 1B. The historical Step 1B report records its then-current migration checksum; use the Step 1C checksum below for this candidate.
+Documentation updates are this plan, `docs/approval-safety-review-followup.md`, `ARCHITECTURE.md`, `DECISIONS.md` and `handover/next-session.md`. The rollback SQL is unchanged since Step 1B. The historical Step 1B report records its then-current migration checksum; use the current Step 1D checksum below for this candidate.
 
 ## Non-negotiable expiry and recovery rules
 
@@ -134,5 +144,5 @@ Step 1C focused suite: **260 passed, zero failed, zero skipped**, adding cancell
 
 No live browser journey, real multi-session PostgreSQL contention, hosted migration/rollback, provider call or staging deployment has occurred here. Independent review of the small cancellation delta and execution of this staging plan remain gates. Ready to stage under separate authorization; not a Production release approval.
 
-Candidate migration SHA-256: `d8223e28bedaa0b80a37d1f59882a40d028bf647eaa6a85f46eabb65b2207489`.
+Candidate migration SHA-256 (Step 1D): `a186c46be41cb3bc69ce8a361b8f52aad2c9be714c9c5f7276efe7d0119c8a87`.
 Rollback SHA-256 (unchanged): `352bcb281990d59b7be747826b42b960215871b67a59c07d30f449490780565d`.

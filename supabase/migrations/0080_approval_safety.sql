@@ -74,11 +74,11 @@ begin
     update public.mara_pending_actions set status='confirmed',result_summary='Approved the reviewed version.',error_summary=null,executed_at=clock_timestamp()
       where id=p_action_id and owner_user_id=p_owner_user_id;
   end if;
-  -- Only this explicit reviewed approval may reopen a terminal queue row.
-  -- Keep it unclaimable until the normal sync has refreshed all queue fields.
+  -- Only explicit owner approval may reopen a terminal queue row; Autopilot
+  -- must preserve Pause-all cancellations. Keep it unclaimable until sync.
   update public.instagram_publish_queue set status='failed',failure_code='owner_approved_sync_required',
     failure_message='Owner approved the current version; synchronize this item to finish scheduling.'
-    where owner_user_id=p_owner_user_id and draft_id=p_draft_id and container_id is null and instagram_media_id is null
+    where p_origin='user' and owner_user_id=p_owner_user_id and draft_id=p_draft_id and container_id is null and instagram_media_id is null
       and (status='cancelled' or failure_code='instagram_schedule_expired');
   -- Close only snapshots covering this version; obsolete cards cannot later run.
   update public.mara_pending_actions set

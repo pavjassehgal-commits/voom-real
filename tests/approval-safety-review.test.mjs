@@ -96,10 +96,29 @@ test('ordinary reschedule cannot reactivate cancelled Instagram, TikTok or YouTu
   assert.deepEqual((await db.query(`select * from ${table} where draft_id=$1`,[d.id])).rows[0],before);
  }
 });
+test('Autopilot approval and synchronization cannot reactivate cancelled Instagram work',async()=>{
+ for(const status of ['draft','approved']){
+  const d=await seed({status,queue:'cancelled'});const before=await qrow(d);
+  for(let attempt=0;attempt<2;attempt++){
+   await db.query("select public.approve_reviewed_post($1,$2,$3,'autopilot')",[OWNER,d.id,d.v]);
+   assert.deepEqual(await qrow(d),before);
+   await upsert(d,FUTURE);
+   await db.query("select public.enqueue_reviewed_instagram_post($1,$2,$3,null,'image','Reviewed caption',$4,false)",[OWNER,d.id,d.v,FUTURE]);
+   assert.deepEqual(await qrow(d),before);
+  }
+ }
+});
 test('fresh explicit reviewed Instagram approval can reactivate cancelled work, not a time change',async()=>{
  const d=await seed({queue:'cancelled'});
+ const before=await qrow(d);
+ await assert.rejects(db.query("select public.approve_reviewed_post($1,$2,$3,'user')",[OWNER,d.id,d.v+1]),/approval_content_changed/);
+ assert.deepEqual(await qrow(d),before);
  const approved=await approvePostDraft(admin,OWNER,d.id,{expectedContentVersion:d.v});
- assert.equal(approved.status,'approved');assert.equal((await qrow(d)).status,'scheduled');assert.equal((await qrow(d)).id,d.q);
+ const row=await qrow(d);
+ assert.equal(approved.status,'approved');assert.equal(row.status,'scheduled');assert.equal(row.id,d.q);
+ assert.equal(row.container_id,null);assert.equal(row.instagram_media_id,null);
+ const draft=(await db.query('select content_version,approved_content_version from public.mara_drafts where id=$1',[d.id])).rows[0];
+ assert.equal(Number(draft.content_version),d.v);assert.equal(draft.approved_content_version,draft.content_version);
 });
 test('explicit owner reschedule recovers an expired queue identity and checks the reviewed version',async()=>{
  const d=await seed({at:new Date(Date.now()-3600000).toISOString(),queue:'scheduled'});await claim();
