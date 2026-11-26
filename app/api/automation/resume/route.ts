@@ -1,3 +1,4 @@
+import { readAutomationPauseState } from "@/lib/voom/automation-pause-state";
 import { z } from "zod";
 import { resumeAllAutomation } from "@/lib/voom/automation-safety";
 import { getCurrentUser } from "@/lib/voom/server-data";
@@ -18,12 +19,15 @@ export async function POST(request: Request) {
   const parsed = schema.safeParse(body);
   if (!parsed.success) return Response.json({ error: "Invalid resume request." }, { status: 400 });
   try {
-    const result = await resumeAllAutomation(createAdminClient(), user.id, parsed.data.idempotencyKey);
+    const admin = createAdminClient();
+    const result = await resumeAllAutomation(admin, user.id, parsed.data.idempotencyKey);
+    const pauseState = await readAutomationPauseState(admin, user.id);
     return Response.json({
       resumed: true,
+      pauseState,
       ...result,
       message: result.modeAllowedByPlan
-        ? "Automation resumed for new work. Cancelled posts and paused email flows stay as they are until you restart them."
+        ? "Automation resumed for new work. Cancelled posts need a fresh explicit owner approval; paused email flows must be restarted individually."
         : "The pause is lifted, but your current plan doesn't include this automation mode, so MARA won't act automatically until you change mode or plan.",
     });
   } catch {

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { AutomationMode } from "@/components/voom/operating/AutomationMode";
-import { AutomationPauseControl } from "@/components/voom/automations/AutomationPauseControl";
+import { AutomationPauseControl, AutomationPauseProvider, AutomationPauseBanner, AutomationPauseModeCard } from "@/components/voom/automations/AutomationPauseControl";
 import { EmailFlowsPanel } from "@/components/voom/automations/EmailFlowsPanel";
 import { Icon } from "@/components/voom/icons";
 import { BTN, ChannelGlyph, PageHeader, StatCard, StatusChip } from "@/components/voom/redesign/ui";
@@ -44,7 +44,6 @@ export default async function AutomationsPage() {
   const lifecycle = data.coordinator?.state.emailState;
   const mode = normalizeAutomationMode(data.business.automation_level);
   const modeConfirmed = automationModeConfirmed(data.business.automation_level);
-  const pausedAt = pause?.pausedAt ?? null;
   const items = data.snapshot.items;
   const mediaActive = items.filter((item) => MEDIA_ACTIVE.has(item.status));
   const mediaProblems = items.filter((item) => MEDIA_PROBLEM.has(item.status) || item.status === "failed");
@@ -52,22 +51,17 @@ export default async function AutomationsPage() {
   const lockedModes = (["manual", "assisted", "autopilot"] as const).filter((value) => !plan.allowedModes.includes(value));
   const activity = data.actions.slice(0, 6);
 
-  return <div className="min-w-0">
+  return <AutomationPauseProvider initialState={pause}><div className="min-w-0">
     <PageHeader
       title="Automations"
       subtitle="Choose how much MARA does on its own, pause everything in one step, and manage the email flows that run automatically."
-      actions={pause ? <AutomationPauseControl pausedAt={pausedAt} /> : <span className="text-[13.5px] text-text-3">Pause state unavailable — refresh to retry.</span>}
+      actions={<AutomationPauseControl />}
     />
 
-    {pausedAt && (
-      <div role="status" className="mb-5 flex gap-3 rounded-[18px] border border-[var(--coral)]/25 bg-[var(--coral-soft)] px-5 py-4 text-[14.5px] text-text">
-        <Icon name="warn" size={18} className="mt-0.5 shrink-0 text-[var(--coral)]" />
-        <span><b className="font-semibold text-[var(--coral)]">Automation is paused</b> since {formatWhen(pausedAt, timeZone)}. MARA isn’t starting new automatic work. Resume when you’re ready — cancelled posts and paused email flows stay as they are.</span>
-      </div>
-    )}
+    <AutomationPauseBanner timeZone={timeZone} />
 
     <div className="mb-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-      <StatCard icon="sparkle" value={mode === "autopilot" ? "Autopilot" : mode === "assisted" ? "Assisted" : "Manual"} label={pausedAt ? "Saved mode · paused" : modeConfirmed ? "Current mode" : "Not confirmed yet"} tone="brand" />
+      <AutomationPauseModeCard value={mode === "autopilot" ? "Autopilot" : mode === "assisted" ? "Assisted" : "Manual"} confirmed={modeConfirmed} />
       <StatCard icon="checkCircle" value={waitingOnYou} label="Waiting on your approval" tone="coral" note={waitingOnYou ? <Link href="/app/approvals" className="text-[var(--brand-ink)] hover:underline">Review approvals</Link> : undefined} />
       <StatCard icon="video" value={mediaActive.length} label="Media in progress" tone="blue" />
       <StatCard icon="warn" value={mediaProblems.length} label="Need attention" tone={mediaProblems.length ? "coral" : "green"} />
@@ -151,7 +145,7 @@ export default async function AutomationsPage() {
       <StatusChip status="published" label="Safety always on" small />
       <p className="text-[14px] leading-relaxed text-text-2">No mode can publish externally, send a campaign, delete content, or spend advertising money without a separately saved permission or an explicit confirmation.</p>
     </section>
-  </div>;
+  </div></AutomationPauseProvider>;
 }
 
 function formatWhen(iso: string, timeZone: string) {

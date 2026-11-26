@@ -25,7 +25,7 @@ test("mode PATCH enforces the saved subscription entitlement server-side", async
 test("pause endpoint is authenticated, owner-scoped and idempotent", async () => {
   const route = await read("app/api/automation/pause/route.ts");
   assert.match(route, /getCurrentUser\(\)/);
-  assert.match(route, /pauseAllAutomation\(createAdminClient\(\), user\.id/);
+  assert.match(route, /pauseAllAutomation\(admin, user\.id/);
   assert.match(route, /idempotencyKey: z\.string\(\)\.min\(16\)\.max\(200\)/);
 });
 

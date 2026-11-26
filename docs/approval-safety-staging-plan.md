@@ -2,6 +2,18 @@
 
 24 November 2026, Dubai. Local preparation only. Claude's Step 1B verdict was READY FOR STAGING; this document records the small subsequent cancellation fix and the staging gates. It is not evidence that staging was performed or authorization to change a hosted environment.
 
+## Step 1P — Final pause/resume UI corrections (26 November 2026)
+
+Local UI follow-up to `d10420b4b030044cc9a798d64c23a792108e98db`, on the same isolated branch. No migration, approval transaction, queue, provider worker or native consent mechanism changed. The existing owner-authenticated Pause/Resume routes still call the same RPCs with the same explicit-confirmation and idempotency requirements; responses now additionally include a fresh owner-scoped `automation_paused_at` read as `pauseState`.
+
+The button, status banner and saved-mode label now share one client presentation state. A successful request applies the current server snapshot immediately, without waiting for `router.refresh()`. A newer server snapshot replaces it; success notices inconsistent with that snapshot are cleared. There is one status banner, so stale paused/resumed messages cannot coexist. Missing state is shown as unavailable and offers no guessed running/paused control. A local in-flight guard also prevents duplicate submissions before React updates the disabled controls.
+
+Resume copy now says that cancelled work requires fresh explicit owner approval in the platform editor; changing the time alone cannot resume publishing. Email flows still require individual restart. This changes presentation only, not cancellation or publishing policy.
+
+Validation: **294 focused tests: 293 passed, zero failed, one skipped**. New tests cover reducer transitions, contradictory/concurrently changed server acknowledgements, unavailable state, actual React-rendered button/banner/mode markup, and owner-scoped route snapshots. The interactive Chromium test was skipped because the browser exited during startup; no local or hosted interactive UI success is claimed. TypeScript passes; lint zero errors /16 existing warnings; whitespace checks pass. Full suite not rerun for this scoped follow-up. Logs: `/tmp/voom-step1p-focused.log`, `/tmp/voom-step1p-typecheck.log`, `/tmp/voom-step1p-lint.log` (transient).
+
+Before release, independently repeat Pause -> Resume -> Pause in an authorized browser environment, without manually reloading, including a failed state read and a second-session change. Confirm the action button, banner and mode label agree, Resume explains fresh approval, and per-platform consent remains required. The user reports earlier code/concurrency/staging checks passed for d10420b; those results do not verify this newer UI delta. No hosted resource, Production record, environment or deployment was modified here.
+
 ## Step 1J — Pause-all / rescheduling race (S5)
 
 This correction follows candidate `d9d3442bcac2e40448a7faff63330229b5564ec7` on the same isolated branch. The commit containing this section identifies the new local candidate. Claude reported a real two-session PostgreSQL reproduction; the local regressions below are deterministic SQL interleavings in PGlite, not a repeat of that contention test.

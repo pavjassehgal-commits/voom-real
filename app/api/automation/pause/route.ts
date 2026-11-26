@@ -1,3 +1,4 @@
+import { readAutomationPauseState } from "@/lib/voom/automation-pause-state";
 import { z } from "zod";
 import { pauseAllAutomation } from "@/lib/voom/automation-safety";
 import { getCurrentUser } from "@/lib/voom/server-data";
@@ -13,8 +14,10 @@ export async function POST(request: Request) {
   const parsed = schema.safeParse(body);
   if (!parsed.success) return Response.json({ error: "Invalid pause request." }, { status: 400 });
   try {
-    const result = await pauseAllAutomation(createAdminClient(), user.id, parsed.data.idempotencyKey);
-    return Response.json({ paused: true, ...result });
+    const admin = createAdminClient();
+    const result = await pauseAllAutomation(admin, user.id, parsed.data.idempotencyKey);
+    const pauseState = await readAutomationPauseState(admin, user.id);
+    return Response.json({ paused: true, ...result, pauseState });
   } catch {
     return Response.json({ error: "Voom couldn't pause automation safely. Nothing was reported as stopped." }, { status: 503 });
   }

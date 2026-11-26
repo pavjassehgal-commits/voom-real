@@ -280,7 +280,7 @@ test("resume endpoint: authenticated, explicit confirm, owner from the session, 
   assert.match(route, /status: 401/);
   assert.match(route, /confirm: z\.literal\(true\)/, "nothing resumes without an explicit confirm flag");
   assert.match(route, /\.strict\(\)/);
-  assert.match(route, /resumeAllAutomation\(createAdminClient\(\), user\.id, parsed\.data\.idempotencyKey\)/);
+  assert.match(route, /resumeAllAutomation\(admin, user\.id, parsed\.data\.idempotencyKey\)/);
   // MARA never resumes itself: the only caller of the resume service is the owner route.
   const { execSync } = await import("node:child_process");
   const callers = execSync("grep -rl 'resumeAllAutomation\\|resume_all_automation' app lib || true", { cwd: new URL("../", import.meta.url) }).toString().trim().split("\n").sort();
