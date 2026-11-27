@@ -182,7 +182,7 @@ export function BrandHub({ mode, initialValues, history, plan, automation, onDon
   }
 
   function cancelEdit() {
-    // Images uploaded during a cancelled edit were never saved: delete them.
+    // Cancel the editor references; physical cleanup is deferred server-side.
     if (editing === "assets" && draft) {
       const saved = new Set(values.assets.assets.map((asset) => asset.path));
       for (const asset of (draft as BrandSectionValues["assets"]).assets) {

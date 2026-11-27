@@ -1,4 +1,5 @@
 "use server";
+import { BrandKitReadError, BusinessContextReadError } from "@/lib/brand/context";
 import { approvalConflictMessage } from "@/lib/post/approval-safety";
 
 /**
@@ -129,6 +130,8 @@ export async function producePlanItemMedia(draftId: string, options: { regenerat
     if (outcome.code === "video_start_conflict") return { ok: true, message: mediaOutcomeMessage("exists") };
     // The provider stack is unavailable, so an in-flight job could not even be
     // re-checked: the truthful degraded state, never a claim that work ran.
+    if (outcome.code === "brand_kit_unavailable") return { ok: false, error: new BrandKitReadError().message };
+    if (outcome.code === "business_context_unavailable") return { ok: false, error: new BusinessContextReadError().message };
     if (outcome.code === "video_provider_unavailable") {
       return { ok: false, error: "Create with MARA is temporarily unavailable, so Voom couldn't re-check that generation. Nothing was started and nothing was charged." };
     }

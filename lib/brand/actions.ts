@@ -14,7 +14,7 @@ import { createAdminClient } from "@/utils/supabase/admin";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { appendBrandKitVersion } from "./versions";
 import { isOwnBrandAssetPath, type BrandAsset } from "./assets";
-import { loadNewestBrandAssets, removeBrandAssetObjects, removeUnreferencedBrandAssets } from "./asset-storage";
+import { removeUnreferencedBrandAssets } from "./asset-storage";
 import { syncBrandToEmail } from "./email-sync";
 import { brandSectionMeta, validateBrandSection, answerKeyLabel, type BrandSectionId, type BrandSectionValues } from "./sections";
 
@@ -36,7 +36,6 @@ export async function saveBrandSection(sectionId: string, raw: unknown): Promise
   }
 
   const supabase = await createClient();
-  const previousAssets = validated.assets ? await loadNewestBrandAssets(supabase, user.id) : [];
 
   if (Object.keys(validated.business).length > 0) {
     const { error } = await supabase.from("businesses").update(validated.business).eq("owner_user_id", user.id);
@@ -58,7 +57,7 @@ export async function saveBrandSection(sectionId: string, raw: unknown): Promise
     return { ok: false, error: "Voom couldn't record that change. Apply the latest Supabase migration (0075, brand kits), then try again." };
   }
 
-  if (validated.assets) await afterAssetsSaved(user.id, previousAssets, validated.assets, validated.values as BrandSectionValues["assets"]);
+  if (validated.assets) await afterAssetsSaved(user.id, appended.version, validated.assets, validated.values as BrandSectionValues["assets"]);
 
   // The history line names the keys that really changed, the same set the
   // row records, so a save that changed nothing in a field does not claim it.
@@ -68,18 +67,13 @@ export async function saveBrandSection(sectionId: string, raw: unknown): Promise
 }
 
 /**
- * After an images save: files the owner removed are deleted from storage (a
- * removed image is gone, not hidden), and the logo and colours fill the email
- * brand where it is still empty. Both best-effort: the version is saved.
+ * After an images save: verify the saved snapshot, defer physical deletion to
+ * protect historical/in-flight references, and fill empty email branding.
  */
-async function afterAssetsSaved(ownerId: string, previous: BrandAsset[], next: BrandAsset[], values: BrandSectionValues["assets"]): Promise<void> {
+async function afterAssetsSaved(ownerId: string, savedVersion: number, next: BrandAsset[], values: BrandSectionValues["assets"]): Promise<void> {
   let admin: ReturnType<typeof createAdminClient>;
   try { admin = createAdminClient(); } catch { return; }
-  const kept = new Set(next.map((asset) => asset.path));
-  const removed = previous.map((asset) => asset.path).filter((path) => !kept.has(path));
-  if (removed.length) await removeBrandAssetObjects(admin, ownerId, removed);
-  // Also any file nothing references any more (leftovers of an onboarding never finished).
-  await removeUnreferencedBrandAssets(admin, ownerId, [...kept]);
+  await removeUnreferencedBrandAssets(admin, ownerId, savedVersion);
   const { data: business } = await admin.from("businesses").select("brand_name").eq("owner_user_id", ownerId).maybeSingle()
     .then((result) => result, () => ({ data: null }));
   await syncBrandToEmail(admin, ownerId, { assets: next, colours: values.colours, brandName: String((business as { brand_name?: string } | null)?.brand_name ?? "") });

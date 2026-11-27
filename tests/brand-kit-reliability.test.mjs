@@ -118,3 +118,102 @@ test('shared Reel/Story/native video service refuses a kit read failure before p
   assert.equal(result.status,503);assert.match(result.error,/Brand Kit.*retry/);assert.equal(calls,0);assert(c.calls.every(x=>x.op==='read'));
  }finally{globalThis.fetch=original;for(const[k,v]of Object.entries(saved)){if(v===undefined)delete process.env[k];else process.env[k]=v}}
 });
+
+const {loadNewestBrandAssets,removeUnreferencedBrandAssets,removeBrandAssetObjects}=await import('../lib/brand/asset-storage.ts');
+const {loadBrandContext,BusinessContextReadError}=await import('../lib/brand/context.ts');
+const {loadBrandKitHistory}=await import('../lib/brand/read.ts');
+function image(id,kind,n){return {id:`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`,kind,path:`${id}/${kind}/00000000-0000-4000-8000-${String(n).padStart(12,'0')}.png`,mimeType:'image/png',byteSize:10,description:'Synthetic',chips:[],look:'',describedBy:''}}
+function storageFence(c,objects=new Map()){
+ const calls=[];c.storage={from(){return {remove:async paths=>{calls.push(paths);for(const p of paths)objects.delete(p);return {error:null}},list:async()=>{throw Error('Sweeping uncommitted uploads is forbidden')}}}};
+ return {calls,objects};
+}
+test('review P1 exact sequence: initial asset read fails, later reads/save succeed without uploads, all saved references survive',async()=>{
+ const id=await owner(),logo=image(id,'logo',1),product=image(id,'product',2);use(client());assert.equal((await saveOnboarding({...input(),kit:{...input().kit,assets:[logo,product]}})).ok,true);
+ let first=true;const c=use(client({fail:x=>x.table==='brand_kits'&&x.op==='read'&&first?(first=false,true):false}));
+ const storage=storageFence(c,new Map([[logo.path,true],[product.path,true]]));globalThis.__brandAdmin=c;
+ // This is the old optional pre-read: it must now be unavailable, never [].
+ await assert.rejects(loadNewestBrandAssets(c,id),BrandKitReadError);
+ assert.deepEqual(await loadNewestBrandAssets(c,id),[logo,product]);
+ assert.equal((await saveOnboarding(input())).ok,true);assert.deepEqual((await kits(id)).at(-1).assets,[logo,product]);
+ assert.deepEqual(storage.calls,[]);assert.equal(storage.objects.size,2);
+ const version=(await kits(id)).at(-1).version;await removeUnreferencedBrandAssets(c,id,version);assert.deepEqual(storage.calls,[]);
+});
+test('cleanup retains historical versions, in-flight uploads and other owners across concurrent saves and retries',async()=>{
+ const id=await owner(),other=await owner(),old=image(id,'logo',11),next=image(id,'logo',12),inFlight=image(id,'product',13),foreign=image(other,'logo',14);
+ const c=client();const storage=storageFence(c,new Map([old,next,inFlight,foreign].map(a=>[a.path,true])));
+ const a=await appendBrandKitVersion(c,id,{source:'brand_hub',answers:{},assets:[old]});
+ await Promise.all([removeUnreferencedBrandAssets(c,id,a.version),appendBrandKitVersion(c,id,{source:'brand_hub',answers:{},assets:[next]})]);
+ await removeBrandAssetObjects(c,id,[old.path,inFlight.path,foreign.path]);
+ await removeUnreferencedBrandAssets(client({fail:x=>x.table==='brand_kits'}),id,999);
+ assert.equal(storage.objects.size,4);assert.deepEqual(storage.calls,[]);assert.equal((await kits(id)).length,2);assert.deepEqual((await kits(other)),[]);
+});
+test('business and profile read failures are unavailable, not missing business; successful missing business stays null',async()=>{
+ const id=await owner();assert.equal(await loadBrandContext(base,id),null);
+ for(const table of ['businesses','profiles'])await assert.rejects(loadBrandContext(client({fail:x=>x.table===table}),id),BusinessContextReadError);
+ await assert.rejects(loadBrandContext({from(){throw Error('Transport failed')}},id),BusinessContextReadError);
+ const response=brandKitFailureResponse(new BusinessContextReadError());assert.equal(response.status,503);assert.equal((await response.json()).code,'business_context_unavailable');
+});
+async function reelFixture(id){
+ const conv=(await db.query('insert into public.mara_conversations(owner_user_id) values($1) returning id',[id])).rows[0].id;
+ const draft=(await db.query("insert into public.mara_drafts(owner_user_id,conversation_id,kind,channel,title,content) values($1,$2,'reel','instagram','Synthetic educational tips','Synthetic caption') returning id",[id,conv])).rows[0].id;
+ const action=(await db.query("insert into public.mara_pending_actions(owner_user_id,conversation_id,tool_name,summary,new_value,status,idempotency_key) values($1,$2,'choose_reel_production','Synthetic', $3,'pending',gen_random_uuid()::text) returning id",[id,conv,JSON.stringify({draftId:draft,concept:'Educational tips',script:'Simple educational tips'})])).rows[0].id;
+ return {draft,action};
+}
+test('Reel POST blocks business failures, kit failures and saved restrictions before fallback AI, card writes or credits',async()=>{
+ const id=await owner();use(client());assert.equal((await saveOnboarding(input())).ok,true);const {action}=await reelFixture(id);
+ const saved=process.env.VIDEO_PROVIDER;process.env.VIDEO_PROVIDER='unconfigured-test-provider';
+ try{
+  const route=await import('../app/api/reels/produce/[actionId]/route.ts');
+  for(const [table,code]of [['businesses','business_context_unavailable'],['brand_kits','brand_kit_unavailable'],[null,'brand_restrictions_unavailable']]){
+   const c=client({fail:x=>x.table===table&&x.op==='read'});globalThis.__brandAdmin=c;const response=await route.POST(new Request('https://test.invalid',{method:'POST',body:'{}'}),{params:Promise.resolve({actionId:action})});
+   assert.equal(response.status,503);const body=await response.json();assert.equal(body.code,code);assert.equal(body.retryable,true);assert(c.calls.every(x=>x.op==='read'));
+  }
+  const row=(await kits(id)).at(-1);assert.deepEqual(row.answers.avoid,{rules:['Never promise cures'],words:['guaranteed']});
+ }finally{if(saved===undefined)delete process.env.VIDEO_PROVIDER;else process.env.VIDEO_PROVIDER=saved}
+});
+test('Post image and caption return retryable business-context 503, not profile-incomplete 409',async()=>{
+ const id=await owner();use(client());assert.equal((await saveOnboarding(input())).ok,true);const {draft}=await reelFixture(id);
+ await db.query("update public.mara_drafts set kind='instagram_post' where id=$1",[draft]);
+ await db.query("insert into public.post_draft_assets(owner_user_id,draft_id,storage_path,display_name,mime_type,byte_size) values($1,$2,$3,'test.png','image/png',10)",[id,draft,`${id}/test.png`]);
+ for(const path of ['generate','suggest']){
+  const c=client({fail:x=>x.table==='businesses'&&x.op==='read'});globalThis.__brandAdmin=c;const route=await import(`../app/api/posts/[id]/${path}/route.ts`);
+  const response=await route.POST(new Request('https://test.invalid',{method:'POST',body:'{}'}),{params:Promise.resolve({id:draft})});assert.equal(response.status,503);assert.equal((await response.json()).code,'business_context_unavailable');assert(c.calls.every(x=>x.op==='read'));
+ }
+});
+test('history distinguishes legitimate empty history from read errors and does not leak another owner',async()=>{
+ const id=await owner(),other=await owner();assert.deepEqual(await loadBrandKitHistory(base,id),[]);
+ await appendBrandKitVersion(base,id,{source:'brand_hub',answers:{notes:'Synthetic private note'}});assert.equal((await loadBrandKitHistory(base,id)).length,1);assert.deepEqual(await loadBrandKitHistory(base,other),[]);
+ await assert.rejects(loadBrandKitHistory(client({fail:x=>x.table==='brand_kits'}),id),BrandKitReadError);
+});
+
+test('Post/Reel/native polling honors local hard timeout during context outage; live jobs remain retryable and untouched',async()=>{
+ for(const surface of ['post','reel','tiktok','youtube'])for(const expired of [false,true]){
+  const id=await owner();use(client());assert.equal((await saveOnboarding(input())).ok,true);const {draft,action}=await reelFixture(id);
+  const conv=(await db.query('select conversation_id from public.mara_drafts where id=$1',[draft])).rows[0].conversation_id;
+  if(surface==='tiktok'||surface==='youtube'){
+   const plan=(await db.query("insert into public.marketing_plans(owner_user_id,business_id,business_goal,weekly_strategy,selected_channels,content_frequency,valid_from,valid_until) values($1,$2,'Awareness','Synthetic',array['tiktok','youtube'],7,'2099-01-01','2099-01-07') returning id",[id,(await state(id)).id])).rows[0].id;
+   const kind=surface==='tiktok'?'tiktok_video':'youtube_short';
+   await db.query('update public.mara_drafts set kind=$1,channel=$2,source_plan_id=$3,source_plan_item_key=$4,social_channel=$2,social_format=$5 where id=$6',[kind,surface,plan,`2099-01-01|${kind}`,surface==='tiktok'?'video':'short',draft]);
+  }
+  const created=new Date(Date.now()-(expired?120:1)*60000).toISOString();
+  const gen=(await db.query("insert into public.mara_media_generations(owner_user_id,conversation_id,draft_id,media_type,prompt,aspect_ratio,status,provider_job_id,idempotency_key,created_at) values($1,$2,$3,'video','Synthetic','9:16','generating','synthetic-existing-provider-job',gen_random_uuid()::text,$4) returning id",[id,conv,draft,created])).rows[0].id;
+  await db.query("update public.mara_pending_actions set new_value=new_value || $1::jsonb where id=$2",[JSON.stringify({generationId:gen,productionStatus:'video_generating'}),action]);
+  const c=client({fail:x=>x.table===(surface==='reel'?'businesses':'brand_kits')&&x.op==='read'});globalThis.__brandAdmin=c;c.rpc=async()=>{throw Error('No credit reservation allowed while polling')};
+  const route=surface==='post'?await import('../app/api/posts/[id]/generation/route.ts'):surface==='reel'?await import('../app/api/reels/produce/[actionId]/route.ts'):await import('../app/api/social-drafts/[id]/generation/route.ts');
+  const response=await route.GET(new Request('https://test.invalid'),{params:Promise.resolve(surface==='reel'?{actionId:action}:{id:draft})});
+  assert.equal(response.status,expired?200:503,`${surface}, expired=${expired}`);
+  const row=(await db.query('select * from public.mara_media_generations where id=$1',[gen])).rows[0];assert.equal(row.status,expired?'failed':'generating');assert.equal(row.provider_job_id,'synthetic-existing-provider-job');
+  if(expired){assert.equal(row.error_code,'provider_timeout');assert(c.calls.filter(x=>x.op!=='read').every(x=>['mara_media_generations','mara_pending_actions'].includes(x.table)));}
+  else {
+   assert.equal((await response.json()).retryable,true);assert(c.calls.every(x=>x.op==='read'));
+   if(surface==='reel'){
+    const {produceWorkflowMedia}=await import('../lib/voom/workflow/media.ts');
+    for(const reason of [new BrandKitReadError(),new BusinessContextReadError()]){
+     const outcome=await produceWorkflowMedia(c,{ownerId:id,draftId:draft,conversationId:conv,contentType:'reel',concept:'Synthetic',visualBrief:''},{explicit:true,now:new Date(Date.now()+16*60000),deps:{advance:async()=>{throw reason}}});
+     assert.deepEqual(outcome,{ok:false,code:reason.code});
+    }
+    assert(c.calls.every(x=>x.op==='read'));
+   }
+  }
+ }
+});

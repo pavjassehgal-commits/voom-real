@@ -1,4 +1,4 @@
-import { BrandKitReadError } from "@/lib/brand/context";
+import { BrandKitReadError, BusinessContextReadError } from "@/lib/brand/context";
 import "server-only";
 import { createMediaProvider, getMediaConfig } from "@/lib/media";
 import { getVideoConfig } from "@/lib/media/video-config";
@@ -218,13 +218,13 @@ export interface PostStudioVideoStartArgs {
 
 export type PostStudioVideoStartResult =
   | { status: 200 | 202; generation: ClientGenerationView; message: string }
-  | { status: number; error: string; generation: ClientGenerationView | null };
+  | { status: number; error: string; code?: string; generation: ClientGenerationView | null };
 
 export async function startPostStudioVideo(args: PostStudioVideoStartArgs): Promise<PostStudioVideoStartResult> {
   const { admin, ownerId, post } = args;
   let service: VideoService | null;
   try { service = await buildVideoService(admin, ownerId); } catch (reason) {
-    if (reason instanceof BrandKitReadError) return { status: 503, error: reason.message, generation: null };
+    if (reason instanceof BrandKitReadError || reason instanceof BusinessContextReadError) return { status: 503, error: reason.message, code: reason.code, generation: null };
     throw reason;
   }
   if (!service) {

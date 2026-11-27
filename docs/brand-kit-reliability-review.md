@@ -1,5 +1,8 @@
 # Brand Kit reliability review — N01 + N02
 
+> Historical initial candidate report (`b16aa866`). The independent-review corrections and
+> current validation are in [brand-kit-reliability-review-corrections.md](brand-kit-reliability-review-corrections.md).
+
 Local candidate, 27 November 2026. No push, merge, deployment, hosted migration,
 customer-record access, paid generation or live publishing. Independent review is the next gate.
 

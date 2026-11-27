@@ -5,7 +5,7 @@ import { createAdminClient } from "@/utils/supabase/admin";
 import { consumeAiRateLimit, rateLimitedResponse } from "@/lib/rate-limit";
 import { sameOrigin } from "@/lib/linkedin/http";
 import { loadNativePlanVideoDraft, nativeGenerationView, nativeVideoPorts, startNativePlanVideo } from "@/lib/social/video-generation";
-import { latestVideoGeneration, buildVideoService } from "@/lib/mara/video-service";
+import { latestVideoGeneration, buildVideoService, enforceVideoJobHardTimeout } from "@/lib/mara/video-service";
 import { advanceVideoGeneration } from "@/lib/mara/video-generation";
 import { isActiveVideoState } from "@/lib/mara/video-job";
 
@@ -39,6 +39,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     if (!draft) return json({ error: "That recommendation was not found." }, 404);
     let row = await latestVideoGeneration(admin, user.id, id);
     if (row && isActiveVideoState(row.status)) {
+      // Local timeout is independent of brand/provider availability and makes
+      // no provider request. Preserve native attachment/consent boundaries.
+      const timedOut = await enforceVideoJobHardTimeout(admin, user.id, row.id);
+      if (timedOut.enforced) return json({ generation: await nativeGenerationView(admin, timedOut.row ?? row) });
       const service = await buildVideoService(admin, user.id);
       if (service) {
         const advanced = await advanceVideoGeneration(nativeVideoPorts(admin, service.ports, row.id), user.id, row.id, draft.kind);

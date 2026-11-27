@@ -1,11 +1,10 @@
 /**
  * Brand Hub reads (Brand Kit v2, slice 2): the newest kit version and the
  * recent history for the logged-in owner. Works on the user-scoped client
- * (RLS limits rows to the caller) and never throws: a missing table reads as
- * "no kit yet" so the page still renders from the `businesses` row.
+ * (RLS limits rows to the caller). Failed reads are distinct from empty history.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { BRAND_KIT_TABLE } from "./context";
+import { BrandKitReadError, BRAND_KIT_TABLE } from "./context";
 import { cleanBrandAssets } from "./assets";
 import type { BrandKitVersionView } from "./sections";
 
@@ -33,13 +32,10 @@ export async function loadBrandKitHistory(db: SupabaseClient, ownerId: string, l
       .eq("owner_user_id", ownerId)
       .order("version", { ascending: false })
       .limit(limit);
-    if (error) {
-      console.error("[brand-kit] history read failed", error.message);
-      return [];
-    }
+    if (error || !Array.isArray(data)) throw new BrandKitReadError();
     return (Array.isArray(data) ? data : []).map((row) => brandKitVersionView(row as Record<string, unknown>));
-  } catch (reason) {
-    console.error("[brand-kit] history read failed", reason instanceof Error ? reason.message : String(reason));
-    return [];
+  } catch {
+    console.error("[brand-kit] history read failed");
+    throw new BrandKitReadError();
   }
 }

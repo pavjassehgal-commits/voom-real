@@ -467,3 +467,20 @@ are merged on collision; overlapping fields retain the existing last-save-wins b
 interleavings are not a claim of multi-session PostgreSQL testing. Baseline verified read-only:
 Production Vercel source `1f619f2e79773570169f8d5a3e7390a8835c9d00`, ledger includes 0075/0080.
 Implementation is isolated on `codex/brand-kit-reliability-1f619f2`; no release authorized.
+
+## 2026-11-27 — Independent Brand Kit review corrections (local only)
+
+Freeze physical Brand Kit cleanup, including unsaved-upload removal. A successful saved/reused
+version is the reference-verification target; failed reads are unavailable, never an authoritative
+empty keep set. No post-read Storage.delete can safely exclude a concurrent save without a shared
+lease/reference protocol, so retain historical and in-flight objects. DELETE responds 202 with
+cleanupDeferred; owner/path restrictions remain. Cost: unused storage accumulates until a separate
+garbage-collection design is authorized. No migration is needed for this conservative policy.
+
+Fail required business/profile context reads with a typed retryable error. Missing businesses
+remain distinguishable. The legacy Reel preview fallback cannot enforce arbitrary Brand Kit rules
+through both AI and deterministic copy, so refuse it for nonempty kits before card mutation or AI.
+Real video providers and their prompts remain unchanged. Polling retains local timeout enforcement
+during context failures; workflow errors identify unavailable brand context accurately, and Brand
+history failure offers retry rather than an empty editor. Broader campaign/email/image-context
+integration is explicitly deferred. N01/N02 persistence retry protections remain intact.

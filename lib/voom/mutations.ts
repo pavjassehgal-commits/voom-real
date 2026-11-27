@@ -9,7 +9,7 @@ import { normalizeWebsiteUrl, WEBSITE_NOT_SAVED_NOTICE } from "./website";
 import { appendBrandKitVersion, brandKitAnswersFromOnboarding, brandKitAnswersFromProfile } from "@/lib/brand/versions";
 import { cleanBrandAssets, cleanBrandColours, isOwnBrandAssetPath } from "@/lib/brand/assets";
 import { syncBrandToEmail } from "@/lib/brand/email-sync";
-import { loadNewestBrandAssets, removeUnreferencedBrandAssets } from "@/lib/brand/asset-storage";
+import { removeUnreferencedBrandAssets } from "@/lib/brand/asset-storage";
 import { onboardingAutomationMode } from "./automation";
 import { canGenerateAutomaticMedia, canUseAutomationMode, normalizePlan } from "@/lib/billing/plans";
 import type { BusinessProfileInput, OnboardingInput } from "./types";
@@ -89,7 +89,6 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
   // become brand kit version 1 (or the next version after a restart).
   // Required persistence: completion is recorded only after the kit is saved.
   // A run with no uploads carries the previous images over.
-  const previousAssets = await loadNewestBrandAssets(supabase, user.id);
   const appended = await appendBrandKitVersion(supabase, user.id, {
     source: "onboarding",
     answers: brandKitAnswersFromOnboarding(checked),
@@ -105,10 +104,8 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
     .eq("owner_user_id", user.id).select("id").maybeSingle();
   if (completed.error || !completed.data) return { ok: false, error: "Your business details and Brand Kit were saved, but setup completion could not be confirmed. Retry to finish; the saved Brand Kit will be reused." };
 
-  // Files the newest version no longer references are deleted: the set this
-  // run replaced, and uploads from a run that was never finished. Only once
-  // the version is really saved, so a failed insert never strands a row.
-  if (appended) await sweepOnboardingBrandAssets(user.id, (assets.length ? assets : previousAssets).map((asset) => asset.path));
+  // Reference verification is tied to the saved/reused version, never a pre-read.
+  await sweepOnboardingBrandAssets(user.id, appended.version);
 
   const websiteSaved = await saveOnboardingWebsite(user.id, input.website);
   // After the website: both go through upsert_email_brand, which keeps what it is not sent.
@@ -118,10 +115,10 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
   return websiteSaved ? { ok: true } : { ok: true, notice: WEBSITE_NOT_SAVED_NOTICE };
 }
 
-/** Deletes the owner's brand images that the saved kit does not reference (best-effort; never fails onboarding). */
-async function sweepOnboardingBrandAssets(ownerId: string, keep: readonly string[]): Promise<void> {
+/** Verifies saved references; physical cleanup is deferred to protect concurrent saves. */
+async function sweepOnboardingBrandAssets(ownerId: string, savedVersion: number): Promise<void> {
   try {
-    await removeUnreferencedBrandAssets(createAdminClient(), ownerId, keep);
+    await removeUnreferencedBrandAssets(createAdminClient(), ownerId, savedVersion);
   } catch {
     console.error("[brand-assets] sweep skipped: service role not configured");
   }

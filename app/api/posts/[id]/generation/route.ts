@@ -46,11 +46,13 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (!row) return Response.json({ generation: null, post }, { headers: { "Cache-Control": "no-store" } });
 
   if (isActiveVideoState(row.status)) {
+    let contextFailure: Response | null = null;
     let service: Awaited<ReturnType<typeof buildVideoService>>;
     try { service = await buildVideoService(admin, user.id); } catch (reason) {
       const failure = brandKitFailureResponse(reason);
-      if (failure) return failure;
-      throw reason;
+      if (!failure) throw reason;
+      contextFailure = failure;
+      service = null;
     }
     if (!service) {
       // The provider stack went unconfigured underneath a running job, so it
@@ -60,6 +62,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       // staying "generating" forever. A job still inside its limit is reported
       // as-is, untouched.
       const enforced = await enforceVideoJobHardTimeout(admin, user.id, row.id).catch(() => null);
+      if (contextFailure && !enforced?.enforced) return contextFailure;
       return Response.json({ generation: toClientGenerationView(enforced?.row ?? row, null), post }, { headers: { "Cache-Control": "no-store" } });
     }
     try {

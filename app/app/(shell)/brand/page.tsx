@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { BrandKitReadError } from "@/lib/brand/context";
 import { PageHeader } from "@/components/voom/redesign/ui";
 import { BrandHub } from "@/components/voom/brand/BrandHub";
 import { isAiVisionConfigured } from "@/lib/ai";
@@ -23,7 +25,11 @@ export const dynamic = "force-dynamic";
 export default async function BrandPage() {
   const [user, business] = await Promise.all([getCurrentUser(), getBusinessRecord()]);
   if (!user || !business) return null;
-  const history = await loadBrandKitHistory(await createClient(), user.id);
+  let history: Awaited<ReturnType<typeof loadBrandKitHistory>>;
+  try { history = await loadBrandKitHistory(await createClient(), user.id); } catch (reason) {
+    if (!(reason instanceof BrandKitReadError)) throw reason;
+    return <div role="alert" className="voom-card p-6"><h1>Brand Kit unavailable</h1><p>Your saved Brand Kit could not be loaded. Please retry before editing.</p><Link href="/app/brand">Retry</Link></div>;
+  }
   const current = history[0] ?? null;
   const values = brandHubValues(business, current);
   // Slice 5: the bucket is private, so thumbnails use one-hour signed links.

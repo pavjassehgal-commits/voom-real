@@ -1,3 +1,25 @@
+## Brand Kit independent-review corrections — 27 November 2026 (local only)
+
+Same isolated branch `codex/brand-kit-reliability-1f619f2`; corrections follow reviewed
+`b16aa866a0f4220fba962a828c1999aa5a35ca4c`, preserving Production source base
+`1f619f2e79773570169f8d5a3e7390a8835c9d00`. Physical Brand Kit storage deletion is deferred
+to protect historical/in-flight saves; saved-version references are verified, never inferred from
+a failed pre-read. Required business read failures are retryable. Nonempty kits block legacy
+Reel fallback before writes/AI because it cannot enforce arbitrary saved rules. Local polling
+timeouts still work during outages. Workflow errors and history unavailable states are accurate.
+
+Validation: focused 320/320; full 2625 pass /32 fail /42 skip. Exact same 32 failure
+names reproduced on clean unchanged Production source. TypeScript passes; lint 0 errors/16
+existing warnings. No live browser, provider or real multi-session PostgreSQL testing.
+
+See `docs/brand-kit-reliability-review-corrections.md` for exact files, evidence, conservative
+trade-offs and known bypasses. Next: independent review, then separately authorized isolated
+validation. No new migration is needed or applied. No push, deployment, hosted/customer
+operation or provider call; no Memory or other working tree changed. Use `git log -1 --format=%H`
+to identify the local correction commit. Older notes below describe historical candidates only.
+
+---
+
 ## Brand Kit reliability N01/N02 — 27 November 2026 (local only)
 
 Fresh isolated checkout `.worktrees/brand-kit-reliability-1f619f2`, branch

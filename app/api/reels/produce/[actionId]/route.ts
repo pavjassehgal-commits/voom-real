@@ -1,4 +1,4 @@
-import { brandKitFailureResponse } from "@/lib/brand/context";
+import { brandKitFailureResponse, loadBrandContext, brandKitHasContent } from "@/lib/brand/context";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAiProvider } from "@/lib/ai";
 import { buildReelComposition, isReelComposition } from "@/lib/mara/reel-composition";
@@ -107,6 +107,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ act
       sourceAsset,
     });
     if ("error" in result) {
+      if (result.code === "brand_kit_unavailable" || result.code === "business_context_unavailable") {
+        return Response.json({ error: result.error, code: result.code, retryable: true }, { status: 503 });
+      }
       if (result.status === 409 && result.generation) {
         // A concurrent click won the race and the job is running: reflect the
         // active job instead of failing the action (the board will keep
@@ -124,21 +127,31 @@ export async function POST(request: Request, { params }: { params: Promise<{ act
     return Response.json({ action: started.data, message: result.message }, { status: result.status === 202 ? 202 : 200 });
   }
 
-  // ---- Fallback: deterministic composition (previous behaviour, unchanged)
+  // The legacy viewer-copy/composition pipeline cannot enforce arbitrary owner
+  // rules, including its deterministic fallback. Refuse rather than omit them.
+  let context: Awaited<ReturnType<typeof loadBrandContext>>;
+  try { context = await loadBrandContext(db, user.id); } catch (reason) {
+    const failure = brandKitFailureResponse(reason);
+    if (failure) return failure;
+    throw reason;
+  }
+  if (!context) return Response.json({ error: "Complete your business profile before creating a Reel." }, { status: 409 });
+  if (brandKitHasContent(context.kit)) {
+    return Response.json({ code: "brand_restrictions_unavailable", retryable: true, error: "Reel preview generation cannot safely apply your saved Brand Kit in fallback mode. Please retry when video generation is available." }, { status: 503 });
+  }
+
+  // ---- Fallback: verified legacy business with no saved kit context
   const preparing = { ...action.new_value, selectedProductionMethod: "create_with_mara", productionStatus: "preparing" };
   const { error: preparingError } = await db.from("mara_pending_actions").update({ new_value: preparing, sanitized_arguments: { ...(action.new_value ?? {}), selectedProductionMethod: "create_with_mara", productionStatus: "preparing" }, result_summary: "Preparing the live Voom Reel composition." }).eq("id", actionId).eq("owner_user_id", user.id).eq("status", "pending");
   if (preparingError) return Response.json({ error: "Voom couldn't start Reel production safely." }, { status: 503 });
 
-  const [{ data: draft }, { data: business }] = await Promise.all([
-    db.from("mara_drafts").select("title,content").eq("id", action.new_value.draftId).eq("owner_user_id", user.id).maybeSingle(),
-    db.from("businesses").select("brand_name,brand_description,industry,target_customer,main_goal").eq("owner_user_id", user.id).maybeSingle(),
-  ]);
+  const { data: draft } = await db.from("mara_drafts").select("title,content").eq("id", action.new_value.draftId).eq("owner_user_id", user.id).maybeSingle();
   if (!draft) return fail(db, user.id, actionId, preparing, "The owned Reel draft could not be loaded.");
   const producing = { ...preparing, productionStatus: "producing" };
   const { error: producingError } = await db.from("mara_pending_actions").update({ new_value: producing, result_summary: "Producing timed scenes, overlays, branding, and the review player." }).eq("id", actionId).eq("owner_user_id", user.id).eq("status", "pending");
   if (producingError) return fail(db, user.id, actionId, preparing, "Voom couldn't persist the production state.");
   const concept = String(action.new_value.concept ?? draft.title);
-  const brandName = business?.brand_name ?? "Your business";
+  const brandName = context.brandName;
   const caption = draft.content;
   const copyContext: ViewerCopyContext = { concept, caption, brandName };
   // Viewer-facing copy is generated from TEXT ONLY (concept, caption, business
@@ -152,7 +165,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ act
       messages: [
         { role: "system", content: REEL_COPY_SYSTEM_PROMPT },
         { role: "user", content: JSON.stringify({
-          business: { name: brandName, description: String(business?.brand_description ?? "").slice(0, 800), industry: String(business?.industry ?? "").slice(0, 200), targetCustomer: String(business?.target_customer ?? "").slice(0, 300), mainGoal: String(business?.main_goal ?? "").slice(0, 300) },
+          business: { name: brandName, description: context.brandDescription.slice(0, 800), industry: context.industry.slice(0, 200), targetCustomer: context.targetCustomer.join(", ").slice(0, 300), mainGoal: context.mainGoal.slice(0, 300) },
           concept,
           caption,
           internalScriptForInterpretationOnly: String(action.new_value.script ?? "").slice(0, 1200),
@@ -204,11 +217,13 @@ export async function GET(_request: Request, { params }: { params: Promise<{ act
   if (productionStatus === "video_generating" || productionStatus === "video_processing") {
     const admin = createAdminClient();
     if (!generationId) return Response.json({ action, error: "This Reel video lost its job record. Retry production." }, { status: 503 });
+    let contextFailure: Response | null = null;
     let service: Awaited<ReturnType<typeof buildVideoService>>;
     try { service = await buildVideoService(admin, user.id); } catch (reason) {
       const failure = brandKitFailureResponse(reason);
-      if (failure) return failure;
-      throw reason;
+      if (!failure) throw reason;
+      contextFailure = failure;
+      service = null;
     }
     if (!service) {
       // The provider stack is unavailable, so the job cannot be polled. Voom's
@@ -228,6 +243,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ act
           .eq("id", actionId).eq("owner_user_id", user.id).eq("status", "pending").select(ACTION_COLUMNS).maybeSingle();
         return Response.json({ action: timedOut ?? action, generation: null }, { headers: { "Cache-Control": "no-store" } });
       }
+      if (contextFailure) return contextFailure;
       return Response.json({ action, message: "Create with MARA is temporarily unavailable. Your previous asset is unchanged." });
     }
     const generation = await latestVideoGeneration(admin, user.id, action.new_value.draftId as string);

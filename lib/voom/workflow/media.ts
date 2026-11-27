@@ -1,4 +1,5 @@
 import "server-only";
+import { BrandKitReadError, BusinessContextReadError } from "@/lib/brand/context";
 
 import { randomUUID } from "node:crypto";
 import { createMediaProvider, getMediaConfig, MediaError } from "@/lib/media";
@@ -292,8 +293,11 @@ export async function produceWorkflowMedia(
   if (decision.kind === "exists") return { ok: true, state: "exists" };
 
   if (decision.kind === "advance") {
-    const advanced = await deps.advance(admin, request.ownerId, request.draftId, decision.generationId)
-      .catch(() => "unavailable" as const);
+    let advanced: "advanced" | "unavailable";
+    try { advanced = await deps.advance(admin, request.ownerId, request.draftId, decision.generationId); } catch (reason) {
+      if (reason instanceof BrandKitReadError || reason instanceof BusinessContextReadError) return { ok: false, code: reason.code };
+      advanced = "unavailable";
+    }
     if (advanced === "unavailable") return { ok: false, code: "video_provider_unavailable" };
     return { ok: true, state: "advanced" };
   }
@@ -406,7 +410,7 @@ export async function produceWorkflowMedia(
       // a video that never existed. The refund RPC is idempotent, so this is a
       // no-op when the video orchestrator already refunded at insert time.
       await releaseReservationOnFailure(admin, request.ownerId, generationIdForLedger).catch(() => null);
-      return { ok: false, code: result.status === 409 ? "video_start_conflict" : "video_start_failed" };
+      return { ok: false, code: result.code ?? (result.status === 409 ? "video_start_conflict" : "video_start_failed") };
     }
 
     await confirmReservation(admin, request.ownerId, generationIdForLedger).catch(() => null);

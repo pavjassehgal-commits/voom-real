@@ -24,8 +24,16 @@ export class BrandKitReadError extends Error {
   }
 }
 
+export class BusinessContextReadError extends Error {
+  readonly code = "business_context_unavailable";
+  constructor() {
+    super("Your business context could not be loaded. Please retry before generating content.");
+    this.name = "BusinessContextReadError";
+  }
+}
+
 export function brandKitFailureResponse(reason: unknown): Response | null {
-  return reason instanceof BrandKitReadError
+  return reason instanceof BrandKitReadError || reason instanceof BusinessContextReadError
     ? Response.json({ error: reason.message, code: reason.code, retryable: true }, { status: 503 })
     : null;
 }
@@ -194,24 +202,32 @@ function stringList(value: unknown): string[] {
  * Studio loader did before.
  */
 export async function loadBrandContext(db: SupabaseClient, ownerId: string): Promise<BrandContext | null> {
-  const [{ data: profile }, { data: business }, kit] = await Promise.all([
-    db.from("profiles").select("display_name").eq("user_id", ownerId).maybeSingle(),
-    db.from("businesses")
-      .select("brand_name,brand_description,industry,target_customer,main_goal,brand_personality,content_frequency")
-      .eq("owner_user_id", ownerId).maybeSingle(),
-    loadBrandKit(db, ownerId),
-  ]);
-  if (!business) return null;
-  return {
-    brandName: String(business.brand_name ?? profile?.display_name ?? "Your business"),
-    brandDescription: String(business.brand_description ?? ""),
-    industry: String(business.industry ?? ""),
-    targetCustomer: stringList(business.target_customer),
-    mainGoal: String(business.main_goal ?? ""),
-    brandPersonality: stringList(business.brand_personality),
-    contentFrequency: String(business.content_frequency ?? ""),
-    kit,
-  };
+  try {
+    const [profileResult, businessResult, kit] = await Promise.all([
+      db.from("profiles").select("display_name").eq("user_id", ownerId).maybeSingle(),
+      db.from("businesses")
+        .select("brand_name,brand_description,industry,target_customer,main_goal,brand_personality,content_frequency")
+        .eq("owner_user_id", ownerId).maybeSingle(),
+      loadBrandKit(db, ownerId),
+    ]);
+    if (profileResult.error || businessResult.error) throw new BusinessContextReadError();
+    const profile = profileResult.data;
+    const business = businessResult.data;
+    if (!business) return null;
+    return {
+      brandName: String(business.brand_name ?? profile?.display_name ?? "Your business"),
+      brandDescription: String(business.brand_description ?? ""),
+      industry: String(business.industry ?? ""),
+      targetCustomer: stringList(business.target_customer),
+      mainGoal: String(business.main_goal ?? ""),
+      brandPersonality: stringList(business.brand_personality),
+      contentFrequency: String(business.content_frequency ?? ""),
+      kit,
+    };
+  } catch (reason) {
+    if (reason instanceof BrandKitReadError || reason instanceof BusinessContextReadError) throw reason;
+    throw new BusinessContextReadError();
+  }
 }
 
 /**

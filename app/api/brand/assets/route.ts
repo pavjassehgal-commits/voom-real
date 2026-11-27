@@ -1,3 +1,4 @@
+import { brandKitFailureResponse } from "@/lib/brand/context";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { BRAND_ASSET_KINDS, BRAND_ASSET_LIMITS, brandAssetPath, isOwnBrandAssetPath, type BrandAsset, type BrandAssetKind } from "@/lib/brand/assets";
@@ -20,9 +21,8 @@ export const runtime = "nodejs";
  *        from its pixels. Nothing is added to the brand kit here: the
  *        reference is saved with the next kit version (onboarding Finish or a
  *        Brand page Save).
- * DELETE { path }: removes an upload that is NOT part of the saved kit (a
- *        file removed before Finish, or a Brand page edit that was cancelled).
- *        Saved images are removed by saving the Brand page without them.
+ * DELETE { path }: accepts removal from the editor of an unsaved upload.
+ *        Physical cleanup is deferred to protect historical and in-flight saves.
  */
 
 function json(body: unknown, status = 200) {
@@ -90,10 +90,15 @@ export async function DELETE(request: Request) {
   let admin: ReturnType<typeof createAdminClient>;
   try { admin = createAdminClient(); } catch { return json({ error: "Voom couldn't remove that image. Please try again." }, 503); }
 
-  const saved = await loadNewestBrandAssets(admin, user.id);
+  let saved: BrandAsset[];
+  try { saved = await loadNewestBrandAssets(admin, user.id); } catch (reason) {
+    const failure = brandKitFailureResponse(reason);
+    if (failure) return failure;
+    throw reason;
+  }
   if (saved.some((asset) => asset.path === body.path)) {
     return json({ error: "That image is part of your saved brand kit. Remove it on the Brand page and save." }, 409);
   }
   await removeBrandAssetObjects(admin, user.id, [body.path]);
-  return json({ ok: true });
+  return json({ ok: true, cleanupDeferred: true }, 202);
 }

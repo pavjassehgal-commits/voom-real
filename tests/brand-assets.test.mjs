@@ -330,7 +330,7 @@ test("upload: logged in, real image bytes, 10 MB, a known kind; stored unchanged
   assert.deepEqual(rateLimit.AI_RATE_LIMITS.brand_vision, { limit: 40, windowSeconds: 3600 });
 });
 
-test("remove: only the owner's own unsaved uploads; images in the saved kit are protected", async () => {
+test("remove: saved and foreign uploads are protected; unsaved physical deletion is deferred", async () => {
   login();
   const saved = asset("logo", 1);
   let { calls } = fakeAdmin({ newestAssets: [saved] });
@@ -338,8 +338,8 @@ test("remove: only the owner's own unsaved uploads; images in the saved kit are 
   assert.equal((await uploadRoute.DELETE(jsonRequest("/api/brand/assets", "DELETE", { path: saved.path }))).status, 409);
   assert.equal(calls.removes.length, 0);
   const unsaved = asset("product", 2);
-  assert.equal((await uploadRoute.DELETE(jsonRequest("/api/brand/assets", "DELETE", { path: unsaved.path }))).status, 200);
-  assert.deepEqual(calls.removes, [{ bucket: "brand-kit", paths: [unsaved.path] }]);
+  assert.equal((await uploadRoute.DELETE(jsonRequest("/api/brand/assets", "DELETE", { path: unsaved.path }))).status, 202);
+  assert.deepEqual(calls.removes, [], "an in-flight save may still reference the upload");
 });
 
 test("describe: off without a vision model (no limit spent), own files only, one small JPEG, nothing stored", async () => {
@@ -453,7 +453,7 @@ test("Finish saves only the owner's own images, and fills the email brand only w
 
 /* ── 8b. Leftover files and colours without a logo (fixes 2026-10-28) ───── */
 
-test("the sweep deletes only the owner's files that the kit does not reference", async () => {
+test("the sweep retains all objects until concurrent and historical references can be proven safe", async () => {
   const keep = asset("logo", 1);
   const orphanProduct = asset("product", 2);
   const orphanPost = asset("past_post", 3);
@@ -461,19 +461,19 @@ test("the sweep deletes only the owner's files that the kit does not reference",
   for (const a of [keep, orphanProduct, orphanPost]) objects.set(`brand-kit/${a.path}`, new Uint8Array([1]));
   objects.set(`brand-kit/${OTHER}/logo/${uuid(4)}.png`, new Uint8Array([1]));
   objects.set(`brand-kit/${OWNER}/logo/notes.txt`, new Uint8Array([1]));
-  await storage.removeUnreferencedBrandAssets(admin, OWNER, [keep.path]);
-  assert.deepEqual(calls.removes, [{ bucket: "brand-kit", paths: [orphanProduct.path, orphanPost.path] }], "the kept file, another owner's folder and a file that is not an image path are left alone");
+  await storage.removeUnreferencedBrandAssets(admin, OWNER, 1);
+  assert.deepEqual(calls.removes, [], "unknown and in-flight references prevent physical deletion");
   assert.ok(objects.has(`brand-kit/${keep.path}`));
   assert.ok(objects.has(`brand-kit/${OTHER}/logo/${uuid(4)}.png`));
 
   // Nothing to delete: no remove call at all.
   const quiet = fakeAdmin();
   quiet.objects.set(`brand-kit/${keep.path}`, new Uint8Array([1]));
-  await storage.removeUnreferencedBrandAssets(quiet.admin, OWNER, [keep.path]);
+  await storage.removeUnreferencedBrandAssets(quiet.admin, OWNER, 1);
   assert.deepEqual(quiet.calls.removes, []);
 });
 
-test("Finish deletes the images a restarted onboarding replaced and any abandoned upload; a run with no uploads keeps everything", async () => {
+test("Finish saves replacements but retains historical images and in-flight uploads", async () => {
   const oldLogo = asset("logo", 1);
   const newLogo = asset("logo", 5);
   const abandoned = asset("product", 6);
@@ -484,7 +484,7 @@ test("Finish deletes the images a restarted onboarding replaced and any abandone
   assert.deepEqual(calls.kitInserts[0].assets, [newLogo]);
   assert.equal(calls.kitInserts[0].answers.colours, null, "a replaced logo with no computed colours clears the old logo's colours");
   const swept = admin.calls.removes.flatMap((call) => call.paths).sort();
-  assert.deepEqual(swept, [oldLogo.path, abandoned.path].sort(), "the replaced logo and the abandoned upload are deleted");
+  assert.deepEqual(swept, [], "historical and in-flight references retain their files");
   assert.ok(admin.objects.has(`brand-kit/${newLogo.path}`), "the new logo stays");
 
   // No uploads: the old images carry forward and nothing is deleted.
@@ -497,7 +497,7 @@ test("Finish deletes the images a restarted onboarding replaced and any abandone
   assert.equal("colours" in calls.kitInserts[0].answers, false, "no uploads: colours carry forward too");
 
   const source = await read("lib/voom/mutations.ts");
-  assert.match(source, /if \(appended\) await sweepOnboardingBrandAssets/, "the sweep runs only once the version is really saved");
+  assert.match(source, /await sweepOnboardingBrandAssets\(user.id, appended.version\)/, "reference verification uses the confirmed saved/reused version");
 });
 
 test("removing the logo drops the colours computed from it and keeps colours the owner picked", async () => {
@@ -531,7 +531,7 @@ test("the email fill is best-effort: a failure never fails the save", async () =
 
 /* ── 9. Brand page save ──────────────────────────────────────────────────── */
 
-test("the Brand page images save refuses foreign paths, deletes removed files and records the new list", async () => {
+test("the Brand page images save refuses foreign paths, retains files and records the new list", async () => {
   const logo = asset("logo", 1);
   const product = { ...asset("product", 2), description: "Iced latte" };
   fakeUserDb({ version: 3, answers: { name: "Bean & Co." }, brief: "B.", assets: [logo, product] });
@@ -550,7 +550,7 @@ test("the Brand page images save refuses foreign paths, deletes removed files an
   assert.deepEqual(calls.kitInserts[0].answers.colours, { primary: "#C81E28", secondary: null, source: "owner" });
   assert.equal(calls.kitInserts[0].brief, "B.", "the brief carries forward");
   assert.deepEqual(calls.businessUpdates, [], "images never touch businesses");
-  assert.deepEqual(admin.calls.removes, [{ bucket: "brand-kit", paths: [logo.path] }, { bucket: "brand-kit", paths: [abandoned.path] }], "the removed logo file is deleted, then the sweep takes an abandoned upload (2026-10-28)");
+  assert.deepEqual(admin.calls.removes, [], "saved history and in-flight uploads remain intact");
   assert.ok(admin.objects.has(`brand-kit/${product.path}`), "the kept image stays");
   assert.equal(admin.calls.rpcs.some((call) => call.name === "upsert_email_brand"), false, "email identity already complete: untouched");
 

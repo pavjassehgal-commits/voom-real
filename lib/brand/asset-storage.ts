@@ -9,8 +9,8 @@ import "server-only";
  * Previews use short-lived signed links (one hour), never public URLs.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { BRAND_KIT_TABLE } from "./context";
-import { BRAND_ASSET_KINDS, BRAND_KIT_BUCKET, cleanBrandAssets, isOwnBrandAssetPath, type BrandAsset } from "./assets";
+import { BrandKitReadError, BRAND_KIT_TABLE } from "./context";
+import { BRAND_KIT_BUCKET, cleanBrandAssets, isOwnBrandAssetPath, type BrandAsset } from "./assets";
 
 export const BRAND_ASSET_PREVIEW_TTL_SECONDS = 3600;
 
@@ -30,46 +30,32 @@ export async function readBrandAssetObject(admin: SupabaseClient, ownerId: strin
   }
 }
 
-/** Best-effort delete of objects inside the owner's folder; anything else is ignored. */
-export async function removeBrandAssetObjects(admin: SupabaseClient, ownerId: string, paths: readonly string[]): Promise<void> {
-  const own = paths.filter((path) => isOwnBrandAssetPath(ownerId, path));
-  if (!own.length) return;
-  try {
-    const { error } = await admin.storage.from(BRAND_KIT_BUCKET).remove(own);
-    if (error) console.error("[brand-assets] remove failed", { count: own.length });
-  } catch {
-    console.error("[brand-assets] remove failed", { count: own.length });
-  }
+/**
+ * Physical deletion is deferred. A reference check followed by Storage.remove
+ * cannot be atomic with a concurrent kit save or an upload still in a wizard.
+ * Retain objects until a separate lease/reference-aware garbage collector exists.
+ */
+export async function removeBrandAssetObjects(_admin: SupabaseClient, ownerId: string, paths: readonly string[]): Promise<void> {
+  const count = paths.filter((path) => isOwnBrandAssetPath(ownerId, path)).length;
+  if (count) console.info("[brand-assets] deletion deferred", { count, reason: "concurrent_save_protection" });
 }
 
-/**
- * Deletes every file in the owner's three folders that the newest kit version
- * does not reference (`keep`): the previous set after a restarted onboarding
- * replaced it, and uploads from an onboarding that was never finished.
- * Best-effort: a listing failure leaves the folder alone and is logged.
- */
-export async function removeUnreferencedBrandAssets(admin: SupabaseClient, ownerId: string, keep: readonly string[]): Promise<void> {
-  const kept = new Set(keep);
-  const orphans: string[] = [];
-  for (const kind of BRAND_ASSET_KINDS) {
-    const folder = `${ownerId}/${kind}`;
-    try {
-      const { data, error } = await admin.storage.from(BRAND_KIT_BUCKET).list(folder, { limit: 1000 });
-      if (error || !Array.isArray(data)) {
-        console.error("[brand-assets] sweep listing failed", { kind });
-        continue;
-      }
-      for (const entry of data) {
-        const name = (entry as { name?: unknown })?.name;
-        if (typeof name !== "string") continue;
-        const path = `${folder}/${name}`;
-        if (!kept.has(path) && isOwnBrandAssetPath(ownerId, path, kind)) orphans.push(path);
-      }
-    } catch {
-      console.error("[brand-assets] sweep listing failed", { kind });
+/** Verify the successfully saved/reused snapshot, never infer keep from a failed pre-read. */
+export async function removeUnreferencedBrandAssets(admin: SupabaseClient, ownerId: string, savedVersion: number): Promise<void> {
+  try {
+    const { data, error } = await admin.from(BRAND_KIT_TABLE).select("assets")
+      .eq("owner_user_id", ownerId).eq("version", savedVersion).maybeSingle();
+    const assets = data ? cleanBrandAssets(data.assets) : null;
+    if (error || !assets) {
+      console.error("[brand-assets] cleanup skipped: saved references unavailable");
+      return;
     }
+    // This snapshot is authoritative for this save, but cannot prove that other
+    // historical versions or in-flight saves no longer need an object.
+    console.info("[brand-assets] cleanup deferred", { version: savedVersion, kept: assets.length, reason: "concurrent_save_protection" });
+  } catch {
+    console.error("[brand-assets] cleanup skipped: saved references unavailable");
   }
-  if (orphans.length) await removeBrandAssetObjects(admin, ownerId, orphans);
 }
 
 /** One-hour preview links for the owner's own paths. Missing objects are simply left out. */
@@ -89,15 +75,17 @@ export async function signBrandAssetUrls(admin: SupabaseClient, ownerId: string,
   }
 }
 
-/** The asset list of the owner's newest kit version ([] when none or unreadable). */
+/** A successful missing row is empty; unavailable references must never authorize deletion. */
 export async function loadNewestBrandAssets(db: SupabaseClient, ownerId: string): Promise<BrandAsset[]> {
   try {
     const { data, error } = await db.from(BRAND_KIT_TABLE)
       .select("assets").eq("owner_user_id", ownerId)
       .order("version", { ascending: false }).limit(1).maybeSingle();
-    if (error || !data) return [];
+    if (error) throw new BrandKitReadError();
+    if (!data) return [];
     return cleanBrandAssets((data as { assets?: unknown }).assets) ?? [];
   } catch {
-    return [];
+    console.error("[brand-assets] asset read failed");
+    throw new BrandKitReadError();
   }
 }
