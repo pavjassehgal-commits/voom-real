@@ -484,3 +484,14 @@ Real video providers and their prompts remain unchanged. Polling retains local t
 during context failures; workflow errors identify unavailable brand context accurately, and Brand
 history failure offers retry rather than an empty editor. Broader campaign/email/image-context
 integration is explicitly deferred. N01/N02 persistence retry protections remain intact.
+
+## 2026-11-27 — Brand asset retention design gate (not implemented)
+
+Inspection found that all eight retention requirements need a coordinated lifecycle: durable
+upload inventory, editor/copy leases, database guards over direct kit inserts, immutable deletion
+tombstones, email-copy lineage and an account-deletion manifest surviving auth cascades. An age
+filter or cleanup-only lock cannot close these races. Per the user's explicit substantial-change
+stop condition, retain the reviewed runtime and stop at `docs/brand-asset-retention-design.md`.
+No collector or partial migration was introduced. Saved historical references deliberately pin
+images; removing a current image is not authorization to erase history. A later complete lifecycle
+implementation requires a new coordinated migration and verified Storage settlement semantics.

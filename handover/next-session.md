@@ -1,3 +1,28 @@
+## Brand asset retention — design gate, 27 November 2026
+
+Reviewed runtime remains `37ff1bf42874beca243a4a5db0c7968c108003d9` on the same isolated
+Brand Kit branch. The user reports independent staging and real PostgreSQL validation passed;
+this task did not repeat hosted testing. Retention implementation stopped under the user's
+explicit substantial-architecture-change condition. No cleanup worker, runtime edits or migration
+were introduced. The smallest complete design is `docs/brand-asset-retention-design.md`.
+
+Required before implementation: upload inventory and leases, database-enforced reference/deletion
+fencing across every writer, immutable tombstones, email-copy lineage and an explicit deletion
+manifest that survives account metadata cascades. Verify Storage upload settlement and the manual
+account-deletion integration. Historical references intentionally retain removed images. Physical
+cleanup remains deferred; indefinite abandoned-upload retention is still unresolved.
+
+Checks of unchanged runtime: focused 37/37; full 2625 pass /32 fail /42 skip. Fresh baseline
+failed-file rerun reproduces 31 failures; the remaining browser-cleanup timing failure also
+appeared in prior baseline evidence (details in the design). TypeScript passes; lint 0 errors/16
+existing warnings. No tests of a new collector are claimed, because none was implemented.
+
+Only design/decision/handover documentation changed; local commit is identifiable with `git log -1`.
+No push, merge, deployment, hosted access or object deletion. No Memory or other worktree edits.
+Next: review the coordinated lifecycle design and scope before implementing/applying any migration.
+
+---
+
 ## Brand Kit independent-review corrections — 27 November 2026 (local only)
 
 Same isolated branch `codex/brand-kit-reliability-1f619f2`; corrections follow reviewed
