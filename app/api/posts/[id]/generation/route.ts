@@ -1,3 +1,4 @@
+import { brandKitFailureResponse } from "@/lib/brand/context";
 import { randomUUID } from "node:crypto";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { getPostDraft, normalizeMediaBrief } from "@/lib/post/server-data";
@@ -45,7 +46,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (!row) return Response.json({ generation: null, post }, { headers: { "Cache-Control": "no-store" } });
 
   if (isActiveVideoState(row.status)) {
-    const service = await buildVideoService(admin, user.id);
+    let service: Awaited<ReturnType<typeof buildVideoService>>;
+    try { service = await buildVideoService(admin, user.id); } catch (reason) {
+      const failure = brandKitFailureResponse(reason);
+      if (failure) return failure;
+      throw reason;
+    }
     if (!service) {
       // The provider stack went unconfigured underneath a running job, so it
       // cannot be polled. Voom's OWN hard timeout does not depend on that

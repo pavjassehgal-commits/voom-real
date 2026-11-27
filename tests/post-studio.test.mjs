@@ -567,11 +567,18 @@ test("no test executes a provider, so no real paid generation runs in the suite"
   for (const name of files) {
     const source = await read(`tests/${name}`);
     // The upload route's behavioural suite substitutes auth/storage and
-    // rejects external HTTP; all other Post Studio suites remain source-only.
+    // rejects external HTTP; the Brand Kit route suite does the same.
     if (name === "mara-launch-post-api.test.mjs") {
       assert.match(source, /registerHooks/);
       assert.match(source, /External HTTP forbidden in post save tests/);
       assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media"|generate\/route)/);
+    } else if (name === "brand-kit-reliability.test.mjs") {
+      // These routes must fail before providers run. The whole file forbids
+      // HTTP, substitutes auth/database access, and checks zero outbound calls.
+      assert.match(source, /registerHooks/);
+      assert.match(source, /globalThis\.fetch = async \(\) => \{ throw new Error\('External HTTP forbidden in Brand Kit reliability tests'\)/);
+      assert.match(source, /assert\.equal\(calls,0\)/);
+      assert.doesNotMatch(source, /import\([^)]*(media\/provider|lib\/media["'])/);
     } else if (name === "youtube-native-upload.test.mjs") {
       assert.match(source, /registerHooks/);
       assert.match(source, /globalThis\.fetch=async\(\)=>\{throw new Error\('External HTTP forbidden/);

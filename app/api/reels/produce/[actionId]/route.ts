@@ -1,3 +1,4 @@
+import { brandKitFailureResponse } from "@/lib/brand/context";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAiProvider } from "@/lib/ai";
 import { buildReelComposition, isReelComposition } from "@/lib/mara/reel-composition";
@@ -73,7 +74,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ act
   if (assetReceived && !usesAsset) return Response.json({ error: "The required private asset could not be verified." }, { status: 409 });
 
   // ---- Real video production (preferred when a video provider is configured)
-  const service = await buildVideoService(admin, user.id);
+  let service: Awaited<ReturnType<typeof buildVideoService>>;
+  try { service = await buildVideoService(admin, user.id); } catch (reason) {
+    const failure = brandKitFailureResponse(reason);
+    if (failure) return failure;
+    throw reason;
+  }
   if (service) {
     const sourceImage = assetPack.find((row) => String(row.mime_type) === "image/jpeg" || String(row.mime_type) === "image/png" || String(row.mime_type) === "image/webp");
     const preparing = { ...action.new_value, selectedProductionMethod: "create_with_mara", productionStatus: "video_preparing" };
@@ -198,7 +204,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ act
   if (productionStatus === "video_generating" || productionStatus === "video_processing") {
     const admin = createAdminClient();
     if (!generationId) return Response.json({ action, error: "This Reel video lost its job record. Retry production." }, { status: 503 });
-    const service = await buildVideoService(admin, user.id);
+    let service: Awaited<ReturnType<typeof buildVideoService>>;
+    try { service = await buildVideoService(admin, user.id); } catch (reason) {
+      const failure = brandKitFailureResponse(reason);
+      if (failure) return failure;
+      throw reason;
+    }
     if (!service) {
       // The provider stack is unavailable, so the job cannot be polled. Voom's
       // OWN hard timeout does not depend on that stack: a job that outlived it

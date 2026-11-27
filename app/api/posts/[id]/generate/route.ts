@@ -1,3 +1,4 @@
+import { brandKitFailureResponse } from "@/lib/brand/context";
 import { randomUUID } from "node:crypto";
 import { createAiProvider, AiError } from "@/lib/ai";
 import { createMediaProvider, getMediaConfig, MediaError } from "@/lib/media";
@@ -130,7 +131,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     .gte("updated_at", since).in("status", ["processing", "completed"]);
   if ((count ?? 0) >= 4) return Response.json({ error: "MARA is generating visuals too quickly. Wait a minute and retry." }, { status: 429 });
 
-  const [brand, planContext] = await Promise.all([loadPostBrandContext(admin, user.id), loadPostPlanContext(admin, user.id)]);
+  let brand: Awaited<ReturnType<typeof loadPostBrandContext>>;
+  let planContext: Awaited<ReturnType<typeof loadPostPlanContext>>;
+  try { [brand, planContext] = await Promise.all([loadPostBrandContext(admin, user.id), loadPostPlanContext(admin, user.id)]); } catch (reason) {
+    const failure = brandKitFailureResponse(reason);
+    if (failure) return failure;
+    throw reason;
+  }
   if (!brand) return Response.json({ error: "Complete your brand profile before creating posts with MARA." }, { status: 409 });
 
   // Brand Kit rules join the system prompt only when the account has a kit

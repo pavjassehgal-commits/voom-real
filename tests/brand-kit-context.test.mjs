@@ -5,11 +5,11 @@
  *      Postgres). A user can read and append only their own versions and can
  *      never update or delete one; the `brand-kit` bucket is private.
  *   2. The reader (`lib/brand/context.ts`) turns a kit row into prompt extras,
- *      tolerates garbage, and fails OPEN to "no kit" so generation never stops.
+ *      tolerates garbage, supports missing rows, and fails closed on read errors.
  *   3. Every generation payload carries `brandKit` only when a kit has content,
  *      and the system prompts are byte-for-byte unchanged without one.
  *   4. Onboarding and the Settings brand save append a new version (dual
- *      write) and still succeed when that insert fails.
+ *      write); onboarding fails when the required kit insert fails.
  */
 import "./helpers/server-only-shim.mjs";
 
@@ -187,16 +187,16 @@ function fakeDb({ kitRow = null, business = {}, profile = null, kitError = null,
   return client;
 }
 
-test("loadBrandKit reads the newest version and fails open to the empty kit", async () => {
+test("loadBrandKit distinguishes a missing kit from a failed read", async () => {
   const warnings = [];
   const original = console.error;
   console.error = (...args) => warnings.push(args.join(" "));
   try {
     assert.deepEqual(await brand.loadBrandKit(fakeDb({ kitRow: KIT_ROW }), OWNER_A), brand.brandKitExtrasFromRow(KIT_ROW));
     assert.deepEqual(await brand.loadBrandKit(fakeDb(), OWNER_A), brand.EMPTY_BRAND_KIT, "no row = empty kit");
-    assert.deepEqual(await brand.loadBrandKit(fakeDb({ kitError: { message: "relation brand_kits does not exist" } }), OWNER_A), brand.EMPTY_BRAND_KIT, "a database error = empty kit");
-    assert.deepEqual(await brand.loadBrandKit(fakeDb({ throwOnKit: true }), OWNER_A), brand.EMPTY_BRAND_KIT, "a thrown error = empty kit");
-    assert.equal(warnings.filter((line) => line.startsWith("[brand-kit] read failed")).length, 2, "both failures are logged, never thrown");
+    await assert.rejects(brand.loadBrandKit(fakeDb({ kitError: { message: "relation brand_kits does not exist" } }), OWNER_A), brand.BrandKitReadError);
+    await assert.rejects(brand.loadBrandKit(fakeDb({ throwOnKit: true }), OWNER_A), brand.BrandKitReadError);
+    assert.equal(warnings.filter((line) => line.startsWith("[brand-kit] read failed")).length, 2, "both failures are logged and thrown");
   } finally {
     console.error = original;
   }
@@ -327,6 +327,7 @@ function fakeUserDb({ newestVersion = null, newestRow = null, insertError = null
         // fake is a new account; the insert is recorded with the upserts so
         // "businesses is written" reads the same.
         select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
+        update: () => chain({ data: { id: "row-1" }, error: null }),
         insert: (payload) => { calls.upserts.push({ table, payload }); return { select: () => ({ single: async () => ({ data: { id: "row-1" }, error: null }) }) }; },
       };
     },

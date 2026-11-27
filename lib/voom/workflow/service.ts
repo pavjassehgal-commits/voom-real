@@ -187,7 +187,7 @@ export async function runOwnerWorkflow(admin: AdminClient, input: WorkflowRunInp
   }
   const goal = String(business.main_goal ?? "Grow awareness");
   const selectedChannels = normalizeSelectedSocialChannels(business.preferred_channels);
-  // Brand Kit v2: read once per run; never throws (no kit = unchanged prompts).
+  // Read once before any workflow generation. A read failure must not become an empty kit.
   const brandKit = brandKitPromptContext(await loadBrandKit(admin, input.ownerId));
   // The cadence pattern is pinned to the active plan's start so every run, on
   // any day, plans the same dates (the coordinator resolves the same anchor).

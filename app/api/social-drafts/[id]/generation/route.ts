@@ -1,3 +1,4 @@
+import { brandKitFailureResponse } from "@/lib/brand/context";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { createAdminClient } from "@/utils/supabase/admin";
@@ -24,7 +25,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const { id } = await params;
     const result = await startNativePlanVideo(createAdminClient(), user.id, id, parsed.data.token);
     return json(result, result.status);
-  } catch { return json({ error: "Voom couldn't confirm generation. Retry the same request before starting another." }, 503); }
+  } catch (reason) { const failure = brandKitFailureResponse(reason); if (failure) return failure; return json({ error: "Voom couldn't confirm generation. Retry the same request before starting another." }, 503); }
 }
 
 /** Only advances an already-paid job; cannot create or approve a job/post. */
@@ -45,5 +46,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       }
     }
     return json({ generation: await nativeGenerationView(admin, row) });
-  } catch { return json({ error: "Video status is temporarily unavailable. No new generation was started." }, 503); }
+  } catch (reason) { const failure = brandKitFailureResponse(reason); if (failure) return failure; return json({ error: "Video status is temporarily unavailable. No new generation was started." }, 503); }
 }

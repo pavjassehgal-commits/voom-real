@@ -65,7 +65,6 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
       // stored mode untouched rather than inventing one.
       ...(onboardingMode ? { automation_level: onboardingMode } : {}),
       ...(input.publishingPermission ? { publishing_permission: input.publishingPermission } : {}),
-      onboarding_completed: true,
     };
   // INSERT guards run before ON CONFLICT. An upsert of an existing Pro
   // business without a plan would therefore validate Assisted against the
@@ -88,8 +87,8 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
   // Brand Kit v2 dual write (migration 0075): the answers, including the
   // kit-only screens (rules, banned words, notes, facts, offerings, brief),
   // become brand kit version 1 (or the next version after a restart).
-  // Best-effort: the businesses row above is what today's generation reads
-  // for the core fields. A run with no uploads carries the previous images over.
+  // Required persistence: completion is recorded only after the kit is saved.
+  // A run with no uploads carries the previous images over.
   const previousAssets = await loadNewestBrandAssets(supabase, user.id);
   const appended = await appendBrandKitVersion(supabase, user.id, {
     source: "onboarding",
@@ -97,7 +96,15 @@ export async function saveOnboarding(input: OnboardingInput): Promise<SaveResult
     ...(input.kit ? { brief: input.kit.brief } : {}),
     ...(assets.length ? { assets } : {}),
     changeSummary: "Onboarding completed",
+    skipUnchanged: true,
   });
+  if (!appended) return { ok: false, error: "Your basic business details were saved, but your complete Brand Kit was not confirmed. Keep this setup open and retry; your answers are still here." };
+  // Keep existing businesses' completion state intact; a new business remains
+  // incomplete until BOTH required records have been confirmed.
+  const completed = await supabase.from("businesses").update({ onboarding_completed: true })
+    .eq("owner_user_id", user.id).select("id").maybeSingle();
+  if (completed.error || !completed.data) return { ok: false, error: "Your business details and Brand Kit were saved, but setup completion could not be confirmed. Retry to finish; the saved Brand Kit will be reused." };
+
   // Files the newest version no longer references are deleted: the set this
   // run replaced, and uploads from a run that was never finished. Only once
   // the version is really saved, so a failed insert never strands a row.

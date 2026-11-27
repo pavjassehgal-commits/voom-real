@@ -111,6 +111,10 @@ function makeFakeDb(initialRow) {
     row,
     client: {
       from(table) {
+        if (table === "brand_kits") {
+          const q = { select: () => q, eq: () => q, order: () => q, limit: () => q, maybeSingle: async () => ({ data: null, error: null }), insert: async () => ({ error: null }) };
+          return q;
+        }
         return {
           upsert: async (payload) => {
             if (table === "profiles") calls.profilesUpsert.push(payload);

@@ -1,3 +1,4 @@
+import { BrandKitReadError } from "@/lib/brand/context";
 import "server-only";
 import { createMediaProvider, getMediaConfig } from "@/lib/media";
 import { getVideoConfig } from "@/lib/media/video-config";
@@ -27,6 +28,10 @@ export interface VideoService {
 }
 
 export async function buildVideoService(admin: AdminClient, ownerId: string): Promise<VideoService | null> {
+  // Read before configuration fallback too: an unavailable kit must not route
+  // Reel production into a legacy fallback that omits saved restrictions.
+  const [brand, plan] = await Promise.all([loadPostBrandContext(admin, ownerId), loadPostPlanContext(admin, ownerId)]);
+  if (!brand) return null;
   let videoConfig: VideoConfig;
   let provider: VideoGenerationProvider;
   try {
@@ -41,8 +46,6 @@ export async function buildVideoService(admin: AdminClient, ownerId: string): Pr
   } catch {
     imageProvider = createNoImageProvider(provider);
   }
-  const [brand, plan] = await Promise.all([loadPostBrandContext(admin, ownerId), loadPostPlanContext(admin, ownerId)]);
-  if (!brand) return null;
   return {
     admin,
     ownerId,
@@ -219,7 +222,11 @@ export type PostStudioVideoStartResult =
 
 export async function startPostStudioVideo(args: PostStudioVideoStartArgs): Promise<PostStudioVideoStartResult> {
   const { admin, ownerId, post } = args;
-  const service = await buildVideoService(admin, ownerId);
+  let service: VideoService | null;
+  try { service = await buildVideoService(admin, ownerId); } catch (reason) {
+    if (reason instanceof BrandKitReadError) return { status: 503, error: reason.message, generation: null };
+    throw reason;
+  }
   if (!service) {
     return { status: 503, error: "Create with MARA is temporarily unavailable. Your previous asset is unchanged.", generation: null };
   }

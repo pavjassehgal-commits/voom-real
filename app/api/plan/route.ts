@@ -1,3 +1,4 @@
+import { brandKitFailureResponse } from "@/lib/brand/context";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { mediaSpendRunNotice } from "@/lib/mara/media-spend";
 import { loadWorkflowSnapshot } from "@/lib/voom/workflow/read";
@@ -94,7 +95,9 @@ export async function POST(request: Request) {
       return Response.json({ ...response, error: replenishFailureMessage(run) }, { status: 503 });
     }
     return Response.json(response);
-  } catch {
+  } catch (reason) {
+    const failure = brandKitFailureResponse(reason);
+    if (failure) return failure;
     return Response.json({
       outcome: failedPlanReplenishOutcome(),
       error: PLAN_UNCHANGED_MESSAGE,

@@ -1,3 +1,4 @@
+import { brandKitFailureResponse } from "@/lib/brand/context";
 import { getCurrentUser } from "@/lib/voom/server-data";
 import { AiError, createAiProvider, createAiVisionProvider } from "@/lib/ai";
 import { postAssetKindForMime } from "@/lib/post/core";
@@ -59,7 +60,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const assetKind = postAssetKindForMime(post.visual.mimeType);
   if (!assetKind) return Response.json({ error: "That file type is not supported." }, { status: 400 });
 
-  const [brand, plan] = await Promise.all([loadPostBrandContext(admin, user.id), loadPostPlanContext(admin, user.id)]);
+  let brand: Awaited<ReturnType<typeof loadPostBrandContext>>;
+  let plan: Awaited<ReturnType<typeof loadPostPlanContext>>;
+  try { [brand, plan] = await Promise.all([loadPostBrandContext(admin, user.id), loadPostPlanContext(admin, user.id)]); } catch (reason) {
+    const failure = brandKitFailureResponse(reason);
+    if (failure) return failure;
+    throw reason;
+  }
   if (!brand) return Response.json({ error: "Complete your brand profile before asking MARA for suggestions." }, { status: 409 });
 
   const seen = assetKind === "image" ? await lookAtPostImage(admin, user.id, id, brand) : null;

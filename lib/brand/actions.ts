@@ -5,8 +5,8 @@
  * section. It validates only that section's values, updates the matching
  * `businesses` columns (today's planner still reads the core fields there),
  * then appends a kit version through the carry-forward rule. The kit is the
- * hub's own record, so a failed kit insert IS a failed save here (unlike the
- * best-effort dual write from onboarding and Settings).
+ * hub's own record, so a failed kit insert IS a failed save here, as in
+ * onboarding. The legacy Settings dual write remains best-effort.
  */
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/utils/supabase/server";

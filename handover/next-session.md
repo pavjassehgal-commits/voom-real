@@ -1,3 +1,27 @@
+## Brand Kit reliability N01/N02 — 27 November 2026 (local only)
+
+Fresh isolated checkout `.worktrees/brand-kit-reliability-1f619f2`, branch
+`codex/brand-kit-reliability-1f619f2`, based on independently verified Production source
+`1f619f2e79773570169f8d5a3e7390a8835c9d00`. Production migration metadata includes 0075
+and 0080; 0079 is absent. No new migration is needed. No old approval or Memory checkout
+was edited. No push, hosted migration, deployment, generation or publishing performed.
+
+Onboarding reports required Brand Kit failures, marks new businesses complete only after
+confirmation, and reuses identical snapshots on retry. Version collisions re-read and merge.
+Generation distinguishes missing kits from failed reads and returns a retryable error for
+unavailable saved restrictions before submitting new generation. Existing success paths,
+models/prompts, approval and publishing safeguards are unchanged.
+
+Validation: focused 288/288 plus 3/3 website checks; full 2618 pass /32 fail /42 skipped.
+All final failure names reproduce on untouched Production source. TypeScript passes; lint
+zero errors/16 warnings, matching baseline. No live UI or real multi-session PostgreSQL test.
+See `docs/brand-kit-reliability-review.md` for exact scope, evidence, validation and limits.
+Use `git log -1 --format=%H` to identify the local commit containing this handover. Next step:
+independent review and separately authorized isolated browser validation; no release authorization.
+Older release/status notes below are historical and do not authorize actions in this task.
+
+---
+
 ## Step 1C final staging preparation — 24 November 2026
 
 Same isolated branch/base below. Candidate is being committed locally in this task; use

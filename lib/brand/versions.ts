@@ -1,13 +1,12 @@
 /**
  * Brand Kit v2, slice 1: appending a version row.
  *
- * `brand_kits` (migration 0075) is append-only: every save inserts
- * version = newest + 1 for the owner. Row-level security lets a user insert
+ * `brand_kits` (migration 0075) is append-only: changed saves insert
+ * version = newest + 1 for the owner; onboarding may reuse an identical row. Row-level security lets a user insert
  * only their own rows, so this runs fine on the user-scoped client.
  *
- * The write is best-effort by design: onboarding and Settings already saved
- * the `businesses` row (today's source for the core fields), so a failed kit
- * insert is logged and never fails the user's save.
+ * Callers must handle a failed append explicitly. Version collisions retry
+ * from the latest row so concurrent section saves preserve unowned fields.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { BRAND_KIT_TABLE } from "./context";
@@ -26,6 +25,8 @@ export interface BrandKitVersionInput {
   assets?: BrandAsset[];
   changeSummary?: string;
   changedKeys?: string[];
+  /** Onboarding retries reuse an identical saved snapshot, including ambiguous writes. */
+  skipUnchanged?: boolean;
 }
 
 /**
@@ -148,36 +149,51 @@ export async function appendBrandKitVersion(
   input: BrandKitVersionInput,
 ): Promise<{ version: number; changedKeys: string[] } | null> {
   try {
-    const { data: newest, error: readError } = await db.from(BRAND_KIT_TABLE)
-      .select("version,answers,brief,assets").eq("owner_user_id", ownerId)
-      .order("version", { ascending: false }).limit(1).maybeSingle();
-    if (readError) throw new Error(readError.message);
-    const current = typeof newest?.version === "number" ? newest.version : 0;
-    const version = current + 1;
-    const merged = mergeBrandKitVersion(
-      newest ? { answers: (newest.answers ?? {}) as Record<string, unknown>, brief: typeof newest.brief === "string" ? newest.brief : null } : null,
-      input,
-    );
-    // Assets follow the same rule as every field: replaced in full when the
-    // save owns them, otherwise carried over untouched.
-    const previousAssets = Array.isArray(newest?.assets) ? (newest.assets as unknown[]) : [];
-    const assets = input.assets ?? previousAssets;
-    const changedKeys = [...merged.changedKeys];
-    if (input.assets !== undefined && JSON.stringify(previousAssets) !== JSON.stringify(input.assets)) changedKeys.push("assets");
-    const { error } = await db.from(BRAND_KIT_TABLE).insert({
-      owner_user_id: ownerId,
-      version,
-      answers: merged.answers,
-      brief: merged.brief,
-      assets,
-      source: input.source,
-      change_summary: input.changeSummary?.slice(0, 300) ?? null,
-      changed_keys: input.changedKeys ?? changedKeys,
-    });
-    if (error) throw new Error(error.message);
-    return { version, changedKeys: input.changedKeys ?? changedKeys };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { data: newest, error: readError } = await db.from(BRAND_KIT_TABLE)
+        .select("version,answers,brief,assets").eq("owner_user_id", ownerId)
+        .order("version", { ascending: false }).limit(1).maybeSingle();
+      if (readError) throw new Error(readError.message);
+      const current = typeof newest?.version === "number" ? newest.version : 0;
+      const version = current + 1;
+      const merged = mergeBrandKitVersion(
+        newest ? { answers: (newest.answers ?? {}) as Record<string, unknown>, brief: typeof newest.brief === "string" ? newest.brief : null } : null,
+        input,
+      );
+      // Assets follow the same rule as every field: replaced in full when the
+      // save owns them, otherwise carried over untouched.
+      const previousAssets = Array.isArray(newest?.assets) ? (newest.assets as unknown[]) : [];
+      const assets = input.assets ?? previousAssets;
+      const changedKeys = [...merged.changedKeys];
+      if (input.assets !== undefined && JSON.stringify(previousAssets) !== JSON.stringify(input.assets)) changedKeys.push("assets");
+      if (input.skipUnchanged && newest && equalBrandValue(newest.answers ?? {}, merged.answers)
+        && (newest.brief ?? null) === merged.brief && equalBrandValue(previousAssets, assets)) {
+        return { version: current, changedKeys: [] };
+      }
+      const { error } = await db.from(BRAND_KIT_TABLE).insert({
+        owner_user_id: ownerId,
+        version,
+        answers: merged.answers,
+        brief: merged.brief,
+        assets,
+        source: input.source,
+        change_summary: input.changeSummary?.slice(0, 300) ?? null,
+        changed_keys: input.changedKeys ?? changedKeys,
+      });
+      if (error?.code === "23505" && attempt < 2) continue;
+      if (error) throw new Error("brand_kit_write_failed");
+      return { version, changedKeys: input.changedKeys ?? changedKeys };
+    }
+    return null;
   } catch (reason) {
     console.error("[brand-kit] version insert failed", reason instanceof Error ? reason.message : String(reason));
     return null;
   }
+}
+
+/** JSONB object key order is not significant; array order still is. */
+function equalBrandValue(left: unknown, right: unknown): boolean {
+  const normalize = (value: unknown): unknown => Array.isArray(value) ? value.map(normalize)
+    : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => [key, normalize(entry)])) : value;
+  return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
 }

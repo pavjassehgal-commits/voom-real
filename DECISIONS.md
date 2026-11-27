@@ -446,3 +446,24 @@ Expired provider submissions are read-only recovery cases, not automatic retry c
 The migration-first/app-second compatibility interval must fence mutations and old workers,
 and rollback must revert/drain app before reverting SQL. Baseline publishers remain fenced
 after rollback because baseline lacks the lateness protection. Staging plan documents gates.
+
+## 2026-11-27 — Brand Kit persistence and unavailable reads (N01/N02, local candidate)
+
+Require the existing Brand Kit append before reporting onboarding success or marking a new
+business complete. Keep the basic profile/business writes on partial failure and tell the owner
+to retry with retained answers. Onboarding reuses an identical newest snapshot; a unique-version
+collision retries from the newest row, preserving fields owned by other sections. This uses the
+existing 0075 constraint, with no new migration or changes to Settings' save contract.
+
+Generation must distinguish a successful empty read from a database/transport failure. The
+canonical reader throws a typed, retryable error on failure; current Post Studio, workflow,
+shared video and interactive route consumers propagate it before generation. Missing-kit
+businesses and successful prompt construction are unchanged. No Memory integration or prompt,
+provider, approval or publishing changes.
+
+Trade-off: the existing onboarding persistence remains staged across tables, not transactional.
+The error explicitly describes partial success. Concurrent changes to different owned sections
+are merged on collision; overlapping fields retain the existing last-save-wins behavior. PGlite
+interleavings are not a claim of multi-session PostgreSQL testing. Baseline verified read-only:
+Production Vercel source `1f619f2e79773570169f8d5a3e7390a8835c9d00`, ledger includes 0075/0080.
+Implementation is isolated on `codex/brand-kit-reliability-1f619f2`; no release authorized.

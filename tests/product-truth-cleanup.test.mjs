@@ -108,16 +108,20 @@ function onboardingPayload(overrides = {}) {
 
 /** Fake user-scoped client (businesses/profiles upserts) + fake admin RPC. */
 function makeFakes({ rpcError = null, adminThrows = false } = {}) {
-  const calls = { businessesUpsert: [], rpc: [] };
+  const calls = { businessesUpsert: [], completions: [], rpc: [] };
   globalThis.__VOOM_FAKE_SUPABASE__ = {
     from(table) {
+      if (table === "brand_kits") {
+        const q = { select: () => q, eq: () => q, order: () => q, limit: () => q, maybeSingle: async () => ({ data: null, error: null }), insert: async () => ({ error: null }) };
+        return q;
+      }
       return {
         upsert: async (payload) => {
           if (table === "businesses") calls.businessesUpsert.push(payload);
           return { error: null, data: { id: "row-1" } };
         },
         update: payload => {
-          const query = { eq: () => query, select: () => query, maybeSingle: async () => { if (table === "businesses") calls.businessesUpsert.push(payload); return { error: null, data: { id: "row-1" } }; } };
+          const query = { eq: () => query, select: () => query, maybeSingle: async () => { if (table === "businesses") (payload.onboarding_completed === true ? calls.completions : calls.businessesUpsert).push(payload); return { error: null, data: { id: "row-1" } }; } };
           return query;
         },
         // Onboarding reads the account's plan before choosing a mode to save.
@@ -288,7 +292,8 @@ test("onboarding with a website stores it ONLY through upsert_email_brand, with 
 
   // Not on businesses — no invented column.
   assert.equal("website" in calls.businessesUpsert[0], false);
-  assert.equal(calls.businessesUpsert[0].onboarding_completed, true);
+  assert.equal(calls.businessesUpsert[0].onboarding_completed, undefined);
+  assert.equal(calls.completions[0].onboarding_completed, true);
 
   // Exactly one RPC, the existing authoritative writer, owner-scoped, and a
   // payload that cannot clobber logo/colours/footer (the RPC coalesces
@@ -304,7 +309,7 @@ test("a failed website write can never fail onboarding — it surfaces as a noti
   const result = await saveOnboarding(onboardingPayload({ website: "beanandco.ae" }));
   assert.equal(result.ok, true);
   assert.equal(result.notice, WEBSITE_NOT_SAVED_NOTICE);
-  assert.equal(rpcFailed.businessesUpsert[0].onboarding_completed, true);
+  assert.equal(rpcFailed.completions[0].onboarding_completed, true);
 
   const noAdmin = makeFakes({ adminThrows: true });
   const fallback = await saveOnboarding(onboardingPayload({ website: "https://beanandco.ae" }));

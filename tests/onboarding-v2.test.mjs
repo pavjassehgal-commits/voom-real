@@ -132,7 +132,7 @@ test("the kit answers from onboarding carry the new screens and omit the retired
 });
 
 test("Finish setup writes the businesses row and brand kit version 1 with the brief and rules", async () => {
-  const calls = { upserts: [], kitInserts: [] };
+  const calls = { upserts: [], kitInserts: [], completions: [] };
   const chain = (result) => { const q = { select: () => q, eq: () => q, order: () => q, limit: () => q, maybeSingle: async () => result }; return q; };
   globalThis.__VOOM_FAKE_SUPABASE__ = {
     from(table) {
@@ -142,6 +142,7 @@ test("Finish setup writes the businesses row and brand kit version 1 with the br
       return {
         upsert: async (payload) => { calls.upserts.push({ table, payload }); return { error: null, data: { id: "row-1" } }; },
         select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
+        update: (payload) => { calls.completions.push(payload); return chain({ data: { id: "row-1" }, error: null }); },
         insert: (payload) => { calls.upserts.push({ table, payload }); return { select: () => ({ single: async () => ({ data: { id: "row-1" }, error: null }) }) }; },
       };
     },
@@ -154,7 +155,8 @@ test("Finish setup writes the businesses row and brand kit version 1 with the br
   // main's save (merged 2026-11-05) leaves the key out when nothing was answered, so the stored value is untouched.
   assert.equal(business.publishing_permission ?? null, null);
   assert.deepEqual(business.preferred_channels, ["Instagram", "TikTok"]);
-  assert.equal(business.onboarding_completed, true);
+  assert.equal(business.onboarding_completed, undefined, "the initial business save cannot claim completion");
+  assert.equal(calls.completions.at(-1).onboarding_completed, true);
   const kit = calls.kitInserts[0];
   assert.equal(kit.version, 1);
   assert.equal(kit.source, "onboarding");

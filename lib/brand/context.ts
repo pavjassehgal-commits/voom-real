@@ -9,14 +9,26 @@
  * facts MARA may state, owner notes and voice samples. An account with no kit
  * row gets empty extras and generation behaves exactly as it did.
  *
- * Reading the kit never throws: any failure (table not applied yet, bad JSON,
- * network) is logged and treated as "no kit", because a missing kit must never
- * stop a plan or a post from being written.
+ * A successful read with no row supports legacy businesses. A failed read
+ * throws: generation cannot guess away saved restrictions or brand rules.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { brandVisualStyle, cleanBrandAssets, cleanBrandColours, type BrandVisualStyle, type WebsiteLookNote } from "./assets";
 
 export const BRAND_KIT_TABLE = "brand_kits";
+export class BrandKitReadError extends Error {
+  readonly code = "brand_kit_unavailable";
+  constructor() {
+    super("Your saved Brand Kit could not be loaded. Please retry so your brand rules can be applied.");
+    this.name = "BrandKitReadError";
+  }
+}
+
+export function brandKitFailureResponse(reason: unknown): Response | null {
+  return reason instanceof BrandKitReadError
+    ? Response.json({ error: reason.message, code: reason.code, retryable: true }, { status: 503 })
+    : null;
+}
 
 /** Extras the kit adds to every prompt. Every field has a safe empty value. */
 export interface BrandKitExtras {
@@ -139,7 +151,7 @@ export function brandKitHasContent(kit: BrandKitExtras | null | undefined): bool
 /**
  * Reads the newest kit for an owner. Works with the user-scoped client (RLS
  * limits it to the caller's rows) and the service-role client (filtered by
- * owner here). Never throws.
+ * owner here). Missing data is supported; failed reads stop generation.
  */
 export async function loadBrandKit(db: SupabaseClient, ownerId: string): Promise<BrandKitExtras> {
   try {
@@ -149,14 +161,12 @@ export async function loadBrandKit(db: SupabaseClient, ownerId: string): Promise
       .order("version", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (error) {
-      console.error("[brand-kit] read failed", error.message);
-      return EMPTY_BRAND_KIT;
-    }
+    if (error) throw new BrandKitReadError();
     return brandKitExtrasFromRow(data as BrandKitRow | null);
-  } catch (reason) {
-    console.error("[brand-kit] read failed", reason instanceof Error ? reason.message : String(reason));
-    return EMPTY_BRAND_KIT;
+  } catch {
+    // Do not log stored content, query details or credentials from provider errors.
+    console.error("[brand-kit] read failed");
+    throw new BrandKitReadError();
   }
 }
 
